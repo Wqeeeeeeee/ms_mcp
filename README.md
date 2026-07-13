@@ -95,6 +95,22 @@ python -m pytest -q
 
 ## MCP Protocol Acceptance
 
+Before relying on `@mcp`, audit the active Codex registration without changing
+it:
+
+```powershell
+.\.venv\Scripts\python.exe -m material_studio_mcp_server.codex_config `
+  --cwd . `
+  --output-snippet workspace\codex_config\materials_studio.toml
+```
+
+The doctor reports missing or legacy registration, entrypoint and allowlist
+drift, and the exact absolute paths for this checkout. It writes only the
+separate snippet path supplied above and refuses to overwrite the active
+`%USERPROFILE%\.codex\config.toml`. Review and merge the snippet manually,
+preserving unrelated config, then restart Codex before calling
+`material_studio_live_session_preflight`.
+
 Use the real MCP stdio client to verify initialization, tool discovery, input
 schemas, safety annotations, and preview-only live modeling calls:
 

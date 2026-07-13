@@ -10,6 +10,23 @@ Configure Codex with `.codex/config.toml.example` adapted to the local repositor
 
 Keep `material_studio_run_script` disabled in normal Codex configuration unless custom Perl execution is required.
 
+Audit the active Codex registration before claiming that `@mcp` is available:
+
+```powershell
+.\.venv\Scripts\python.exe -m material_studio_mcp_server.codex_config `
+  --cwd . `
+  --output-snippet workspace\codex_config\materials_studio.toml
+```
+
+The command is read-only with respect to the active config. It reports whether
+`mcp_servers.materials_studio` uses this checkout's `.venv` and
+`run_server.py`, whether the safe tool allowlist is complete, and whether
+`material_studio_run_script` remains disabled. The optional output is a
+separate review artifact; the command rejects an output path equal to the
+active `%USERPROFILE%\.codex\config.toml`. Merge the reviewed section manually
+without replacing unrelated servers or trusted-project entries, restart Codex,
+and call `material_studio_live_session_preflight`.
+
 ## Protocol Acceptance
 
 Direct tool-function tests do not verify the MCP transport. Run the stdio

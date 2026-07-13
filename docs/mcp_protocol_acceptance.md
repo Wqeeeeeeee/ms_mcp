@@ -37,6 +37,20 @@ disabled in the example Codex config.
 
 ## Config Drift
 
+Run the dedicated read-only doctor against the active config before protocol
+acceptance:
+
+```powershell
+ms-mcp-config-doctor --cwd . `
+  --output-snippet workspace\codex_config\materials_studio.toml
+```
+
+It distinguishes missing registration, legacy `ms_mcp.server` entrypoints,
+disabled servers, path drift, and tool-allowlist drift. The receipt includes
+before/after SHA-256 values proving the active config was not changed. The
+generated snippet uses absolute paths for the current checkout, keeps custom
+script execution disabled, and can only be written to a separate file.
+
 Without `--strict-config`, protocol acceptance can pass while the summary
 reports an incomplete active Codex allowlist. This is useful when validating a
 server before the user decides to update their local config. With

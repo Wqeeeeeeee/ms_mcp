@@ -1796,7 +1796,11 @@ def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_bl
     assert site_metadata["valid_site_count"] == 0
     assert site_metadata["stale_site_count"] == 1
     assert site_metadata["metadata_consistent"] is False
-    assert status["live_summary"]["ready_for_next_edit"] is False
+    assert status["live_summary"]["ready_for_next_edit"] is True
+    assert status["live_summary"]["next_edit_status"] == "ready_with_reaudit"
+    assert status["live_summary"]["next_edit_requires_reaudit"] is True
+    assert status["live_summary"]["next_edit_blocking_reasons"] == []
+    assert "modeling_health_failed" in status["live_summary"]["next_edit_review_reasons"]
     assert status["live_summary"]["ready_for_calculation"] is False
     assert "dopant_site_metadata_inconsistent" in status["live_summary"]["semiconductor_risk_flags"]
     assert status["next_action_plan"]["action_id"] == "reconcile_dopant_metadata"
@@ -1819,6 +1823,78 @@ def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_bl
         status["live_summary"]["next_action"]
         == "reconcile_dopant_metadata_with_current_structure_then_reaudit"
     )
+    calculation_readiness = status["modeling_report"]["semiconductor_calculation_readiness"]
+    assert calculation_readiness["action_id"] == "reconcile_dopant_metadata"
+    assert calculation_readiness["recommended_tool"] == "material_studio_project_reconcile_dopant_metadata"
+    assert calculation_readiness["needs_user_confirmation"] is True
+    assert calculation_readiness["safe_to_call_without_confirmation"] is False
+    diagnosis = status["modeling_report"]["semiconductor_normality_diagnosis"]
+    assert diagnosis["recommended_tool"] == "material_studio_project_reconcile_dopant_metadata"
+    assert diagnosis["recommended_action"] == "reconcile_dopant_metadata_with_current_structure_then_reaudit"
+    assert diagnosis["remediation_plan"]["preview_needs_user_confirmation"] is True
+    assert diagnosis["remediation_plan"]["preview_safe_to_call_without_confirmation"] is False
+    preview_step = diagnosis["remediation_plan"]["steps"][0]
+    assert preview_step["tool"] == "material_studio_project_reconcile_dopant_metadata"
+    assert preview_step["requires_user_confirmation"] is True
+    assert preview_step["safe_to_call_without_confirmation"] is False
+    mcp_readiness = status["modeling_report"]["mcp_client_readiness"]
+    assert mcp_readiness["can_accept_followup_request"] is True
+    assert mcp_readiness["next_edit_requires_reaudit"] is True
+    assert mcp_readiness["model_trust_blocked"] is True
+    followup = status["modeling_report"]["live_modeling_contract"]["followup_edit_capabilities"]
+    assert followup["status"] == "ready_for_followup_patch_with_reaudit"
+    assert followup["patch_payload_hint"]["export_view_audit"] is True
+    assert followup["normality_claims_remain_blocked_until_reaudit"] is True
+    hotload = status["live_hotload_preflight"]
+    assert hotload["status"] == "ready_to_execute_and_hotload_unverified_gui"
+    assert hotload["safe_to_attempt_hotload"] is True
+    assert hotload["hotload_for_visual_review_only"] is True
+    assert hotload["normality_claim_allowed"] is False
+    assert "modeling_health_failed" not in hotload["blocking_reasons"]
+    assert "modeling_health_failed_hotload_for_visual_review_only" in hotload["warnings"]
+
+
+def test_stale_dopant_metadata_can_be_repaired_by_structural_patch(tmp_path: Path) -> None:
+    plan = infer_modeling_plan(
+        "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."
+    )
+    doped = ModelSpec.model_validate(plan.payload)
+    stale_atoms = [
+        atom.model_copy(update={"element": "Si"}) if atom.id == "Si1_000" else atom
+        for atom in doped.model.basis_atoms
+    ]
+    stale = doped.model_copy(update={"model": doped.model.model_copy(update={"basis_atoms": stale_atoms})})
+    created = server.material_studio_model_create_from_spec(
+        stale.model_dump(mode="json"),
+        user_text="Legacy stale dopant metadata fixture.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    repaired = server.material_studio_live_modeling_request(
+        "Dope Si1_000 with P and prepare preview, then re-audit the model.",
+        project_id=stale.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert repaired["ok"] is True
+    assert repaired["workflow"] == "patch"
+    assert repaired["nl_plan"]["template_id"] == "crystal_dopant"
+    assert repaired["base_revision"] == 0
+    assert repaired["new_revision"] == 1
+    site_metadata = repaired["modeling_report"]["semiconductor_review"]["dopants"]["site_metadata"]
+    assert site_metadata["metadata_consistent"] is True
+    assert site_metadata["stale_site_count"] == 0
+    assert site_metadata["latest"]["atom_id"] == "Si1_000"
+    assert site_metadata["latest"]["actual_element"] == "P"
+    assert "dopant_site_metadata_inconsistent" not in repaired["live_summary"]["semiconductor_risk_flags"]
+    assert repaired["live_summary"]["ready_for_next_edit"] is True
+    assert repaired["live_summary"]["ready_for_calculation"] is False
+    history = server.material_studio_project_history(stale.project_id, working_dir=str(tmp_path))["history"]
+    assert [entry["revision"] for entry in history] == [0, 1]
 
 
 def test_dopant_metadata_reconcile_routes_natural_language_and_avoids_empty_revision(
@@ -16274,7 +16350,9 @@ def test_live_modeling_request_blocks_current_cell_surface_orientation_mismatch(
     assert result["normality_check_requested"] is True
     assert result["can_claim_model_normal"] is False
     assert result["ready_for_calculation"] is False
-    assert result["ready_for_next_edit"] is False
+    assert result["ready_for_next_edit"] is True
+    assert result["next_edit_status"] == "ready_with_reaudit"
+    assert result["next_edit_requires_reaudit"] is True
     orientation = result["modeling_report"]["inspection"]["semiconductor_health"][
         "surface_orientation_summary"
     ]

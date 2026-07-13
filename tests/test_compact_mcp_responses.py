@@ -271,6 +271,49 @@ def test_compact_live_status_uses_latest_current_project_resolution(tmp_path: Pa
     assert status["gui_current_revision_needs_snapshot"] is False
 
 
+def test_compact_stale_semiconductor_status_keeps_repairable_edit_contract(tmp_path: Path) -> None:
+    plan = infer_modeling_plan(
+        "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."
+    )
+    doped = ModelSpec.model_validate(plan.payload)
+    stale_atoms = [
+        atom.model_copy(update={"element": "Si"}) if atom.id == "Si1_000" else atom
+        for atom in doped.model.basis_atoms
+    ]
+    stale = doped.model_copy(update={"model": doped.model.model_copy(update={"basis_atoms": stale_atoms})})
+    created = server.material_studio_model_create_from_spec(
+        stale.model_dump(mode="json"),
+        user_text="Legacy stale dopant metadata fixture.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    status = server.material_studio_live_project_status(
+        project_id=stale.project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert status["ok"] is True
+    assert status["normality"] == "failed"
+    assert status["ready_for_next_edit"] is True
+    assert status["next_edit_status"] == "ready_with_reaudit"
+    assert status["next_edit_requires_reaudit"] is True
+    assert status["next_edit_blocking_reasons"] == []
+    assert status["ready_for_calculation"] is False
+    readiness = status["mcp_client_readiness"]
+    assert readiness["can_accept_followup_request"] is True
+    assert readiness["next_edit_requires_reaudit"] is True
+    assert readiness["model_trust_blocked"] is True
+    assert status["next_action_plan"]["action_id"] == "reconcile_dopant_metadata"
+    assert status["next_action_plan"]["needs_user_confirmation"] is True
+    assert status["semiconductor_normality_diagnosis"]["recommended_tool"] == (
+        "material_studio_project_reconcile_dopant_metadata"
+    )
+    assert _json_size(status) < server.COMPACT_RESPONSE_MAX_BYTES
+
+
 def test_compact_status_preserves_bound_nondefault_views_and_rejects_stale_audit(
     tmp_path: Path,
 ) -> None:

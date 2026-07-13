@@ -2318,6 +2318,10 @@ _TOP_LEVEL_FOLLOWUP_ACTION_FIELDS = (
     "next_action_safe_to_call_without_confirmation",
     "next_action_state",
     "ready_for_next_edit",
+    "next_edit_status",
+    "next_edit_requires_reaudit",
+    "next_edit_blocking_reasons",
+    "next_edit_review_reasons",
     "followup_edit_capabilities",
     "followup_edit_available",
     "followup_edit_status",
@@ -2468,6 +2472,11 @@ _TOP_LEVEL_MCP_CLIENT_READINESS_FIELDS = (
     "mcp_can_apply_current_revision_without_new_window",
     "mcp_ready_for_live_edit",
     "mcp_ready_for_live_hotload",
+    "mcp_next_edit_status",
+    "mcp_next_edit_requires_reaudit",
+    "mcp_next_edit_blocking_reasons",
+    "mcp_next_edit_review_reasons",
+    "mcp_model_trust_blocked",
     "mcp_same_window_hotload_ready",
     "mcp_same_window_hotload_status",
     "mcp_same_window_hotload_tool",
@@ -6306,7 +6315,7 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     live_edit_blocking_reasons: list[str] = []
     if not project_id:
         live_edit_blocking_reasons.append("project_id_missing")
-    if report.get("ok") is False or readiness.get("state") == "blocked":
+    if report.get("ok") is False:
         live_edit_blocking_reasons.append("modeling_report_blocked")
     if not can_accept_followup:
         live_edit_blocking_reasons.append("current_revision_not_ready_for_next_edit")
@@ -6318,7 +6327,6 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         can_accept_followup
         and can_hotload_without_new_window
         and report.get("ok") is not False
-        and readiness.get("state") != "blocked"
     )
     reload_payload_hint = (
         gui_current.get("payload_hint")
@@ -6362,7 +6370,7 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_blocking_reasons.append("project_id_missing")
     elif current_revision_reload_available or current_revision_apply_available:
         visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
-    elif report.get("ok") is False or readiness.get("state") == "blocked":
+    elif report.get("ok") is False:
         visible_followup_blocking_reasons.append("modeling_report_blocked")
     elif not can_accept_followup:
         visible_followup_blocking_reasons.append("current_revision_not_ready_for_next_edit")
@@ -6397,7 +6405,7 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_recommended_tool = "material_studio_gui_apply_current_revision"
         visible_followup_recommended_action = "execute_current_revision_to_hotload_when_user_confirms"
         visible_followup_payload_hint = apply_payload_hint
-    elif report.get("ok") is False or readiness.get("state") == "blocked":
+    elif report.get("ok") is False:
         visible_followup_status = "blocked"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
         visible_followup_recommended_action = next_action.get("recommended_action") or readiness.get("recommended_action")
@@ -6492,7 +6500,7 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         and not same_window_hotload_blocking_reasons
     )
 
-    if readiness.get("state") == "blocked" or report.get("ok") is False:
+    if report.get("ok") is False:
         status = "blocked"
     elif current_loaded and normality_gate.get("can_claim_live_gui_normal") is True and calculation_review_required:
         status = "live_gui_normal_calculation_review"
@@ -6501,7 +6509,11 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     elif can_apply_current and not current_loaded:
         status = "ready_to_apply_current_revision"
     elif can_accept_followup:
-        status = "ready_for_followup_live_modeling"
+        status = (
+            "ready_for_followup_live_modeling_with_reaudit"
+            if readiness.get("next_edit_requires_reaudit")
+            else "ready_for_followup_live_modeling"
+        )
     elif can_accept_preview:
         status = "preview_ready"
     else:
@@ -6538,6 +6550,15 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "can_apply_current_revision_without_new_window": can_apply_current,
             "ready_for_live_edit": ready_for_live_edit,
             "ready_for_live_hotload": ready_for_live_edit and can_hotload_without_new_window,
+            "next_edit_status": readiness.get("next_edit_status"),
+            "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
+            "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
+            "next_edit_review_reasons": readiness.get("next_edit_review_reasons") or [],
+            "model_trust_blocked": bool(
+                readiness.get("state") == "blocked"
+                or readiness.get("model_trust_blocking_reasons")
+            ),
+            "model_trust_blocking_reasons": readiness.get("model_trust_blocking_reasons") or [],
             "same_window_hotload_ready": same_window_hotload_ready,
             "same_window_hotload_status": same_window_hotload_status,
             "same_window_hotload_tool": same_window_hotload_tool,
@@ -12536,6 +12557,26 @@ def _promote_response_followup_actions(response: dict[str, Any]) -> None:
                 readiness.get("ready_for_next_edit"),
                 followup.get("ready_for_next_edit"),
             ),
+            "next_edit_status": _first_not_none(
+                live_summary.get("next_edit_status"),
+                readiness.get("next_edit_status"),
+                followup.get("next_edit_status"),
+            ),
+            "next_edit_requires_reaudit": _first_not_none(
+                live_summary.get("next_edit_requires_reaudit"),
+                readiness.get("next_edit_requires_reaudit"),
+                followup.get("next_edit_requires_reaudit"),
+            ),
+            "next_edit_blocking_reasons": _first_not_none(
+                live_summary.get("next_edit_blocking_reasons"),
+                readiness.get("next_edit_blocking_reasons"),
+                followup.get("next_edit_blocking_reasons"),
+            ),
+            "next_edit_review_reasons": _first_not_none(
+                live_summary.get("next_edit_review_reasons"),
+                readiness.get("next_edit_review_reasons"),
+                followup.get("next_edit_review_reasons"),
+            ),
             "followup_edit_capabilities": _first_not_none(
                 live_summary.get("followup_edit_capabilities"),
                 followup or None,
@@ -17107,13 +17148,54 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         recommended_action = "open_generated_structure_in_gui_and_snapshot"
         recommended_tool = "material_studio_gui_open_structure"
 
+    project_resolution = (
+        report.get("project_resolution")
+        if isinstance(report.get("project_resolution"), dict)
+        else {}
+    )
+    current_pointer = (
+        project_resolution.get("current_pointer")
+        if isinstance(project_resolution.get("current_pointer"), dict)
+        else {}
+    )
+    edit_blocking_reasons: list[str] = []
+    if report.get("ok") is False:
+        edit_blocking_reasons.append("response_not_ok")
+    if not report.get("project_id"):
+        edit_blocking_reasons.append("current_project_missing")
+    if report.get("revision") is None:
+        edit_blocking_reasons.append("current_revision_missing")
+    if (
+        current_pointer.get("valid") is False
+        and current_pointer.get("safe_to_continue_read_only") is False
+    ):
+        edit_blocking_reasons.append("current_pointer_unrecoverable")
+    edit_blocking_reasons = _dedupe_strings(edit_blocking_reasons)
+
+    hotload_blocking_reasons = _dedupe_strings(
+        [reason for reason in blocking_reasons if reason != "modeling_health_failed"]
+    )
     ready_for_hotload = (
         execution_mode == ExecutionMode.PREVIEW.value
-        and not blocking_reasons
+        and not hotload_blocking_reasons
         and report.get("script_valid") is not False
     )
-    ready_for_next_edit = not blocking_reasons and (
-        execution_mode == ExecutionMode.PREVIEW.value or bool(gui.get("hot_loaded")) or structure_exists
+    ready_for_next_edit = not edit_blocking_reasons
+    next_edit_review_reasons = _dedupe_strings(
+        [
+            *blocking_reasons,
+            *review_reasons,
+            *visual_review_reasons,
+            *calculation_blocking_reasons,
+        ]
+    )
+    next_edit_requires_reaudit = bool(blocking_reasons or normality == "failed")
+    next_edit_status = (
+        "blocked"
+        if edit_blocking_reasons
+        else "ready_with_reaudit"
+        if next_edit_requires_reaudit
+        else "ready"
     )
     ready_for_calculation = (
         not blocking_reasons
@@ -17134,6 +17216,10 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         "normality": normality,
         "ready_for_hotload": ready_for_hotload,
         "ready_for_next_edit": ready_for_next_edit,
+        "next_edit_status": next_edit_status,
+        "next_edit_requires_reaudit": next_edit_requires_reaudit,
+        "next_edit_blocking_reasons": edit_blocking_reasons,
+        "next_edit_review_reasons": next_edit_review_reasons,
         "ready_for_calculation": ready_for_calculation,
         "gui_single_window_policy_ok": gui_single_window_policy_ok,
         "gui_single_window_violation_reasons": gui_single_window_violation_reasons,
@@ -17144,6 +17230,8 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         "recommended_tool": recommended_tool,
         "recommended_action": recommended_action,
         "blocking_reasons": _dedupe_strings(blocking_reasons),
+        "model_trust_blocking_reasons": _dedupe_strings(blocking_reasons),
+        "hotload_blocking_reasons": hotload_blocking_reasons,
         "calculation_blocking_reasons": _dedupe_strings(calculation_blocking_reasons),
         "review_reasons": _dedupe_strings(review_reasons),
         "visual_review_reasons": _dedupe_strings(visual_review_reasons),
@@ -17311,6 +17399,44 @@ def _semiconductor_calculation_action_hint(
         else {}
     )
     contact = semiconductor.get("contact") if isinstance(semiconductor.get("contact"), dict) else {}
+
+    if "semiconductor:dopant_site_metadata_inconsistent" in semiconductor_blocking_reasons:
+        dopants = semiconductor.get("dopants") if isinstance(semiconductor.get("dopants"), dict) else {}
+        site_metadata = (
+            dopants.get("site_metadata")
+            if isinstance(dopants.get("site_metadata"), dict)
+            else {}
+        )
+        payload_hint = {
+            "project_id": project_id,
+            "base_revision": revision,
+            "execution_mode": ExecutionMode.PREVIEW.value,
+            "open_in_gui": False,
+            "take_snapshot": False,
+            "reason": "current_structure_and_dopant_metadata_are_out_of_sync",
+            "recovery_hint": "run_metadata_reconcile_without_rebuilding_the_structure",
+        }
+        action = "reconcile_dopant_metadata_with_current_structure_then_reaudit"
+        return {
+            "action_id": "reconcile_dopant_metadata",
+            "next_action": action,
+            "recommended_tool": "material_studio_project_reconcile_dopant_metadata",
+            "recommended_action": action,
+            "payload_hint": _drop_none_values(payload_hint),
+            "needs_user_confirmation": True,
+            "safe_to_call_without_confirmation": False,
+            "action_reason": "semiconductor:dopant_site_metadata_inconsistent",
+            "action_context": _drop_none_values(
+                {
+                    "metadata_consistent": site_metadata.get("metadata_consistent"),
+                    "stale_site_count": site_metadata.get("stale_site_count"),
+                    "stale_entries": site_metadata.get("stale_entries") or [],
+                    "blocking_reasons": semiconductor_blocking_reasons,
+                    "structure_unchanged_by_reconcile": True,
+                    "simulation_unchanged_by_reconcile": True,
+                }
+            ),
+        }
 
     if surface_model_blocked and contact.get("quality") == "complete":
         request = (
@@ -17531,6 +17657,8 @@ def _semiconductor_calculation_action_hint(
 
 
 _SEMICONDUCTOR_NORMALITY_REASON_PRIORITY = (
+    "semiconductor:dopant_site_metadata_inconsistent",
+    "semiconductor:semiconductor_health_failed",
     "semiconductor:surface_model_not_ready",
     "semiconductor:slab_not_centered",
     "semiconductor:slab_vacuum_review",
@@ -17642,6 +17770,8 @@ def _semiconductor_remediation_plan(
     recommended_action: str | None,
     preview_payload_hint: dict[str, Any],
     hotload_payload_hint: dict[str, Any],
+    preview_needs_user_confirmation: bool,
+    preview_safe_to_call_without_confirmation: bool,
 ) -> dict[str, Any]:
     """Return a machine-readable preview-first remediation plan for @mcp clients."""
 
@@ -17660,8 +17790,8 @@ def _semiconductor_remediation_plan(
                 "required_diagnostic_focuses": preview_payload_hint.get(
                     "required_diagnostic_focuses"
                 ),
-                "requires_user_confirmation": False,
-                "safe_to_call_without_confirmation": True,
+                "requires_user_confirmation": preview_needs_user_confirmation,
+                "safe_to_call_without_confirmation": preview_safe_to_call_without_confirmation,
             })
         )
     if hotload_available:
@@ -17700,6 +17830,8 @@ def _semiconductor_remediation_plan(
             "recommended_tool": recommended_tool,
             "recommended_action": recommended_action,
             "preview_available": preview_available,
+            "preview_needs_user_confirmation": preview_needs_user_confirmation,
+            "preview_safe_to_call_without_confirmation": preview_safe_to_call_without_confirmation,
             "preview_payload_hint": preview_payload_hint,
             "hotload_available": hotload_available,
             "hotload_requires_user_confirmation": hotload_available,
@@ -17814,6 +17946,12 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
         recommended_action=recommended_action,
         preview_payload_hint=preview_payload_hint,
         hotload_payload_hint=hotload_payload_hint,
+        preview_needs_user_confirmation=bool(
+            semiconductor_calculation_readiness.get("needs_user_confirmation")
+        ),
+        preview_safe_to_call_without_confirmation=bool(
+            semiconductor_calculation_readiness.get("safe_to_call_without_confirmation")
+        ),
     )
     live_gui_ok = live_gui_acceptance.get("ok")
     if live_gui_ok is None:
@@ -19147,6 +19285,10 @@ def _live_contract_current_model_context(report: dict[str, Any]) -> dict[str, An
             "structure_path": structure.get("path"),
             "structure_exists": structure.get("exists"),
             "ready_for_next_edit": readiness.get("ready_for_next_edit"),
+            "next_edit_status": readiness.get("next_edit_status"),
+            "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
+            "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
+            "next_edit_review_reasons": readiness.get("next_edit_review_reasons") or [],
             "ready_for_hotload": readiness.get("ready_for_hotload"),
             "ready_for_calculation": readiness.get("ready_for_calculation"),
             "patch_payload_hint": _drop_none_values(
@@ -19257,6 +19399,7 @@ def _live_contract_followup_edit_capabilities(
     revision = current_context.get("base_revision_for_next_patch") or current_context.get("revision")
     model_type = current_context.get("model_type")
     ready_for_next_edit = current_context.get("ready_for_next_edit")
+    next_edit_requires_reaudit = bool(current_context.get("next_edit_requires_reaudit"))
     ready_for_hotload = current_context.get("ready_for_hotload")
     interface_scaffold = (
         semiconductor.get("interface_scaffold")
@@ -19367,6 +19510,8 @@ def _live_contract_followup_edit_capabilities(
 
     if ready_for_next_edit is False:
         status = "context_available_review_required"
+    elif next_edit_requires_reaudit:
+        status = "ready_for_followup_patch_with_reaudit"
     else:
         status = "ready_for_followup_patch"
 
@@ -19377,6 +19522,7 @@ def _live_contract_followup_edit_capabilities(
             "patch": "SemanticPatch",
             "tool": "material_studio_live_modeling_request",
             "execution_mode": ExecutionMode.PREVIEW.value,
+            "export_view_audit": True if next_edit_requires_reaudit else None,
         }
     )
     status_payload_hint = _drop_none_values(
@@ -19397,6 +19543,11 @@ def _live_contract_followup_edit_capabilities(
             "model_type": model_type,
             "domain_tags": domain_tags,
             "ready_for_next_edit": ready_for_next_edit,
+            "next_edit_status": current_context.get("next_edit_status"),
+            "next_edit_requires_reaudit": next_edit_requires_reaudit,
+            "next_edit_blocking_reasons": current_context.get("next_edit_blocking_reasons") or [],
+            "next_edit_review_reasons": current_context.get("next_edit_review_reasons") or [],
+            "normality_claims_remain_blocked_until_reaudit": next_edit_requires_reaudit,
             "ready_for_hotload": ready_for_hotload,
             "execution_mode_default": ExecutionMode.PREVIEW.value,
             "hotload_execution_mode": ExecutionMode.EXECUTE.value,
@@ -19412,7 +19563,11 @@ def _live_contract_followup_edit_capabilities(
             "command_patterns": catalog["command_patterns"],
             "patch_payload_hint": patch_payload_hint,
             "status_tool_payload_hint": status_payload_hint,
-            "next_action": "send_natural_language_or_semantic_patch_for_current_project",
+            "next_action": (
+                "send_corrective_natural_language_or_semantic_patch_then_reaudit"
+                if next_edit_requires_reaudit
+                else "send_natural_language_or_semantic_patch_for_current_project"
+            ),
         }
     )
 
@@ -20292,7 +20447,7 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
     if report.get("ok") is False:
         blocking_reasons.append("response_not_ok")
     if report.get("health_ok") is False:
-        blocking_reasons.append("modeling_health_failed")
+        warnings.append("modeling_health_failed_hotload_for_visual_review_only")
     if report.get("script_valid") is False:
         blocking_reasons.append("script_validation_failed")
     if single_window_policy_ok is False or gui_current.get("needs_single_window_resolution"):
@@ -20397,6 +20552,15 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             "payload_hint": _drop_none_values(payload_hint),
             "blocking_reasons": blocking_reasons,
             "warnings": _dedupe_strings(warnings),
+            "model_trust_blocking_reasons": readiness.get("model_trust_blocking_reasons") or [],
+            "hotload_for_visual_review_only": bool(
+                report.get("health_ok") is False or report.get("normality") == "failed"
+            ),
+            "normality_claim_allowed": (
+                (report.get("normality_gate") or {}).get("can_claim_model_normal")
+                if isinstance(report.get("normality_gate"), dict)
+                else False
+            ),
             "execution_mode": execution_mode,
             "project_id": project_id,
             "revision": revision,
@@ -21997,6 +22161,19 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             ),
             "mcp_ready_for_live_edit": mcp_client_readiness.get("ready_for_live_edit"),
             "mcp_ready_for_live_hotload": mcp_client_readiness.get("ready_for_live_hotload"),
+            "mcp_next_edit_status": mcp_client_readiness.get("next_edit_status"),
+            "mcp_next_edit_requires_reaudit": mcp_client_readiness.get(
+                "next_edit_requires_reaudit"
+            ),
+            "mcp_next_edit_blocking_reasons": mcp_client_readiness.get(
+                "next_edit_blocking_reasons"
+            )
+            or [],
+            "mcp_next_edit_review_reasons": mcp_client_readiness.get(
+                "next_edit_review_reasons"
+            )
+            or [],
+            "mcp_model_trust_blocked": mcp_client_readiness.get("model_trust_blocked"),
             "mcp_same_window_hotload_ready": mcp_client_readiness.get("same_window_hotload_ready"),
             "mcp_same_window_hotload_status": mcp_client_readiness.get("same_window_hotload_status"),
             "mcp_same_window_hotload_tool": mcp_client_readiness.get("same_window_hotload_tool"),
@@ -22474,6 +22651,10 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "readiness_state": readiness.get("state"),
             "ready_for_hotload": readiness.get("ready_for_hotload"),
             "ready_for_next_edit": readiness.get("ready_for_next_edit"),
+            "next_edit_status": readiness.get("next_edit_status"),
+            "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
+            "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
+            "next_edit_review_reasons": readiness.get("next_edit_review_reasons") or [],
             "ready_for_calculation": readiness.get("ready_for_calculation"),
             "semiconductor_calculation_readiness": semiconductor_calculation_readiness,
             "semiconductor_calculation_readiness_status": semiconductor_calculation_readiness.get("status"),
@@ -23565,6 +23746,11 @@ def _change_receipt_health_check(
         "error_count": report.get("error_count"),
         "warning_count": report.get("warning_count"),
         "script_valid": report.get("script_valid"),
+        "ready_for_next_edit": readiness.get("ready_for_next_edit"),
+        "next_edit_status": readiness.get("next_edit_status"),
+        "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
+        "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
+        "next_edit_review_reasons": readiness.get("next_edit_review_reasons") or [],
         "acceptance_ok": None if not acceptance.get("available") else acceptance.get("ok"),
         "change_validation_ok": (report.get("change_validation") or {}).get("ok"),
         "change_verification_ok": change_verification.get("ok"),
@@ -23625,6 +23811,10 @@ def _change_receipt_health_check(
         "semiconductor_coordination_outlier_count": semiconductor.get("coordination_outlier_count"),
         "readiness_state": readiness.get("state"),
         "ready_for_next_edit": readiness.get("ready_for_next_edit"),
+        "next_edit_status": readiness.get("next_edit_status"),
+        "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
+        "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
+        "next_edit_review_reasons": readiness.get("next_edit_review_reasons") or [],
         "ready_for_calculation": readiness.get("ready_for_calculation"),
         "blocking_reasons": readiness.get("blocking_reasons") or [],
         "review_reasons": readiness.get("review_reasons") or [],
@@ -26483,6 +26673,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "normality",
             "health_verdict",
             "ready_for_next_edit",
+            "next_edit_status",
+            "next_edit_requires_reaudit",
+            "next_edit_blocking_reasons",
+            "next_edit_review_reasons",
             "ready_for_calculation",
             "can_claim_model_normal",
             "can_claim_live_gui_normal",
@@ -26556,6 +26750,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "normality",
             "health_verdict",
             "ready_for_next_edit",
+            "next_edit_status",
+            "next_edit_requires_reaudit",
+            "next_edit_blocking_reasons",
+            "next_edit_review_reasons",
             "ready_for_calculation",
             "can_claim_model_normal",
             "can_claim_live_gui_normal",
@@ -26946,6 +27144,10 @@ def _compact_live_response(
             "visual_note_reasons",
             "visual_blocking_reasons",
             "ready_for_next_edit",
+            "next_edit_status",
+            "next_edit_requires_reaudit",
+            "next_edit_blocking_reasons",
+            "next_edit_review_reasons",
             "ready_for_hotload",
             "ready_for_calculation",
             "formula",
@@ -27012,6 +27214,10 @@ def _compact_live_response(
         "normality",
         "health_verdict",
         "ready_for_next_edit",
+        "next_edit_status",
+        "next_edit_requires_reaudit",
+        "next_edit_blocking_reasons",
+        "next_edit_review_reasons",
         "ready_for_hotload",
         "ready_for_calculation",
         "can_claim_model_normal",
@@ -27075,6 +27281,12 @@ def _compact_live_response(
             "can_apply_current_revision_without_new_window",
             "ready_for_live_edit",
             "ready_for_live_hotload",
+            "next_edit_status",
+            "next_edit_requires_reaudit",
+            "next_edit_blocking_reasons",
+            "next_edit_review_reasons",
+            "model_trust_blocked",
+            "model_trust_blocking_reasons",
             "ready_for_calculation",
             "current_revision_loaded_in_gui",
             "visible_followup_ready",

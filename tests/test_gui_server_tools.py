@@ -1846,8 +1846,11 @@ def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_bl
     assert followup["patch_payload_hint"]["export_view_audit"] is True
     assert followup["normality_claims_remain_blocked_until_reaudit"] is True
     hotload = status["live_hotload_preflight"]
-    assert hotload["status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert hotload["safe_to_attempt_hotload"] is True
+    assert hotload["status"] == "gui_preflight_required"
+    assert hotload["safe_to_attempt_hotload"] is False
+    assert hotload["model_ready_for_hotload"] is True
+    assert hotload["gui_preflight_required"] is True
+    assert hotload["recommended_tool"] == "material_studio_gui_status"
     assert hotload["hotload_for_visual_review_only"] is True
     assert hotload["normality_claim_allowed"] is False
     assert "modeling_health_failed" not in hotload["blocking_reasons"]
@@ -2049,13 +2052,27 @@ def test_crystal_cif_roundtrip_blocks_tampered_artifact_and_rematerializes_same_
     assert status["structure_artifact_validation_ok"] is False
     assert status["modeling_health"]["verdict"] == "failed"
     assert status["normality"] == "failed"
-    assert status["next_action_plan"]["action_id"] == "rematerialize_current_structure_artifact"
-    assert status["next_action_plan"]["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["next_action_plan"]["needs_user_confirmation"] is True
-    assert (
-        status["live_summary"]["next_action"]
-        == "rematerialize_current_revision_from_model_spec_then_hotload_and_reaudit"
-    )
+    next_action = status["next_action_plan"]
+    assert next_action["action_id"] == "verify_single_window_gui_preflight"
+    assert next_action["recommended_tool"] == "material_studio_gui_status"
+    assert next_action["needs_user_confirmation"] is False
+    assert next_action["safe_to_call_without_confirmation"] is True
+    assert next_action["gui_preflight_required"] is True
+    assert next_action["deferred_hotload_action"] == {
+        "action_id": "rematerialize_current_structure_artifact",
+        "recommended_tool": "material_studio_gui_apply_current_revision",
+        "recommended_action": "rematerialize_current_revision_from_model_spec_then_hotload_and_reaudit",
+        "needs_user_confirmation": True,
+        "payload_hint": {
+            "project_id": created["project_id"],
+            "execution_mode": "execute",
+            "open_in_gui": True,
+            "take_snapshot": True,
+            "export_view_audit": True,
+        },
+    }
+    assert status["live_summary"]["next_action_id"] == "verify_single_window_gui_preflight"
+    assert status["live_summary"]["next_action_tool"] == "material_studio_gui_status"
 
     exported = server.material_studio_model_export_view_bundle(
         project_id=created["project_id"],
@@ -3687,6 +3704,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "mcp_can_apply_current_revision_without_new_window" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
     assert "mcp_ready_for_live_edit" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
     assert "mcp_ready_for_live_hotload" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
+    assert "mcp_model_ready_for_hotload" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
+    assert "mcp_gui_preflight_verified" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
+    assert "mcp_gui_preflight_required" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
+    assert "mcp_gui_preflight_reasons" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
     assert "mcp_same_window_hotload_ready" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
     assert "mcp_same_window_hotload_status" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
     assert "mcp_same_window_hotload_tool" in capabilities["response_mcp_client_readiness"]["top_level_shortcut_fields"]
@@ -4126,6 +4147,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "mcp_next_needs_user_confirmation" in capabilities["diagnostics"]["live_summary_fields"]
     assert "mcp_next_safe_to_call_without_confirmation" in capabilities["diagnostics"]["live_summary_fields"]
     assert "mcp_next_payload_hint" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "mcp_model_ready_for_hotload" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "mcp_gui_preflight_verified" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "mcp_gui_preflight_required" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "mcp_gui_preflight_reasons" in capabilities["diagnostics"]["live_summary_fields"]
     assert "mcp_same_window_hotload_ready" in capabilities["diagnostics"]["live_summary_fields"]
     assert "mcp_same_window_hotload_status" in capabilities["diagnostics"]["live_summary_fields"]
     assert "mcp_same_window_hotload_tool" in capabilities["diagnostics"]["live_summary_fields"]
@@ -4502,6 +4527,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "live_request_summary" in capabilities["diagnostics"]["status_summary_fields"]
     assert "live_hotload_preflight_status" in capabilities["diagnostics"]["live_summary_fields"]
     assert "live_hotload_preflight_safe_to_attempt" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "live_hotload_preflight_gui_required" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "live_hotload_preflight_gui_reasons" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "live_hotload_preflight_model_ready" in capabilities["diagnostics"]["live_summary_fields"]
+    assert (
+        "live_hotload_preflight_single_window_execution_verified"
+        in capabilities["diagnostics"]["live_summary_fields"]
+    )
     assert "live_hotload_preflight_payload_hint" in capabilities["diagnostics"]["live_summary_fields"]
     assert "live_hotload_gate" in capabilities["diagnostics"]["live_summary_fields"]
     assert "live_hotload_gate_status" in capabilities["diagnostics"]["live_summary_fields"]
@@ -5174,7 +5206,7 @@ def test_live_session_preflight_requires_single_window_before_activating_target_
     assert gui_binding["recommended_tool"] == "material_studio_gui_status"
     assert status["live_summary"]["live_gui_window_binding_status"] == "single_window_policy_review"
     assert status["live_summary"]["live_gui_window_binding_single_window_policy_ok"] is False
-    assert status["live_summary"]["live_gui_window_binding_current_revision_loaded"] is True
+    assert status["live_summary"]["live_gui_window_binding_current_revision_loaded"] is False
     assert status["live_summary"]["live_gui_window_binding_target_window_handle"] == 303
     assert status["live_summary"]["live_gui_window_binding_target_window_is_selected"] is False
     assert status["live_summary"]["live_gui_window_binding_ready_for_next_live_edit"] is False
@@ -5184,7 +5216,7 @@ def test_live_session_preflight_requires_single_window_before_activating_target_
     assert status["live_gui_window_binding_single_window_violation_reasons"] == [
         "multiple_matstudio_windows_detected"
     ]
-    assert status["live_gui_window_binding_current_revision_loaded"] is True
+    assert status["live_gui_window_binding_current_revision_loaded"] is False
     assert status["live_gui_window_binding_target_window_handle"] == 303
     assert status["live_gui_window_binding_target_window_is_selected"] is False
     assert status["live_gui_window_binding_needs_single_window_resolution"] is True
@@ -6164,62 +6196,80 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["mcp_current_model_element_counts"] == {"C": 6, "H": 6}
     assert status["mcp_current_model_formula"] == "C6H6"
     assert status["mcp_current_model_reduced_formula"] == "CH"
+    preflight_payload = {"project_id": "live_status_no_report_proj", "revision": 0}
+    preflight_reasons = ["gui_status_not_probed", "single_window_policy_not_verified"]
+    preflight_blockers = ["gui_preflight_not_verified", *preflight_reasons]
     assert status["next_action_plan"] == status["modeling_report"]["next_action_plan"]
-    assert status["next_action_plan"]["action_id"] == "execute_and_hotload_current_revision"
-    assert status["next_action_plan"]["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["next_action_plan"]["needs_user_confirmation"] is True
-    assert status["next_action_plan"]["payload_hint"] == {
-        "project_id": "live_status_no_report_proj",
-        "execution_mode": "execute",
-        "open_in_gui": True,
-        "take_snapshot": True,
-        "export_view_audit": True,
-    }
+    assert status["next_action_plan"]["action_id"] == "verify_single_window_gui_preflight"
+    assert status["next_action_plan"]["recommended_tool"] == "material_studio_gui_status"
+    assert status["next_action_plan"]["needs_user_confirmation"] is False
+    assert status["next_action_plan"]["safe_to_call_without_confirmation"] is True
+    assert status["next_action_plan"]["payload_hint"] == preflight_payload
+    assert status["next_action_plan"]["gui_preflight_required"] is True
+    assert status["next_action_plan"]["deferred_hotload_action"]["recommended_tool"] == (
+        "material_studio_gui_apply_current_revision"
+    )
     assert status["next_action_plan"]["ready"]["hotload"] is True
     assert status["mcp_client_readiness"] == status["modeling_report"]["mcp_client_readiness"]
     client = status["mcp_client_readiness"]
-    assert client["status"] == "ready_to_apply_current_revision"
+    assert client["status"] == "gui_preflight_required_for_live_hotload"
     assert client["can_accept_modeling_request"] is True
     assert client["can_accept_followup_request"] is True
     assert client["can_accept_preview_request"] is True
-    assert client["can_accept_hotload_request_without_new_window"] is True
-    assert client["can_apply_current_revision_without_new_window"] is True
-    assert client["ready_for_live_edit"] is True
-    assert client["ready_for_live_hotload"] is True
-    assert client["same_window_hotload_ready"] is True
-    assert client["same_window_hotload_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert client["same_window_hotload_tool"] == "material_studio_gui_apply_current_revision"
-    assert client["same_window_hotload_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert client["same_window_hotload_payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert client["same_window_hotload_needs_user_confirmation"] is True
-    assert client["same_window_hotload_safe_to_call_without_confirmation"] is False
-    assert client["same_window_hotload_blocking_reasons"] == []
-    assert client["live_edit_blocking_reasons"] == []
+    assert client["can_accept_hotload_request_without_new_window"] is False
+    assert client["can_apply_current_revision_without_new_window"] is False
+    assert client["ready_for_live_edit"] is False
+    assert client["ready_for_live_hotload"] is False
+    assert client["model_ready_for_hotload"] is True
+    assert client["gui_preflight_verified"] is False
+    assert client["gui_preflight_required"] is True
+    assert client["gui_preflight_reasons"] == preflight_reasons
+    assert client["same_window_hotload_ready"] is False
+    assert client["same_window_hotload_status"] == "gui_preflight_required"
+    assert client["same_window_hotload_tool"] == "material_studio_gui_status"
+    assert client["same_window_hotload_action"] == "verify_single_existing_materials_studio_window_before_hotload"
+    assert client["same_window_hotload_payload_hint"] == preflight_payload
+    assert client["same_window_hotload_needs_user_confirmation"] is False
+    assert client["same_window_hotload_safe_to_call_without_confirmation"] is True
+    assert client["same_window_hotload_blocking_reasons"] == preflight_blockers
+    assert client["live_edit_blocking_reasons"] == [
+        *preflight_blockers,
+        "current_revision_not_ready_for_same_window_hotload",
+    ]
     assert client["can_export_view_diagnostics"] is True
     assert client["diagnostics_exported"] is True
     assert client["current_revision_loaded_in_gui"] is False
     assert client["visible_followup_ready"] is False
-    assert client["visible_followup_status"] == "needs_current_revision_hotload"
-    assert client["visible_followup_blocking_reasons"] == ["current_revision_not_loaded_in_gui"]
-    assert client["visible_followup_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert client["visible_followup_recommended_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert client["visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert client["visible_followup_status"] == "gui_preflight_required"
+    assert client["visible_followup_blocking_reasons"] == preflight_blockers
+    assert client["visible_followup_recommended_tool"] == "material_studio_gui_status"
+    assert client["visible_followup_recommended_action"] == (
+        "verify_single_existing_materials_studio_window_before_hotload"
+    )
+    assert client["visible_followup_payload_hint"] == preflight_payload
     binding = status["live_gui_window_binding"]
+    assert binding["status"] == "gui_preflight_required"
     assert binding["current_revision_loaded"] is False
     assert binding["ready_for_next_live_edit"] is False
+    assert binding["model_ready_for_hotload"] is True
+    assert binding["gui_preflight_verified"] is False
+    assert binding["gui_preflight_required"] is True
+    assert binding["gui_preflight_reasons"] == preflight_reasons
     assert binding["visible_followup_ready"] is False
-    assert binding["visible_followup_status"] == "needs_current_revision_hotload"
-    assert binding["visible_followup_blocking_reasons"] == ["current_revision_not_loaded_in_gui"]
-    assert binding["visible_followup_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert binding["visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert binding["visible_followup_status"] == "gui_preflight_required"
+    assert binding["visible_followup_blocking_reasons"] == preflight_blockers
+    assert binding["visible_followup_recommended_tool"] == "material_studio_gui_status"
+    assert binding["visible_followup_payload_hint"] == preflight_payload
+    assert binding["recommended_tool"] == "material_studio_gui_status"
+    assert binding["payload_hint"] == preflight_payload
     assert client["must_reuse_existing_gui_window"] is True
     assert client["auto_launch_during_hotload_allowed"] is False
-    assert client["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert client["next_action_id"] == "execute_and_hotload_current_revision"
-    assert client["needs_user_confirmation"] is True
-    assert client["safe_to_call_without_confirmation"] is False
-    assert client["payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert client["hotload_blocking_reasons"] == []
+    assert client["recommended_tool"] == "material_studio_gui_status"
+    assert client["next_action_id"] == "verify_single_window_gui_preflight"
+    assert client["needs_user_confirmation"] is False
+    assert client["safe_to_call_without_confirmation"] is True
+    assert client["payload_hint"] == preflight_payload
+    assert client["hotload_blocking_reasons"] == preflight_blockers
     assert status["mcp_client_readiness_status"] == client["status"]
     assert status["mcp_model_normality"] == "preview_ready"
     assert status["mcp_normality_gate_status"] == "preview_only"
@@ -6230,38 +6280,49 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["mcp_calculation_blocking_reasons"] == []
     assert status["mcp_can_accept_modeling_request"] is True
     assert status["mcp_can_accept_followup_request"] is True
-    assert status["mcp_can_accept_hotload_request_without_new_window"] is True
-    assert status["mcp_can_apply_current_revision_without_new_window"] is True
-    assert status["mcp_ready_for_live_edit"] is True
-    assert status["mcp_ready_for_live_hotload"] is True
-    assert status["mcp_same_window_hotload_ready"] is True
-    assert status["mcp_same_window_hotload_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["mcp_same_window_hotload_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["mcp_same_window_hotload_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert status["mcp_same_window_hotload_payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert status["mcp_same_window_hotload_needs_user_confirmation"] is True
-    assert status["mcp_same_window_hotload_safe_to_call_without_confirmation"] is False
-    assert status["mcp_same_window_hotload_blocking_reasons"] == []
-    assert status["mcp_live_edit_blocking_reasons"] == []
+    assert status["mcp_can_accept_hotload_request_without_new_window"] is False
+    assert status["mcp_can_apply_current_revision_without_new_window"] is False
+    assert status["mcp_ready_for_live_edit"] is False
+    assert status["mcp_ready_for_live_hotload"] is False
+    assert status["mcp_model_ready_for_hotload"] is True
+    assert status["mcp_gui_preflight_verified"] is False
+    assert status["mcp_gui_preflight_required"] is True
+    assert status["mcp_gui_preflight_reasons"] == preflight_reasons
+    assert status["mcp_same_window_hotload_ready"] is False
+    assert status["mcp_same_window_hotload_status"] == "gui_preflight_required"
+    assert status["mcp_same_window_hotload_tool"] == "material_studio_gui_status"
+    assert status["mcp_same_window_hotload_action"] == (
+        "verify_single_existing_materials_studio_window_before_hotload"
+    )
+    assert status["mcp_same_window_hotload_payload_hint"] == preflight_payload
+    assert status["mcp_same_window_hotload_needs_user_confirmation"] is False
+    assert status["mcp_same_window_hotload_safe_to_call_without_confirmation"] is True
+    assert status["mcp_same_window_hotload_blocking_reasons"] == preflight_blockers
+    assert status["mcp_live_edit_blocking_reasons"] == [
+        *preflight_blockers,
+        "current_revision_not_ready_for_same_window_hotload",
+    ]
     assert status["mcp_can_export_view_diagnostics"] is True
     assert status["mcp_current_revision_loaded_in_gui"] is False
     assert status["mcp_visible_followup_ready"] is False
-    assert status["mcp_visible_followup_status"] == "needs_current_revision_hotload"
-    assert status["mcp_visible_followup_blocking_reasons"] == ["current_revision_not_loaded_in_gui"]
-    assert status["mcp_visible_followup_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["mcp_visible_followup_recommended_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert status["mcp_visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["mcp_visible_followup_status"] == "gui_preflight_required"
+    assert status["mcp_visible_followup_blocking_reasons"] == preflight_blockers
+    assert status["mcp_visible_followup_recommended_tool"] == "material_studio_gui_status"
+    assert status["mcp_visible_followup_recommended_action"] == (
+        "verify_single_existing_materials_studio_window_before_hotload"
+    )
+    assert status["mcp_visible_followup_payload_hint"] == preflight_payload
     assert status["visible_followup_ready"] is False
-    assert status["visible_followup_status"] == "needs_current_revision_hotload"
-    assert status["visible_followup_blocking_reasons"] == ["current_revision_not_loaded_in_gui"]
-    assert status["visible_followup_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["visible_followup_status"] == "gui_preflight_required"
+    assert status["visible_followup_blocking_reasons"] == preflight_blockers
+    assert status["visible_followup_recommended_tool"] == "material_studio_gui_status"
+    assert status["visible_followup_payload_hint"] == preflight_payload
     assert status["visible_followup_contract"]["project_id"] == "live_status_no_report_proj"
     assert status["visible_followup_contract"]["revision"] == 0
     assert status["visible_followup_contract"]["current_revision_materialized"] is False
     assert status["visible_followup_contract"]["current_revision_loaded_in_gui"] is False
-    assert status["visible_followup_contract"]["visible_followup_status"] == "needs_current_revision_hotload"
-    assert status["visible_followup_contract"]["visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["visible_followup_contract"]["visible_followup_status"] == "gui_preflight_required"
+    assert status["visible_followup_contract"]["visible_followup_payload_hint"] == preflight_payload
     assert status["visible_followup_contract"]["must_reuse_existing_gui_window"] is True
     session = status["mcp_modeling_session_contract"]
     assert session == status["modeling_report"]["mcp_modeling_session_contract"]
@@ -6272,16 +6333,22 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert session["single_window"]["auto_launch_allowed"] is False
     assert session["single_window"]["reuse_existing_window_only"] is True
     assert session["followup"]["visible_followup_ready"] is False
-    assert session["followup"]["visible_followup_status"] == "needs_current_revision_hotload"
-    assert session["followup"]["payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert session["hotload"]["same_window_ready"] is True
-    assert session["hotload"]["status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert session["hotload"]["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert session["hotload"]["recommended_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert session["hotload"]["payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert session["hotload"]["needs_user_confirmation"] is True
-    assert session["hotload"]["safe_to_call_without_confirmation"] is False
-    assert session["hotload"]["blocking_reasons"] == []
+    assert session["followup"]["visible_followup_status"] == "gui_preflight_required"
+    assert session["followup"]["payload_hint"] == preflight_payload
+    assert session["hotload"]["same_window_ready"] is False
+    assert session["hotload"]["model_ready"] is True
+    assert session["hotload"]["gui_preflight_verified"] is False
+    assert session["hotload"]["gui_preflight_required"] is True
+    assert session["hotload"]["gui_preflight_reasons"] == preflight_reasons
+    assert session["hotload"]["status"] == "gui_preflight_required"
+    assert session["hotload"]["recommended_tool"] == "material_studio_gui_status"
+    assert session["hotload"]["recommended_action"] == (
+        "verify_single_existing_materials_studio_window_before_hotload"
+    )
+    assert session["hotload"]["payload_hint"] == preflight_payload
+    assert session["hotload"]["needs_user_confirmation"] is False
+    assert session["hotload"]["safe_to_call_without_confirmation"] is True
+    assert session["hotload"]["blocking_reasons"] == preflight_blockers
     assert session["hotload"]["must_reuse_existing_gui_window"] is True
     assert session["hotload"]["auto_launch_allowed"] is False
     assert session["diagnostics"]["can_check_model_normality"] is False
@@ -6298,19 +6365,21 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["mcp_modeling_session_visible_followup_ready"] is False
     assert status["mcp_modeling_session_can_claim_model_normal"] is False
     assert status["mcp_modeling_session_can_claim_live_gui_normal"] is False
-    assert status["mcp_modeling_session_hotload_ready"] is True
-    assert status["mcp_modeling_session_hotload_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["mcp_modeling_session_hotload_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["mcp_modeling_session_hotload_action"] == "execute_current_revision_to_hotload_when_user_confirms"
-    assert status["mcp_modeling_session_hotload_payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert status["mcp_modeling_session_hotload_needs_user_confirmation"] is True
-    assert status["mcp_modeling_session_hotload_safe_to_call_without_confirmation"] is False
-    assert status["mcp_modeling_session_hotload_blocking_reasons"] == []
-    assert status["mcp_modeling_session_next_tool"] == "material_studio_gui_apply_current_revision"
+    assert status["mcp_modeling_session_hotload_ready"] is False
+    assert status["mcp_modeling_session_hotload_status"] == "gui_preflight_required"
+    assert status["mcp_modeling_session_hotload_tool"] == "material_studio_gui_status"
+    assert status["mcp_modeling_session_hotload_action"] == (
+        "verify_single_existing_materials_studio_window_before_hotload"
+    )
+    assert status["mcp_modeling_session_hotload_payload_hint"] == preflight_payload
+    assert status["mcp_modeling_session_hotload_needs_user_confirmation"] is False
+    assert status["mcp_modeling_session_hotload_safe_to_call_without_confirmation"] is True
+    assert status["mcp_modeling_session_hotload_blocking_reasons"] == preflight_blockers
+    assert status["mcp_modeling_session_next_tool"] == "material_studio_gui_status"
     assert status["mcp_must_reuse_existing_gui_window"] is True
     assert status["mcp_auto_launch_during_hotload_allowed"] is False
     assert "mcp_single_window_policy_ok" not in status
-    assert status["mcp_hotload_blocking_reasons"] == []
+    assert status["mcp_hotload_blocking_reasons"] == preflight_blockers
     assert status["mcp_next_action_id"] == client["next_action_id"]
     assert status["mcp_next_tool"] == client["recommended_tool"]
     assert status["mcp_next_action"] == client["recommended_action"]
@@ -6318,51 +6387,64 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["mcp_next_safe_to_call_without_confirmation"] == client["safe_to_call_without_confirmation"]
     assert status["mcp_next_payload_hint"] == client["payload_hint"]
     assert status["live_hotload_preflight"] == status["modeling_report"]["live_hotload_preflight"]
-    assert status["live_hotload_preflight"]["status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["live_hotload_preflight"]["safe_to_attempt_hotload"] is True
+    assert status["live_hotload_preflight"]["status"] == "gui_preflight_required"
+    assert status["live_hotload_preflight"]["safe_to_attempt_hotload"] is False
+    assert status["live_hotload_preflight"]["model_ready_for_hotload"] is True
     assert status["live_hotload_preflight"]["gui_preflight_verified"] is False
-    assert status["live_hotload_preflight"]["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["live_hotload_preflight"]["payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert status["live_hotload_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["live_hotload_action_id"] == "execute_and_hotload_current_revision"
-    assert status["live_hotload_recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert status["live_hotload_preflight"]["gui_preflight_required"] is True
+    assert status["live_hotload_preflight"]["gui_preflight_reasons"] == preflight_reasons
+    assert status["live_hotload_preflight"]["recommended_tool"] == "material_studio_gui_status"
+    assert status["live_hotload_preflight"]["payload_hint"] == preflight_payload
+    assert status["live_hotload_status"] == "gui_preflight_required"
+    assert status["live_hotload_action_id"] == "verify_single_window_gui_preflight"
+    assert status["live_hotload_recommended_tool"] == "material_studio_gui_status"
     assert status["live_hotload_recommended_action"] == status["live_hotload_preflight"]["recommended_action"]
     assert status["live_hotload_current_revision_loaded"] is False
-    assert status["live_hotload_safe_to_attempt"] is True
-    assert status["live_hotload_needs_user_confirmation"] is True
+    assert status["live_hotload_safe_to_attempt"] is False
+    assert status["live_hotload_model_ready"] is True
+    assert status["live_hotload_gui_preflight_verified"] is False
+    assert status["live_hotload_gui_preflight_required"] is True
+    assert status["live_hotload_gui_preflight_reasons"] == preflight_reasons
+    assert status["live_hotload_needs_user_confirmation"] is False
     assert status["live_hotload_blocking_reasons"] == []
-    assert status["live_hotload_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["live_hotload_payload_hint"] == preflight_payload
     gate = status["live_hotload_gate"]
     assert gate == status["modeling_report"]["live_hotload_gate"]
-    assert gate["status"] == "ready_to_attempt"
-    assert gate["ok"] is True
-    assert gate["recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert gate["status"] == "preflight_required"
+    assert gate["ok"] is False
+    assert gate["gui_preflight_required"] is True
+    assert gate["recommended_tool"] == "material_studio_gui_status"
     assert gate["blocking_reasons"] == []
-    assert status["live_hotload_gate_status"] == "ready_to_attempt"
-    assert status["live_hotload_gate_ok"] is True
-    assert status["live_hotload_gate_recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert status["live_hotload_gate_status"] == "preflight_required"
+    assert status["live_hotload_gate_ok"] is False
+    assert status["live_hotload_gate_recommended_tool"] == "material_studio_gui_status"
     assert status["live_hotload_gate_blocking_reasons"] == []
     assert status["live_request_summary"] == status["modeling_report"]["live_request_summary"]
-    assert status["live_request_summary"]["state"] == "ready_for_hotload"
+    assert status["live_request_summary"]["state"] == "gui_preflight_required"
     assert status["live_request_summary"]["explicit_hotload_requested"] is False
-    assert status["live_request_summary"]["hotload_safe_to_attempt"] is True
-    assert status["live_request_summary"]["recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["live_summary"]["live_hotload_preflight_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["live_summary"]["live_hotload_preflight_safe_to_attempt"] is True
-    assert status["live_summary"]["live_hotload_preflight_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["live_request_summary"]["hotload_safe_to_attempt"] is False
+    assert status["live_request_summary"]["recommended_tool"] == "material_studio_gui_status"
+    assert status["live_summary"]["live_hotload_preflight_status"] == "gui_preflight_required"
+    assert status["live_summary"]["live_hotload_preflight_safe_to_attempt"] is False
+    assert status["live_summary"]["live_hotload_preflight_gui_required"] is True
+    assert status["live_summary"]["live_hotload_preflight_gui_reasons"] == preflight_reasons
+    assert status["live_summary"]["live_hotload_preflight_model_ready"] is True
+    assert status["live_summary"]["live_hotload_preflight_payload_hint"] == preflight_payload
     assert status["live_summary"]["live_hotload_gate"] == gate
-    assert status["live_summary"]["live_hotload_gate_status"] == "ready_to_attempt"
-    assert status["live_summary"]["live_hotload_gate_ok"] is True
+    assert status["live_summary"]["live_hotload_gate_status"] == "preflight_required"
+    assert status["live_summary"]["live_hotload_gate_ok"] is False
     assert status["live_summary"]["live_hotload_gate_blocking_reasons"] == []
-    assert status["live_summary"]["live_request_state"] == "ready_for_hotload"
-    assert status["live_summary"]["live_request_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["live_summary"]["next_action_id"] == "execute_and_hotload_current_revision"
-    assert status["live_summary"]["next_action_tool"] == "material_studio_gui_apply_current_revision"
-    assert status["live_summary"]["next_action_needs_user_confirmation"] is True
-    assert status["live_summary"]["next_action_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["live_summary"]["live_request_state"] == "gui_preflight_required"
+    assert status["live_summary"]["live_request_recommended_tool"] == "material_studio_gui_status"
+    assert status["live_summary"]["next_action_id"] == "verify_single_window_gui_preflight"
+    assert status["live_summary"]["next_action_tool"] == "material_studio_gui_status"
+    assert status["live_summary"]["next_action_needs_user_confirmation"] is False
+    assert status["live_summary"]["next_action_payload_hint"] == preflight_payload
     assert status["live_summary"]["next_action_ready"] == status["next_action_plan"]["ready"]
     assert status["live_summary"]["mcp_client_readiness"] == client
-    assert status["live_summary"]["mcp_client_readiness_status"] == "ready_to_apply_current_revision"
+    assert status["live_summary"]["mcp_client_readiness_status"] == (
+        "gui_preflight_required_for_live_hotload"
+    )
     assert status["live_summary"]["mcp_model_normality"] == "preview_ready"
     assert status["live_summary"]["mcp_normality_gate_status"] == "preview_only"
     assert status["live_summary"]["mcp_can_claim_model_normal"] is False
@@ -6372,48 +6454,55 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["live_summary"]["mcp_calculation_blocking_reasons"] == []
     assert status["live_summary"]["mcp_can_accept_modeling_request"] is True
     assert status["live_summary"]["mcp_can_accept_followup_request"] is True
-    assert status["live_summary"]["mcp_can_accept_hotload_request_without_new_window"] is True
-    assert status["live_summary"]["mcp_can_apply_current_revision_without_new_window"] is True
-    assert status["live_summary"]["mcp_ready_for_live_edit"] is True
-    assert status["live_summary"]["mcp_ready_for_live_hotload"] is True
-    assert status["live_summary"]["mcp_same_window_hotload_ready"] is True
-    assert status["live_summary"]["mcp_same_window_hotload_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert status["live_summary"]["mcp_same_window_hotload_tool"] == "material_studio_gui_apply_current_revision"
+    assert status["live_summary"]["mcp_can_accept_hotload_request_without_new_window"] is False
+    assert status["live_summary"]["mcp_can_apply_current_revision_without_new_window"] is False
+    assert status["live_summary"]["mcp_ready_for_live_edit"] is False
+    assert status["live_summary"]["mcp_ready_for_live_hotload"] is False
+    assert status["live_summary"]["mcp_model_ready_for_hotload"] is True
+    assert status["live_summary"]["mcp_gui_preflight_verified"] is False
+    assert status["live_summary"]["mcp_gui_preflight_required"] is True
+    assert status["live_summary"]["mcp_gui_preflight_reasons"] == preflight_reasons
+    assert status["live_summary"]["mcp_same_window_hotload_ready"] is False
+    assert status["live_summary"]["mcp_same_window_hotload_status"] == "gui_preflight_required"
+    assert status["live_summary"]["mcp_same_window_hotload_tool"] == "material_studio_gui_status"
     assert (
         status["live_summary"]["mcp_same_window_hotload_action"]
-        == "execute_current_revision_to_hotload_when_user_confirms"
+        == "verify_single_existing_materials_studio_window_before_hotload"
     )
-    assert status["live_summary"]["mcp_same_window_hotload_payload_hint"] == status["next_action_plan"]["payload_hint"]
-    assert status["live_summary"]["mcp_same_window_hotload_needs_user_confirmation"] is True
-    assert status["live_summary"]["mcp_same_window_hotload_safe_to_call_without_confirmation"] is False
-    assert status["live_summary"]["mcp_same_window_hotload_blocking_reasons"] == []
-    assert status["live_summary"]["mcp_live_edit_blocking_reasons"] == []
+    assert status["live_summary"]["mcp_same_window_hotload_payload_hint"] == preflight_payload
+    assert status["live_summary"]["mcp_same_window_hotload_needs_user_confirmation"] is False
+    assert status["live_summary"]["mcp_same_window_hotload_safe_to_call_without_confirmation"] is True
+    assert status["live_summary"]["mcp_same_window_hotload_blocking_reasons"] == preflight_blockers
+    assert status["live_summary"]["mcp_live_edit_blocking_reasons"] == [
+        *preflight_blockers,
+        "current_revision_not_ready_for_same_window_hotload",
+    ]
     assert status["live_summary"]["mcp_can_export_view_diagnostics"] is True
     assert status["live_summary"]["mcp_current_revision_loaded_in_gui"] is False
     assert status["live_summary"]["mcp_visible_followup_ready"] is False
-    assert status["live_summary"]["mcp_visible_followup_status"] == "needs_current_revision_hotload"
-    assert status["live_summary"]["mcp_visible_followup_blocking_reasons"] == [
-        "current_revision_not_loaded_in_gui"
-    ]
-    assert status["live_summary"]["mcp_visible_followup_recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert status["live_summary"]["mcp_visible_followup_status"] == "gui_preflight_required"
+    assert status["live_summary"]["mcp_visible_followup_blocking_reasons"] == preflight_blockers
+    assert status["live_summary"]["mcp_visible_followup_recommended_tool"] == "material_studio_gui_status"
     assert (
         status["live_summary"]["mcp_visible_followup_recommended_action"]
-        == "execute_current_revision_to_hotload_when_user_confirms"
+        == "verify_single_existing_materials_studio_window_before_hotload"
     )
-    assert status["live_summary"]["mcp_visible_followup_payload_hint"] == status["next_action_plan"]["payload_hint"]
+    assert status["live_summary"]["mcp_visible_followup_payload_hint"] == preflight_payload
     assert status["live_summary"]["live_gui_window_binding_ready_for_next_live_edit"] is False
     assert status["live_summary"]["live_gui_window_binding_visible_followup_ready"] is False
-    assert status["live_summary"]["live_gui_window_binding_visible_followup_status"] == "needs_current_revision_hotload"
-    assert status["live_summary"]["live_gui_window_binding_visible_followup_blocking_reasons"] == [
-        "current_revision_not_loaded_in_gui"
-    ]
+    assert status["live_summary"]["live_gui_window_binding_visible_followup_status"] == (
+        "gui_preflight_required"
+    )
+    assert status["live_summary"]["live_gui_window_binding_visible_followup_blocking_reasons"] == (
+        preflight_blockers
+    )
     assert (
         status["live_summary"]["live_gui_window_binding_visible_followup_recommended_tool"]
-        == "material_studio_gui_apply_current_revision"
+        == "material_studio_gui_status"
     )
     assert (
         status["live_summary"]["live_gui_window_binding_visible_followup_payload_hint"]
-        == status["next_action_plan"]["payload_hint"]
+        == preflight_payload
     )
     assert status["live_summary"]["mcp_must_reuse_existing_gui_window"] is True
     assert status["live_summary"]["mcp_auto_launch_during_hotload_allowed"] is False
@@ -6421,7 +6510,7 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["live_summary"]["mcp_current_model_formula"] == "C6H6"
     assert status["live_summary"]["mcp_current_model_reduced_formula"] == "CH"
     assert "mcp_single_window_policy_ok" not in status["live_summary"]
-    assert status["live_summary"]["mcp_hotload_blocking_reasons"] == []
+    assert status["live_summary"]["mcp_hotload_blocking_reasons"] == preflight_blockers
     assert status["live_summary"]["mcp_next_action_id"] == client["next_action_id"]
     assert status["live_summary"]["mcp_next_tool"] == client["recommended_tool"]
     assert status["live_summary"]["mcp_next_action"] == client["recommended_action"]
@@ -6431,6 +6520,49 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
         == client["safe_to_call_without_confirmation"]
     )
     assert status["live_summary"]["mcp_next_payload_hint"] == client["payload_hint"]
+
+
+def test_live_project_status_requires_verified_single_window_before_hotload(
+    monkeypatch, tmp_path: Path
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    spec = load_benzene("verified_single_window_preflight_proj")
+    created = server.material_studio_model_create_from_spec(spec, working_dir=str(tmp_path))
+    assert created["ok"] is True
+
+    unverified = server.material_studio_live_project_status(
+        spec["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    verified = server.material_studio_live_project_status(
+        spec["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert unverified["live_hotload_preflight"]["model_ready_for_hotload"] is True
+    assert unverified["live_hotload_preflight"]["gui_preflight_required"] is True
+    assert unverified["live_hotload_preflight"]["safe_to_attempt_hotload"] is False
+    assert unverified["mcp_same_window_hotload_ready"] is False
+    hotload = verified["live_hotload_preflight"]
+    assert hotload["status"] == "ready_to_execute_and_hotload"
+    assert hotload["model_ready_for_hotload"] is True
+    assert hotload["gui_preflight_verified"] is True
+    assert hotload["gui_preflight_required"] is False
+    assert hotload["safe_to_attempt_hotload"] is True
+    assert hotload["recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert hotload["needs_user_confirmation"] is True
+    assert verified["mcp_can_accept_hotload_request_without_new_window"] is True
+    assert verified["mcp_can_apply_current_revision_without_new_window"] is True
+    assert verified["mcp_same_window_hotload_ready"] is True
+    assert verified["mcp_gui_preflight_verified"] is True
+    assert verified["mcp_gui_preflight_required"] is False
 
 
 def test_live_project_status_uses_latest_project_when_id_omitted(tmp_path: Path) -> None:
@@ -18135,19 +18267,29 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert status["live_action_summary"]["action_id"] == "continue_live_modeling"
     assert status["live_modeling_contract"] == status["modeling_report"]["live_modeling_contract"]
     assert status["live_summary"]["live_modeling_contract"] == status["live_modeling_contract"]
-    assert status["live_modeling_contract"]["status"] == "hot_loaded_review_required"
-    assert status["live_modeling_contract"]["hotload"]["trusted"] is True
+    assert status["live_modeling_contract"]["status"] == "live_hotload_unverified"
+    assert status["live_modeling_contract"]["hotload"]["trusted"] is False
+    assert status["live_modeling_contract"]["hotload"]["succeeded"] is True
+    assert status["live_modeling_contract"]["hotload"]["acceptance_failures"] == [
+        {
+            "type": "hotload_preflight_current_revision_not_loaded",
+            "observed": False,
+        }
+    ]
     assert status["live_modeling_contract"]["next_action"]["recommended_tool"] == "material_studio_live_modeling_request"
-    assert status["mcp_client_readiness"]["status"] == "ready_for_followup_live_modeling"
-    assert status["mcp_client_readiness"]["current_revision_loaded_in_gui"] is True
-    assert status["mcp_client_readiness"]["can_apply_current_revision_without_new_window"] is True
-    assert status["mcp_can_apply_current_revision_without_new_window"] is True
-    assert status["live_summary"]["mcp_can_apply_current_revision_without_new_window"] is True
-    assert status["live_gui_window_binding"]["can_apply_current_revision_without_new_window"] is True
+    assert status["mcp_client_readiness"]["status"] == "gui_preflight_required_for_live_hotload"
+    assert status["mcp_client_readiness"]["current_revision_loaded_in_gui"] is False
+    assert status["mcp_client_readiness"]["model_ready_for_hotload"] is True
+    assert status["mcp_client_readiness"]["gui_preflight_required"] is True
+    assert status["mcp_client_readiness"]["can_apply_current_revision_without_new_window"] is False
+    assert status["mcp_can_apply_current_revision_without_new_window"] is False
+    assert status["live_summary"]["mcp_can_apply_current_revision_without_new_window"] is False
+    assert status["live_gui_window_binding"]["can_apply_current_revision_without_new_window"] is False
+    assert status["live_gui_window_binding"]["current_revision_loaded"] is False
     assert status["live_summary"]["hot_loaded"] is True
     assert status["live_summary"]["gui_loaded_current_revision"] is True
-    assert status["live_gui_acceptance"]["ok"] is True
-    assert status["live_summary"]["live_gui_acceptance_ok"] is True
+    assert status["live_gui_acceptance"]["ok"] is False
+    assert status["live_summary"]["live_gui_acceptance_ok"] is False
     assert status["change_verification"]["status"] == "created_and_audited"
     assert status["semiconductor_intent"]["status"] == "verified"
     assert status["live_delivery"]["status"] == "delivered_with_review"
@@ -18161,7 +18303,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert status["live_summary"]["live_delivery_ok"] is True
     assert status["live_summary"]["modeling_issue_index_status"] == "blocked"
     assert status["live_summary"]["diagnostic_export_manifest_status"] == "exported"
-    assert status["modeling_report"]["change_receipt"]["health_check"]["live_gui_acceptance_ok"] is True
+    assert status["modeling_report"]["change_receipt"]["health_check"]["live_gui_acceptance_ok"] is False
     assert status["live_summary"]["acceptance_ok"] is False
     assert status["live_summary"]["acceptance_failed_checks"] == ["warning_count_within_acceptance"]
     assert status["live_summary"]["view_projection_row_count"] == 56
@@ -18188,6 +18330,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert status["persisted_change_receipt"]["diagnostic_row_counts"]["view_projections"] == 56
     assert status["persisted_change_receipt"]["view_check"]["view_projection_row_count"] == 56
     assert status["persisted_change_receipt"]["health_check"]["normality"] == result["modeling_report"]["normality"]
+    assert status["persisted_change_receipt"]["health_check"]["live_gui_acceptance_ok"] is True
     assert status["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
 
 

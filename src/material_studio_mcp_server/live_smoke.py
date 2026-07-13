@@ -1234,6 +1234,9 @@ def build_live_smoke_summary(
         "live_hotload_preflight_status": hotload_preflight.get("status"),
         "live_hotload_preflight_safe_to_attempt": hotload_preflight.get("safe_to_attempt_hotload"),
         "live_hotload_preflight_gui_verified": hotload_preflight.get("gui_preflight_verified"),
+        "live_hotload_preflight_gui_required": hotload_preflight.get("gui_preflight_required"),
+        "live_hotload_preflight_gui_reasons": hotload_preflight.get("gui_preflight_reasons") or [],
+        "live_hotload_preflight_model_ready": hotload_preflight.get("model_ready_for_hotload"),
         "live_hotload_preflight_current_revision_loaded": live_hotload_preflight_current_revision_loaded,
         "live_hotload_preflight_recommended_tool": hotload_preflight.get("recommended_tool"),
         "live_hotload_preflight_blocking_reasons": hotload_preflight.get("blocking_reasons") or [],
@@ -1362,7 +1365,11 @@ def build_live_smoke_summary(
         "follow_up_expected_diagnostics": expected_diagnostics,
         "follow_up_expected_diagnostics_ok": expected_diagnostics.get("ok"),
         "follow_up_expected_diagnostic_failures": expected_diagnostics.get("failures") or [],
-        "next_action_tool": _next_action_tool(summary=summary, report=report, status=status),
+        "next_action_tool": (
+            hotload_preflight.get("recommended_tool")
+            if hotload_preflight.get("gui_preflight_required")
+            else _next_action_tool(summary=summary, report=report, status=status)
+        ),
         "next_action": report.get("next_action") or live.get("next_action") or (status or {}).get("next_action"),
         "errors": _collect_errors(preflight, live, status, bundle),
         "warnings": _collect_warnings(preflight, live, status, bundle),
@@ -1585,6 +1592,7 @@ def _gui_hotload_gate_summary(
 
     acceptance_available = hotload_acceptance.get("available") is True
     acceptance_ok = hotload_acceptance.get("ok")
+    gui_preflight_required = bool(hotload_preflight.get("gui_preflight_required"))
     safe_to_attempt = _first_not_none(
         hotload_preflight.get("safe_to_attempt_hotload"),
         live_request_summary.get("hotload_safe_to_attempt"),
@@ -1623,6 +1631,11 @@ def _gui_hotload_gate_summary(
         status = "current_revision_loaded"
         ok = True
         next_action = "ready_for_visual_review_or_next_edit"
+    elif gui_preflight_required:
+        status = "preflight_required"
+        ok = False
+        recommended_tool = "material_studio_gui_status"
+        next_action = "verify_single_window_gui_preflight"
     elif safe_to_attempt is True:
         status = "ready_to_attempt"
         ok = True
@@ -1639,6 +1652,10 @@ def _gui_hotload_gate_summary(
         "acceptance_available": acceptance_available,
         "acceptance_ok": acceptance_ok,
         "safe_to_attempt_hotload": safe_to_attempt,
+        "gui_preflight_verified": hotload_preflight.get("gui_preflight_verified"),
+        "gui_preflight_required": gui_preflight_required,
+        "gui_preflight_reasons": hotload_preflight.get("gui_preflight_reasons") or [],
+        "model_ready_for_hotload": hotload_preflight.get("model_ready_for_hotload"),
         "execution_mode": execution_mode,
         "gui_hot_loaded": gui_hot_loaded,
         "gui_loaded_current_revision": gui_loaded_current_revision,

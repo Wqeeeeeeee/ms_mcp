@@ -167,6 +167,21 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert compact_status.get("gui_view_replay_status") is None
     assert compact_status["gui_current_revision_recommended_tool"] == "material_studio_gui_apply_current_revision"
     assert compact_status.get("gui_current_revision_target_window_handle") is None
+    assert compact_status["live_hotload_model_ready"] is True
+    assert compact_status["live_hotload_gui_preflight_verified"] is False
+    assert compact_status["live_hotload_gui_preflight_required"] is True
+    assert compact_status["live_hotload_gui_preflight_reasons"] == [
+        "gui_status_not_probed",
+        "single_window_policy_not_verified",
+    ]
+    assert compact_status["live_hotload_safe_to_attempt"] is False
+    assert compact_status["live_hotload_status"] == "gui_preflight_required"
+    assert compact_status["live_hotload_recommended_tool"] == "material_studio_gui_status"
+    assert compact_status["mcp_model_ready_for_hotload"] is True
+    assert compact_status["mcp_gui_preflight_verified"] is False
+    assert compact_status["mcp_gui_preflight_required"] is True
+    assert compact_status["mcp_same_window_hotload_ready"] is False
+    assert compact_status["mcp_same_window_hotload_tool"] == "material_studio_gui_status"
     gui_current_revision = compact_status["gui_current_revision"]
     assert gui_current_revision["view_audit_report_path"] == compact_status["view_audit_report_path"]
     assert gui_current_revision["view_audit_report_exists"] is True

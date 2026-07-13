@@ -2092,6 +2092,10 @@ _TOP_LEVEL_LIVE_STATE_FIELDS = (
     "live_hotload_recommended_action",
     "live_hotload_current_revision_loaded",
     "live_hotload_safe_to_attempt",
+    "live_hotload_model_ready",
+    "live_hotload_gui_preflight_verified",
+    "live_hotload_gui_preflight_required",
+    "live_hotload_gui_preflight_reasons",
     "live_hotload_needs_user_confirmation",
     "live_hotload_blocking_reasons",
     "live_hotload_payload_hint",
@@ -2472,6 +2476,10 @@ _TOP_LEVEL_MCP_CLIENT_READINESS_FIELDS = (
     "mcp_can_apply_current_revision_without_new_window",
     "mcp_ready_for_live_edit",
     "mcp_ready_for_live_hotload",
+    "mcp_model_ready_for_hotload",
+    "mcp_gui_preflight_verified",
+    "mcp_gui_preflight_required",
+    "mcp_gui_preflight_reasons",
     "mcp_next_edit_status",
     "mcp_next_edit_requires_reaudit",
     "mcp_next_edit_blocking_reasons",
@@ -4264,6 +4272,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "live_hotload_preflight_action_id",
                 "live_hotload_preflight_safe_to_attempt",
                 "live_hotload_preflight_gui_verified",
+                "live_hotload_preflight_gui_required",
+                "live_hotload_preflight_gui_reasons",
+                "live_hotload_preflight_model_ready",
+                "live_hotload_preflight_single_window_execution_verified",
                 "live_hotload_preflight_current_revision_loaded",
                 "live_hotload_preflight_recommended_tool",
                 "live_hotload_preflight_blocking_reasons",
@@ -4661,6 +4673,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "mcp_can_apply_current_revision_without_new_window",
                 "mcp_ready_for_live_edit",
                 "mcp_ready_for_live_hotload",
+                "mcp_model_ready_for_hotload",
+                "mcp_gui_preflight_verified",
+                "mcp_gui_preflight_required",
+                "mcp_gui_preflight_reasons",
                 "mcp_same_window_hotload_ready",
                 "mcp_same_window_hotload_status",
                 "mcp_same_window_hotload_tool",
@@ -4794,6 +4810,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "live_hotload_preflight_action_id",
                 "live_hotload_preflight_safe_to_attempt",
                 "live_hotload_preflight_gui_verified",
+                "live_hotload_preflight_gui_required",
+                "live_hotload_preflight_gui_reasons",
+                "live_hotload_preflight_model_ready",
+                "live_hotload_preflight_single_window_execution_verified",
                 "live_hotload_preflight_current_revision_loaded",
                 "live_hotload_preflight_recommended_tool",
                 "live_hotload_preflight_needs_user_confirmation",
@@ -6248,11 +6268,20 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         gui_target_window_title = gui.get("window_management_target_window_title")
     gui_target_window_is_selected = gui.get("window_management_target_window_is_selected")
     gui_target_window_found = bool(gui_target_window_handle is not None or gui.get("target_window_matched_project_window"))
+    gui_preflight_verified = hotload.get("gui_preflight_verified") is True
+    gui_preflight_required = bool(hotload.get("gui_preflight_required"))
+    gui_preflight_reasons = _dedupe_strings(hotload.get("gui_preflight_reasons") or [])
+    model_ready_for_hotload = bool(hotload.get("model_ready_for_hotload"))
     current_loaded = bool(
-        hotload.get("current_revision_loaded")
-        or gui_current.get("loaded_current_revision")
-        or gui.get("loaded_current_revision")
-        or acceptance.get("can_trust_live_gui_current_revision")
+        hotload.get("current_revision_loaded") is True
+        or (
+            gui_preflight_verified
+            and (
+                gui_current.get("loaded_current_revision") is True
+                or gui.get("loaded_current_revision") is True
+                or acceptance.get("can_trust_live_gui_current_revision") is True
+            )
+        )
     )
     hotload_blocking_reasons = _dedupe_strings(
         [
@@ -6266,6 +6295,10 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     )
     if single_window_policy_ok is False and "single_window_policy_violation" not in hotload_blocking_reasons:
         hotload_blocking_reasons.insert(0, "single_window_policy_violation")
+    if gui_preflight_required:
+        hotload_blocking_reasons = _dedupe_strings(
+            ["gui_preflight_not_verified", *gui_preflight_reasons, *hotload_blocking_reasons]
+        )
 
     can_accept_preview = bool(project_id and report.get("ok") is not False and report.get("script_valid") is not False)
     can_accept_followup = bool(readiness.get("ready_for_next_edit"))
@@ -6405,6 +6438,14 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_recommended_tool = "material_studio_gui_apply_current_revision"
         visible_followup_recommended_action = "execute_current_revision_to_hotload_when_user_confirms"
         visible_followup_payload_hint = apply_payload_hint
+    elif gui_preflight_required:
+        visible_followup_status = "gui_preflight_required"
+        visible_followup_recommended_tool = "material_studio_gui_status"
+        visible_followup_recommended_action = "verify_single_existing_materials_studio_window_before_hotload"
+        visible_followup_payload_hint = hotload.get("payload_hint") or {
+            "project_id": project_id,
+            "revision": report.get("revision"),
+        }
     elif report.get("ok") is False:
         visible_followup_status = "blocked"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
@@ -6483,6 +6524,8 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         same_window_hotload_status = "current_revision_loaded"
     elif single_window_policy_ok is False:
         same_window_hotload_status = "single_window_policy_violation"
+    elif gui_preflight_required:
+        same_window_hotload_status = "gui_preflight_required"
     elif hotload.get("safe_to_attempt_hotload") or current_revision_apply_available:
         same_window_hotload_status = hotload.get("status") or "ready_to_execute_and_hotload"
     elif current_revision_reload_available:
@@ -6506,6 +6549,8 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         status = "live_gui_normal_calculation_review"
     elif current_loaded and normality_gate.get("can_claim_live_gui_normal") is True:
         status = "live_gui_normal"
+    elif gui_preflight_required and model_ready_for_hotload:
+        status = "gui_preflight_required_for_live_hotload"
     elif can_apply_current and not current_loaded:
         status = "ready_to_apply_current_revision"
     elif can_accept_followup:
@@ -6550,6 +6595,10 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "can_apply_current_revision_without_new_window": can_apply_current,
             "ready_for_live_edit": ready_for_live_edit,
             "ready_for_live_hotload": ready_for_live_edit and can_hotload_without_new_window,
+            "model_ready_for_hotload": model_ready_for_hotload,
+            "gui_preflight_verified": gui_preflight_verified,
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": gui_preflight_reasons,
             "next_edit_status": readiness.get("next_edit_status"),
             "next_edit_requires_reaudit": readiness.get("next_edit_requires_reaudit"),
             "next_edit_blocking_reasons": readiness.get("next_edit_blocking_reasons") or [],
@@ -11261,6 +11310,14 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "live_hotload_preflight_action_id": live_hotload_preflight.get("action_id"),
         "live_hotload_preflight_safe_to_attempt": live_hotload_preflight.get("safe_to_attempt_hotload"),
         "live_hotload_preflight_gui_verified": live_hotload_preflight.get("gui_preflight_verified"),
+        "live_hotload_preflight_gui_required": live_hotload_preflight.get("gui_preflight_required"),
+        "live_hotload_preflight_gui_reasons": _csv_json_value(
+            live_hotload_preflight.get("gui_preflight_reasons") or []
+        ),
+        "live_hotload_preflight_model_ready": live_hotload_preflight.get("model_ready_for_hotload"),
+        "live_hotload_preflight_single_window_execution_verified": live_hotload_preflight.get(
+            "single_window_execution_verified"
+        ),
         "live_hotload_preflight_current_revision_loaded": live_hotload_preflight.get("current_revision_loaded"),
         "live_hotload_preflight_recommended_tool": live_hotload_preflight.get("recommended_tool"),
         "live_hotload_preflight_blocking_reasons": _csv_json_value(
@@ -11854,6 +11911,10 @@ def _promote_response_live_state(response: dict[str, Any]) -> None:
                 hotload.get("loaded_current_revision"),
             ),
             "live_hotload_safe_to_attempt": hotload.get("safe_to_attempt_hotload"),
+            "live_hotload_model_ready": hotload.get("model_ready_for_hotload"),
+            "live_hotload_gui_preflight_verified": hotload.get("gui_preflight_verified"),
+            "live_hotload_gui_preflight_required": hotload.get("gui_preflight_required"),
+            "live_hotload_gui_preflight_reasons": hotload.get("gui_preflight_reasons") or [],
             "live_hotload_needs_user_confirmation": hotload.get("needs_user_confirmation"),
             "live_hotload_blocking_reasons": hotload.get("blocking_reasons"),
             "live_hotload_payload_hint": hotload.get("payload_hint"),
@@ -12925,6 +12986,22 @@ def _promote_response_mcp_client_readiness(response: dict[str, Any]) -> None:
                 live_summary.get("mcp_ready_for_live_hotload"),
                 readiness.get("ready_for_live_hotload"),
             ),
+            "mcp_model_ready_for_hotload": _first_not_none(
+                live_summary.get("mcp_model_ready_for_hotload"),
+                readiness.get("model_ready_for_hotload"),
+            ),
+            "mcp_gui_preflight_verified": _first_not_none(
+                live_summary.get("mcp_gui_preflight_verified"),
+                readiness.get("gui_preflight_verified"),
+            ),
+            "mcp_gui_preflight_required": _first_not_none(
+                live_summary.get("mcp_gui_preflight_required"),
+                readiness.get("gui_preflight_required"),
+            ),
+            "mcp_gui_preflight_reasons": _first_not_none(
+                live_summary.get("mcp_gui_preflight_reasons"),
+                readiness.get("gui_preflight_reasons"),
+            ),
             "mcp_same_window_hotload_ready": _first_not_none(
                 live_summary.get("mcp_same_window_hotload_ready"),
                 readiness.get("same_window_hotload_ready"),
@@ -13499,6 +13576,23 @@ def _mcp_modeling_session_contract(response: dict[str, Any]) -> dict[str, Any]:
                     "trusted": hotload.get("trusted"),
                     "current_revision_loaded": current_revision_loaded_for_hotload,
                     "same_window_ready": same_window_hotload_ready,
+                    "model_ready": _first_not_none(
+                        readiness.get("model_ready_for_hotload"),
+                        hotload.get("model_ready_for_hotload"),
+                    ),
+                    "gui_preflight_verified": _first_not_none(
+                        readiness.get("gui_preflight_verified"),
+                        hotload.get("gui_preflight_verified"),
+                    ),
+                    "gui_preflight_required": _first_not_none(
+                        readiness.get("gui_preflight_required"),
+                        hotload.get("gui_preflight_required"),
+                    ),
+                    "gui_preflight_reasons": _first_not_none(
+                        readiness.get("gui_preflight_reasons"),
+                        hotload.get("gui_preflight_reasons"),
+                        [],
+                    ),
                     "status": same_window_hotload_status,
                     "recommended_tool": same_window_hotload_tool,
                     "recommended_action": same_window_hotload_action,
@@ -20240,6 +20334,16 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
     recommended_action_override: str | None = None
     use_semiconductor_calculation_action = False
     view_parameter_refresh_plan = _view_parameter_export_refresh_plan(report)
+    gui_preflight_verified = bool(
+        gui.get("status_was_probed") is True
+        and gui.get("window_found") is True
+        and _first_not_none(
+            readiness.get("gui_single_window_policy_ok"),
+            gui.get("single_window_policy_ok"),
+        )
+        is True
+    )
+    deferred_hotload_action: dict[str, Any] = {}
 
     if readiness.get("gui_single_window_policy_ok") is False:
         action_id = "resolve_single_window_materials_studio_session"
@@ -20359,6 +20463,35 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         action_id = "review_or_fix_current_revision"
         payload_hint = {"project_id": report.get("project_id")}
 
+    if (
+        recommended_tool
+        in {
+            "material_studio_gui_apply_current_revision",
+            "material_studio_gui_open_structure",
+        }
+        and not gui_preflight_verified
+        and readiness.get("gui_single_window_policy_ok") is not False
+    ):
+        deferred_hotload_action = _drop_none_values(
+            {
+                "action_id": action_id,
+                "recommended_tool": recommended_tool,
+                "recommended_action": recommended_action_override
+                or readiness.get("recommended_action")
+                or report.get("next_action"),
+                "needs_user_confirmation": needs_user_confirmation,
+                "payload_hint": _drop_none_values(payload_hint),
+            }
+        )
+        action_id = "verify_single_window_gui_preflight"
+        recommended_tool = "material_studio_gui_status"
+        recommended_action_override = "verify_single_existing_materials_studio_window_before_hotload"
+        needs_user_confirmation = False
+        payload_hint = {
+            "project_id": report.get("project_id"),
+            "revision": report.get("revision"),
+        }
+
     artifacts = _drop_none_values(
         {
             "structure_path": structure.get("path"),
@@ -20393,6 +20526,9 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         "needs_user_confirmation": needs_user_confirmation,
         "safe_to_call_without_confirmation": not needs_user_confirmation,
         "payload_hint": _drop_none_values(payload_hint),
+        "gui_preflight_verified": gui_preflight_verified,
+        "gui_preflight_required": bool(deferred_hotload_action),
+        "deferred_hotload_action": deferred_hotload_action,
         "ready": ready,
         "blocking_reasons": readiness.get("blocking_reasons") or [],
         "review_reasons": readiness.get("review_reasons") or [],
@@ -20461,10 +20597,39 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
     gui_preflight_verified = bool(
         gui_status_was_probed
         and gui_window_found is True
-        and single_window_policy_ok is not False
+        and single_window_policy_ok is True
     )
+    model_ready_for_hotload = bool(
+        (
+            execution_mode == ExecutionMode.PREVIEW.value
+            and readiness.get("ready_for_hotload")
+        )
+        or (
+            execution_mode == ExecutionMode.EXECUTE.value
+            and structure_exists
+        )
+    )
+    current_revision_loaded = bool(
+        gui_preflight_verified
+        and hot_loaded
+        and loaded_current_revision is True
+        and not needs_reload
+    )
+    gui_preflight_reasons: list[str] = []
     if not gui_status_was_probed:
         warnings.append("gui_status_not_probed")
+        gui_preflight_reasons.append("gui_status_not_probed")
+    elif gui_window_found is not True:
+        gui_preflight_reasons.append("gui_window_not_verified")
+    if single_window_policy_ok is not True:
+        gui_preflight_reasons.append("single_window_policy_not_verified")
+    gui_preflight_reasons = _dedupe_strings(gui_preflight_reasons)
+    gui_preflight_required = bool(
+        model_ready_for_hotload
+        and not current_revision_loaded
+        and not gui_preflight_verified
+        and not blocking_reasons
+    )
     if single_window_violation_reasons:
         warnings.extend(f"single_window:{reason}" for reason in single_window_violation_reasons)
 
@@ -20480,7 +20645,7 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             recommended_action = "fix_hotload_blocking_reasons_then_reaudit"
             payload_hint = {"project_id": project_id}
         needs_user_confirmation = False
-    elif hot_loaded and loaded_current_revision is not False and not needs_reload:
+    elif current_revision_loaded:
         status = "current_revision_loaded"
         action_id = "continue_live_modeling_on_loaded_revision"
         recommended_tool = "material_studio_gui_snapshot" if needs_snapshot else "material_studio_live_modeling_request"
@@ -20489,8 +20654,15 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         )
         payload_hint = {"project_id": project_id, "revision": revision} if needs_snapshot else {"project_id": project_id}
         needs_user_confirmation = False
+    elif gui_preflight_required:
+        status = "gui_preflight_required"
+        action_id = "verify_single_window_gui_preflight"
+        recommended_tool = "material_studio_gui_status"
+        recommended_action = "verify_single_existing_materials_studio_window_before_hotload"
+        payload_hint = {"project_id": project_id, "revision": revision}
+        needs_user_confirmation = False
     elif execution_mode == ExecutionMode.PREVIEW.value and readiness.get("ready_for_hotload"):
-        status = "ready_to_execute_and_hotload" if gui_preflight_verified else "ready_to_execute_and_hotload_unverified_gui"
+        status = "ready_to_execute_and_hotload"
         action_id = "execute_and_hotload_current_revision"
         recommended_tool = "material_studio_gui_apply_current_revision"
         recommended_action = "execute_current_revision_to_hotload_when_user_confirms"
@@ -20503,7 +20675,7 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         }
         needs_user_confirmation = True
     elif execution_mode == ExecutionMode.EXECUTE.value and structure_exists:
-        status = "ready_to_open_structure_in_gui" if gui_preflight_verified else "ready_to_open_structure_unverified_gui"
+        status = "ready_to_open_structure_in_gui"
         action_id = "open_generated_structure_in_gui"
         recommended_tool = "material_studio_gui_open_structure"
         recommended_action = "open_generated_structure_in_existing_materials_studio_window"
@@ -20528,12 +20700,11 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
 
     safe_to_attempt_hotload = bool(
         not blocking_reasons
+        and gui_preflight_verified
         and status
         in {
             "ready_to_execute_and_hotload",
-            "ready_to_execute_and_hotload_unverified_gui",
             "ready_to_open_structure_in_gui",
-            "ready_to_open_structure_unverified_gui",
         }
     )
 
@@ -20544,7 +20715,11 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             "action_id": action_id,
             "safe_to_attempt_hotload": safe_to_attempt_hotload,
             "gui_preflight_verified": gui_preflight_verified,
-            "current_revision_loaded": bool(hot_loaded and loaded_current_revision is not False and not needs_reload),
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": gui_preflight_reasons,
+            "model_ready_for_hotload": model_ready_for_hotload,
+            "single_window_execution_verified": gui_preflight_verified,
+            "current_revision_loaded": current_revision_loaded,
             "needs_user_confirmation": needs_user_confirmation,
             "safe_to_call_without_confirmation": not needs_user_confirmation,
             "recommended_tool": recommended_tool,
@@ -20813,6 +20988,7 @@ def _live_hotload_gate_summary(report: dict[str, Any]) -> dict[str, Any]:
 
     acceptance_available = live_gui_acceptance.get("available") is True
     acceptance_ok = live_gui_acceptance.get("ok")
+    gui_preflight_required = bool(hotload_preflight.get("gui_preflight_required"))
     safe_to_attempt = _first_not_none(
         hotload_preflight.get("safe_to_attempt_hotload"),
         live_request.get("hotload_safe_to_attempt"),
@@ -20885,6 +21061,12 @@ def _live_hotload_gate_summary(report: dict[str, Any]) -> dict[str, Any]:
         status = "current_revision_loaded"
         ok = True
         next_action = "ready_for_visual_review_or_next_edit"
+    elif gui_preflight_required:
+        status = "preflight_required"
+        ok = False
+        recommended_tool = "material_studio_gui_status"
+        recommended_action = "verify_single_existing_materials_studio_window_before_hotload"
+        next_action = "verify_single_window_gui_preflight"
     elif safe_to_attempt is True:
         status = "ready_to_attempt"
         ok = True
@@ -20903,6 +21085,10 @@ def _live_hotload_gate_summary(report: dict[str, Any]) -> dict[str, Any]:
             "acceptance_available": acceptance_available,
             "acceptance_ok": acceptance_ok,
             "safe_to_attempt_hotload": safe_to_attempt,
+            "gui_preflight_verified": hotload_preflight.get("gui_preflight_verified"),
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": hotload_preflight.get("gui_preflight_reasons") or [],
+            "model_ready_for_hotload": hotload_preflight.get("model_ready_for_hotload"),
             "execution_mode": report.get("execution_mode"),
             "execution_mode_source": report.get("execution_mode_source"),
             "explicit_hotload_requested": live_request.get("explicit_hotload_requested"),
@@ -20977,6 +21163,12 @@ def _live_request_summary(response: dict[str, Any], report: dict[str, Any]) -> d
         recommended_action = hotload_preflight.get("recommended_action")
         payload_hint = hotload_preflight.get("payload_hint") or {}
         needs_confirmation = bool(hotload_preflight.get("needs_user_confirmation"))
+    elif hotload_preflight.get("gui_preflight_required"):
+        state = "gui_preflight_required"
+        recommended_tool = "material_studio_gui_status"
+        recommended_action = "verify_single_existing_materials_studio_window_before_hotload"
+        payload_hint = hotload_preflight.get("payload_hint") or {}
+        needs_confirmation = False
     elif hotload_preflight.get("safe_to_attempt_hotload"):
         state = "ready_for_hotload"
         recommended_tool = hotload_preflight.get("recommended_tool")
@@ -21017,6 +21209,9 @@ def _live_request_summary(response: dict[str, Any], report: dict[str, Any]) -> d
             "hotload_preflight_status": hotload_preflight.get("status"),
             "hotload_safe_to_attempt": hotload_preflight.get("safe_to_attempt_hotload"),
             "hotload_gui_preflight_verified": hotload_preflight.get("gui_preflight_verified"),
+            "hotload_gui_preflight_required": hotload_preflight.get("gui_preflight_required"),
+            "hotload_gui_preflight_reasons": hotload_preflight.get("gui_preflight_reasons") or [],
+            "hotload_model_ready": hotload_preflight.get("model_ready_for_hotload"),
             "hotload_current_revision_loaded": hotload_preflight.get("current_revision_loaded"),
             "hotload_blocking_reasons": hotload_preflight.get("blocking_reasons") or [],
             "diagnostic_export_requested": diagnostics_requested,
@@ -21631,6 +21826,13 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
         "live_hotload_preflight": live_hotload_preflight,
         "live_hotload_preflight_status": live_hotload_preflight.get("status"),
         "live_hotload_preflight_safe_to_attempt": live_hotload_preflight.get("safe_to_attempt_hotload"),
+        "live_hotload_preflight_gui_verified": live_hotload_preflight.get("gui_preflight_verified"),
+        "live_hotload_preflight_gui_required": live_hotload_preflight.get("gui_preflight_required"),
+        "live_hotload_preflight_gui_reasons": live_hotload_preflight.get("gui_preflight_reasons") or [],
+        "live_hotload_preflight_model_ready": live_hotload_preflight.get("model_ready_for_hotload"),
+        "live_hotload_preflight_single_window_execution_verified": live_hotload_preflight.get(
+            "single_window_execution_verified"
+        ),
         "live_hotload_preflight_recommended_tool": live_hotload_preflight.get("recommended_tool"),
         "live_hotload_gate": live_hotload_gate,
         "live_hotload_gate_status": live_hotload_gate.get("status"),
@@ -22161,6 +22363,10 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             ),
             "mcp_ready_for_live_edit": mcp_client_readiness.get("ready_for_live_edit"),
             "mcp_ready_for_live_hotload": mcp_client_readiness.get("ready_for_live_hotload"),
+            "mcp_model_ready_for_hotload": mcp_client_readiness.get("model_ready_for_hotload"),
+            "mcp_gui_preflight_verified": mcp_client_readiness.get("gui_preflight_verified"),
+            "mcp_gui_preflight_required": mcp_client_readiness.get("gui_preflight_required"),
+            "mcp_gui_preflight_reasons": mcp_client_readiness.get("gui_preflight_reasons") or [],
             "mcp_next_edit_status": mcp_client_readiness.get("next_edit_status"),
             "mcp_next_edit_requires_reaudit": mcp_client_readiness.get(
                 "next_edit_requires_reaudit"
@@ -22417,6 +22623,12 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "live_hotload_preflight_action_id": live_hotload_preflight.get("action_id"),
             "live_hotload_preflight_safe_to_attempt": live_hotload_preflight.get("safe_to_attempt_hotload"),
             "live_hotload_preflight_gui_verified": live_hotload_preflight.get("gui_preflight_verified"),
+            "live_hotload_preflight_gui_required": live_hotload_preflight.get("gui_preflight_required"),
+            "live_hotload_preflight_gui_reasons": live_hotload_preflight.get("gui_preflight_reasons") or [],
+            "live_hotload_preflight_model_ready": live_hotload_preflight.get("model_ready_for_hotload"),
+            "live_hotload_preflight_single_window_execution_verified": live_hotload_preflight.get(
+                "single_window_execution_verified"
+            ),
             "live_hotload_preflight_current_revision_loaded": live_hotload_preflight.get("current_revision_loaded"),
             "live_hotload_preflight_recommended_tool": live_hotload_preflight.get("recommended_tool"),
             "live_hotload_preflight_needs_user_confirmation": live_hotload_preflight.get("needs_user_confirmation"),
@@ -23343,6 +23555,9 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
         )
     if not status:
         status = "unknown"
+    gui_preflight_required = bool(mcp_readiness.get("gui_preflight_required"))
+    if gui_preflight_required:
+        status = "gui_preflight_required"
     visible_followup_ready = mcp_readiness.get("visible_followup_ready")
     visible_followup_status = mcp_readiness.get("visible_followup_status")
     visible_followup_blocking_reasons = mcp_readiness.get("visible_followup_blocking_reasons")
@@ -23381,6 +23596,10 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
             "can_trust_current_revision": live_gui_acceptance.get("can_trust_live_gui_current_revision"),
             "ready_for_next_live_edit": ready_for_next_live_edit,
             "ready_for_live_hotload": mcp_readiness.get("ready_for_live_hotload"),
+            "model_ready_for_hotload": mcp_readiness.get("model_ready_for_hotload"),
+            "gui_preflight_verified": mcp_readiness.get("gui_preflight_verified"),
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": mcp_readiness.get("gui_preflight_reasons") or [],
             "visible_followup_ready": visible_followup_ready,
             "visible_followup_status": visible_followup_status,
             "visible_followup_blocking_reasons": visible_followup_blocking_reasons or [],
@@ -23393,9 +23612,21 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
             "can_apply_current_revision_without_new_window": mcp_readiness.get(
                 "can_apply_current_revision_without_new_window"
             ),
-            "recommended_tool": gui_current.get("recommended_tool") or mcp_readiness.get("recommended_tool"),
-            "recommended_action": gui_current.get("recommended_action") or mcp_readiness.get("recommended_action"),
-            "payload_hint": gui_current.get("payload_hint") or mcp_readiness.get("payload_hint") or {},
+            "recommended_tool": (
+                visible_followup_recommended_tool
+                if gui_preflight_required
+                else gui_current.get("recommended_tool") or mcp_readiness.get("recommended_tool")
+            ),
+            "recommended_action": (
+                visible_followup_recommended_action
+                if gui_preflight_required
+                else gui_current.get("recommended_action") or mcp_readiness.get("recommended_action")
+            ),
+            "payload_hint": (
+                visible_followup_payload_hint
+                if gui_preflight_required
+                else gui_current.get("payload_hint") or mcp_readiness.get("payload_hint") or {}
+            ),
         }
     )
 
@@ -27022,6 +27253,22 @@ def _compact_live_response(
             "ready_for_calculation",
             "can_claim_model_normal",
             "can_claim_live_gui_normal",
+            "live_hotload_status",
+            "live_hotload_recommended_tool",
+            "live_hotload_safe_to_attempt",
+            "live_hotload_model_ready",
+            "live_hotload_gui_preflight_verified",
+            "live_hotload_gui_preflight_required",
+            "live_hotload_gui_preflight_reasons",
+            "mcp_model_ready_for_hotload",
+            "mcp_gui_preflight_verified",
+            "mcp_gui_preflight_required",
+            "mcp_gui_preflight_reasons",
+            "mcp_same_window_hotload_ready",
+            "mcp_same_window_hotload_status",
+            "mcp_same_window_hotload_tool",
+            "mcp_same_window_hotload_action",
+            "mcp_same_window_hotload_payload_hint",
             "visual_clean_view_available",
             "visual_clean_view_count",
             "structure_artifact_validation_status",
@@ -27149,6 +27396,14 @@ def _compact_live_response(
             "next_edit_blocking_reasons",
             "next_edit_review_reasons",
             "ready_for_hotload",
+            "live_hotload_preflight_status",
+            "live_hotload_preflight_safe_to_attempt",
+            "live_hotload_preflight_gui_verified",
+            "live_hotload_preflight_gui_required",
+            "live_hotload_preflight_gui_reasons",
+            "live_hotload_preflight_model_ready",
+            "live_hotload_preflight_single_window_execution_verified",
+            "live_hotload_preflight_recommended_tool",
             "ready_for_calculation",
             "formula",
             "reduced_formula",
@@ -27281,6 +27536,10 @@ def _compact_live_response(
             "can_apply_current_revision_without_new_window",
             "ready_for_live_edit",
             "ready_for_live_hotload",
+            "model_ready_for_hotload",
+            "gui_preflight_verified",
+            "gui_preflight_required",
+            "gui_preflight_reasons",
             "next_edit_status",
             "next_edit_requires_reaudit",
             "next_edit_blocking_reasons",

@@ -342,17 +342,23 @@ def test_run_live_smoke_summarizes_semiconductor_workflow(monkeypatch, tmp_path:
                 "next_action_tool": "material_studio_gui_apply_current_revision",
             },
             "live_request_summary": {
-                "state": "ready_for_hotload",
+                "state": "gui_preflight_required",
                 "explicit_hotload_requested": False,
-                "hotload_safe_to_attempt": True,
-                "recommended_tool": "material_studio_gui_apply_current_revision",
+                "hotload_safe_to_attempt": False,
+                "recommended_tool": "material_studio_gui_status",
             },
             "live_hotload_preflight": {
-                "status": "ready_to_execute_and_hotload_unverified_gui",
-                "safe_to_attempt_hotload": True,
+                "status": "gui_preflight_required",
+                "safe_to_attempt_hotload": False,
                 "gui_preflight_verified": False,
+                "gui_preflight_required": True,
+                "gui_preflight_reasons": [
+                    "gui_status_not_probed",
+                    "single_window_policy_not_verified",
+                ],
+                "model_ready_for_hotload": True,
                 "current_revision_loaded": False,
-                "recommended_tool": "material_studio_gui_apply_current_revision",
+                "recommended_tool": "material_studio_gui_status",
                 "blocking_reasons": [],
             },
             "modeling_report": {
@@ -384,17 +390,23 @@ def test_run_live_smoke_summarizes_semiconductor_workflow(monkeypatch, tmp_path:
                 "next_action_tool": "material_studio_gui_apply_current_revision",
             },
             "live_request_summary": {
-                "state": "ready_for_hotload",
+                "state": "gui_preflight_required",
                 "explicit_hotload_requested": False,
-                "hotload_safe_to_attempt": True,
-                "recommended_tool": "material_studio_gui_apply_current_revision",
+                "hotload_safe_to_attempt": False,
+                "recommended_tool": "material_studio_gui_status",
             },
             "live_hotload_preflight": {
-                "status": "ready_to_execute_and_hotload_unverified_gui",
-                "safe_to_attempt_hotload": True,
+                "status": "gui_preflight_required",
+                "safe_to_attempt_hotload": False,
                 "gui_preflight_verified": False,
+                "gui_preflight_required": True,
+                "gui_preflight_reasons": [
+                    "gui_status_not_probed",
+                    "single_window_policy_not_verified",
+                ],
+                "model_ready_for_hotload": True,
                 "current_revision_loaded": False,
-                "recommended_tool": "material_studio_gui_apply_current_revision",
+                "recommended_tool": "material_studio_gui_status",
                 "blocking_reasons": [],
             },
             "modeling_report": {
@@ -442,23 +454,29 @@ def test_run_live_smoke_summarizes_semiconductor_workflow(monkeypatch, tmp_path:
     assert summary["normality_gate_status"] == "preview_only"
     assert summary["can_claim_model_normal"] is False
     assert summary["gui_hot_loaded"] is False
-    assert summary["live_request_state"] == "ready_for_hotload"
-    assert summary["live_request_hotload_safe_to_attempt"] is True
-    assert summary["live_request_recommended_tool"] == "material_studio_gui_apply_current_revision"
-    assert summary["live_hotload_preflight_status"] == "ready_to_execute_and_hotload_unverified_gui"
-    assert summary["live_hotload_preflight_safe_to_attempt"] is True
+    assert summary["live_request_state"] == "gui_preflight_required"
+    assert summary["live_request_hotload_safe_to_attempt"] is False
+    assert summary["live_request_recommended_tool"] == "material_studio_gui_status"
+    assert summary["live_hotload_preflight_status"] == "gui_preflight_required"
+    assert summary["live_hotload_preflight_safe_to_attempt"] is False
     assert summary["live_hotload_preflight_gui_verified"] is False
+    assert summary["live_hotload_preflight_gui_required"] is True
+    assert summary["live_hotload_preflight_gui_reasons"] == [
+        "gui_status_not_probed",
+        "single_window_policy_not_verified",
+    ]
+    assert summary["live_hotload_preflight_model_ready"] is True
     assert summary["hotload_acceptance"]["available"] is False
     assert summary["hotload_acceptance"]["reason"] == "hotload_not_requested"
-    assert summary["gui_hotload_gate_status"] == "ready_to_attempt"
-    assert summary["gui_hotload_gate_ok"] is True
-    assert summary["gui_hotload_gate_recommended_tool"] == "material_studio_gui_apply_current_revision"
+    assert summary["gui_hotload_gate_status"] == "preflight_required"
+    assert summary["gui_hotload_gate_ok"] is False
+    assert summary["gui_hotload_gate_recommended_tool"] == "material_studio_gui_status"
     assert summary["gui_hotload_gate_blocking_reasons"] == []
     assert summary["view_bundle_manifest_exists"] is True
     assert summary["view_bundle_row_counts"] == {"modeling_report_summary": 1}
     assert summary["scenario_expected_diagnostics"]["available"] is False
     assert summary["scenario_expected_diagnostics"]["reason"] == "no_scenario"
-    assert summary["next_action_tool"] == "material_studio_gui_apply_current_revision"
+    assert summary["next_action_tool"] == "material_studio_gui_status"
 
 
 def test_live_smoke_cli_writes_compact_json(monkeypatch, tmp_path: Path, capsys) -> None:

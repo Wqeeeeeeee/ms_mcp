@@ -1,0 +1,51 @@
+{
+  "project_id": "benzene_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "molecule",
+  "model": {
+    "name": "benzene",
+    "atoms": [
+      {"id": "C1", "element": "C", "xyz_angstrom": [1.397, 0.000, 0.000]},
+      {"id": "C2", "element": "C", "xyz_angstrom": [0.699, 1.210, 0.000]},
+      {"id": "C3", "element": "C", "xyz_angstrom": [-0.699, 1.210, 0.000]},
+      {"id": "C4", "element": "C", "xyz_angstrom": [-1.397, 0.000, 0.000]},
+      {"id": "C5", "element": "C", "xyz_angstrom": [-0.699, -1.210, 0.000]},
+      {"id": "C6", "element": "C", "xyz_angstrom": [0.699, -1.210, 0.000]},
+      {"id": "H1", "element": "H", "xyz_angstrom": [2.479, 0.000, 0.000]},
+      {"id": "H2", "element": "H", "xyz_angstrom": [1.240, 2.147, 0.000]},
+      {"id": "H3", "element": "H", "xyz_angstrom": [-1.240, 2.147, 0.000]},
+      {"id": "H4", "element": "H", "xyz_angstrom": [-2.479, 0.000, 0.000]},
+      {"id": "H5", "element": "H", "xyz_angstrom": [-1.240, -2.147, 0.000]},
+      {"id": "H6", "element": "H", "xyz_angstrom": [1.240, -2.147, 0.000]}
+    ],
+    "bonds": [
+      {"atom1": "C1", "atom2": "C2", "type": "Aromatic"},
+      {"atom1": "C2", "atom2": "C3", "type": "Aromatic"},
+      {"atom1": "C3", "atom2": "C4", "type": "Aromatic"},
+      {"atom1": "C4", "atom2": "C5", "type": "Aromatic"},
+      {"atom1": "C5", "atom2": "C6", "type": "Aromatic"},
+      {"atom1": "C6", "atom2": "C1", "type": "Aromatic"},
+      {"atom1": "C1", "atom2": "H1", "type": "Single"},
+      {"atom1": "C2", "atom2": "H2", "type": "Single"},
+      {"atom1": "C3", "atom2": "H3", "type": "Single"},
+      {"atom1": "C4", "atom2": "H4", "type": "Single"},
+      {"atom1": "C5", "atom2": "H5", "type": "Single"},
+      {"atom1": "C6", "atom2": "H6", "type": "Single"}
+    ],
+    "total_charge": 0,
+    "spin_multiplicity": 1
+  },
+  "simulation": {
+    "module": "Forcite",
+    "task": "GeometryOptimization",
+    "forcefield": "COMPASS",
+    "quality": "Medium",
+    "charge_assignment": "Forcefield assigned",
+    "max_iterations": 500,
+    "convergence": "Medium"
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 0, "require_convergence": false, "notes": []},
+  "metadata": {"source": "example"}
+}

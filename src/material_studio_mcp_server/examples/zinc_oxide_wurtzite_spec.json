@@ -1,0 +1,48 @@
+{
+  "project_id": "zinc_oxide_wurtzite_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "zinc_oxide_wurtzite",
+    "lattice": {"a": 6.499, "b": 6.499, "c": 5.2069, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Zn1_000", "element": "Zn", "fractional": [0.166666, 0.333334, 0.0]},
+      {"id": "Zn1_010", "element": "Zn", "fractional": [0.166666, 0.833333, 0.0]},
+      {"id": "Zn1_100", "element": "Zn", "fractional": [0.666667, 0.333334, 0.0]},
+      {"id": "Zn1_110", "element": "Zn", "fractional": [0.666667, 0.833333, 0.0]},
+      {"id": "Zn2_000", "element": "Zn", "fractional": [0.333334, 0.166666, 0.5]},
+      {"id": "Zn2_010", "element": "Zn", "fractional": [0.333334, 0.666667, 0.5]},
+      {"id": "Zn2_100", "element": "Zn", "fractional": [0.833333, 0.166666, 0.5]},
+      {"id": "Zn2_110", "element": "Zn", "fractional": [0.833333, 0.666667, 0.5]},
+      {"id": "O1_000", "element": "O", "fractional": [0.166666, 0.333334, 0.3825]},
+      {"id": "O1_010", "element": "O", "fractional": [0.166666, 0.833333, 0.3825]},
+      {"id": "O1_100", "element": "O", "fractional": [0.666667, 0.333334, 0.3825]},
+      {"id": "O1_110", "element": "O", "fractional": [0.666667, 0.833333, 0.3825]},
+      {"id": "O2_000", "element": "O", "fractional": [0.333334, 0.166666, 0.8825]},
+      {"id": "O2_010", "element": "O", "fractional": [0.333334, 0.666667, 0.8825]},
+      {"id": "O2_100", "element": "O", "fractional": [0.833333, 0.166666, 0.8825]},
+      {"id": "O2_110", "element": "O", "fractional": [0.833333, 0.666667, 0.8825]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]},
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite",
+    "material": "ZnO",
+    "template_supercell": [2, 2, 1],
+    "reference_lattice_angstrom": {"a": 3.2495, "c": 5.2069},
+    "internal_parameter_u": 0.3825
+  }
+}

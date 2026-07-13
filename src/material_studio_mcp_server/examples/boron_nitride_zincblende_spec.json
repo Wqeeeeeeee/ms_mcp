@@ -1,0 +1,43 @@
+{
+  "project_id": "boron_nitride_zincblende_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "boron_nitride_zincblende",
+    "lattice": {"a": 3.615, "b": 3.615, "c": 3.615, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "B1", "element": "B", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "B2", "element": "B", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "B3", "element": "B", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "B4", "element": "B", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "N1", "element": "N", "fractional": [0.25, 0.25, 0.25]},
+      {"id": "N2", "element": "N", "fractional": [0.25, 0.75, 0.75]},
+      {"id": "N3", "element": "N", "fractional": [0.75, 0.25, 0.75]},
+      {"id": "N4", "element": "N", "fractional": [0.75, 0.75, 0.25]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 650,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 1,
+    "require_convergence": false,
+    "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "zinc blende",
+    "material": "c-BN",
+    "polytype": "cubic",
+    "reference_lattice_angstrom": 3.615
+  }
+}

@@ -1,0 +1,97 @@
+# MCP Protocol Acceptance
+
+`material_studio_mcp_server.protocol_smoke` proves that a real MCP client can
+start the stdio server, negotiate the protocol, discover the expected tools,
+and invoke the preview-safe live workflow. It complements direct Python unit
+tests; it does not replace them.
+
+## Run
+
+```powershell
+.\.venv\Scripts\python.exe -m material_studio_mcp_server.protocol_smoke `
+  --cwd . `
+  --workspace workspace\mcp_protocol_acceptance `
+  --config .codex\config.toml.example `
+  --output workspace\mcp_protocol_acceptance\summary.json
+```
+
+The command verifies:
+
+- MCP initialization and server metadata.
+- Complete paginated `tools/list` discovery.
+- Required live, GUI, view replay, and repair tools.
+- Selected input schema fields and safety annotations.
+- Preview-only silicon creation, project status, history, and three-view export.
+- No materialized structure and no GUI open during the preview path.
+- Optional Codex TOML drift without writing the config.
+- Compact responses for capabilities, create, status, and view-bundle calls,
+  each below the 48 KB protocol acceptance limit.
+
+## Safety
+
+The acceptance workspace is supplied through
+`MATERIAL_STUDIO_MCP_WORKSPACE`. Preview calls do not invoke
+`RunMatScript.bat`, do not launch `MatStudio.exe`, and do not modify the active
+Materials Studio project. `material_studio_run_script` must remain explicitly
+disabled in the example Codex config.
+
+## Config Drift
+
+Without `--strict-config`, protocol acceptance can pass while the summary
+reports an incomplete active Codex allowlist. This is useful when validating a
+server before the user decides to update their local config. With
+`--strict-config`, any missing required tool, enabled custom-script tool, or
+missing explicit custom-script disablement makes the command fail.
+
+The audit is intentionally read-only. Update the active `.codex/config.toml`
+only with the user's explicit approval, then restart the Codex MCP session.
+
+## Response Modes
+
+The live capabilities, modeling, update, status, view-bundle, and GUI-apply
+tools accept `response_mode="compact"` or `response_mode="full"`. Compact mode
+is intended for interactive @mcp work and returns the decision receipt plus
+camera parameters and artifact entry points. Full mode preserves the previous
+in-band response shape. Neither mode changes persisted diagnostics or execution
+behavior.
+
+Compact schema v2 removes repeated evidence trees and full capability catalogs
+from the in-band receipt. It retains the complete `view_bundle_files` index and
+uses `report_json_path`, `view_audit_report_path`, and
+`view_bundle_manifest_path` as stable detail entry points.
+Complex responses that require hard-budget fallback return
+`response_compaction.hard_budget_applied=true` and an explicit `omitted_fields`
+list. This fallback changes only the in-band receipt, not persisted diagnostics.
+
+Protocol discovery also requires
+`material_studio_gui_record_visual_confirmation`. The high-level modeling tool
+exposes the same persistence path through its `visual_confirmation` payload so
+clients with a restricted allowlist can record Computer Use evidence. Evidence
+is accepted only when its revision, handle, exact wrapper title, project
+metadata, and single-window state match the current GUI.
+
+Discovery also validates the direct view-replay recorder's exact-window,
+reviewed-command, and compact-response fields. Restricted clients can submit
+the same evidence through
+`material_studio_live_modeling_request.view_replay_confirmation`; the schema is
+strict, and a stale revision or window mismatch is rejected before any replay
+event is appended.
+
+Compact capabilities also expose `view_replay_automation_policy`, while compact
+project status preserves `gui_view_replay.replay_continuation`. Clients must
+honor `automation_ready`; the current MS 20.1 policy permits named Reset View
+automation for `front` and installed-help-backed unmodified arrow-key recipes
+for `back`, `right`, `left`, `top`, `bottom`, and staged `isometric`. The receipt
+must prove the exact key sequence or stages, Reset precondition, angle, no
+modifiers, setting restoration, and visual axis/projection match.
+`crystal_plane_*` recipes may also be automatic-ready when the installed
+Miller Plane/Object Tree/Properties/View Onto evidence is verified. The tool
+schema exposes strict `miller_plane_evidence`; protocol acceptance checks that
+field is discoverable, while runtime acceptance additionally requires exact
+plane selection, pre-cleanup screenshot, whitelisted cleanup, restored
+document/tree/view state, and an unchanged wrapper-source SHA-256. The camera
+scope is plane-normal plus native MS roll rather than exact analytic up/right.
+The same schema supports crystallographic directions only when the prepared
+recipe reports an exact direct-direction/reciprocal-normal collinearity
+mapping; it additionally requires the direction-match boolean. Directions
+without that exact mapping remain review-gated.

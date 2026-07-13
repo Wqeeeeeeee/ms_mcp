@@ -1,0 +1,110 @@
+{
+  "$defs": {
+    "SimulationModule": {
+      "description": "模拟模块枚举。",
+      "enum": [
+        "Forcite",
+        "CASTEP",
+        "DMol3",
+        "DFTBPlus"
+      ],
+      "title": "SimulationModule",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "CASTEP 能量规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    functional: 交换关联泛函\n    quality: 计算质量\n    cutoff_energy_ev: 截断能量（eV）\n    kpoint_separation: k 点间距\n    kpoints: k 点网格\n    output_file: 输出文件路径",
+  "properties": {
+    "module": {
+      "$ref": "#/$defs/SimulationModule",
+      "default": "CASTEP"
+    },
+    "task": {
+      "default": "Energy",
+      "title": "Task",
+      "type": "string"
+    },
+    "functional": {
+      "default": "PBE",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Functional",
+      "type": "string"
+    },
+    "quality": {
+      "default": "Medium",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Quality",
+      "type": "string"
+    },
+    "cutoff_energy_ev": {
+      "anyOf": [
+        {
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cutoff Energy Ev"
+    },
+    "kpoint_separation": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kpoint Separation"
+    },
+    "kpoints": {
+      "anyOf": [
+        {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kpoints"
+    },
+    "output_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output File"
+    }
+  },
+  "title": "CastepEnergySpec",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

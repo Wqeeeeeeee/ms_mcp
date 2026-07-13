@@ -1,0 +1,83 @@
+{
+  "project_id": "aluminum_nitride_gallium_nitride_0001_heterostructure_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "aluminum_nitride_gallium_nitride_0001_heterostructure",
+    "lattice": {"a": 6.378, "b": 6.378, "c": 10.167, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Ga1_000", "element": "Ga", "fractional": [0.166666, 0.333334, 0.0]},
+      {"id": "Ga1_010", "element": "Ga", "fractional": [0.166666, 0.833333, 0.0]},
+      {"id": "Ga1_100", "element": "Ga", "fractional": [0.666667, 0.333334, 0.0]},
+      {"id": "Ga1_110", "element": "Ga", "fractional": [0.666667, 0.833333, 0.0]},
+      {"id": "N1_000", "element": "N", "fractional": [0.166666, 0.333334, 0.1885]},
+      {"id": "N1_010", "element": "N", "fractional": [0.166666, 0.833333, 0.1885]},
+      {"id": "N1_100", "element": "N", "fractional": [0.666667, 0.333334, 0.1885]},
+      {"id": "N1_110", "element": "N", "fractional": [0.666667, 0.833333, 0.1885]},
+      {"id": "Ga2_000", "element": "Ga", "fractional": [0.333334, 0.166666, 0.25]},
+      {"id": "Ga2_010", "element": "Ga", "fractional": [0.333334, 0.666667, 0.25]},
+      {"id": "Ga2_100", "element": "Ga", "fractional": [0.833333, 0.166666, 0.25]},
+      {"id": "Ga2_110", "element": "Ga", "fractional": [0.833333, 0.666667, 0.25]},
+      {"id": "N2_000", "element": "N", "fractional": [0.333334, 0.166666, 0.4385]},
+      {"id": "N2_010", "element": "N", "fractional": [0.333334, 0.666667, 0.4385]},
+      {"id": "N2_100", "element": "N", "fractional": [0.833333, 0.166666, 0.4385]},
+      {"id": "N2_110", "element": "N", "fractional": [0.833333, 0.666667, 0.4385]},
+      {"id": "Al1_001", "element": "Al", "fractional": [0.166666, 0.333334, 0.5]},
+      {"id": "Al1_011", "element": "Al", "fractional": [0.166666, 0.833333, 0.5]},
+      {"id": "Al1_101", "element": "Al", "fractional": [0.666667, 0.333334, 0.5]},
+      {"id": "Al1_111", "element": "Al", "fractional": [0.666667, 0.833333, 0.5]},
+      {"id": "N1_001", "element": "N", "fractional": [0.166666, 0.333334, 0.691]},
+      {"id": "N1_011", "element": "N", "fractional": [0.166666, 0.833333, 0.691]},
+      {"id": "N1_101", "element": "N", "fractional": [0.666667, 0.333334, 0.691]},
+      {"id": "N1_111", "element": "N", "fractional": [0.666667, 0.833333, 0.691]},
+      {"id": "Al2_001", "element": "Al", "fractional": [0.333334, 0.166666, 0.75]},
+      {"id": "Al2_011", "element": "Al", "fractional": [0.333334, 0.666667, 0.75]},
+      {"id": "Al2_101", "element": "Al", "fractional": [0.833333, 0.166666, 0.75]},
+      {"id": "Al2_111", "element": "Al", "fractional": [0.833333, 0.666667, 0.75]},
+      {"id": "N2_001", "element": "N", "fractional": [0.333334, 0.166666, 0.941]},
+      {"id": "N2_011", "element": "N", "fractional": [0.333334, 0.666667, 0.941]},
+      {"id": "N2_101", "element": "N", "fractional": [0.833333, 0.166666, 0.941]},
+      {"id": "N2_111", "element": "N", "fractional": [0.833333, 0.666667, 0.941]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 560,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 4,
+    "require_convergence": false,
+    "notes": ["AlN/GaN(0001) coherent wurtzite heterostructure starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite heterostructure",
+    "materials": ["GaN", "AlN"],
+    "material_marker_map": {"Ga": "GaN", "Al": "AlN"},
+    "interface": "GaN/AlN",
+    "interface_orientation": "(0001)",
+    "interface_axis": "c",
+    "substrate": "GaN",
+    "barrier": "AlN",
+    "well_material": "GaN",
+    "barrier_material": "AlN",
+    "in_plane_lattice_angstrom": 3.189,
+    "gan_reference_lattice_angstrom": 3.189,
+    "aln_reference_lattice_angstrom": 3.112,
+    "coherent_strain_model": "pseudomorphic_aln_on_gan",
+    "band_alignment_model": "electron_affinity_metadata_reference",
+    "band_alignment_reference": "template_estimate_for_preflight_only",
+    "material_electronic_properties": {
+      "GaN": {"electron_affinity_ev": 4.1, "band_gap_ev": 3.4},
+      "AlN": {"electron_affinity_ev": 2.3, "band_gap_ev": 6.2}
+    }
+  }
+}

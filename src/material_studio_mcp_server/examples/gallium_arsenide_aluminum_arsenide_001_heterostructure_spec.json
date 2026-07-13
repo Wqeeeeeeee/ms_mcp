@@ -1,0 +1,63 @@
+{
+  "project_id": "gallium_arsenide_aluminum_arsenide_001_heterostructure_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "gallium_arsenide_aluminum_arsenide_001_heterostructure",
+    "lattice": {"a": 5.6572, "b": 5.6572, "c": 11.3144, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Ga1", "element": "Ga", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Ga2", "element": "Ga", "fractional": [0.0, 0.5, 0.249828]},
+      {"id": "Ga3", "element": "Ga", "fractional": [0.5, 0.0, 0.249828]},
+      {"id": "Ga4", "element": "Ga", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "AsG1", "element": "As", "fractional": [0.25, 0.25, 0.124914]},
+      {"id": "AsG2", "element": "As", "fractional": [0.25, 0.75, 0.374742]},
+      {"id": "AsG3", "element": "As", "fractional": [0.75, 0.25, 0.374742]},
+      {"id": "AsG4", "element": "As", "fractional": [0.75, 0.75, 0.124914]},
+      {"id": "Al1", "element": "Al", "fractional": [0.0, 0.0, 0.499657]},
+      {"id": "Al2", "element": "Al", "fractional": [0.0, 0.5, 0.749828]},
+      {"id": "Al3", "element": "Al", "fractional": [0.5, 0.0, 0.749828]},
+      {"id": "Al4", "element": "Al", "fractional": [0.5, 0.5, 0.499657]},
+      {"id": "AsA1", "element": "As", "fractional": [0.25, 0.25, 0.624742]},
+      {"id": "AsA2", "element": "As", "fractional": [0.25, 0.75, 0.874914]},
+      {"id": "AsA3", "element": "As", "fractional": [0.75, 0.25, 0.874914]},
+      {"id": "AsA4", "element": "As", "fractional": [0.75, 0.75, 0.624742]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["GaAs/AlAs(001) coherent heterostructure starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "zinc blende heterostructure",
+    "materials": ["GaAs", "AlAs"],
+    "interface": "GaAs/AlAs",
+    "interface_orientation": "(001)",
+    "interface_axis": "c",
+    "substrate": "GaAs",
+    "in_plane_lattice_angstrom": 5.6572,
+    "gaas_reference_lattice_angstrom": 5.6533,
+    "alas_reference_lattice_angstrom": 5.6611,
+    "coherent_strain_model": "average_in_plane_lattice",
+    "band_alignment_model": "electron_affinity_metadata_reference",
+    "band_alignment_reference": "template_estimate_for_preflight_only",
+    "material_electronic_properties": {
+      "GaAs": {"electron_affinity_ev": 4.07, "band_gap_ev": 1.42},
+      "AlAs": {"electron_affinity_ev": 3.5, "band_gap_ev": 2.16}
+    }
+  }
+}

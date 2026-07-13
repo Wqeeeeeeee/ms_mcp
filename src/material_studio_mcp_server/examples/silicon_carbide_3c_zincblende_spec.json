@@ -1,0 +1,43 @@
+{
+  "project_id": "silicon_carbide_3c_zincblende_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "silicon_carbide_3c_zincblende",
+    "lattice": {"a": 4.3596, "b": 4.3596, "c": 4.3596, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Si1", "element": "Si", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Si2", "element": "Si", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "Si3", "element": "Si", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "Si4", "element": "Si", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "C1", "element": "C", "fractional": [0.25, 0.25, 0.25]},
+      {"id": "C2", "element": "C", "fractional": [0.25, 0.75, 0.75]},
+      {"id": "C3", "element": "C", "fractional": [0.75, 0.25, 0.75]},
+      {"id": "C4", "element": "C", "fractional": [0.75, 0.75, 0.25]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 1,
+    "require_convergence": false,
+    "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "zinc blende",
+    "material": "3C-SiC",
+    "polytype": "3C",
+    "reference_lattice_angstrom": 4.3596
+  }
+}

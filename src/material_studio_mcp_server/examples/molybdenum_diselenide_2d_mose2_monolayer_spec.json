@@ -1,0 +1,53 @@
+{
+  "project_id": "molybdenum_diselenide_2d_mose2_monolayer_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "molybdenum_diselenide_2d_mose2_monolayer",
+    "lattice": {"a": 6.576, "b": 6.576, "c": 22.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Mo1_000", "element": "Mo", "fractional": [0.0, 0.0, 0.5]},
+      {"id": "Mo1_010", "element": "Mo", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "Mo1_100", "element": "Mo", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "Mo1_110", "element": "Mo", "fractional": [0.5, 0.5, 0.5]},
+      {"id": "Setop1_000", "element": "Se", "fractional": [0.166667, 0.333333, 0.5755]},
+      {"id": "Setop1_010", "element": "Se", "fractional": [0.166667, 0.833333, 0.5755]},
+      {"id": "Setop1_100", "element": "Se", "fractional": [0.666667, 0.333333, 0.5755]},
+      {"id": "Setop1_110", "element": "Se", "fractional": [0.666667, 0.833333, 0.5755]},
+      {"id": "Sebot1_000", "element": "Se", "fractional": [0.333333, 0.166667, 0.4245]},
+      {"id": "Sebot1_010", "element": "Se", "fractional": [0.333333, 0.666667, 0.4245]},
+      {"id": "Sebot1_100", "element": "Se", "fractional": [0.833333, 0.166667, 0.4245]},
+      {"id": "Sebot1_110", "element": "Se", "fractional": [0.833333, 0.666667, 0.4245]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["2D monolayer template with vacuum along c; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "2d tmd monolayer",
+    "material": "MoSe2",
+    "tmd_phase": "2H",
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 3.32,
+    "vacuum_angstrom": 18.68,
+    "termination": "selenium_terminated",
+    "template_supercell": [2, 2, 1],
+    "reference_lattice_angstrom": {"a": 3.288, "c": 22.0}
+  }
+}

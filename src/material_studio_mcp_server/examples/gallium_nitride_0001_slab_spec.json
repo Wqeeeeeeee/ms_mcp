@@ -1,0 +1,41 @@
+{
+  "project_id": "gallium_nitride_0001_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "gallium_nitride_0001_slab",
+    "lattice": {"a": 3.189, "b": 3.189, "c": 25.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Ga1", "element": "Ga", "fractional": [0.333333, 0.666667, 0.0]},
+      {"id": "Ga2", "element": "Ga", "fractional": [0.666667, 0.333333, 0.1037]},
+      {"id": "N1", "element": "N", "fractional": [0.333333, 0.666667, 0.07819]},
+      {"id": "N2", "element": "N", "fractional": [0.666667, 0.333333, 0.18193]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Unpassivated slab starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite slab",
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 5.185,
+    "vacuum_angstrom": 19.815,
+    "termination": "unpassivated"
+  }
+}

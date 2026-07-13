@@ -1,0 +1,583 @@
+{
+  "$defs": {
+    "ExecutionMode": {
+      "description": "执行模式枚举。",
+      "enum": [
+        "preview",
+        "execute"
+      ],
+      "title": "ExecutionMode",
+      "type": "string"
+    },
+    "FractionalVector3": {
+      "additionalProperties": false,
+      "description": "分数坐标向量。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "z": {
+          "title": "Z",
+          "type": "number"
+        },
+        "allow_outside_cell": {
+          "default": false,
+          "title": "Allow Outside Cell",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "title": "FractionalVector3",
+      "type": "object"
+    },
+    "LatticeSpec": {
+      "additionalProperties": false,
+      "description": "晶格规格。\n\n属性:\n    a: 晶格参数 a（埃）\n    b: 晶格参数 b（埃）\n    c: 晶格参数 c（埃）\n    alpha: 晶格角度 alpha（度）\n    beta: 晶格角度 beta（度）\n    gamma: 晶格角度 gamma（度）",
+      "properties": {
+        "a": {
+          "exclusiveMinimum": 0,
+          "title": "A",
+          "type": "number"
+        },
+        "b": {
+          "exclusiveMinimum": 0,
+          "title": "B",
+          "type": "number"
+        },
+        "c": {
+          "exclusiveMinimum": 0,
+          "title": "C",
+          "type": "number"
+        },
+        "alpha": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "beta": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Beta",
+          "type": "number"
+        },
+        "gamma": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Gamma",
+          "type": "number"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "c",
+        "alpha",
+        "beta",
+        "gamma"
+      ],
+      "title": "LatticeSpec",
+      "type": "object"
+    },
+    "SemanticPatchOperation": {
+      "additionalProperties": false,
+      "description": "语义补丁操作。\n\n属性:\n    operation: 操作类型\n    id: 原子 ID\n    element: 元素符号\n    xyz_angstrom: 笛卡尔坐标\n    atom_id: 原子 ID\n    atom1: 第一个原子 ID\n    atom2: 第二个原子 ID\n    bond_type: 键类型\n    new_element: 新元素符号\n    total_charge: 总电荷\n    spin_multiplicity: 自旋多重度\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    max_iterations: 最大迭代次数\n    convergence: 收敛级别\n    functional: 交换关联泛函\n    cutoff_energy_ev: 截断能量\n    kpoint_separation: k 点间距\n    kpoints: k 点网格\n    matrix: 超胞矩阵\n    axis: 轴\n    thickness_angstrom: 厚度\n    lattice: 晶格规格\n    fractional: 分数坐标\n    nearest_cartesian_angstrom: 最近笛卡尔坐标",
+      "properties": {
+        "type": {
+          "enum": [
+            "add_atom",
+            "delete_atom",
+            "add_bond",
+            "delete_bond",
+            "set_bond_type",
+            "substitute_atom",
+            "set_atom_position",
+            "set_total_charge",
+            "set_spin_multiplicity",
+            "set_forcite_optimization",
+            "set_castep_energy",
+            "make_supercell",
+            "add_vacuum",
+            "set_vacuum",
+            "center_slab",
+            "set_lattice",
+            "set_metadata",
+            "reconcile_dopant_metadata",
+            "set_interface_gap",
+            "set_gate_stack_thickness",
+            "set_p_gan_gate_cap_thickness",
+            "set_quantum_well_thickness"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "element": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Element"
+        },
+        "xyz_angstrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Vector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "atom_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atom Id"
+        },
+        "atom1": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atom1"
+        },
+        "atom2": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atom2"
+        },
+        "bond_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bond Type"
+        },
+        "new_element": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "New Element"
+        },
+        "total_charge": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Charge"
+        },
+        "spin_multiplicity": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Spin Multiplicity"
+        },
+        "forcefield": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Forcefield"
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quality"
+        },
+        "charge_assignment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charge Assignment"
+        },
+        "max_iterations": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Iterations"
+        },
+        "convergence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Convergence"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task"
+        },
+        "functional": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Functional"
+        },
+        "cutoff_energy_ev": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cutoff Energy Ev"
+        },
+        "kpoint_separation": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kpoint Separation"
+        },
+        "kpoints": {
+          "anyOf": [
+            {
+              "maxItems": 3,
+              "minItems": 3,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kpoints"
+        },
+        "matrix": {
+          "anyOf": [
+            {
+              "maxItems": 3,
+              "minItems": 3,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matrix"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "thickness_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thickness Angstrom"
+        },
+        "target_layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "gate",
+                "oxide",
+                "channel",
+                "well",
+                "barrier"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Layer"
+        },
+        "lattice": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatticeSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fractional": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FractionalVector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nearest_cartesian_angstrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Vector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "metadata_updates": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata Updates"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "SemanticPatchOperation",
+      "type": "object"
+    },
+    "Vector3": {
+      "additionalProperties": false,
+      "description": "三维向量。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "z": {
+          "title": "Z",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "title": "Vector3",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "语义补丁。\n\n属性:\n    project_id: 项目 ID\n    base_revision: 基础修订版本\n    operations: 操作列表\n    run_after_apply: 应用后是否运行\n    execution_mode: 执行模式\n    force: 是否强制",
+  "properties": {
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "base_revision": {
+      "minimum": 0,
+      "title": "Base Revision",
+      "type": "integer"
+    },
+    "operations": {
+      "items": {
+        "$ref": "#/$defs/SemanticPatchOperation"
+      },
+      "minItems": 1,
+      "title": "Operations",
+      "type": "array"
+    },
+    "run_after_apply": {
+      "default": false,
+      "title": "Run After Apply",
+      "type": "boolean"
+    },
+    "execution_mode": {
+      "$ref": "#/$defs/ExecutionMode",
+      "default": "preview"
+    },
+    "force": {
+      "default": false,
+      "title": "Force",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "project_id",
+    "base_revision",
+    "operations"
+  ],
+  "title": "SemanticPatch",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,76 @@
+[mcp_servers.materials_studio]
+command = "D:\\path\\to\\Materials-Studio-mcp\\.venv\\Scripts\\python.exe"
+args = ["D:\\path\\to\\Materials-Studio-mcp\\run_server.py"]
+cwd = "D:\\path\\to\\Materials-Studio-mcp"
+startup_timeout_sec = 30
+tool_timeout_sec = 1800
+default_tools_approval_mode = "prompt"
+enabled = true
+
+enabled_tools = [
+  "material_studio_get_status",
+  "material_studio_live_capabilities",
+  "material_studio_live_session_preflight",
+  "material_studio_model_validate",
+  "material_studio_model_create_from_spec",
+  "material_studio_model_modify_with_patch",
+  "material_studio_model_preview_script",
+  "material_studio_model_get_current",
+  "material_studio_live_modeling_request",
+  "material_studio_live_project_status",
+  "material_studio_model_export_view_audit",
+  "material_studio_model_export_view_bundle",
+  "material_studio_live_update_with_patch",
+  "material_studio_project_history",
+  "material_studio_project_rollback",
+  "material_studio_project_reconcile_dopant_metadata",
+  "material_studio_gui_status",
+  "material_studio_gui_launch",
+  "material_studio_gui_activate",
+  "material_studio_gui_snapshot",
+  "material_studio_gui_open_structure",
+  "material_studio_gui_apply_current_revision",
+  "material_studio_gui_record_visual_confirmation",
+  "material_studio_gui_copy_script_assist",
+  "material_studio_gui_prepare_view_replay",
+  "material_studio_gui_record_view_replay",
+  "material_studio_structure_summary",
+  "material_studio_import_export",
+  "material_studio_forcite_geometry_optimization",
+  "material_studio_castep_energy_script",
+  "material_studio_list_script_templates"
+]
+
+disabled_tools = [
+  "material_studio_run_script"
+]
+
+[mcp_servers.materials_studio.tools.material_studio_model_create_from_spec]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_model_modify_with_patch]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_live_modeling_request]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_live_update_with_patch]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_project_reconcile_dopant_metadata]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_launch]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_apply_current_revision]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_record_visual_confirmation]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_open_structure]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_run_script]
+approval_mode = "prompt"

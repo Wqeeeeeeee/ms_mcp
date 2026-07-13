@@ -1,0 +1,105 @@
+{
+  "project_id": "beta_gallium_oxide_010_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "beta_gallium_oxide_010_slab",
+    "lattice": {
+      "a": 12.214,
+      "b": 25.0,
+      "c": 5.7981,
+      "alpha": 90.0,
+      "beta": 103.83,
+      "gamma": 90.0
+    },
+    "basis_atoms": [
+      {"id": "Ga1a_00", "element": "Ga", "fractional": [0.0895, 0.408887, 0.7938]},
+      {"id": "Ga1b_00", "element": "Ga", "fractional": [0.9105, 0.408887, 0.2062]},
+      {"id": "Ga1c_00", "element": "Ga", "fractional": [0.5895, 0.469629, 0.7938]},
+      {"id": "Ga1d_00", "element": "Ga", "fractional": [0.4105, 0.469629, 0.2062]},
+      {"id": "Ga2a_00", "element": "Ga", "fractional": [0.6585, 0.408887, 0.31]},
+      {"id": "Ga2b_00", "element": "Ga", "fractional": [0.3415, 0.408887, 0.69]},
+      {"id": "Ga2c_00", "element": "Ga", "fractional": [0.1585, 0.469629, 0.31]},
+      {"id": "Ga2d_00", "element": "Ga", "fractional": [0.8415, 0.469629, 0.69]},
+      {"id": "O1a_00", "element": "O", "fractional": [0.1519, 0.408887, 0.1001]},
+      {"id": "O1b_00", "element": "O", "fractional": [0.8481, 0.408887, 0.8999]},
+      {"id": "O1c_00", "element": "O", "fractional": [0.6519, 0.469629, 0.1001]},
+      {"id": "O1d_00", "element": "O", "fractional": [0.3481, 0.469629, 0.8999]},
+      {"id": "O2a_00", "element": "O", "fractional": [0.1722, 0.408887, 0.564]},
+      {"id": "O2b_00", "element": "O", "fractional": [0.8278, 0.408887, 0.436]},
+      {"id": "O2c_00", "element": "O", "fractional": [0.6722, 0.469629, 0.564]},
+      {"id": "O2d_00", "element": "O", "fractional": [0.3278, 0.469629, 0.436]},
+      {"id": "O3a_00", "element": "O", "fractional": [0.492, 0.408887, 0.2645]},
+      {"id": "O3b_00", "element": "O", "fractional": [0.508, 0.408887, 0.7355]},
+      {"id": "O3c_00", "element": "O", "fractional": [0.992, 0.469629, 0.2645]},
+      {"id": "O3d_00", "element": "O", "fractional": [0.008, 0.469629, 0.7355]},
+      {"id": "Ga1a_01", "element": "Ga", "fractional": [0.0895, 0.530371, 0.7938]},
+      {"id": "Ga1b_01", "element": "Ga", "fractional": [0.9105, 0.530371, 0.2062]},
+      {"id": "Ga1c_01", "element": "Ga", "fractional": [0.5895, 0.591113, 0.7938]},
+      {"id": "Ga1d_01", "element": "Ga", "fractional": [0.4105, 0.591113, 0.2062]},
+      {"id": "Ga2a_01", "element": "Ga", "fractional": [0.6585, 0.530371, 0.31]},
+      {"id": "Ga2b_01", "element": "Ga", "fractional": [0.3415, 0.530371, 0.69]},
+      {"id": "Ga2c_01", "element": "Ga", "fractional": [0.1585, 0.591113, 0.31]},
+      {"id": "Ga2d_01", "element": "Ga", "fractional": [0.8415, 0.591113, 0.69]},
+      {"id": "O1a_01", "element": "O", "fractional": [0.1519, 0.530371, 0.1001]},
+      {"id": "O1b_01", "element": "O", "fractional": [0.8481, 0.530371, 0.8999]},
+      {"id": "O1c_01", "element": "O", "fractional": [0.6519, 0.591113, 0.1001]},
+      {"id": "O1d_01", "element": "O", "fractional": [0.3481, 0.591113, 0.8999]},
+      {"id": "O2a_01", "element": "O", "fractional": [0.1722, 0.530371, 0.564]},
+      {"id": "O2b_01", "element": "O", "fractional": [0.8278, 0.530371, 0.436]},
+      {"id": "O2c_01", "element": "O", "fractional": [0.6722, 0.591113, 0.564]},
+      {"id": "O2d_01", "element": "O", "fractional": [0.3278, 0.591113, 0.436]},
+      {"id": "O3a_01", "element": "O", "fractional": [0.492, 0.530371, 0.2645]},
+      {"id": "O3b_01", "element": "O", "fractional": [0.508, 0.530371, 0.7355]},
+      {"id": "O3c_01", "element": "O", "fractional": [0.992, 0.591113, 0.2645]},
+      {"id": "O3d_01", "element": "O", "fractional": [0.008, 0.591113, 0.7355]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 3,
+    "require_convergence": false,
+    "notes": [
+      "Unrelaxed beta-Ga2O3(010) slab starting point; explicit execute materializes CIF for GUI hot-loading.",
+      "Surface atoms are not passivated or relaxed; review surface, coordination, and close-contact diagnostics before calculation."
+    ]
+  },
+  "metadata": {
+    "source": "example",
+    "source_reference": "Experimental beta-Ga2O3 C2/m structure after Geller, J. Chem. Phys. 33, 676 (1960), with conventional-cell 4i positions expanded by C-centering.",
+    "domain": "semiconductor",
+    "structure_family": "monoclinic beta-Ga2O3 slab",
+    "material": "Ga2O3",
+    "wide_bandgap_semiconductor": true,
+    "oxide_semiconductor": true,
+    "space_group": "C2/m-derived slab",
+    "surface_orientation": "(010)",
+    "surface_axis": "b",
+    "slab_repeat": [1, 2, 1],
+    "slab_thickness_angstrom": 6.0742,
+    "vacuum_angstrom": 18.9258,
+    "termination": "unpassivated",
+    "slab_centering": {
+      "axis": "b",
+      "shift_fractional": 0.408887,
+      "source": "example_template_centered_for_gui_hotload"
+    },
+    "reference_lattice_angstrom": {
+      "a": 12.214,
+      "b": 3.0371,
+      "c": 5.7981,
+      "beta": 103.83
+    },
+    "base_template_id": "beta_gallium_oxide_monoclinic"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "project_id": "gallium_nitride_wurtzite_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "gallium_nitride_wurtzite",
+    "lattice": {"a": 3.189, "b": 3.189, "c": 5.185, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Ga1", "element": "Ga", "fractional": [0.333333, 0.666667, 0.0]},
+      {"id": "Ga2", "element": "Ga", "fractional": [0.666667, 0.333333, 0.5]},
+      {"id": "N1", "element": "N", "fractional": [0.333333, 0.666667, 0.377]},
+      {"id": "N2", "element": "N", "fractional": [0.666667, 0.333333, 0.877]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]},
+  "metadata": {"source": "example", "domain": "semiconductor", "structure_family": "wurtzite"}
+}

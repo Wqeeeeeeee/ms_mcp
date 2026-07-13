@@ -1,0 +1,53 @@
+{
+  "project_id": "tungsten_disulfide_2d_ws2_monolayer_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "tungsten_disulfide_2d_ws2_monolayer",
+    "lattice": {"a": 6.306, "b": 6.306, "c": 22.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "W1_000", "element": "W", "fractional": [0.0, 0.0, 0.5]},
+      {"id": "W1_010", "element": "W", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "W1_100", "element": "W", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "W1_110", "element": "W", "fractional": [0.5, 0.5, 0.5]},
+      {"id": "Stop1_000", "element": "S", "fractional": [0.166667, 0.333333, 0.5709]},
+      {"id": "Stop1_010", "element": "S", "fractional": [0.166667, 0.833333, 0.5709]},
+      {"id": "Stop1_100", "element": "S", "fractional": [0.666667, 0.333333, 0.5709]},
+      {"id": "Stop1_110", "element": "S", "fractional": [0.666667, 0.833333, 0.5709]},
+      {"id": "Sbot1_000", "element": "S", "fractional": [0.333333, 0.166667, 0.4291]},
+      {"id": "Sbot1_010", "element": "S", "fractional": [0.333333, 0.666667, 0.4291]},
+      {"id": "Sbot1_100", "element": "S", "fractional": [0.833333, 0.166667, 0.4291]},
+      {"id": "Sbot1_110", "element": "S", "fractional": [0.833333, 0.666667, 0.4291]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["2D monolayer template with vacuum along c; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "2d tmd monolayer",
+    "material": "WS2",
+    "tmd_phase": "2H",
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 3.2,
+    "vacuum_angstrom": 18.8,
+    "termination": "sulfur_terminated",
+    "template_supercell": [2, 2, 1],
+    "reference_lattice_angstrom": {"a": 3.153, "c": 22.0}
+  }
+}

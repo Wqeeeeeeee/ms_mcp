@@ -1,0 +1,45 @@
+{
+  "project_id": "silicon_100_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "silicon_100_slab",
+    "lattice": {"a": 5.431, "b": 5.431, "c": 25.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Si1", "element": "Si", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Si2", "element": "Si", "fractional": [0.25, 0.25, 0.05431]},
+      {"id": "Si3", "element": "Si", "fractional": [0.0, 0.5, 0.10862]},
+      {"id": "Si4", "element": "Si", "fractional": [0.25, 0.75, 0.16293]},
+      {"id": "Si5", "element": "Si", "fractional": [0.5, 0.0, 0.10862]},
+      {"id": "Si6", "element": "Si", "fractional": [0.75, 0.25, 0.16293]},
+      {"id": "Si7", "element": "Si", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "Si8", "element": "Si", "fractional": [0.75, 0.75, 0.05431]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Unpassivated slab starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "diamond cubic slab",
+    "surface_orientation": "(100)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 5.431,
+    "vacuum_angstrom": 19.569,
+    "termination": "unpassivated"
+  }
+}

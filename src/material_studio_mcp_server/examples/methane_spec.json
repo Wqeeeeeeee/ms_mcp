@@ -1,0 +1,36 @@
+{
+  "project_id": "methane_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "molecule",
+  "model": {
+    "name": "methane",
+    "atoms": [
+      {"id": "C1", "element": "C", "xyz_angstrom": [0.000, 0.000, 0.000]},
+      {"id": "H1", "element": "H", "xyz_angstrom": [0.629, 0.629, 0.629]},
+      {"id": "H2", "element": "H", "xyz_angstrom": [-0.629, -0.629, 0.629]},
+      {"id": "H3", "element": "H", "xyz_angstrom": [-0.629, 0.629, -0.629]},
+      {"id": "H4", "element": "H", "xyz_angstrom": [0.629, -0.629, -0.629]}
+    ],
+    "bonds": [
+      {"atom1": "C1", "atom2": "H1", "type": "Single"},
+      {"atom1": "C1", "atom2": "H2", "type": "Single"},
+      {"atom1": "C1", "atom2": "H3", "type": "Single"},
+      {"atom1": "C1", "atom2": "H4", "type": "Single"}
+    ],
+    "total_charge": 0,
+    "spin_multiplicity": 1
+  },
+  "simulation": {
+    "module": "Forcite",
+    "task": "GeometryOptimization",
+    "forcefield": "COMPASS",
+    "quality": "Medium",
+    "charge_assignment": "Forcefield assigned",
+    "max_iterations": 200,
+    "convergence": "Medium"
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 0, "require_convergence": false, "notes": []},
+  "metadata": {"source": "example"}
+}

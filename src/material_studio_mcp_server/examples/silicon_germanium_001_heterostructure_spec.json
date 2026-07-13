@@ -1,0 +1,63 @@
+{
+  "project_id": "silicon_germanium_001_heterostructure_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "silicon_germanium_001_heterostructure",
+    "lattice": {"a": 5.5445, "b": 5.5445, "c": 11.089, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Si1", "element": "Si", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Si2", "element": "Si", "fractional": [0.25, 0.25, 0.122445]},
+      {"id": "Si3", "element": "Si", "fractional": [0.0, 0.5, 0.244891]},
+      {"id": "Si4", "element": "Si", "fractional": [0.25, 0.75, 0.367336]},
+      {"id": "Si5", "element": "Si", "fractional": [0.5, 0.0, 0.244891]},
+      {"id": "Si6", "element": "Si", "fractional": [0.75, 0.25, 0.367336]},
+      {"id": "Si7", "element": "Si", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "Si8", "element": "Si", "fractional": [0.75, 0.75, 0.122445]},
+      {"id": "Ge1", "element": "Ge", "fractional": [0.0, 0.0, 0.489781]},
+      {"id": "Ge2", "element": "Ge", "fractional": [0.25, 0.25, 0.617336]},
+      {"id": "Ge3", "element": "Ge", "fractional": [0.0, 0.5, 0.744891]},
+      {"id": "Ge4", "element": "Ge", "fractional": [0.25, 0.75, 0.872445]},
+      {"id": "Ge5", "element": "Ge", "fractional": [0.5, 0.0, 0.744891]},
+      {"id": "Ge6", "element": "Ge", "fractional": [0.75, 0.25, 0.872445]},
+      {"id": "Ge7", "element": "Ge", "fractional": [0.5, 0.5, 0.489781]},
+      {"id": "Ge8", "element": "Ge", "fractional": [0.75, 0.75, 0.617336]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Si/Ge(001) coherent heterostructure starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "diamond cubic heterostructure",
+    "materials": ["Si", "Ge"],
+    "interface": "Si/Ge",
+    "interface_orientation": "(001)",
+    "interface_axis": "c",
+    "substrate": "Si",
+    "in_plane_lattice_angstrom": 5.5445,
+    "si_reference_lattice_angstrom": 5.431,
+    "ge_reference_lattice_angstrom": 5.658,
+    "coherent_strain_model": "average_in_plane_lattice",
+    "band_alignment_model": "electron_affinity_metadata_reference",
+    "band_alignment_reference": "template_estimate_for_preflight_only",
+    "material_electronic_properties": {
+      "Si": {"electron_affinity_ev": 4.05, "band_gap_ev": 1.12},
+      "Ge": {"electron_affinity_ev": 4.0, "band_gap_ev": 0.66}
+    }
+  }
+}

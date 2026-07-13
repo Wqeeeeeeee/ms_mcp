@@ -1,0 +1,74 @@
+{
+  "project_id": "silicon_silicon_dioxide_100_interface_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "silicon_silicon_dioxide_100_interface",
+    "lattice": {"a": 5.431, "b": 5.431, "c": 22.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "SiSub1", "element": "Si", "fractional": [0.0, 0.0, 0.05]},
+      {"id": "SiSub2", "element": "Si", "fractional": [0.5, 0.5, 0.05]},
+      {"id": "SiSub3", "element": "Si", "fractional": [0.25, 0.25, 0.15]},
+      {"id": "SiSub4", "element": "Si", "fractional": [0.75, 0.75, 0.15]},
+      {"id": "SiSub5", "element": "Si", "fractional": [0.0, 0.5, 0.25]},
+      {"id": "SiSub6", "element": "Si", "fractional": [0.5, 0.0, 0.25]},
+      {"id": "SiSub7", "element": "Si", "fractional": [0.25, 0.75, 0.35]},
+      {"id": "SiSub8", "element": "Si", "fractional": [0.75, 0.25, 0.35]},
+      {"id": "OxSi1", "element": "Si", "fractional": [0.0, 0.0, 0.43]},
+      {"id": "OxSi2", "element": "Si", "fractional": [0.5, 0.5, 0.43]},
+      {"id": "O1", "element": "O", "fractional": [0.25, 0.0, 0.43]},
+      {"id": "O2", "element": "O", "fractional": [0.0, 0.25, 0.43]},
+      {"id": "O3", "element": "O", "fractional": [0.75, 0.5, 0.43]},
+      {"id": "O4", "element": "O", "fractional": [0.5, 0.75, 0.43]},
+      {"id": "OxSi3", "element": "Si", "fractional": [0.25, 0.25, 0.55]},
+      {"id": "OxSi4", "element": "Si", "fractional": [0.75, 0.75, 0.55]},
+      {"id": "O5", "element": "O", "fractional": [0.25, 0.5, 0.55]},
+      {"id": "O6", "element": "O", "fractional": [0.5, 0.25, 0.55]},
+      {"id": "O7", "element": "O", "fractional": [0.75, 0.0, 0.55]},
+      {"id": "O8", "element": "O", "fractional": [0.0, 0.75, 0.55]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 4,
+    "require_convergence": false,
+    "notes": [
+      "Si(100)/SiO2 gate-oxide interface starting point; explicit execute materializes CIF for GUI hot-loading.",
+      "The oxide is an idealized mixed Si/O layer model for setup and visual review, not a production-relaxed amorphous oxide."
+    ]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "semiconductor oxide interface",
+    "materials": ["Si", "SiO2"],
+    "interface": "Si/SiO2",
+    "interface_orientation": "Si(100)/SiO2",
+    "interface_axis": "c",
+    "substrate": "Si",
+    "surface_axis": "c",
+    "vacuum_angstrom": 9.9,
+    "in_plane_lattice_angstrom": 5.431,
+    "si_reference_lattice_angstrom": 5.431,
+    "sio2_reference_lattice_angstrom": 5.431,
+    "coherent_strain_model": "matched_to_si_100",
+    "oxide_interface": true,
+    "semiconductor_oxide_interface": true,
+    "mixed_oxide_layers_expected": true,
+    "interface_gap_angstrom": 1.76,
+    "oxide_thickness_angstrom": 4.84,
+    "silicon_slab_thickness_angstrom": 7.7,
+    "material_marker_map": {"O;Si": "SiO2"},
+    "layer_profile_tolerance_fractional": 0.0001
+  }
+}

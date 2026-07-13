@@ -1,0 +1,32 @@
+{
+  "project_id": "diamond_cubic_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "diamond_cubic",
+    "lattice": {"a": 3.567, "b": 3.567, "c": 3.567, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "C1", "element": "C", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "C2", "element": "C", "fractional": [0.25, 0.25, 0.25]},
+      {"id": "C3", "element": "C", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "C4", "element": "C", "fractional": [0.25, 0.75, 0.75]},
+      {"id": "C5", "element": "C", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "C6", "element": "C", "fractional": [0.75, 0.25, 0.75]},
+      {"id": "C7", "element": "C", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "C8", "element": "C", "fractional": [0.75, 0.75, 0.25]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]},
+  "metadata": {"source": "example", "domain": "semiconductor", "structure_family": "diamond cubic", "material_family": "wide bandgap power semiconductor"}
+}

@@ -1,0 +1,45 @@
+{
+  "project_id": "gallium_arsenide_001_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "gallium_arsenide_001_slab",
+    "lattice": {"a": 5.6533, "b": 5.6533, "c": 25.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Ga1", "element": "Ga", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Ga2", "element": "Ga", "fractional": [0.0, 0.5, 0.113066]},
+      {"id": "Ga3", "element": "Ga", "fractional": [0.5, 0.0, 0.113066]},
+      {"id": "Ga4", "element": "Ga", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "As1", "element": "As", "fractional": [0.25, 0.25, 0.056533]},
+      {"id": "As2", "element": "As", "fractional": [0.25, 0.75, 0.169599]},
+      {"id": "As3", "element": "As", "fractional": [0.75, 0.25, 0.169599]},
+      {"id": "As4", "element": "As", "fractional": [0.75, 0.75, 0.056533]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Unpassivated slab starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "zinc blende slab",
+    "surface_orientation": "(001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 5.6533,
+    "vacuum_angstrom": 19.3467,
+    "termination": "unpassivated"
+  }
+}

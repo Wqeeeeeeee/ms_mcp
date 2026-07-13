@@ -1,0 +1,169 @@
+{
+  "$defs": {
+    "BasisAtomSpec": {
+      "additionalProperties": false,
+      "description": "基原子规格。\n\n属性:\n    id: 原子唯一标识符\n    element: 元素符号\n    fractional: 分数坐标",
+      "properties": {
+        "id": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "element": {
+          "maxLength": 3,
+          "minLength": 1,
+          "title": "Element",
+          "type": "string"
+        },
+        "fractional": {
+          "$ref": "#/$defs/FractionalVector3"
+        }
+      },
+      "required": [
+        "id",
+        "element",
+        "fractional"
+      ],
+      "title": "BasisAtomSpec",
+      "type": "object"
+    },
+    "CrystalOperation": {
+      "additionalProperties": false,
+      "description": "晶体操作规格。\n\n属性:\n    type: 操作类型\n    parameters: 操作参数",
+      "properties": {
+        "type": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "CrystalOperation",
+      "type": "object"
+    },
+    "FractionalVector3": {
+      "additionalProperties": false,
+      "description": "分数坐标向量。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "z": {
+          "title": "Z",
+          "type": "number"
+        },
+        "allow_outside_cell": {
+          "default": false,
+          "title": "Allow Outside Cell",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "title": "FractionalVector3",
+      "type": "object"
+    },
+    "LatticeSpec": {
+      "additionalProperties": false,
+      "description": "晶格规格。\n\n属性:\n    a: 晶格参数 a（埃）\n    b: 晶格参数 b（埃）\n    c: 晶格参数 c（埃）\n    alpha: 晶格角度 alpha（度）\n    beta: 晶格角度 beta（度）\n    gamma: 晶格角度 gamma（度）",
+      "properties": {
+        "a": {
+          "exclusiveMinimum": 0,
+          "title": "A",
+          "type": "number"
+        },
+        "b": {
+          "exclusiveMinimum": 0,
+          "title": "B",
+          "type": "number"
+        },
+        "c": {
+          "exclusiveMinimum": 0,
+          "title": "C",
+          "type": "number"
+        },
+        "alpha": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Alpha",
+          "type": "number"
+        },
+        "beta": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Beta",
+          "type": "number"
+        },
+        "gamma": {
+          "exclusiveMaximum": 180,
+          "exclusiveMinimum": 0,
+          "title": "Gamma",
+          "type": "number"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "c",
+        "alpha",
+        "beta",
+        "gamma"
+      ],
+      "title": "LatticeSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "晶体规格。\n\n属性:\n    name: 晶体名称\n    lattice: 晶格规格\n    basis_atoms: 基原子列表\n    operations: 操作列表",
+  "properties": {
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "lattice": {
+      "$ref": "#/$defs/LatticeSpec"
+    },
+    "basis_atoms": {
+      "items": {
+        "$ref": "#/$defs/BasisAtomSpec"
+      },
+      "minItems": 1,
+      "title": "Basis Atoms",
+      "type": "array"
+    },
+    "operations": {
+      "items": {
+        "$ref": "#/$defs/CrystalOperation"
+      },
+      "title": "Operations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "name",
+    "lattice",
+    "basis_atoms"
+  ],
+  "title": "CrystalSpec",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,39 @@
+{
+  "project_id": "aluminum_nitride_wurtzite_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "aluminum_nitride_wurtzite",
+    "lattice": {"a": 3.112, "b": 3.112, "c": 4.982, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Al1", "element": "Al", "fractional": [0.333333, 0.666667, 0.0]},
+      {"id": "Al2", "element": "Al", "fractional": [0.666667, 0.333333, 0.5]},
+      {"id": "N1", "element": "N", "fractional": [0.333333, 0.666667, 0.382]},
+      {"id": "N2", "element": "N", "fractional": [0.666667, 0.333333, 0.882]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 560,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 1,
+    "require_convergence": false,
+    "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite",
+    "material": "AlN",
+    "reference_lattice_angstrom": {"a": 3.112, "c": 4.982},
+    "internal_parameter_u": 0.382
+  }
+}

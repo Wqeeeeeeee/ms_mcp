@@ -22779,11 +22779,55 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _report_artifact_path_with_source(report: dict[str, Any], key: str) -> tuple[Any, str]:
+    """Resolve a declared report artifact, preferring a path that currently exists."""
+
+    candidates: list[tuple[str, Any]] = [("top_level", report.get(key))]
+    for source in ("diagnostics", "artifacts"):
+        section = report.get(source) if isinstance(report.get(source), dict) else {}
+        candidates.append((source, section.get(key)))
+
+    first_declared: tuple[Any, str] | None = None
+    for source, value in candidates:
+        if not value:
+            continue
+        if first_declared is None:
+            first_declared = (value, source)
+        if _artifact_path_exists(value):
+            return value, source
+    if first_declared is not None:
+        return first_declared
+    return None, "missing"
+
+
 def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str, Any]:
     """Return a compact trust check for whether Materials Studio shows this revision."""
 
     gui = report.get("gui") if isinstance(report.get("gui"), dict) else {}
     structure = report.get("structure") if isinstance(report.get("structure"), dict) else {}
+    view_audit_report_path, view_audit_report_path_source = _report_artifact_path_with_source(
+        report,
+        "view_audit_report_path",
+    )
+    report_json_path, report_json_path_source = _report_artifact_path_with_source(
+        report,
+        "report_json_path",
+    )
+    view_bundle_manifest_path, view_bundle_manifest_path_source = _report_artifact_path_with_source(
+        report,
+        "view_bundle_manifest_path",
+    )
+    artifact_evidence = {
+        "view_audit_report_path": view_audit_report_path,
+        "view_audit_report_exists": _artifact_path_exists(view_audit_report_path),
+        "view_audit_report_path_source": view_audit_report_path_source,
+        "report_json_path": report_json_path,
+        "report_json_exists": _artifact_path_exists(report_json_path),
+        "report_json_path_source": report_json_path_source,
+        "view_bundle_manifest_path": view_bundle_manifest_path,
+        "view_bundle_manifest_exists": _artifact_path_exists(view_bundle_manifest_path),
+        "view_bundle_manifest_path_source": view_bundle_manifest_path_source,
+    }
     if not gui:
         return {
             "available": False,
@@ -22792,6 +22836,7 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
             "loaded_current_revision": None,
             "needs_reload": None,
             "needs_snapshot": None,
+            **artifact_evidence,
         }
 
     hot_loaded = bool(gui.get("hot_loaded"))
@@ -22934,8 +22979,7 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         "snapshot_path": gui.get("snapshot_path"),
         "opened_structure_path": gui.get("opened_structure_path"),
         "expected_structure_path": structure.get("path") or gui.get("expected_structure_path"),
-        "view_audit_report_path": report.get("view_audit_report_path"),
-        "view_audit_report_exists": _artifact_path_exists(report.get("view_audit_report_path")),
+        **artifact_evidence,
         "open_identity_verification": gui.get("open_identity_verification"),
         "window_identity_verification": window_identity,
         "matching_window_count": gui.get("matching_window_count"),
@@ -23017,6 +23061,20 @@ def _gui_current_revision_live_summary(gui_current_revision: dict[str, Any]) -> 
             ),
             "gui_current_revision_window_management_can_apply_current_revision_without_new_window": gui_current_revision.get(
                 "window_management_can_apply_current_revision_without_new_window"
+            ),
+            "gui_current_revision_view_audit_report_exists": gui_current_revision.get(
+                "view_audit_report_exists"
+            ),
+            "gui_current_revision_view_audit_report_path_source": gui_current_revision.get(
+                "view_audit_report_path_source"
+            ),
+            "gui_current_revision_report_json_exists": gui_current_revision.get("report_json_exists"),
+            "gui_current_revision_report_json_path_source": gui_current_revision.get("report_json_path_source"),
+            "gui_current_revision_view_bundle_manifest_exists": gui_current_revision.get(
+                "view_bundle_manifest_exists"
+            ),
+            "gui_current_revision_view_bundle_manifest_path_source": gui_current_revision.get(
+                "view_bundle_manifest_path_source"
             ),
             "gui_current_revision_recommended_tool": gui_current_revision.get("recommended_tool"),
         }
@@ -23189,6 +23247,13 @@ def _change_receipt_gui_current_revision(gui_current_revision: dict[str, Any]) -
             "visual_validation": gui_current_revision.get("visual_validation"),
             "view_audit_report_path": gui_current_revision.get("view_audit_report_path"),
             "view_audit_report_exists": gui_current_revision.get("view_audit_report_exists"),
+            "view_audit_report_path_source": gui_current_revision.get("view_audit_report_path_source"),
+            "report_json_path": gui_current_revision.get("report_json_path"),
+            "report_json_exists": gui_current_revision.get("report_json_exists"),
+            "report_json_path_source": gui_current_revision.get("report_json_path_source"),
+            "view_bundle_manifest_path": gui_current_revision.get("view_bundle_manifest_path"),
+            "view_bundle_manifest_exists": gui_current_revision.get("view_bundle_manifest_exists"),
+            "view_bundle_manifest_path_source": gui_current_revision.get("view_bundle_manifest_path_source"),
             "snapshot_path": gui_current_revision.get("snapshot_path"),
             "opened_structure_path": gui_current_revision.get("opened_structure_path"),
             "expected_structure_path": gui_current_revision.get("expected_structure_path"),
@@ -25841,6 +25906,13 @@ def _compact_gui_current_revision(value: Any) -> dict[str, Any] | None:
             "expected_structure_path",
             "view_audit_report_path",
             "view_audit_report_exists",
+            "view_audit_report_path_source",
+            "report_json_path",
+            "report_json_exists",
+            "report_json_path_source",
+            "view_bundle_manifest_path",
+            "view_bundle_manifest_exists",
+            "view_bundle_manifest_path_source",
             "open_identity_verification",
             "window_identity_verification",
             "matching_window_count",
@@ -26898,6 +26970,12 @@ def _compact_live_response(
             "view_bundle_manifest_path",
             "view_bundle_row_counts",
             "view_audit_report_path",
+            "gui_current_revision_view_audit_report_exists",
+            "gui_current_revision_view_audit_report_path_source",
+            "gui_current_revision_report_json_exists",
+            "gui_current_revision_report_json_path_source",
+            "gui_current_revision_view_bundle_manifest_exists",
+            "gui_current_revision_view_bundle_manifest_path_source",
             "view_request_requested",
             "view_request_exported_names",
             "view_request_matches_export",

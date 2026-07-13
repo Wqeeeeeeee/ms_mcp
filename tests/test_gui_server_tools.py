@@ -5235,6 +5235,60 @@ def test_live_modeling_request_flags_post_open_spawned_matstudio_process(
     assert summary_rows[0]["gui_post_open_window_management_recommended_tool"] == "material_studio_gui_status"
 
 
+def test_gui_current_revision_prefers_existing_nested_diagnostic_artifacts(tmp_path: Path) -> None:
+    stale_audit_path = tmp_path / "stale" / "view_audit.json"
+    stale_manifest_path = tmp_path / "stale" / "manifest.json"
+    view_audit_path = tmp_path / "view_audit.json"
+    report_json_path = tmp_path / "report.json"
+    view_bundle_manifest_path = tmp_path / "view_bundle_manifest.json"
+    for path in (view_audit_path, report_json_path, view_bundle_manifest_path):
+        path.write_text("{}", encoding="utf-8")
+
+    report = {
+        "project_id": "artifact_binding_proj",
+        "revision": 3,
+        "view_audit_report_path": str(stale_audit_path),
+        "diagnostics": {
+            "view_audit_report_path": str(view_audit_path),
+            "report_json_path": str(report_json_path),
+            "view_bundle_manifest_path": str(stale_manifest_path),
+        },
+        "artifacts": {"view_bundle_manifest_path": str(view_bundle_manifest_path)},
+        "structure": {"path": str(tmp_path / "structure.cif"), "exists": True},
+        "gui": {
+            "hot_loaded": True,
+            "loaded_current_revision": True,
+            "visual_validation": "passed",
+        },
+    }
+
+    current = server._gui_current_revision_status_from_report(report)
+
+    assert current["view_audit_report_path"] == str(view_audit_path)
+    assert current["view_audit_report_exists"] is True
+    assert current["view_audit_report_path_source"] == "diagnostics"
+    assert current["report_json_path"] == str(report_json_path)
+    assert current["report_json_exists"] is True
+    assert current["report_json_path_source"] == "diagnostics"
+    assert current["view_bundle_manifest_path"] == str(view_bundle_manifest_path)
+    assert current["view_bundle_manifest_exists"] is True
+    assert current["view_bundle_manifest_path_source"] == "artifacts"
+
+    summary = server._gui_current_revision_live_summary(current)
+    assert summary["gui_current_revision_view_audit_report_exists"] is True
+    assert summary["gui_current_revision_view_audit_report_path_source"] == "diagnostics"
+    assert summary["gui_current_revision_report_json_exists"] is True
+    assert summary["gui_current_revision_view_bundle_manifest_exists"] is True
+
+    receipt = server._change_receipt_gui_current_revision(current)
+    assert receipt["view_audit_report_path"] == str(view_audit_path)
+    assert receipt["view_audit_report_path_source"] == "diagnostics"
+    assert receipt["report_json_path"] == str(report_json_path)
+    assert receipt["report_json_path_source"] == "diagnostics"
+    assert receipt["view_bundle_manifest_path"] == str(view_bundle_manifest_path)
+    assert receipt["view_bundle_manifest_path_source"] == "artifacts"
+
+
 def test_gui_current_revision_recommends_activate_for_loaded_target_window_not_selected() -> None:
     report = {
         "project_id": "active_proj",
@@ -5281,6 +5335,7 @@ def test_gui_current_revision_recommends_activate_for_loaded_target_window_not_s
     assert current["window_management_warning_count"] == 1
     assert current["view_audit_report_path"] == "C:\\ms\\view_audit.json"
     assert current["view_audit_report_exists"] is False
+    assert current["view_audit_report_path_source"] == "top_level"
 
     summary = server._gui_current_revision_live_summary(current)
     assert summary["gui_current_revision_needs_activation"] is True
@@ -5295,6 +5350,7 @@ def test_gui_current_revision_recommends_activate_for_loaded_target_window_not_s
     assert receipt["target_window_is_selected"] is False
     assert receipt["view_audit_report_path"] == "C:\\ms\\view_audit.json"
     assert receipt["view_audit_report_exists"] is False
+    assert receipt["view_audit_report_path_source"] == "top_level"
 
 
 def test_gui_current_revision_recommends_snapshot_for_visual_warning() -> None:

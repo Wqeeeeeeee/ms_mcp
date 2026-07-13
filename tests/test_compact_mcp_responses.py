@@ -167,6 +167,25 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert compact_status.get("gui_view_replay_status") is None
     assert compact_status["gui_current_revision_recommended_tool"] == "material_studio_gui_apply_current_revision"
     assert compact_status.get("gui_current_revision_target_window_handle") is None
+    gui_current_revision = compact_status["gui_current_revision"]
+    assert gui_current_revision["view_audit_report_path"] == compact_status["view_audit_report_path"]
+    assert gui_current_revision["view_audit_report_exists"] is True
+    assert gui_current_revision["view_audit_report_path_source"] == "diagnostics"
+    assert gui_current_revision["report_json_path"] == compact_status["report_json_path"]
+    assert gui_current_revision["report_json_exists"] is True
+    assert gui_current_revision["report_json_path_source"] == "diagnostics"
+    assert (
+        gui_current_revision["view_bundle_manifest_path"]
+        == full_status["modeling_report"]["diagnostics"]["view_bundle_manifest_path"]
+    )
+    assert gui_current_revision["view_bundle_manifest_exists"] is True
+    assert gui_current_revision["view_bundle_manifest_path_source"] == "diagnostics"
+    assert compact_status["view_bundle_manifest_path"] == compact_status["view_bundle_files"][
+        "diagnostic_export_manifest_json"
+    ]
+    assert compact_status["live_summary"]["gui_current_revision_view_audit_report_exists"] is True
+    assert compact_status["live_summary"]["gui_current_revision_report_json_exists"] is True
+    assert compact_status["live_summary"]["gui_current_revision_view_bundle_manifest_exists"] is True
     assert "modeling_report" not in compact_status
     assert isinstance(full_status["modeling_report"], dict)
     assert isinstance(full_status["view_audit"], dict)

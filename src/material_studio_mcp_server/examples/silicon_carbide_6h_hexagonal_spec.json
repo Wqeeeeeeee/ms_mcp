@@ -1,0 +1,59 @@
+{
+  "project_id": "silicon_carbide_6h_hexagonal_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "silicon_carbide_6h_hexagonal",
+    "lattice": {"a": 3.081, "b": 3.081, "c": 15.1248, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Si1", "element": "Si", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Si2", "element": "Si", "fractional": [0.0, 0.0, 0.5]},
+      {"id": "Si3", "element": "Si", "fractional": [0.333333, 0.666667, 0.1664]},
+      {"id": "Si4", "element": "Si", "fractional": [0.666667, 0.333333, 0.6664]},
+      {"id": "Si5", "element": "Si", "fractional": [0.666667, 0.333333, 0.3329]},
+      {"id": "Si6", "element": "Si", "fractional": [0.333333, 0.666667, 0.8329]},
+      {"id": "C1", "element": "C", "fractional": [0.333333, 0.666667, 0.0412]},
+      {"id": "C2", "element": "C", "fractional": [0.666667, 0.333333, 0.5412]},
+      {"id": "C3", "element": "C", "fractional": [0.666667, 0.333333, 0.208]},
+      {"id": "C4", "element": "C", "fractional": [0.333333, 0.666667, 0.708]},
+      {"id": "C5", "element": "C", "fractional": [0.0, 0.0, 0.3746]},
+      {"id": "C6", "element": "C", "fractional": [0.0, 0.0, 0.8746]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 1,
+    "require_convergence": false,
+    "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "Capitani et al. 2007 single-crystal X-ray refinement",
+    "source_title": "The 6H-SiC structure model: Further refinement from SCXRD data from a terrestrial moissanite",
+    "source_doi": "10.2138/am.2007.2346",
+    "source_url": "https://rruff.geo.arizona.edu/doclib/am/vol92/AM92_403.pdf",
+    "source_temperature_kelvin": 293,
+    "domain": "semiconductor",
+    "structure_family": "hexagonal 6H-SiC",
+    "material": "6H-SiC",
+    "polytype": "6H",
+    "space_group": "P63mc",
+    "space_group_number": 186,
+    "prototype": "AB_hP12_186_a2b_a2b",
+    "stacking_sequence": "ABCACB",
+    "formula_units_per_cell": 6,
+    "reference_lattice_angstrom": {"a": 3.081, "c": 15.1248},
+    "reference_average_si_c_bond_angstrom": 1.8898,
+    "coordinate_basis": "Table 2 asymmetric special positions expanded to both P63mc mates",
+    "symmetry_expansion": "For each listed 2a/2b special position, include its z+1/2 mate modulo 1; 2b mates exchange the 1/3 and 2/3 basal coordinates."
+  }
+}

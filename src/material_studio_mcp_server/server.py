@@ -3115,6 +3115,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "构建锗晶体并热加载到 Materials Studio",
                 "\u6784\u5efa\u91d1\u521a\u77f3\u6676\u4f53\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
                 "\u6784\u5efa\u7845 PN \u7ed3\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
+                "\u6784\u5efa6H\u78b3\u5316\u7845\u6676\u4f53\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
                 "\u6784\u5efa4H-SiC MOS\u7535\u5bb9\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
                 "\u6784\u5efa InAs/GaSb \u7834\u7f3a\u5e26\u9699\u91cf\u5b50\u9631\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
                 "\u6784\u5efa\u91d1\u5c5e-\u534a\u5bfc\u4f53\u63a5\u89e6\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",

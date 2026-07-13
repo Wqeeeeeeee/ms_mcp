@@ -1300,6 +1300,38 @@ def test_model_view_audit_reports_4h_silicon_carbide_semiconductor_health() -> N
     assert band_path["path_label"] == "Gamma-M-K-Gamma-A-L-H-A-L-M-K-H"
 
 
+def test_model_view_audit_reports_6h_silicon_carbide_semiconductor_health() -> None:
+    sic = model_view_audit(load_example("silicon_carbide_6h_hexagonal_spec.json"))["health"]["semiconductor_health"]
+
+    assert sic["ok"] is True
+    assert sic["rule"] == "group_iv_tetrahedral"
+    assert sic["structure_family"] == "hexagonal 6H-SiC"
+    assert sic["elements"] == ["C", "Si"]
+    assert sic["composition_summary"]["formula"] == "C6Si6"
+    assert sic["composition_summary"]["reduced_formula"] == "CSi"
+    assert sic["neighbor_pair_counts"] == {"C-Si": 24}
+    assert sic["unexpected_neighbor_pair_count"] == 0
+    assert sic["coordination_outlier_count"] == 0
+    assert sic["coordination_by_element"]["C"]["min"] == 4.0
+    assert sic["coordination_by_element"]["Si"]["max"] == 4.0
+    distances = sic["neighbor_distance_summary"]["distance_stats_angstrom"]
+    assert distances["min"] == 1.884804
+    assert distances["max"] == 1.89665
+    assert distances["mean"] == 1.888015
+    charge_balance = sic["charge_balance_summary"]
+    assert charge_balance["total_valence_electron_count"] == 48
+    assert charge_balance["carrier_type_hint"] == "neutral_or_intrinsic"
+    calculation = sic["calculation_preflight_summary"]
+    assert calculation["module"] == "CASTEP"
+    assert calculation["cutoff_energy_ev"] == 600
+    assert calculation["ready_for_energy_preflight"] is True
+    reciprocal = sic["reciprocal_lattice_summary"]
+    assert reciprocal["estimated_kpoints_from_separation"] == [59, 59, 11]
+    band_path = sic["band_path_summary"]
+    assert band_path["bravais_lattice"] == "hexagonal"
+    assert band_path["path_label"] == "Gamma-M-K-Gamma-A-L-H-A-L-M-K-H"
+
+
 def test_model_view_audit_reports_ii_vi_wurtzite_health() -> None:
     audit = model_view_audit(load_example("zinc_oxide_wurtzite_spec.json"))
     zno = audit["health"]["semiconductor_health"]

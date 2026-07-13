@@ -21,6 +21,35 @@ def test_example_specs_validate() -> None:
         assert spec.project_id
 
 
+def test_6h_silicon_carbide_example_preserves_reviewed_scxrd_structure() -> None:
+    payload = json.loads((EXAMPLES / "silicon_carbide_6h_hexagonal_spec.json").read_text(encoding="utf-8"))
+    spec = ModelSpec.model_validate(payload)
+
+    assert spec.model_type == "crystal"
+    assert spec.model.lattice.a == 3.081
+    assert spec.model.lattice.c == 15.1248
+    assert len(spec.model.basis_atoms) == 12
+    assert [atom.element for atom in spec.model.basis_atoms].count("Si") == 6
+    assert [atom.element for atom in spec.model.basis_atoms].count("C") == 6
+    assert spec.model.basis_atoms[2].fractional.model_dump(mode="json") == {
+        "x": 0.333333,
+        "y": 0.666667,
+        "z": 0.1664,
+        "allow_outside_cell": False,
+    }
+    assert spec.model.basis_atoms[8].fractional.model_dump(mode="json") == {
+        "x": 0.666667,
+        "y": 0.333333,
+        "z": 0.208,
+        "allow_outside_cell": False,
+    }
+    assert spec.metadata["polytype"] == "6H"
+    assert spec.metadata["space_group"] == "P63mc"
+    assert spec.metadata["space_group_number"] == 186
+    assert spec.metadata["stacking_sequence"] == "ABCACB"
+    assert spec.metadata["source_doi"] == "10.2138/am.2007.2346"
+
+
 def test_invalid_element_fails() -> None:
     with pytest.raises(ValidationError):
         AtomSpec(id="X1", element="Bad", xyz_angstrom=[0, 0, 0])

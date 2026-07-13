@@ -2286,6 +2286,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "electronic_structure_preflight" in semiconductor_profiles["silicon_carbide_4h_hexagonal"][
         "default_diagnostic_focuses"
     ]
+    assert semiconductor_profiles["silicon_carbide_6h_hexagonal"]["polytype"] == "6H"
+    assert semiconductor_profiles["silicon_carbide_6h_hexagonal"]["structure_family"] == "hexagonal 6H-SiC"
+    assert semiconductor_profiles["silicon_carbide_6h_hexagonal"]["execute_backend"] == (
+        "crystal_cif_materialize_for_gui_hotload"
+    )
+    assert "electronic_structure_preflight" in semiconductor_profiles["silicon_carbide_6h_hexagonal"][
+        "default_diagnostic_focuses"
+    ]
     sic_mos = semiconductor_profiles["aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"]
     assert sic_mos["interface"] == "Al/SiO2/4H-SiC"
     assert "mos_gate_stack" in sic_mos["default_diagnostic_focuses"]
@@ -2932,6 +2940,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "\u78b3\u5316\u7845mos" in alias_by_template[
         "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
     ]["terms"]
+    assert "6h\u78b3\u5316\u7845" in alias_by_template["silicon_carbide_6h_hexagonal"]["terms"]
     assert "\u6c27\u5316\u94ea" in alias_by_template[
         "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor"
     ]["terms"]
@@ -2945,6 +2954,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["natural_language"]["cjk_semiconductor_aliases"] == cjk_aliases
     assert "构建砷化镓晶体并热加载到 Materials Studio" in capabilities["natural_language"]["cjk_semiconductor_hotload_examples"]
     assert "构建二硫化钼单层并热加载到 Materials Studio" in capabilities["natural_language"]["cjk_semiconductor_hotload_examples"]
+    assert (
+        "\u6784\u5efa6H\u78b3\u5316\u7845\u6676\u4f53\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio"
+        in capabilities["natural_language"]["cjk_semiconductor_hotload_examples"]
+    )
     assert (
         "\u6784\u5efa4H-SiC MOS\u7535\u5bb9\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio"
         in capabilities["natural_language"]["cjk_semiconductor_hotload_examples"]
@@ -9059,8 +9072,10 @@ def test_live_modeling_request_infers_semiconductor_crystal_templates(monkeypatc
         ("\u6784\u5efa\u7845\u9517\u91cf\u5b50\u9631\u5e76\u51c6\u5907\u9884\u89c8", "silicon_germanium_001_heterostructure", {"Ge": 8, "Si": 8}, "diamond cubic heterostructure"),
         ("Build 3C-SiC zinc blende crystal for semiconductor modeling.", "silicon_carbide_3c_zincblende", {"C": 4, "Si": 4}, "zinc blende"),
         ("Build 4H-SiC hexagonal crystal for semiconductor modeling.", "silicon_carbide_4h_hexagonal", {"C": 4, "Si": 4}, "hexagonal 4H-SiC"),
+        ("Build 6H-SiC hexagonal crystal for semiconductor modeling.", "silicon_carbide_6h_hexagonal", {"C": 6, "Si": 6}, "hexagonal 6H-SiC"),
         ("Build hexagonal silicon carbide for semiconductor modeling.", "silicon_carbide_4h_hexagonal", {"C": 4, "Si": 4}, "hexagonal 4H-SiC"),
         ("\u6784\u5efa4H\u78b3\u5316\u7845\u6676\u4f53\u5e76\u51c6\u5907\u9884\u89c8", "silicon_carbide_4h_hexagonal", {"C": 4, "Si": 4}, "hexagonal 4H-SiC"),
+        ("\u6784\u5efa6H\u78b3\u5316\u7845\u6676\u4f53\u5e76\u51c6\u5907\u9884\u89c8", "silicon_carbide_6h_hexagonal", {"C": 6, "Si": 6}, "hexagonal 6H-SiC"),
         ("构建碳化硅半导体晶体", "silicon_carbide_3c_zincblende", {"C": 4, "Si": 4}, "zinc blende"),
         ("Build cubic BN zinc blende crystal for semiconductor modeling.", "boron_nitride_zincblende", {"B": 4, "N": 4}, "zinc blende"),
         ("构建立方氮化硼半导体晶体", "boron_nitride_zincblende", {"B": 4, "N": 4}, "zinc blende"),
@@ -21605,6 +21620,51 @@ def test_live_modeling_request_chinese_passivates_all_dangling_bonds_without_hyd
     assert Path(result["view_bundle_manifest_path"]).exists()
 
 
+def test_6h_sic_routing_is_polytype_specific_and_rejects_unreviewed_derivatives(tmp_path: Path) -> None:
+    english = infer_modeling_plan("Build 6H-SiC bulk crystal and export all view parameters.")
+    chinese = infer_modeling_plan("\u6784\u5efa6H\u78b3\u5316\u7845\u6676\u4f53\u5e76\u5bfc\u51fa\u5404\u79cd\u89c6\u89d2\u53c2\u6570")
+    reversed_name = infer_modeling_plan("Build silicon carbide 6H crystal.")
+    view_diagnostic = infer_modeling_plan("Build 6H-SiC crystal and export surface-normal view parameters.")
+
+    for plan in (english, chinese, reversed_name, view_diagnostic):
+        assert plan.kind == "spec"
+        assert plan.template_id == "silicon_carbide_6h_hexagonal"
+        assert plan.payload is not None
+        assert plan.payload["metadata"]["polytype"] == "6H"
+        assert len(plan.payload["model"]["basis_atoms"]) == 12
+
+    for request in (
+        "Build a 6H-SiC(0001) Si-face slab and export all view parameters.",
+        "Build a 6H-SiC surface (0001).",
+        "Build an Au/6H-SiC(0001) Schottky contact.",
+        "Build a 6H-SiC MOS capacitor.",
+        "Build a 6H-SiC MOS device.",
+        "\u6784\u5efa6H\u78b3\u5316\u7845\u8868\u9762\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
+        "\u6784\u5efa6H\u78b3\u5316\u7845\u8868\u9762\u6a21\u578b\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
+    ):
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "unsupported"
+        assert plan.template_id is None
+        assert any("No 3C-SiC, 4H-SiC, or silicon substitute" in note for note in plan.notes)
+
+    germanium_contact = infer_modeling_plan("Build a metal/germanium Schottky contact.")
+    assert germanium_contact.kind == "unsupported"
+    assert germanium_contact.template_id is None
+    assert any("non-silicon semiconductor host" in note for note in germanium_contact.notes)
+
+    rejected_live = server.material_studio_live_modeling_request(
+        "Build an Au/6H-SiC(0001) Schottky contact and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    assert rejected_live["ok"] is False
+    assert rejected_live["nl_plan"]["kind"] == "unsupported"
+    assert rejected_live["nl_plan"]["template_id"] is None
+    assert not list(tmp_path.rglob("current.json"))
+
+    assert infer_modeling_plan("Build 4H-SiC crystal.").template_id == "silicon_carbide_4h_hexagonal"
+    assert infer_modeling_plan("Build 3C-SiC crystal.").template_id == "silicon_carbide_3c_zincblende"
+
+
 def test_live_modeling_request_hotloads_semiconductor_crystal_as_cif(monkeypatch, tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
@@ -21677,6 +21737,34 @@ def test_live_modeling_request_hotloads_semiconductor_crystal_as_cif(monkeypatch
     assert sic_4h["gui_open"]["structure_path"].endswith(".cif")
     assert sic_4h["modeling_report"]["gui"]["hot_loaded"] is True
     assert Path(sic_4h["modeling_report"]["diagnostics"]["semiconductor_reciprocal_lattice_csv"]).exists()
+    assert backend.opened[-1].suffix == ".cif"
+
+    sic_6h = server.material_studio_live_modeling_request(
+        (
+            "Build 6H-SiC hexagonal crystal, hot-load it in Materials Studio, "
+            "export all view parameters, and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path),
+    )
+
+    assert sic_6h["ok"] is True
+    assert sic_6h["execution_mode"] == "execute"
+    assert sic_6h["execution_mode_source"] == "explicit_live_intent"
+    assert sic_6h["nl_plan"]["template_id"] == "silicon_carbide_6h_hexagonal"
+    assert sic_6h["view_audit"]["model"]["elements"] == {"C": 6, "Si": 6}
+    semiconductor = sic_6h["modeling_report"]["inspection"]["semiconductor_health"]
+    assert semiconductor["rule"] == "group_iv_tetrahedral"
+    assert semiconductor["coordination_outlier_count"] == 0
+    assert semiconductor["band_path_summary"]["bravais_lattice"] == "hexagonal"
+    assert sic_6h["normality_check_requested"] is True
+    assert sic_6h["diagnostic_export_requested"] is True
+    assert sic_6h["view_bundle_row_counts"]["view_summary"] == 7
+    assert sic_6h["view_bundle_row_counts"]["view_projections"] == 84
+    assert sic_6h["structure_artifact_validation"]["status"] == "matched"
+    assert sic_6h["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert sic_6h["gui_open"]["structure_path"].endswith(".cif")
+    assert sic_6h["modeling_report"]["gui"]["hot_loaded"] is True
+    assert Path(sic_6h["modeling_report"]["diagnostics"]["semiconductor_reciprocal_lattice_csv"]).exists()
     assert backend.opened[-1].suffix == ".cif"
 
     alas = server.material_studio_live_modeling_request(

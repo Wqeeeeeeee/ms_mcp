@@ -476,6 +476,25 @@ TEMPLATE_SPECS: tuple[dict[str, Any], ...] = (
         "domain": "semiconductor",
     },
     {
+        "template_id": "silicon_carbide_6h_hexagonal",
+        "example": "silicon_carbide_6h_hexagonal_spec.json",
+        "terms": (
+            '6h-sic',
+            '6h sic',
+            '6h silicon carbide',
+            '6h silicon-carbide',
+            'sic 6h',
+            'silicon carbide 6h',
+            'silicon-carbide 6h',
+            '6H\u78b3\u5316\u7845',
+            '6h\u78b3\u5316\u7845',
+            '\u78b3\u5316\u78456h',
+            '\u78b3\u5316\u7845 6h',
+        ),
+        "notes": "6H silicon carbide P63mc hP12 bulk crystal from a reviewed SCXRD refinement with CASTEP energy settings.",
+        "domain": "semiconductor",
+    },
+    {
         "template_id": "silicon_carbide_4h_hexagonal",
         "example": "silicon_carbide_4h_hexagonal_spec.json",
         "terms": (
@@ -3960,6 +3979,8 @@ def _text_mentions_non_silicon_pn_host(text: str) -> bool:
 def _text_mentions_non_silicon_semiconductor_material(text: str) -> bool:
     """Return True when a request names a semiconductor not covered by the Si contact template."""
 
+    if re.search(r"\bgermanium\b", text, flags=re.IGNORECASE):
+        return True
     for alias in NON_SILICON_SEMICONDUCTOR_ALIASES:
         if alias == "GaP":
             if re.search(r"(?<![A-Za-z0-9])GaP(?![A-Za-z0-9])", text) or re.search(
@@ -3994,6 +4015,86 @@ def _looks_like_metal_semiconductor_contact_text(text: str) -> bool:
                 "\u63a5\u89e6\u52bf\u5792",
             )
         )
+    )
+
+
+def _mentions_sic_6h(text: str) -> bool:
+    """Return whether a request explicitly names the 6H-SiC polytype."""
+
+    return bool(
+        re.search(
+            r"(?<![A-Za-z0-9])6h[-\s]*(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)(?![A-Za-z0-9])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)[-\s]*6h(?![A-Za-z0-9])",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLanguagePlan | None:
+    """Reject unreviewed 6H-SiC surfaces and devices without changing polytype."""
+
+    if not _mentions_sic_6h(text):
+        return None
+    english_derived_geometry = bool(
+        re.search(
+            r"\b(?:slab|interface|contact|schottky|mos(?:\s+capacitor)?|gate[-\s]+(?:stack|oxide)|heterostructure)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\bsurface\s+(?:structure|model|cell|slab)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:build|create|construct|generate)\b.{0,96}\bsurface\b"
+            r"(?![-\s]+(?:normal|view|projection|parameter|diagnostic))",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\(\s*0001\s*\).{0,24}\bsurface\b(?![-\s]+(?:normal|view|projection|parameter))",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+    cjk_surface_geometry = bool(
+        re.search(
+            r"\u8868\u9762(?!\u6cd5\u5411|\u89c6\u56fe|\u89c6\u89d2|\u6295\u5f71|\u53c2\u6570|\u8bca\u65ad)",
+            text,
+        )
+    )
+    cjk_derived_geometry = cjk_surface_geometry or any(
+        term in text
+        for term in (
+            "\u8868\u9762\u6a21\u578b",
+            "\u8868\u9762\u7ed3\u6784",
+            "\u8868\u9762slab",
+            "\u754c\u9762",
+            "\u63a5\u89e6",
+            "\u8096\u7279\u57fa",
+            "mos\u7535\u5bb9",
+            "\u6805\u5806",
+            "\u5f02\u8d28\u7ed3",
+        )
+    )
+    if not english_derived_geometry and not cjk_derived_geometry:
+        return None
+    return NaturalLanguagePlan(
+        kind="unsupported",
+        payload=None,
+        confidence=0.0,
+        template_id=None,
+        notes=[
+            "A 6H-SiC derived-geometry request was recognized, but only the 6H-SiC P63mc bulk template is reviewed locally.",
+            "No 3C-SiC, 4H-SiC, or silicon substitute was selected.",
+            "Provide a reviewed ModelSpec for the requested 6H-SiC surface, interface, or device geometry before live loading.",
+        ],
     )
 
 
@@ -6181,6 +6282,10 @@ def _is_semiconductor_heterostructure_request(text: str) -> bool:
 
 
 def _infer_template(text: str, *, user_request: str, project_id: str | None) -> NaturalLanguagePlan | None:
+    unsupported_sic_6h_plan = _infer_unsupported_sic_6h_derived_structure_request(text)
+    if unsupported_sic_6h_plan is not None:
+        return unsupported_sic_6h_plan
+
     gaas_contact_plan = _infer_gaas_schottky_contact_template(
         text,
         user_request=user_request,
@@ -7303,6 +7408,13 @@ _CJK_SEMICONDUCTOR_DISCOVERY_ALIASES: tuple[dict[str, Any], ...] = (
         "notes": "Chinese discovery aliases for diamond-cubic carbon wide-bandgap semiconductor starts.",
     },
     {
+        "terms": ("6h-sic", "6h sic", "6h\u78b3\u5316\u7845", "\u78b3\u5316\u78456h", "\u78b3\u5316\u7845 6h"),
+        "template_id": "silicon_carbide_6h_hexagonal",
+        "surface_template_id": None,
+        "surface_intent_terms": [],
+        "notes": "Chinese discovery aliases for the explicit 6H-SiC P63mc bulk start.",
+    },
+    {
         "terms": ("3c-sic", "3c sic", "3c\u78b3\u5316\u7845", "\u78b3\u5316\u7845", "\u78b3\u5316\u7845\u6676\u4f53", "\u78b3\u5316\u7845\u534a\u5bfc\u4f53", "\u7acb\u65b9\u78b3\u5316\u7845"),
         "template_id": "silicon_carbide_3c_zincblende",
         "surface_template_id": None,
@@ -7554,6 +7666,8 @@ def _match_explicit_template_id(text: str) -> str | None:
     selection_text = _surface_template_selection_text(text)
     lowered = selection_text.lower()
     compact = re.sub(r"\s+", "", lowered)
+    if _mentions_sic_6h(selection_text):
+        return "silicon_carbide_6h_hexagonal"
     beta_ga2o3_terms = (
         "ga2o3",
         "beta ga2o3",
@@ -7592,6 +7706,8 @@ def _match_cjk_template_id(text: str) -> str | None:
     sic_mos_intent = any(
         term in text for term in ("mos", "\u91d1\u6c27\u534a", "\u7535\u5bb9", "\u6805\u6c27", "\u6805\u4ecb\u8d28")
     )
+    if not sic_mos_intent and _mentions_sic_6h(text):
+        return "silicon_carbide_6h_hexagonal"
     if not sic_mos_intent and (
         any(term in compact_text for term in ("4h\u78b3\u5316\u7845", "4h-sic", "4hsic"))
         or any(term in text for term in ("\u516d\u65b9\u78b3\u5316\u7845",))

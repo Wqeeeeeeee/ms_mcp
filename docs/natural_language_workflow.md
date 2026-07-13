@@ -137,7 +137,8 @@ material/interface/surface metadata, the execute backend, and default diagnostic
 focuses to request when exporting model checks. Current local crystal templates
 include Si diamond cubic, Ge diamond cubic, GaAs zinc blende, AlAs zinc
 blende, AlP zinc blende, AlSb zinc blende, GaP zinc blende, GaSb zinc blende,
-InP zinc blende, InAs zinc blende, InSb zinc blende, 3C-SiC zinc blende, c-BN zinc blende,
+InP zinc blende, InAs zinc blende, InSb zinc blende, 3C-SiC zinc blende,
+4H-SiC and 6H-SiC hexagonal bulk, c-BN zinc blende,
 ZnO wurtzite, AlN wurtzite, InN wurtzite, CdTe zinc blende, ZnS zinc blende, ZnSe zinc blende, ZnTe zinc blende, CdS zinc blende, CdSe zinc
 blende, 2D MoS2 monolayer, GaN wurtzite, a deterministic Si p-n junction start,
 and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
@@ -150,7 +151,8 @@ interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001), InN(0001), and ZnO(0001) with vacuum along the c axis. Requests such as
 "build silicon crystal", "build a silicon p-n junction", "build GaAs zinc blende", "build AlAs zinc blende", "build AlP zinc blende", "build AlSb zinc blende", "build GaP zinc blende", "build GaSb zinc blende", "build InP zinc blende", "build InAs zinc blende", "build InSb zinc blende", "build GaN wurtzite",
-"build AlN wurtzite", "build InN wurtzite", "build 3C-SiC zinc blende", "build cubic BN zinc blende", "build silicon carbide", "build ZnO wurtzite", "build CdTe zinc blende",
+"build AlN wurtzite", "build InN wurtzite", "build 3C-SiC zinc blende",
+"build 6H-SiC crystal", "build cubic BN zinc blende", "build silicon carbide", "build ZnO wurtzite", "build CdTe zinc blende",
 "build ZnS zinc blende", "build ZnSe zinc blende", "build ZnTe zinc blende", "build CdS zinc blende", "build CdSe zinc blende", "build MoS2 monolayer",
 "build Si/Ge heterostructure", "build Si/Ge MQW",
 "build a Si/SiO2 MOS interface",
@@ -175,6 +177,17 @@ Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001), I
 "build GaAs(001) surface", or
 "build ZnO(0001) surface slab" can be routed
 directly through `material_studio_live_modeling_request`.
+
+The `silicon_carbide_6h_hexagonal` template is a 12-atom P63mc bulk cell with
+the ABCACB stacking sequence. Its lattice and special-position coordinates come
+from the single-crystal X-ray refinement by Capitani et al.,
+[DOI 10.2138/am.2007.2346](https://rruff.geo.arizona.edu/doclib/am/vol92/AM92_403.pdf).
+The example metadata records the citation, symmetry expansion, formula units,
+reference lattice, and reference average Si-C bond length. Explicit execution
+materializes the reviewed bulk spec as CIF and may hot-load it into the current
+Materials Studio window. No reviewed 6H-SiC slab, surface, MOS, interface, or
+metal-contact template is currently provided; those requests return
+`kind="unsupported"` and do not fall back to 3C-SiC, 4H-SiC, or silicon.
 
 The metal/beta-Ga2O3(010) scaffold is centered in a vacuum cell and remains an
 unrelaxed visualization and diagnostic starting point. Its 4.0 eV electron

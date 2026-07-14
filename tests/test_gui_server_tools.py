@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from material_studio_mcp_server import server
 from material_studio_mcp_server import gui as gui_module
 from material_studio_mcp_server.diagnostics import model_view_audit
@@ -1717,6 +1719,62 @@ def test_miller_viewport_properties_probe_unblocks_ms20_without_tree_explorer(
     assert artifact["evidence"]["viewport_selection_probe"]["complete"] is True
 
 
+def test_miller_dialog_keyboard_correction_plan_matches_ms_20_1_active_x_behavior() -> None:
+    exact = gui_module._miller_dialog_keyboard_correction_plan(" 1 0 0 ", "1 0 0")
+    assert exact["strategy"] == "exact_trimmed_match_no_mutation"
+    assert exact["mutation_required"] is False
+
+    suffix = gui_module._miller_dialog_keyboard_correction_plan("4 1 0", "4 1 1")
+    assert suffix == {
+        "strategy": "focus_end_replace_minimal_differing_suffix",
+        "focus_key": "End",
+        "backspace_count": 1,
+        "type_text": "1",
+        "preserved_text": "4 1 ",
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+    }
+
+    full = gui_module._miller_dialog_keyboard_correction_plan("9 9 9", "1 0 0")
+    assert full == {
+        "strategy": "focus_end_backspace_observed_character_count_then_type_exact",
+        "focus_key": "End",
+        "backspace_count": 5,
+        "type_text": "1 0 0",
+        "preserved_text": "",
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+    }
+
+    before_full_replacement = gui_module._miller_dialog_keyboard_correction_plan(
+        "0",
+        "1 0 0",
+    )
+    assert before_full_replacement["strategy"] == (
+        "focus_end_backspace_observed_character_count_then_type_exact"
+    )
+
+    residual = gui_module._miller_dialog_keyboard_correction_plan(
+        "0",
+        "1 0 0",
+        full_replacement_attempted=True,
+    )
+    assert residual == {
+        "strategy": "focus_home_type_expected_prefix_over_residual_single_zero",
+        "focus_key": "Home",
+        "backspace_count": 0,
+        "type_text": "1 0 ",
+        "preserved_text": "0",
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+    }
+
+
+def test_miller_dialog_keyboard_correction_plan_rejects_noncanonical_target() -> None:
+    with pytest.raises(gui_module.GuiError, match="canonical 'h k l' text"):
+        gui_module._miller_dialog_keyboard_correction_plan("1 0 0", "1,0,0")
+
+
 def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -1807,16 +1865,37 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
-    assert plane_recipe["schema_version"] == 4
+    assert plane_recipe["schema_version"] == 5
     assert plane_recipe["dialog_index_entry_contract"] == {
         "control_id": "TxtHKL",
         "expected_value": "1 0 0",
         "value_source": "fresh_modeless_child_accessibility_value",
         "replacement_strategy_order": [
             "accessibility_set_value_exact",
+            "focus_end_replace_minimal_differing_suffix_from_fresh_value",
             "focus_end_backspace_observed_character_count_then_type_exact",
+            "focus_home_type_expected_prefix_over_residual_single_zero",
         ],
+        "keyboard_correction_contract": {
+            "fresh_observed_value_required": True,
+            "minimal_suffix_rule": (
+                "when_observed_and_expected_share_a_nonempty_prefix_focus_end_"
+                "backspace_only_the_observed_suffix_then_type_only_the_expected_suffix"
+            ),
+            "full_replacement_rule": (
+                "focus_end_backspace_the_fresh_observed_character_count_then_type_exact"
+            ),
+            "post_full_replacement_residual_zero_rule": (
+                "only_when_fresh_readback_is_exactly_0_and_expected_ends_with_0_"
+                "focus_home_then_type_expected_without_its_final_0"
+            ),
+            "residual_zero_target_prefix": "1 0 ",
+            "maximum_full_replacement_attempts": 1,
+            "fresh_child_readback_required_after_each_mutation": True,
+            "mismatch_after_final_strategy": "abort_without_create",
+        },
         "control_a_replacement_assumption_allowed": False,
+        "shift_selection_allowed": False,
         "fresh_child_state_required_after_entry": True,
         "read_back_required_before_create": True,
         "comparison": "exact_trimmed_text",
@@ -1828,6 +1907,9 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert "read_back_txt_hkl_value_from_fresh_child_accessibility_state" in (
         plane_recipe["action_sequence"]
     )
+    assert "read_back_txt_hkl_value_after_each_mutation" in plane_recipe[
+        "action_sequence"
+    ]
     assert "block_create_until_exact_dialog_value_match" in plane_recipe[
         "action_sequence"
     ]

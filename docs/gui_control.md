@@ -162,11 +162,18 @@ derived from that fresh child screenshot. Never reuse a parent-window
 screenshot coordinate for a modeless dialog control, and reject duplicated
 accessibility elements that resolve outside the dialog. Do not assume that
 `Ctrl+A` replaced the existing `TxtHKL` contents. Prefer exact accessibility
-`set_value`; when that is unsupported, clear the observed value deterministically
-and type the canonical three-index string. In both cases refresh the child state
-and compare the trimmed accessibility value exactly with
+`set_value`; when that is unsupported, follow the prepared
+`dialog_index_entry_contract` using only unmodified keys. If the fresh observed
+value shares a prefix with the target, focus `End`, backspace only the differing
+suffix, and type only the target suffix. Otherwise perform at most one full
+replacement using the fresh observed character count. MS 20.1 can leave one
+residual `0` after that operation; only when the fresh readback is exactly `0`
+and the target ends in `0`, focus `Home` and type the target without its final
+zero. Never use Shift or a selection range. Refresh the child state after every
+mutation and compare the trimmed accessibility value exactly with
 `dialog_miller_indices_text` before Create. A mismatch blocks Create and must be
-corrected and reverified. Persist the observed text, the
+corrected and reverified; abort without Create after the final strategy fails.
+Persist the observed text, the
 `fresh_modeless_child_accessibility_value` source, and the verification result in
 `miller_plane_evidence`. If an unexpected
 default plane is created, invoke only the

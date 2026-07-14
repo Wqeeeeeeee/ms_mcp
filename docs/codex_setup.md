@@ -206,7 +206,12 @@ structure hash is unchanged.
 For every prepared Miller-plane replay, inspect
 `execution_recipe.dialog_index_entry_contract`. Read `TxtHKL` back from a fresh
 modeless child accessibility state after entry; never treat `Ctrl+A` as proof
-that replacement succeeded. Invoke Create only after the trimmed value exactly
+that replacement succeeded. Prefer exact `set_value`; otherwise apply the
+contract's unmodified-key correction order: minimal suffix replacement from
+`End`, one observed-count full replacement, then a `Home`-based target-prefix
+repair only if the post-replacement readback is exactly one residual `0` and the
+target ends in `0`. Refresh the child state after each mutation and abort without
+Create if the final readback still differs. Invoke Create only after the trimmed value exactly
 matches `dialog_miller_indices_text`, then record
 `dialog_miller_indices_text_before_create`,
 `dialog_miller_indices_value_source="fresh_modeless_child_accessibility_value"`,

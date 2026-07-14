@@ -656,6 +656,69 @@ def _miller_plane_dialog_text(indices: list[int]) -> str:
     return " ".join(str(value) for value in indices)
 
 
+def _miller_dialog_keyboard_correction_plan(
+    observed_value: str,
+    expected_value: str,
+    *,
+    full_replacement_attempted: bool = False,
+) -> dict[str, Any]:
+    """Plan an unmodified-key correction for the MS 20.1 TxtHKL control."""
+
+    observed = str(observed_value)
+    expected = str(expected_value).strip()
+    if re.fullmatch(r"-?\d{1,3} -?\d{1,3} -?\d{1,3}", expected) is None:
+        raise GuiError("expected Miller dialog value must be canonical 'h k l' text")
+
+    if observed.strip() == expected:
+        return {
+            "strategy": "exact_trimmed_match_no_mutation",
+            "focus_key": None,
+            "backspace_count": 0,
+            "type_text": "",
+            "preserved_text": observed,
+            "mutation_required": False,
+            "fresh_readback_required_after_mutation": False,
+        }
+
+    if full_replacement_attempted and observed == "0" and expected.endswith("0"):
+        return {
+            "strategy": "focus_home_type_expected_prefix_over_residual_single_zero",
+            "focus_key": "Home",
+            "backspace_count": 0,
+            "type_text": expected[:-1],
+            "preserved_text": "0",
+            "mutation_required": True,
+            "fresh_readback_required_after_mutation": True,
+        }
+
+    shared_prefix_length = 0
+    for observed_character, expected_character in zip(observed, expected):
+        if observed_character != expected_character:
+            break
+        shared_prefix_length += 1
+
+    if shared_prefix_length > 0:
+        return {
+            "strategy": "focus_end_replace_minimal_differing_suffix",
+            "focus_key": "End",
+            "backspace_count": len(observed) - shared_prefix_length,
+            "type_text": expected[shared_prefix_length:],
+            "preserved_text": observed[:shared_prefix_length],
+            "mutation_required": True,
+            "fresh_readback_required_after_mutation": True,
+        }
+
+    return {
+        "strategy": "focus_end_backspace_observed_character_count_then_type_exact",
+        "focus_key": "End",
+        "backspace_count": len(observed),
+        "type_text": expected,
+        "preserved_text": "",
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+    }
+
+
 def _miller_plane_label(indices: list[int]) -> str:
     """Return the compact Miller label used by the Properties Explorer."""
 
@@ -4013,7 +4076,7 @@ def _view_replay_execution_recipe(
         )
         return {
             **base,
-            "schema_version": 4,
+            "schema_version": 5,
             "recipe_kind": recipe_kind,
             "status": (
                 "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
@@ -4057,9 +4120,35 @@ def _view_replay_execution_recipe(
                 "value_source": "fresh_modeless_child_accessibility_value",
                 "replacement_strategy_order": [
                     "accessibility_set_value_exact",
+                    "focus_end_replace_minimal_differing_suffix_from_fresh_value",
                     "focus_end_backspace_observed_character_count_then_type_exact",
+                    "focus_home_type_expected_prefix_over_residual_single_zero",
                 ],
+                "keyboard_correction_contract": {
+                    "fresh_observed_value_required": True,
+                    "minimal_suffix_rule": (
+                        "when_observed_and_expected_share_a_nonempty_prefix_focus_end_"
+                        "backspace_only_the_observed_suffix_then_type_only_the_expected_suffix"
+                    ),
+                    "full_replacement_rule": (
+                        "focus_end_backspace_the_fresh_observed_character_count_then_type_exact"
+                    ),
+                    "post_full_replacement_residual_zero_rule": (
+                        "only_when_fresh_readback_is_exactly_0_and_expected_ends_with_0_"
+                        "focus_home_then_type_expected_without_its_final_0"
+                    ),
+                    "residual_zero_target_prefix": (
+                        _miller_plane_dialog_text(dialog_indices)[:-1]
+                        if dialog_indices
+                        and _miller_plane_dialog_text(dialog_indices).endswith("0")
+                        else None
+                    ),
+                    "maximum_full_replacement_attempts": 1,
+                    "fresh_child_readback_required_after_each_mutation": True,
+                    "mismatch_after_final_strategy": "abort_without_create",
+                },
                 "control_a_replacement_assumption_allowed": False,
+                "shift_selection_allowed": False,
                 "fresh_child_state_required_after_entry": True,
                 "read_back_required_before_create": True,
                 "comparison": "exact_trimmed_text",
@@ -4223,7 +4312,12 @@ def _view_replay_execution_recipe(
                 "capture_fresh_modeless_dialog_child_window_state",
                 "abort_after_exact_undo_if_unexpected_default_plane_was_created",
                 "enter_exact_three_index_dialog_values",
+                "try_accessibility_set_value_exact",
+                "replace_only_minimal_differing_suffix_when_fresh_value_shares_prefix",
+                "fallback_full_backspace_and_exact_retype_from_fresh_observed_character_count",
+                "repair_post_full_replacement_residual_single_zero_from_home_when_target_ends_zero",
                 "read_back_txt_hkl_value_from_fresh_child_accessibility_state",
+                "read_back_txt_hkl_value_after_each_mutation",
                 "correct_dialog_value_and_reverify_if_not_exact",
                 "block_create_until_exact_dialog_value_match",
                 "invoke_create_only_from_verified_child_bounds_or_fresh_child_screenshot",
@@ -4260,7 +4354,7 @@ def _view_replay_execution_recipe(
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
                 "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
-                "Do not assume Ctrl+A replaced TxtHKL. Read its value back from a fresh child accessibility state and invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
+                "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value, otherwise replace only the differing suffix, then use one observed-count full replacement if needed. If that full replacement leaves exactly one trailing target zero, repair it from Home by typing the target prefix. Refresh after every mutation and invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",

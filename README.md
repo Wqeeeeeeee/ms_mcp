@@ -146,8 +146,11 @@ Computer Use or manual viewport evidence can be recorded through the enabled
 high-level `material_studio_live_modeling_request` tool by supplying a
 `visual_confirmation` object. The payload must contain the observed revision,
 window handle, and exact MCP wrapper title. The server rejects stale or
-unmatched windows and does not create a revision. Visual confirmation proves
-what is visible; it cannot clear structural or semiconductor health failures.
+unmatched windows and does not create a revision. For an ongoing session,
+`project_id` may be omitted; the server resolves the latest current project and
+accepts the evidence only when its revision matches the supplied observed
+revision. Visual confirmation proves what is visible; it cannot clear
+structural or semiconductor health failures.
 
 Prepared camera/view replay can use the same restricted high-level entry via a
 `view_replay_confirmation` object. It requires the prepared view name, current

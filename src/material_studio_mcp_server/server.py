@@ -32014,8 +32014,6 @@ def _resolve_gui_snapshot_sync_context(
 ) -> dict[str, Any]:
     """Resolve optional structured context for a direct GUI snapshot."""
 
-    if project_id is None and revision is not None:
-        return {"available": False, "reason": "revision_without_project_id"}
     store = _structured_store(working_dir)
     if project_id is not None:
         spec = store.get_revision(project_id, revision) if revision is not None else store.load_current(project_id)
@@ -32031,12 +32029,25 @@ def _resolve_gui_snapshot_sync_context(
     if latest is None:
         return {"available": False, "reason": "no_current_project"}
     spec, resolution = latest
+    if revision is not None and spec.revision != revision:
+        return {
+            "available": False,
+            "reason": "latest_current_revision_mismatch",
+            "requested_revision": revision,
+            "latest_project_id": spec.project_id,
+            "latest_revision": spec.revision,
+            "project_resolution": resolution,
+        }
     return {
         "available": True,
         "project_id": spec.project_id,
         "revision": spec.revision,
         "project_resolution": resolution,
-        "reason": "latest_current_project",
+        "reason": (
+            "latest_current_project_revision_match"
+            if revision is not None
+            else "latest_current_project"
+        ),
     }
 
 

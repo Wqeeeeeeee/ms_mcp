@@ -23953,6 +23953,65 @@ def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, t
     assert persisted_after_explicit_check["modeling_report"]["normality_check_requested"] is True
 
 
+def test_live_visual_confirmation_resolves_latest_project_when_project_id_is_omitted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    project_id = created["project_id"]
+    revision = created["revision"]
+    window_management = created["gui_status"]["window_management"]
+    window_handle = window_management["target_window_handle"]
+    window_title = window_management["target_window_title"]
+
+    recorded = server.material_studio_live_modeling_request(
+        "Record visual confirmation for the latest current Materials Studio model.",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        visual_confirmation={
+            "source": "computer_use",
+            "model_visible": True,
+            "expected_revision": revision,
+            "expected_window_handle": window_handle,
+            "expected_window_title": window_title,
+        },
+    )
+
+    assert recorded["ok"] is True
+    assert recorded["workflow"] == "gui_visual_confirmation"
+    assert recorded["project_id"] == project_id
+    assert recorded["revision"] == revision
+    assert recorded["revision_created"] is False
+    assert recorded["project_resolution"]["source"] == "latest_current"
+    assert recorded["visual_confirmation_binding"]["status"] == "verified_current_wrapper_window"
+
+    rejected = server.material_studio_live_modeling_request(
+        "Record stale visual confirmation for the latest current Materials Studio model.",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        visual_confirmation={
+            "source": "computer_use",
+            "model_visible": True,
+            "expected_revision": revision + 1,
+            "expected_window_handle": window_handle,
+            "expected_window_title": window_title,
+        },
+    )
+
+    assert rejected["ok"] is False
+    assert "latest_current_revision_mismatch" in rejected["error"]
+
+
 def test_live_visual_confirmation_payload_forbids_extra_fields(tmp_path: Path) -> None:
     result = server.material_studio_live_modeling_request(
         "Record visual evidence.",

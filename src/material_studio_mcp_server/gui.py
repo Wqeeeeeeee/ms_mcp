@@ -680,13 +680,25 @@ def _miller_dialog_keyboard_correction_plan(
             "fresh_readback_required_after_mutation": False,
         }
 
-    if full_replacement_attempted and observed == "0" and expected.endswith("0"):
+    if observed.endswith(expected):
+        retained_prefix = observed[: -len(expected)]
         return {
-            "strategy": "focus_home_type_expected_prefix_over_residual_single_zero",
+            "strategy": "focus_home_delete_retained_prefix_before_expected_value",
             "focus_key": "Home",
-            "backspace_count": 0,
-            "type_text": expected[:-1],
-            "preserved_text": "0",
+            "delete_count": len(retained_prefix),
+            "type_text": "",
+            "preserved_text": expected,
+            "mutation_required": True,
+            "fresh_readback_required_after_mutation": True,
+        }
+    if observed and expected.endswith(observed):
+        missing_prefix = expected[: -len(observed)]
+        return {
+            "strategy": "focus_home_type_missing_expected_prefix_over_retained_suffix",
+            "focus_key": "Home",
+            "delete_count": 0,
+            "type_text": missing_prefix,
+            "preserved_text": observed,
             "mutation_required": True,
             "fresh_readback_required_after_mutation": True,
         }
@@ -706,6 +718,95 @@ def _miller_dialog_keyboard_correction_plan(
             "preserved_text": observed[:shared_prefix_length],
             "mutation_required": True,
             "fresh_readback_required_after_mutation": True,
+        }
+
+    longest_common_length = 0
+    longest_common_observed_start = 0
+    longest_common_expected_start = 0
+    for observed_start in range(len(observed)):
+        for expected_start in range(len(expected)):
+            common_length = 0
+            while (
+                observed_start + common_length < len(observed)
+                and expected_start + common_length < len(expected)
+                and observed[observed_start + common_length]
+                == expected[expected_start + common_length]
+            ):
+                common_length += 1
+            if common_length > longest_common_length:
+                longest_common_length = common_length
+                longest_common_observed_start = observed_start
+                longest_common_expected_start = expected_start
+
+    if longest_common_length > 0:
+        preserved_text = observed[
+            longest_common_observed_start : (
+                longest_common_observed_start + longest_common_length
+            )
+        ]
+        observed_suffix_count = len(observed) - (
+            longest_common_observed_start + longest_common_length
+        )
+        expected_prefix = expected[:longest_common_expected_start]
+        expected_suffix = expected[
+            longest_common_expected_start + longest_common_length :
+        ]
+        common_plan = {
+            "preserved_text": preserved_text,
+            "observed_preserved_span": [
+                longest_common_observed_start,
+                longest_common_observed_start + longest_common_length,
+            ],
+            "expected_preserved_span": [
+                longest_common_expected_start,
+                longest_common_expected_start + longest_common_length,
+            ],
+            "mutation_required": True,
+            "fresh_readback_required_after_mutation": True,
+            "replan_from_fresh_readback_after_mutation": True,
+        }
+        if longest_common_observed_start > 0:
+            return {
+                **common_plan,
+                "strategy": "focus_home_delete_prefix_before_longest_common_substring",
+                "focus_key": "Home",
+                "delete_count": longest_common_observed_start,
+                "type_text": "",
+            }
+        if observed_suffix_count > 0:
+            return {
+                **common_plan,
+                "strategy": "focus_end_delete_suffix_after_longest_common_substring",
+                "focus_key": "End",
+                "backspace_count": observed_suffix_count,
+                "type_text": "",
+            }
+        if expected_prefix:
+            return {
+                **common_plan,
+                "strategy": "focus_home_type_prefix_before_longest_common_substring",
+                "focus_key": "Home",
+                "delete_count": 0,
+                "type_text": expected_prefix,
+            }
+        return {
+            **common_plan,
+            "strategy": "focus_end_type_suffix_after_longest_common_substring",
+            "focus_key": "End",
+            "backspace_count": 0,
+            "type_text": expected_suffix,
+        }
+
+    if full_replacement_attempted:
+        return {
+            "strategy": "abort_unrepairable_post_full_replacement_mismatch",
+            "focus_key": None,
+            "delete_count": 0,
+            "type_text": "",
+            "preserved_text": observed,
+            "mutation_required": False,
+            "fresh_readback_required_after_mutation": False,
+            "abort_without_create": True,
         }
 
     return {
@@ -4120,9 +4221,11 @@ def _view_replay_execution_recipe(
                 "value_source": "fresh_modeless_child_accessibility_value",
                 "replacement_strategy_order": [
                     "accessibility_set_value_exact",
+                    "focus_home_delete_retained_prefix_before_expected_value",
+                    "focus_home_type_missing_expected_prefix_over_retained_suffix",
                     "focus_end_replace_minimal_differing_suffix_from_fresh_value",
+                    "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
                     "focus_end_backspace_observed_character_count_then_type_exact",
-                    "focus_home_type_expected_prefix_over_residual_single_zero",
                 ],
                 "keyboard_correction_contract": {
                     "fresh_observed_value_required": True,
@@ -4133,18 +4236,30 @@ def _view_replay_execution_recipe(
                     "full_replacement_rule": (
                         "focus_end_backspace_the_fresh_observed_character_count_then_type_exact"
                     ),
-                    "post_full_replacement_residual_zero_rule": (
-                        "only_when_fresh_readback_is_exactly_0_and_expected_ends_with_0_"
-                        "focus_home_then_type_expected_without_its_final_0"
+                    "post_full_replacement_retained_prefix_rule": (
+                        "when_fresh_readback_ends_with_expected_focus_home_then_delete_"
+                        "the_retained_prefix_character_count"
                     ),
-                    "residual_zero_target_prefix": (
-                        _miller_plane_dialog_text(dialog_indices)[:-1]
-                        if dialog_indices
-                        and _miller_plane_dialog_text(dialog_indices).endswith("0")
-                        else None
+                    "post_full_replacement_retained_suffix_rule": (
+                        "when_expected_ends_with_nonempty_fresh_readback_focus_home_then_"
+                        "type_only_the_missing_expected_prefix"
+                    ),
+                    "overlap_repair_rule": (
+                        "preserve_the_longest_common_contiguous_substring_tie_breaking_"
+                        "by_earliest_observed_then_expected_start_apply_exactly_one_"
+                        "nonempty_edge_repair_in_observed_prefix_observed_suffix_"
+                        "expected_prefix_expected_suffix_order_then_replan_fresh"
                     ),
                     "maximum_full_replacement_attempts": 1,
+                    "relation_repairs_allowed_before_or_after_full_replacement": True,
+                    "allowed_after_full_replacement": [
+                        "focus_home_delete_retained_prefix_before_expected_value",
+                        "focus_home_type_missing_expected_prefix_over_retained_suffix",
+                        "focus_end_replace_minimal_differing_suffix_from_fresh_value",
+                        "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
+                    ],
                     "fresh_child_readback_required_after_each_mutation": True,
+                    "unrelated_post_full_readback_action": "abort_without_create",
                     "mismatch_after_final_strategy": "abort_without_create",
                 },
                 "control_a_replacement_assumption_allowed": False,
@@ -4315,7 +4430,8 @@ def _view_replay_execution_recipe(
                 "try_accessibility_set_value_exact",
                 "replace_only_minimal_differing_suffix_when_fresh_value_shares_prefix",
                 "fallback_full_backspace_and_exact_retype_from_fresh_observed_character_count",
-                "repair_post_full_replacement_residual_single_zero_from_home_when_target_ends_zero",
+                "repair_post_full_replacement_retained_prefix_or_suffix_from_home",
+                "preserve_longest_common_substring_and_replan_from_each_fresh_readback",
                 "read_back_txt_hkl_value_from_fresh_child_accessibility_state",
                 "read_back_txt_hkl_value_after_each_mutation",
                 "correct_dialog_value_and_reverify_if_not_exact",
@@ -4354,7 +4470,7 @@ def _view_replay_execution_recipe(
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
                 "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
-                "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value, otherwise replace only the differing suffix, then use one observed-count full replacement if needed. If that full replacement leaves exactly one trailing target zero, repair it from Home by typing the target prefix. Refresh after every mutation and invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
+                "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value. From any fresh readback, first repair a verified affix relation, a differing suffix, or preserve the longest common contiguous substring while deleting only the prefix before it. Replan after every mutation. Use at most one observed-count full replacement; after it, only relation-based repairs remain allowed and an unrelated value must abort. Invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",

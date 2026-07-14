@@ -164,12 +164,18 @@ accessibility elements that resolve outside the dialog. Do not assume that
 `Ctrl+A` replaced the existing `TxtHKL` contents. Prefer exact accessibility
 `set_value`; when that is unsupported, follow the prepared
 `dialog_index_entry_contract` using only unmodified keys. If the fresh observed
-value shares a prefix with the target, focus `End`, backspace only the differing
-suffix, and type only the target suffix. Otherwise perform at most one full
-replacement using the fresh observed character count. MS 20.1 can leave one
-residual `0` after that operation; only when the fresh readback is exactly `0`
-and the target ends in `0`, focus `Home` and type the target without its final
-zero. Never use Shift or a selection range. Refresh the child state after every
+value has a verified affix relation with the target, repair it first; otherwise,
+if it shares a prefix with the target, focus `End`, backspace only the differing
+suffix, and type only the target suffix. For a cross-offset overlap, preserve the
+longest common contiguous substring, apply exactly one nonempty edge repair in
+observed-prefix, observed-suffix, expected-prefix, expected-suffix order, and
+replan from the next fresh readback. Perform at most one full replacement
+using the fresh observed character count. MS 20.1 can retain an arbitrary prefix
+or suffix before or after that operation. Repair only a verified affix
+relation: if the fresh value ends with the target, focus `Home` and delete the
+retained prefix character count; if the target ends with the nonempty fresh
+value, focus `Home` and type only the missing target prefix. After one full
+replacement, an unrelated value must abort. Never use Shift or a selection range. Refresh and replan after every
 mutation and compare the trimmed accessibility value exactly with
 `dialog_miller_indices_text` before Create. A mismatch blocks Create and must be
 corrected and reverified; abort without Create after the final strategy fails.

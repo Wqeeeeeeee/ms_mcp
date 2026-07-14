@@ -1735,39 +1735,84 @@ def test_miller_dialog_keyboard_correction_plan_matches_ms_20_1_active_x_behavio
         "fresh_readback_required_after_mutation": True,
     }
 
-    full = gui_module._miller_dialog_keyboard_correction_plan("9 9 9", "1 0 0")
+    overlap = gui_module._miller_dialog_keyboard_correction_plan("4 1 0", "1 0 0")
+    assert overlap == {
+        "strategy": "focus_home_delete_prefix_before_longest_common_substring",
+        "focus_key": "Home",
+        "delete_count": 2,
+        "type_text": "",
+        "preserved_text": "1 0",
+        "observed_preserved_span": [2, 5],
+        "expected_preserved_span": [0, 3],
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+        "replan_from_fresh_readback_after_mutation": True,
+    }
+    overlap_followup = gui_module._miller_dialog_keyboard_correction_plan(
+        "1 0",
+        "1 0 0",
+    )
+    assert overlap_followup["strategy"] == "focus_end_replace_minimal_differing_suffix"
+    assert overlap_followup["backspace_count"] == 0
+    assert overlap_followup["type_text"] == " 0"
+
+    overlap_prefix = gui_module._miller_dialog_keyboard_correction_plan(
+        "4",
+        "1 4 0",
+    )
+    assert overlap_prefix["strategy"] == (
+        "focus_home_type_prefix_before_longest_common_substring"
+    )
+    assert overlap_prefix["type_text"] == "1 "
+
+    full = gui_module._miller_dialog_keyboard_correction_plan("xyz", "1 0 0")
     assert full == {
         "strategy": "focus_end_backspace_observed_character_count_then_type_exact",
         "focus_key": "End",
-        "backspace_count": 5,
+        "backspace_count": 3,
         "type_text": "1 0 0",
         "preserved_text": "",
         "mutation_required": True,
         "fresh_readback_required_after_mutation": True,
     }
 
-    before_full_replacement = gui_module._miller_dialog_keyboard_correction_plan(
-        "0",
+    retained_prefix = gui_module._miller_dialog_keyboard_correction_plan(
+        "4 1 0 0",
         "1 0 0",
     )
-    assert before_full_replacement["strategy"] == (
-        "focus_end_backspace_observed_character_count_then_type_exact"
-    )
-
-    residual = gui_module._miller_dialog_keyboard_correction_plan(
-        "0",
-        "1 0 0",
-        full_replacement_attempted=True,
-    )
-    assert residual == {
-        "strategy": "focus_home_type_expected_prefix_over_residual_single_zero",
+    assert retained_prefix == {
+        "strategy": "focus_home_delete_retained_prefix_before_expected_value",
         "focus_key": "Home",
-        "backspace_count": 0,
+        "delete_count": 2,
+        "type_text": "",
+        "preserved_text": "1 0 0",
+        "mutation_required": True,
+        "fresh_readback_required_after_mutation": True,
+    }
+
+    retained_suffix = gui_module._miller_dialog_keyboard_correction_plan(
+        "0",
+        "1 0 0",
+    )
+    assert retained_suffix == {
+        "strategy": "focus_home_type_missing_expected_prefix_over_retained_suffix",
+        "focus_key": "Home",
+        "delete_count": 0,
         "type_text": "1 0 ",
         "preserved_text": "0",
         "mutation_required": True,
         "fresh_readback_required_after_mutation": True,
     }
+
+    unrepairable = gui_module._miller_dialog_keyboard_correction_plan(
+        "xyz",
+        "1 0 0",
+        full_replacement_attempted=True,
+    )
+    assert unrepairable["strategy"] == (
+        "abort_unrepairable_post_full_replacement_mismatch"
+    )
+    assert unrepairable["abort_without_create"] is True
 
 
 def test_miller_dialog_keyboard_correction_plan_rejects_noncanonical_target() -> None:
@@ -1872,9 +1917,11 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         "value_source": "fresh_modeless_child_accessibility_value",
         "replacement_strategy_order": [
             "accessibility_set_value_exact",
+            "focus_home_delete_retained_prefix_before_expected_value",
+            "focus_home_type_missing_expected_prefix_over_retained_suffix",
             "focus_end_replace_minimal_differing_suffix_from_fresh_value",
+            "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
             "focus_end_backspace_observed_character_count_then_type_exact",
-            "focus_home_type_expected_prefix_over_residual_single_zero",
         ],
         "keyboard_correction_contract": {
             "fresh_observed_value_required": True,
@@ -1885,13 +1932,30 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
             "full_replacement_rule": (
                 "focus_end_backspace_the_fresh_observed_character_count_then_type_exact"
             ),
-            "post_full_replacement_residual_zero_rule": (
-                "only_when_fresh_readback_is_exactly_0_and_expected_ends_with_0_"
-                "focus_home_then_type_expected_without_its_final_0"
+            "post_full_replacement_retained_prefix_rule": (
+                "when_fresh_readback_ends_with_expected_focus_home_then_delete_"
+                "the_retained_prefix_character_count"
             ),
-            "residual_zero_target_prefix": "1 0 ",
+            "post_full_replacement_retained_suffix_rule": (
+                "when_expected_ends_with_nonempty_fresh_readback_focus_home_then_"
+                "type_only_the_missing_expected_prefix"
+            ),
+            "overlap_repair_rule": (
+                "preserve_the_longest_common_contiguous_substring_tie_breaking_"
+                "by_earliest_observed_then_expected_start_apply_exactly_one_"
+                "nonempty_edge_repair_in_observed_prefix_observed_suffix_"
+                "expected_prefix_expected_suffix_order_then_replan_fresh"
+            ),
             "maximum_full_replacement_attempts": 1,
+            "relation_repairs_allowed_before_or_after_full_replacement": True,
+            "allowed_after_full_replacement": [
+                "focus_home_delete_retained_prefix_before_expected_value",
+                "focus_home_type_missing_expected_prefix_over_retained_suffix",
+                "focus_end_replace_minimal_differing_suffix_from_fresh_value",
+                "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
+            ],
             "fresh_child_readback_required_after_each_mutation": True,
+            "unrelated_post_full_readback_action": "abort_without_create",
             "mismatch_after_final_strategy": "abort_without_create",
         },
         "control_a_replacement_assumption_allowed": False,

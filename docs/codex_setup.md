@@ -208,9 +208,13 @@ For every prepared Miller-plane replay, inspect
 modeless child accessibility state after entry; never treat `Ctrl+A` as proof
 that replacement succeeded. Prefer exact `set_value`; otherwise apply the
 contract's unmodified-key correction order: minimal suffix replacement from
-`End`, one observed-count full replacement, then a `Home`-based target-prefix
-repair only if the post-replacement readback is exactly one residual `0` and the
-target ends in `0`. Refresh the child state after each mutation and abort without
+`End`, `Home`-based affix repair, or longest-common-substring preservation before
+falling back to one observed-count full replacement. For a cross-offset overlap,
+apply one nonempty edge repair in observed-prefix, observed-suffix,
+expected-prefix, expected-suffix order and replan from a fresh readback. Delete a retained prefix only when the fresh value ends with
+the target, or type a missing prefix only when the target ends with the nonempty
+fresh value. After the single full replacement, allow only those relation-based
+repairs and abort on an unrelated value. Refresh the child state after each mutation and abort without
 Create if the final readback still differs. Invoke Create only after the trimmed value exactly
 matches `dialog_miller_indices_text`, then record
 `dialog_miller_indices_text_before_create`,

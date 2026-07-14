@@ -37,6 +37,15 @@ and current-request diagnostic intent, effective intent, and proves that no
 revision, structure, or simulation state was changed. Existing explicit intent
 is preserved; a plain evidence-recording request cannot silently set
 `normality_check_requested=true`.
+
+GUI open, standalone snapshot, and visual-confirmation re-audits also preserve
+the current revision's nondefault view list when the persisted audit matches the
+project ID, revision, and immutable spec fingerprint. Explicit `views` still
+take precedence. A missing or stale binding falls back to the standard views;
+`view_selection_resolution` and the visual-confirmation
+`gui_evidence_reaudit` receipt expose the selected source, names, reuse flag,
+and mismatch reasons.
+
 - `material_studio_live_session_preflight`: read-only session check that combines runner status, GUI status, latest current project, readiness flags, and next recommended tool.
 - `material_studio_live_capabilities`: lists the high-level live-modeling entry point, deterministic natural-language templates, supported patch commands, schema paths, GUI tools, and diagnostic fields.
 - `material_studio_live_update_with_patch`: applies a semantic patch, creates a new revision, and can execute/open it in the live GUI when explicitly requested.

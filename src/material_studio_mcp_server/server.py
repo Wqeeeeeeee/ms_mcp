@@ -7345,6 +7345,58 @@ def _persisted_view_audit_binding(
     return not reasons, reasons
 
 
+def _resolve_gui_reaudit_view_selection(
+    spec: ModelSpec,
+    *,
+    views: list[str] | None,
+    persisted_audit: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve GUI re-audit views without trusting stale revision diagnostics."""
+
+    if views is not None:
+        audit = model_view_audit(spec, views)
+        view_names = _view_names_from_rows(audit.get("views"))
+        return audit, {
+            "source": "explicit_request",
+            "explicit_views_provided": True,
+            "persisted_view_audit_binding_evaluated": False,
+            "persisted_view_selection_reused": False,
+            "persisted_view_audit_matches_current": None,
+            "persisted_view_audit_mismatch_reasons": [],
+            "view_names": view_names,
+            "view_count": len(view_names),
+            "spec_fingerprint": audit.get("spec_fingerprint"),
+        }
+
+    default_audit = model_view_audit(spec)
+    persisted_matches, mismatch_reasons = _persisted_view_audit_binding(
+        persisted_audit,
+        spec=spec,
+        computed_audit=default_audit,
+    )
+    if persisted_matches:
+        persisted_view_names = _view_names_from_rows((persisted_audit or {}).get("views"))
+        audit = model_view_audit(spec, persisted_view_names)
+        source = "persisted_current_revision"
+    else:
+        audit = default_audit
+        persisted_view_names = []
+        source = "default_views"
+    view_names = _view_names_from_rows(audit.get("views"))
+    return audit, {
+        "source": source,
+        "explicit_views_provided": False,
+        "persisted_view_audit_binding_evaluated": True,
+        "persisted_view_selection_reused": bool(persisted_matches),
+        "persisted_view_audit_matches_current": bool(persisted_matches),
+        "persisted_view_audit_mismatch_reasons": mismatch_reasons,
+        "persisted_view_names": persisted_view_names,
+        "view_names": view_names,
+        "view_count": len(view_names),
+        "spec_fingerprint": audit.get("spec_fingerprint"),
+    }
+
+
 def _latest_gui_open_from_audit(audit: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return the most recent persisted GUI open result from a view audit."""
 
@@ -27597,6 +27649,11 @@ def _compact_gui_evidence_reaudit(value: Any) -> dict[str, Any]:
             "structure_modified",
             "simulation_modified",
             "replay_view_name",
+            "view_selection_source",
+            "view_selection_names",
+            "persisted_view_selection_reused",
+            "persisted_view_audit_matches_current",
+            "persisted_view_audit_mismatch_reasons",
         ),
     )
 
@@ -28118,6 +28175,7 @@ def _compact_live_response(
             "view_audit_source",
             "persisted_view_audit_matches_current",
             "persisted_view_audit_mismatch_reasons",
+            "view_selection_resolution",
             "model_type",
             "viewport_control_backend",
             "gui_modified",
@@ -31573,6 +31631,13 @@ def _persist_gui_open_structure_report(
     store = _structured_store(working_dir)
     spec = store.get_revision(project_id, revision)
     generated = _generate_structured_script(spec, store)
+    output_dir = store.outputs_dir(project_id, revision)
+    report_payload, _ = _read_json_file(output_dir / "view_audit.json")
+    view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
+        spec,
+        views=views,
+        persisted_audit=report_payload,
+    )
     audit_artifacts = [{"type": "gui_open", "result": gui_open}]
     response: dict[str, Any] = {
         "ok": True,
@@ -31594,7 +31659,8 @@ def _persist_gui_open_structure_report(
         "gui_status": gui.status(project_id=project_id, revision=revision),
         "gui_open": gui_open,
         "gui_artifacts": audit_artifacts,
-        "view_audit": model_view_audit(spec, views),
+        "view_audit": view_audit,
+        "view_selection_resolution": view_selection_resolution,
     }
     response = _attach_modeling_health(
         response,
@@ -31622,6 +31688,7 @@ def _persist_gui_open_structure_report(
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
+        "view_selection_resolution": response.get("view_selection_resolution"),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),
@@ -31652,6 +31719,11 @@ def _persist_gui_snapshot_report(
     output_dir = store.outputs_dir(project_id, revision)
     report_payload, _ = _read_json_file(output_dir / "view_audit.json")
     report_json_payload, _ = _read_json_file(output_dir / "report.json")
+    view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
+        spec,
+        views=views,
+        persisted_audit=report_payload,
+    )
     previous_artifacts = _status_gui_artifacts(report_payload, report_json_payload)
     snapshot_artifact = {"type": "gui_snapshot", **snapshot}
     audit_artifacts = [
@@ -31691,7 +31763,8 @@ def _persist_gui_snapshot_report(
         },
         "gui_status": gui.status(project_id=project_id, revision=revision),
         "gui_artifacts": audit_artifacts,
-        "view_audit": model_view_audit(spec, views),
+        "view_audit": view_audit,
+        "view_selection_resolution": view_selection_resolution,
     }
     if latest_gui_open is not None:
         response["gui_open"] = latest_gui_open
@@ -31721,6 +31794,7 @@ def _persist_gui_snapshot_report(
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
+        "view_selection_resolution": response.get("view_selection_resolution"),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),
@@ -31812,6 +31886,11 @@ def _persist_gui_visual_confirmation_report(
     output_dir = store.outputs_dir(project_id, revision)
     report_payload, _ = _read_json_file(output_dir / "view_audit.json")
     report_json_payload, _ = _read_json_file(output_dir / "report.json")
+    view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
+        spec,
+        views=views,
+        persisted_audit=report_payload,
+    )
     previous_artifacts = _status_gui_artifacts(report_payload, report_json_payload)
     confirmation_artifact = {"type": "visual_confirmation", **confirmation}
     audit_artifacts = [artifact for artifact in previous_artifacts if isinstance(artifact, dict)]
@@ -31885,6 +31964,17 @@ def _persist_gui_visual_confirmation_report(
             "structure_modified": False,
             "simulation_modified": False,
             "replay_view_name": replay_view_name,
+            "view_selection_source": view_selection_resolution.get("source"),
+            "view_selection_names": view_selection_resolution.get("view_names"),
+            "persisted_view_selection_reused": view_selection_resolution.get(
+                "persisted_view_selection_reused"
+            ),
+            "persisted_view_audit_matches_current": view_selection_resolution.get(
+                "persisted_view_audit_matches_current"
+            ),
+            "persisted_view_audit_mismatch_reasons": view_selection_resolution.get(
+                "persisted_view_audit_mismatch_reasons"
+            ),
         }
     )
     response: dict[str, Any] = {
@@ -31912,7 +32002,8 @@ def _persist_gui_visual_confirmation_report(
         "gui_status": gui_status,
         "gui_artifacts": audit_artifacts,
         "gui_visual_confirmation": confirmation_artifact,
-        "view_audit": model_view_audit(spec, views),
+        "view_audit": view_audit,
+        "view_selection_resolution": view_selection_resolution,
     }
     if latest_gui_open is not None:
         response["gui_open"] = latest_gui_open
@@ -31947,6 +32038,7 @@ def _persist_gui_visual_confirmation_report(
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
+        "view_selection_resolution": response.get("view_selection_resolution"),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),

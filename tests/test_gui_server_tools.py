@@ -7458,7 +7458,12 @@ def test_gui_open_structure_infers_latest_project_when_structure_matches_planned
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
     monkeypatch.setattr(server, "runner", FakeRunner())
 
-    created = server.material_studio_live_modeling_request("Build silicon crystal.", working_dir=str(tmp_path))
+    views = ["front", "crystal_100"]
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal and export custom crystal views.",
+        views=views,
+        working_dir=str(tmp_path),
+    )
     assert created["ok"] is True
     planned_structure = Path(created["planned_outputs"]["structure"])
     planned_structure.parent.mkdir(parents=True, exist_ok=True)
@@ -7482,6 +7487,9 @@ def test_gui_open_structure_infers_latest_project_when_structure_matches_planned
     assert Path(opened["report_json_path"]).exists()
     assert opened["modeling_report"]["gui"]["hot_loaded"] is True
     assert opened["modeling_report"]["project_resolution"]["source"] == "latest_current"
+    assert opened["view_selection_resolution"]["source"] == "persisted_current_revision"
+    assert opened["view_selection_resolution"]["view_names"] == views
+    assert [row["name"] for row in opened["view_audit"]["views"]] == views
 
 
 def test_gui_open_structure_returns_single_window_block_for_multiple_windows(
@@ -24010,6 +24018,127 @@ def test_live_visual_confirmation_resolves_latest_project_when_project_id_is_omi
 
     assert rejected["ok"] is False
     assert "latest_current_revision_mismatch" in rejected["error"]
+
+
+def test_live_visual_confirmation_preserves_bound_crystallographic_view_selection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    views = ["front", "crystal_100", "crystal_plane_001"]
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal, hot-load it in Materials Studio, and export custom crystal views.",
+        views=views,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    assert [row["name"] for row in created["view_audit"]["views"]] == views
+    window_management = created["gui_status"]["window_management"]
+    history_before = server.material_studio_project_history(
+        created["project_id"], working_dir=str(tmp_path)
+    )["history"]
+
+    recorded = server.material_studio_live_modeling_request(
+        "Record visual confirmation for the latest current Materials Studio model.",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        visual_confirmation={
+            "source": "computer_use",
+            "model_visible": True,
+            "expected_revision": created["revision"],
+            "expected_window_handle": window_management["target_window_handle"],
+            "expected_window_title": window_management["target_window_title"],
+        },
+    )
+
+    assert recorded["ok"] is True
+    resolution = recorded["view_selection_resolution"]
+    assert resolution["source"] == "persisted_current_revision"
+    assert resolution["persisted_view_selection_reused"] is True
+    assert resolution["persisted_view_audit_matches_current"] is True
+    assert resolution["persisted_view_audit_mismatch_reasons"] == []
+    assert resolution["view_names"] == views
+    assert recorded["gui_evidence_reaudit"]["view_selection_source"] == (
+        "persisted_current_revision"
+    )
+    assert recorded["gui_evidence_reaudit"]["view_selection_names"] == views
+    assert recorded["view_bundle_row_counts"]["view_summary"] == len(views)
+    assert len(json.dumps(recorded, ensure_ascii=False).encode("utf-8")) < (
+        server.COMPACT_RESPONSE_MAX_BYTES
+    )
+
+    persisted_audit = json.loads(
+        Path(recorded["view_audit_report_path"]).read_text(encoding="utf-8")
+    )
+    assert [row["name"] for row in persisted_audit["views"]] == views
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert status["view_parameter_summary"]["view_names"] == views
+    history_after = server.material_studio_project_history(
+        created["project_id"], working_dir=str(tmp_path)
+    )["history"]
+    assert len(history_after) == len(history_before)
+
+
+def test_gui_snapshot_reaudit_rejects_stale_persisted_view_selection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal and hot-load it in Materials Studio.",
+        views=["crystal_100", "crystal_plane_001"],
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    audit_path = Path(created["view_audit_report_path"])
+    stale_audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    stale_audit["spec_fingerprint"] = "stale-fingerprint"
+    audit_path.write_text(
+        json.dumps(stale_audit, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    snapshot = server.material_studio_gui_snapshot(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        working_dir=str(tmp_path),
+    )
+
+    assert snapshot["ok"] is True
+    resolution = snapshot["view_selection_resolution"]
+    assert resolution["source"] == "default_views"
+    assert resolution["persisted_view_selection_reused"] is False
+    assert resolution["persisted_view_audit_matches_current"] is False
+    assert "spec_fingerprint_mismatch" in resolution[
+        "persisted_view_audit_mismatch_reasons"
+    ]
+    assert resolution["view_names"] == [
+        "front",
+        "back",
+        "right",
+        "left",
+        "top",
+        "bottom",
+        "isometric",
+    ]
+    refreshed_audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert [row["name"] for row in refreshed_audit["views"]] == resolution[
+        "view_names"
+    ]
+    assert refreshed_audit["spec_fingerprint"] != "stale-fingerprint"
 
 
 def test_live_visual_confirmation_payload_forbids_extra_fields(tmp_path: Path) -> None:

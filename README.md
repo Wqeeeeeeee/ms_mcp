@@ -150,7 +150,11 @@ unmatched windows and does not create a revision. For an ongoing session,
 `project_id` may be omitted; the server resolves the latest current project and
 accepts the evidence only when its revision matches the supplied observed
 revision. Visual confirmation proves what is visible; it cannot clear
-structural or semiconductor health failures.
+structural or semiconductor health failures. GUI open, snapshot, and visual
+confirmation re-audits preserve a current revision's custom view selection only
+when the persisted project, revision, and spec fingerprint still match. Their
+`view_selection_resolution` receipt reports whether explicit, persisted, or
+default views were used.
 
 Prepared camera/view replay can use the same restricted high-level entry via a
 `view_replay_confirmation` object. It requires the prepared view name, current

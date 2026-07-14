@@ -199,6 +199,12 @@ text. Safe evidence is archived with its SHA-256; shell, network, file
 import/export/delete, calculation, or structure-mutation signals block view
 acceptance and prevent raw script-text persistence.
 
+Do not infer that an old `accepted=true` event is still trusted. Read the current
+`gui_view_replay.replay_summary.evidence_integrity_status` and
+`integrity_blocked_view_names`. Status refresh rechecks SHA-256 for the bound
+screenshot, inert script, metadata, and structure artifact. A mismatch keeps the
+historical event but requires a fresh screenshot and reviewed Copy Script record.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

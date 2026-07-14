@@ -109,6 +109,11 @@ exact inert script, completed review attestations, exact current wrapper
 handle/title, and a workspace screenshot. The server must report
 `execution_allowed=false`; unsafe external-effect, calculation, or structural
 mutation findings block acceptance and raw script persistence.
+Accepted reviewed evidence exposes a SHA-256 integrity receipt for the bound
+screenshot, inert script, metadata, and structure artifact. Live status must
+reverify those artifacts. A mismatch preserves append-only history but removes
+the view from trusted acceptance and invalidates the replay-derived visual
+confirmation until new evidence is recorded.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

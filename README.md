@@ -226,6 +226,11 @@ workspace screenshot. The script is never executed. Safe inert text is archived
 under `gui_copy_script_evidence/` with its SHA-256 and JSON review metadata;
 scripts containing shell, network, file import/export/delete, calculation, or
 structure-mutation signals retain only their hash and static rejection analysis.
+Accepted reviewed evidence is also revalidated on every live status or manifest
+refresh. The screenshot, inert script, metadata, and structure artifact have
+separate SHA-256 records. If any artifact is missing or changed, the append-only
+event remains in history but no longer counts as an accepted view or valid
+external visual confirmation until fresh evidence is recorded.
 
 Conversation-style requests such as `continue the next GUI view replay` or
 `继续验证下一个 GUI 视角` route through the high-level live modeling tool. The

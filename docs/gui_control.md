@@ -124,6 +124,15 @@ artifact; only its hash and rejection analysis are retained. This evidence path
 does not execute the script and cannot bypass camera, screenshot, revision,
 window, or single-window gates.
 
+Each accepted reviewed Copy Script event also records SHA-256 and byte-count
+evidence for the screenshot, inert script, Copy Script metadata, and current
+structure artifact. `material_studio_live_project_status` and a later manifest
+refresh recompute those digests. Artifact drift does not delete or rewrite the
+append-only event; it changes the trusted replay summary to
+`evidence_integrity_reverification_required`, removes the affected view from the
+accepted set, and prevents its derived visual confirmation from satisfying GUI
+validation until a new bound event is recorded.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

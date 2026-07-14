@@ -1036,6 +1036,36 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
         ensure_ascii=False,
     )
 
+    Path(evidence["script_path"]).write_text(
+        "drifted after acceptance\n",
+        encoding="utf-8",
+    )
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    replay = status["gui_view_replay"]
+    assert replay["replay_summary"]["raw_accepted_event_count"] == 1
+    assert replay["replay_summary"]["accepted_event_count"] == 0
+    assert replay["replay_summary"]["integrity_blocked_view_names"] == [
+        "front"
+    ]
+    assert replay["replay_continuation"]["status"] == (
+        "evidence_integrity_reverification_required"
+    )
+    assert status["gui_visual_confirmation"]["evidence_integrity_ok"] is False
+    assert status["gui_visual_confirmation"]["evidence_integrity"][
+        "trusted_for_replay"
+    ] is False
+    assert status["modeling_report"]["gui"][
+        "external_visual_confirmation_ok"
+    ] is False
+    assert status["live_gui_acceptance"].get(
+        "external_visual_confirmation_ok"
+    ) is not True
+
 
 def test_live_view_replay_confirmation_accepts_strict_copy_script_payload(
     monkeypatch,
@@ -6114,6 +6144,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy["reviewed_copy_script_artifact_directory"] == (
         "gui_copy_script_evidence"
     )
+    assert view_replay_policy["evidence_integrity_algorithm"] == "sha256"
+    assert view_replay_policy["evidence_integrity_reverified_on_status"] is True
+    assert view_replay_policy[
+        "evidence_integrity_failure_preserves_append_only_event"
+    ] is True
+    assert view_replay_policy[
+        "evidence_integrity_failure_invalidates_visual_confirmation"
+    ] is True
     assert view_replay_policy["arbitrary_camera_materialscript_api_verified"] is False
     assert view_replay_policy["local_mcp_backend"] == "manifest_only"
     assert view_replay_policy["automatic_view_names"] == [

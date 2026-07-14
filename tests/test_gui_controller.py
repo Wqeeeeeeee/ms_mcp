@@ -1703,6 +1703,16 @@ def test_record_view_replay_persists_safe_reviewed_copy_script_artifacts(
     persisted = event["reviewed_copy_script_evidence"]
     assert persisted["execution_allowed"] is False
     assert persisted["raw_script_persisted"] is True
+    integrity = event["evidence_integrity"]
+    assert integrity["status"] == "verified"
+    assert integrity["trusted_for_replay"] is True
+    assert set(integrity["required_artifact_kinds"]) == {
+        "screenshot",
+        "copy_script",
+        "copy_script_metadata",
+        "structure",
+    }
+    assert all(item["status"] == "verified" for item in integrity["artifacts"])
     script_path = Path(persisted["script_path"])
     metadata_path = Path(persisted["metadata_path"])
     assert script_path.read_text(encoding="utf-8") == evidence["script_text"]
@@ -1710,6 +1720,139 @@ def test_record_view_replay_persists_safe_reviewed_copy_script_artifacts(
     assert metadata["accepted"] is True
     assert metadata["event_id"] == event["event_id"]
     assert metadata["evidence"]["script_sha256"] == persisted["script_sha256"]
+
+
+@pytest.mark.parametrize(
+    "artifact_kind",
+    ["screenshot", "copy_script", "copy_script_metadata", "structure"],
+)
+def test_refresh_view_replay_invalidates_drifted_reviewed_evidence(
+    tmp_path: Path,
+    artifact_kind: str,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    controller.prepare_view_replay(audit, project_id="view_proj", revision=2)
+    screenshot = tmp_path / "view_proj" / "outputs" / "r002" / "copy_script.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="reviewed_copy_script",
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=screenshot,
+        expected_window_handle=backend.window.handle,
+        expected_window_title=backend.window.title,
+        reviewed_copy_script_evidence=_reviewed_copy_script_evidence(),
+    )
+    assert recorded["accepted"] is True
+    artifacts = {
+        item["kind"]: item
+        for item in recorded["event"]["evidence_integrity"]["artifacts"]
+    }
+    Path(artifacts[artifact_kind]["path"]).write_bytes(
+        f"drifted-{artifact_kind}".encode("ascii")
+    )
+
+    refreshed = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+
+    manifest = refreshed["manifest"]
+    event = manifest["replay_events"][0]
+    integrity = event["evidence_integrity"]
+    assert event["accepted"] is True
+    assert integrity["status"] == "invalid"
+    assert integrity["trusted_for_replay"] is False
+    assert f"evidence_integrity_sha256_mismatch:{artifact_kind}" in integrity[
+        "issue_codes"
+    ]
+    summary = manifest["replay_summary"]
+    assert summary["raw_accepted_event_count"] == 1
+    assert summary["accepted_event_count"] == 0
+    assert summary["accepted_view_count"] == 0
+    assert summary["integrity_blocked_view_names"] == ["crystal_100"]
+    assert refreshed["replay_status"] == (
+        "evidence_integrity_reverification_required"
+    )
+    assert refreshed["replay_continuation"]["status"] == (
+        "evidence_integrity_reverification_required"
+    )
+    assert refreshed["replay_continuation"]["automatic_replay_ready"] is False
+    persisted_event = json.loads(
+        Path(recorded["events_path"]).read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert persisted_event["accepted"] is True
+    assert persisted_event["evidence_integrity"]["status"] == "verified"
+    if artifact_kind == "copy_script":
+        rerecorded = controller.record_view_replay(
+            project_id="view_proj",
+            revision=2,
+            view_name="crystal_100",
+            source="reviewed_copy_script",
+            model_visible=True,
+            camera_matches_manifest=True,
+            screenshot_path=screenshot,
+            expected_window_handle=backend.window.handle,
+            expected_window_title=backend.window.title,
+            reviewed_copy_script_evidence=_reviewed_copy_script_evidence(),
+        )
+        restored_summary = rerecorded["replay_summary"]
+        assert rerecorded["accepted"] is True
+        assert rerecorded["replay_status"] == "externally_confirmed"
+        assert restored_summary["raw_accepted_event_count"] == 2
+        assert restored_summary["accepted_event_count"] == 1
+        assert restored_summary["accepted_view_count"] == 1
+        assert restored_summary["integrity_blocked_view_names"] == []
+        assert restored_summary["evidence_integrity_status"] == (
+            "verified_with_historical_drift"
+        )
+
+
+def test_refresh_view_replay_invalidates_drifted_computer_use_screenshot(
+    tmp_path: Path,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    controller.prepare_view_replay(audit, project_id="view_proj", revision=2)
+    screenshot = tmp_path / "view_proj" / "outputs" / "r002" / "computer_use.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="computer_use",
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=screenshot,
+        expected_window_handle=backend.window.handle,
+        expected_window_title=backend.window.title,
+    )
+    assert recorded["accepted"] is True
+    assert recorded["event"]["evidence_integrity"]["policy"] == (
+        "recorded_screenshot_strict"
+    )
+
+    screenshot.write_bytes(b"drifted-computer-use-screenshot")
+    refreshed = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+
+    assert refreshed["manifest"]["replay_summary"][
+        "integrity_blocked_view_names"
+    ] == ["crystal_100"]
+    assert refreshed["manifest"]["last_replay_event"]["evidence_integrity"][
+        "trusted_for_replay"
+    ] is False
 
 
 def test_record_view_replay_blocks_and_does_not_persist_unsafe_copy_script_text(

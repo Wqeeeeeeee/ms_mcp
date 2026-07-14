@@ -192,6 +192,14 @@ REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS = {
     "structure_unchanged_observed",
     "note",
 }
+VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION = 1
+VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM = "sha256"
+REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS = {
+    "screenshot",
+    "copy_script",
+    "copy_script_metadata",
+    "structure",
+}
 MILLER_PLANE_SELECTION_METHODS = {
     MILLER_PLANE_SELECTION_METHOD,
     MILLER_PLANE_VIEWPORT_SELECTION_METHOD,
@@ -2836,7 +2844,10 @@ class MaterialsStudioGuiController:
             manifest["replay_events"] = preserved_events
             manifest["preserved_replay_event_count"] = len(preserved_events)
             manifest["prior_manifest_generated_at"] = existing_manifest.get("generated_at")
-        _refresh_view_replay_summary(manifest)
+        _refresh_view_replay_summary(
+            manifest,
+            workspace_root=self.workspace_root,
+        )
         current_recipe_contract = manifest.get("recipe_contract")
         manifest["recipe_migration"] = {
             "performed": bool(
@@ -3694,6 +3705,7 @@ class MaterialsStudioGuiController:
             and copy_script_analysis.get("safe_for_view_evidence") is True
             and exact_window_binding_supplied
             and resolved_screenshot is not None
+            and structure_artifact_sha256_current is not None
         )
         miller_plane_evidence_required = bool(miller_plane_recipe)
         miller_plane_artifact_binding_matches = bool(
@@ -3794,6 +3806,10 @@ class MaterialsStudioGuiController:
                 )
             if resolved_screenshot is None:
                 rejection_reasons.append("reviewed_copy_script_screenshot_missing")
+            if structure_artifact_sha256_current is None:
+                rejection_reasons.append(
+                    "reviewed_copy_script_structure_artifact_missing"
+                )
         if miller_plane_evidence_required:
             if normalized_miller_plane_evidence is None:
                 rejection_reasons.append("miller_plane_evidence_missing")
@@ -3986,11 +4002,29 @@ class MaterialsStudioGuiController:
             "expected_camera": matching_view.get("camera"),
             "expected_projection": matching_view.get("verification"),
         }
+        event["evidence_integrity"] = _record_view_replay_evidence_integrity(
+            event,
+            workspace_root=self.workspace_root,
+        )
+        if (
+            event.get("accepted") is True
+            and event["evidence_integrity"].get("strict") is True
+            and event["evidence_integrity"].get("trusted_for_replay") is not True
+        ):
+            accepted = False
+            if "evidence_integrity_verification_failed" not in rejection_reasons:
+                rejection_reasons.append("evidence_integrity_verification_failed")
+            event["accepted"] = False
+            event["rejection_reasons"] = rejection_reasons
+            event["evidence_integrity"]["trusted_for_replay"] = False
         replay_events = [item for item in manifest.get("replay_events") or [] if isinstance(item, dict)]
         replay_events.append(event)
         manifest["replay_events"] = replay_events
         manifest["last_replay_event"] = event
-        _refresh_view_replay_summary(manifest)
+        _refresh_view_replay_summary(
+            manifest,
+            workspace_root=self.workspace_root,
+        )
         _write_json_atomic(manifest_path, manifest)
 
         events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
@@ -6075,6 +6109,305 @@ def _view_replay_recipe_contract_status(
     }
 
 
+def _sha256_file(path: Path) -> tuple[str, int]:
+    """Return a streaming SHA-256 digest and byte count for one artifact."""
+
+    digest = hashlib.sha256()
+    byte_count = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            byte_count += len(chunk)
+    return digest.hexdigest(), byte_count
+
+
+def _view_replay_evidence_artifact_bindings(
+    event: dict[str, Any],
+) -> dict[str, str | None]:
+    copy_script_evidence = (
+        event.get("reviewed_copy_script_evidence")
+        if isinstance(event.get("reviewed_copy_script_evidence"), dict)
+        else {}
+    )
+    return {
+        "screenshot": (
+            str(event.get("screenshot_path"))
+            if event.get("screenshot_path")
+            else None
+        ),
+        "copy_script": (
+            str(copy_script_evidence.get("script_path"))
+            if copy_script_evidence.get("script_path")
+            else None
+        ),
+        "copy_script_metadata": (
+            str(copy_script_evidence.get("metadata_path"))
+            if copy_script_evidence.get("metadata_path")
+            else None
+        ),
+        "structure": (
+            str(event.get("expected_structure_artifact_path"))
+            if event.get("expected_structure_artifact_path")
+            else str(copy_script_evidence.get("structure_artifact_path"))
+            if copy_script_evidence.get("structure_artifact_path")
+            else None
+        ),
+    }
+
+
+def _record_view_replay_evidence_integrity(
+    event: dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Capture immutable digests before a replay event is persisted."""
+
+    bindings = _view_replay_evidence_artifact_bindings(event)
+    source = str(event.get("source") or "")
+    required_kinds: set[str] = set()
+    policy = "not_required"
+    if source == "reviewed_copy_script":
+        required_kinds.update(REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS)
+        policy = "reviewed_copy_script_strict"
+    elif bindings.get("screenshot"):
+        required_kinds.add("screenshot")
+        if bindings.get("structure"):
+            required_kinds.add("structure")
+        policy = "recorded_screenshot_strict"
+
+    artifacts: list[dict[str, Any]] = []
+    for kind, path_text in bindings.items():
+        if kind not in required_kinds or not path_text:
+            continue
+        path = Path(path_text).expanduser().resolve()
+        digest: str | None = None
+        byte_count: int | None = None
+        try:
+            _ensure_inside(workspace_root, path)
+            if path.exists() and path.is_file():
+                digest, byte_count = _sha256_file(path)
+        except (GuiError, OSError, RuntimeError, ValueError):
+            digest = None
+            byte_count = None
+        artifacts.append(
+            {
+                "kind": kind,
+                "path": str(path),
+                "required": kind in required_kinds,
+                "recorded_sha256": digest,
+                "recorded_byte_count": byte_count,
+            }
+        )
+
+    captured = {
+        "schema_version": VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION,
+        "algorithm": VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM,
+        "policy": policy,
+        "strict": bool(required_kinds),
+        "required_artifact_kinds": sorted(required_kinds),
+        "artifacts": artifacts,
+    }
+    event_with_integrity = dict(event)
+    event_with_integrity["evidence_integrity"] = captured
+    return _audit_view_replay_event_integrity(
+        event_with_integrity,
+        workspace_root=workspace_root,
+    )
+
+
+def _audit_view_replay_event_integrity(
+    event: dict[str, Any],
+    *,
+    workspace_root: Path | None,
+    hash_cache: dict[Path, tuple[str, int]] | None = None,
+) -> dict[str, Any]:
+    """Reverify persisted replay artifacts without changing acceptance history."""
+
+    source = str(event.get("source") or "")
+    accepted = event.get("accepted") is True
+    raw_integrity = (
+        event.get("evidence_integrity")
+        if isinstance(event.get("evidence_integrity"), dict)
+        else None
+    )
+    strict_by_source = source == "reviewed_copy_script"
+    if raw_integrity is None:
+        return {
+            "schema_version": VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION,
+            "algorithm": VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM,
+            "policy": (
+                "reviewed_copy_script_strict"
+                if strict_by_source
+                else "legacy_non_copy_script"
+            ),
+            "strict": strict_by_source,
+            "required_artifact_kinds": sorted(
+                REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS
+                if strict_by_source
+                else set()
+            ),
+            "artifacts": [],
+            "status": (
+                "missing_required_integrity"
+                if strict_by_source
+                else "legacy_unverified"
+            ),
+            "issue_codes": (
+                ["evidence_integrity_record_missing"] if strict_by_source else []
+            ),
+            "trusted_for_replay": bool(accepted and not strict_by_source),
+        }
+
+    integrity = dict(raw_integrity)
+    issue_codes: list[str] = []
+    if integrity.get("schema_version") != VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION:
+        issue_codes.append("evidence_integrity_schema_invalid")
+    if integrity.get("algorithm") != VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM:
+        issue_codes.append("evidence_integrity_algorithm_invalid")
+
+    required_kinds = {
+        str(item)
+        for item in integrity.get("required_artifact_kinds") or []
+        if str(item)
+    }
+    if strict_by_source:
+        required_kinds.update(REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS)
+    strict = bool(strict_by_source or integrity.get("strict") is True)
+    bindings = _view_replay_evidence_artifact_bindings(event)
+    raw_artifacts = [
+        item
+        for item in integrity.get("artifacts") or []
+        if isinstance(item, dict)
+    ]
+    artifacts_by_kind: dict[str, dict[str, Any]] = {}
+    for item in raw_artifacts:
+        kind = str(item.get("kind") or "")
+        if not kind:
+            issue_codes.append("evidence_integrity_artifact_kind_missing")
+            continue
+        if kind in artifacts_by_kind:
+            issue_codes.append(f"evidence_integrity_artifact_duplicate:{kind}")
+            continue
+        artifacts_by_kind[kind] = item
+
+    audited_artifacts: list[dict[str, Any]] = []
+    for kind in sorted(set(artifacts_by_kind) | required_kinds):
+        raw_artifact = artifacts_by_kind.get(kind)
+        expected_path_text = bindings.get(kind)
+        if raw_artifact is None:
+            issue_codes.append(f"evidence_integrity_artifact_missing:{kind}")
+            continue
+        artifact = dict(raw_artifact)
+        artifact["required"] = kind in required_kinds
+        path_text = artifact.get("path")
+        artifact_status = "verified"
+        current_sha256: str | None = None
+        current_byte_count: int | None = None
+        if not path_text:
+            issue_codes.append(f"evidence_integrity_artifact_path_missing:{kind}")
+            artifact_status = "path_missing"
+        elif not expected_path_text:
+            issue_codes.append(f"evidence_integrity_binding_missing:{kind}")
+            artifact_status = "binding_missing"
+        elif workspace_root is None:
+            issue_codes.append("evidence_integrity_workspace_root_unavailable")
+            artifact_status = "verification_unavailable"
+        else:
+            try:
+                path = Path(str(path_text)).expanduser().resolve()
+                expected_path = Path(str(expected_path_text)).expanduser().resolve()
+                _ensure_inside(workspace_root, path)
+                _ensure_inside(workspace_root, expected_path)
+                artifact["path"] = str(path)
+                if path != expected_path:
+                    issue_codes.append(
+                        f"evidence_integrity_artifact_binding_mismatch:{kind}"
+                    )
+                    artifact_status = "binding_mismatch"
+                elif not path.exists() or not path.is_file():
+                    issue_codes.append(f"evidence_integrity_artifact_missing:{kind}")
+                    artifact_status = "missing"
+                else:
+                    if hash_cache is not None and path in hash_cache:
+                        current_sha256, current_byte_count = hash_cache[path]
+                    else:
+                        current_sha256, current_byte_count = _sha256_file(path)
+                        if hash_cache is not None:
+                            hash_cache[path] = (
+                                current_sha256,
+                                current_byte_count,
+                            )
+                    recorded_sha256 = artifact.get("recorded_sha256")
+                    recorded_byte_count = artifact.get("recorded_byte_count")
+                    if not isinstance(recorded_sha256, str) or not re.fullmatch(
+                        r"[0-9a-f]{64}", recorded_sha256
+                    ):
+                        issue_codes.append(
+                            f"evidence_integrity_recorded_sha256_invalid:{kind}"
+                        )
+                        artifact_status = "recorded_digest_invalid"
+                    elif current_sha256 != recorded_sha256:
+                        issue_codes.append(
+                            f"evidence_integrity_sha256_mismatch:{kind}"
+                        )
+                        artifact_status = "digest_mismatch"
+                    if (
+                        isinstance(recorded_byte_count, int)
+                        and current_byte_count != recorded_byte_count
+                    ):
+                        issue_codes.append(
+                            f"evidence_integrity_byte_count_mismatch:{kind}"
+                        )
+                        if artifact_status == "verified":
+                            artifact_status = "byte_count_mismatch"
+            except (GuiError, OSError, RuntimeError, ValueError):
+                issue_codes.append(f"evidence_integrity_artifact_path_invalid:{kind}")
+                artifact_status = "path_invalid"
+        artifact["current_sha256"] = current_sha256
+        artifact["current_byte_count"] = current_byte_count
+        artifact["status"] = artifact_status
+        audited_artifacts.append(artifact)
+
+    unique_issue_codes = list(dict.fromkeys(issue_codes))
+    status = (
+        "not_required"
+        if not strict and not audited_artifacts and not unique_issue_codes
+        else "verified"
+        if not unique_issue_codes
+        else "invalid"
+    )
+    integrity.update(
+        {
+            "schema_version": VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION,
+            "algorithm": VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM,
+            "strict": strict,
+            "required_artifact_kinds": sorted(required_kinds),
+            "artifacts": audited_artifacts,
+            "status": status,
+            "issue_codes": unique_issue_codes,
+            "trusted_for_replay": bool(
+                accepted and (not strict or status == "verified")
+            ),
+        }
+    )
+    return integrity
+
+
+def _view_replay_event_is_trusted(event: dict[str, Any]) -> bool:
+    if event.get("accepted") is not True:
+        return False
+    integrity = (
+        event.get("evidence_integrity")
+        if isinstance(event.get("evidence_integrity"), dict)
+        else {}
+    )
+    if event.get("source") == "reviewed_copy_script":
+        return integrity.get("trusted_for_replay") is True
+    if integrity.get("strict") is True:
+        return integrity.get("trusted_for_replay") is True
+    return True
+
+
 def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]:
     """Audit persisted recipe versions without mutating replay evidence."""
 
@@ -6104,7 +6437,7 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         str(event.get("view_name"))
         for event in manifest.get("replay_events") or []
         if isinstance(event, dict)
-        and event.get("accepted") is True
+        and _view_replay_event_is_trusted(event)
         and event.get("view_name") is not None
     }
     view_contracts: list[dict[str, Any]] = []
@@ -6170,14 +6503,44 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
     }
 
 
-def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
+def _refresh_view_replay_summary(
+    manifest: dict[str, Any],
+    *,
+    workspace_root: Path | None = None,
+) -> None:
     """Refresh replay progress while preserving the current preflight state."""
 
     replay_events = [item for item in manifest.get("replay_events") or [] if isinstance(item, dict)]
+    hash_cache: dict[Path, tuple[str, int]] = {}
+    for event in replay_events:
+        event["evidence_integrity"] = _audit_view_replay_event_integrity(
+            event,
+            workspace_root=workspace_root,
+            hash_cache=hash_cache,
+        )
+    manifest["replay_events"] = replay_events
+    if replay_events:
+        manifest["last_replay_event"] = replay_events[-1]
+    raw_accepted_events = [
+        item for item in replay_events if item.get("accepted") is True
+    ]
+    trusted_accepted_events = [
+        item for item in replay_events if _view_replay_event_is_trusted(item)
+    ]
+    integrity_blocked_events = [
+        item
+        for item in raw_accepted_events
+        if not _view_replay_event_is_trusted(item)
+    ]
     accepted_views = {
         str(item.get("view_name"))
-        for item in replay_events
-        if item.get("accepted") is True and item.get("view_name") is not None
+        for item in trusted_accepted_events
+        if item.get("view_name") is not None
+    }
+    raw_accepted_views = {
+        str(item.get("view_name"))
+        for item in raw_accepted_events
+        if item.get("view_name") is not None
     }
     supported_steps = [
         item
@@ -6208,10 +6571,33 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     automation_ready_view_names = [str(item.get("view_name")) for item in automation_ready_steps]
     review_required_view_names = [str(item.get("view_name")) for item in review_required_steps]
     all_confirmed = bool(supported_view_names) and supported_view_names <= accepted_views
+    integrity_blocked_view_names = sorted(
+        (raw_accepted_views - accepted_views) & supported_view_names
+    )
+    if integrity_blocked_view_names:
+        evidence_integrity_status = "blocked"
+    elif integrity_blocked_events:
+        evidence_integrity_status = "verified_with_historical_drift"
+    elif any(
+        isinstance(item.get("evidence_integrity"), dict)
+        and item["evidence_integrity"].get("status") == "verified"
+        for item in replay_events
+    ):
+        evidence_integrity_status = "verified"
+    else:
+        evidence_integrity_status = "not_applicable"
     manifest["replay_summary"] = {
         "event_count": len(replay_events),
-        "accepted_event_count": sum(1 for item in replay_events if item.get("accepted") is True),
+        "raw_accepted_event_count": len(raw_accepted_events),
+        "accepted_event_count": len(trusted_accepted_events),
+        "trusted_accepted_event_count": len(trusted_accepted_events),
         "accepted_view_count": len(accepted_supported_views),
+        "accepted_view_names": sorted(accepted_supported_views),
+        "raw_accepted_view_count": len(raw_accepted_views & supported_view_names),
+        "integrity_blocked_accepted_event_count": len(integrity_blocked_events),
+        "integrity_blocked_view_count": len(integrity_blocked_view_names),
+        "integrity_blocked_view_names": integrity_blocked_view_names,
+        "evidence_integrity_status": evidence_integrity_status,
         "supported_view_count": len(supported_view_names),
         "pending_view_count": len(pending_steps),
         "pending_view_names": pending_view_names,
@@ -6224,6 +6610,14 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     preflight = manifest.get("preflight") if isinstance(manifest.get("preflight"), dict) else {}
     next_pending_step = pending_steps[0] if pending_steps else None
     next_automation_step = automation_ready_steps[0] if automation_ready_steps else None
+    next_pending_view_name = (
+        str(next_pending_step.get("view_name"))
+        if next_pending_step is not None
+        else None
+    )
+    next_pending_integrity_blocked = bool(
+        next_pending_view_name in integrity_blocked_view_names
+    )
     next_pending_recipe = (
         next_pending_step.get("execution_recipe")
         if next_pending_step is not None
@@ -6288,6 +6682,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         recommended_executor = None
         recommended_action = "resolve_view_replay_preflight_blockers"
         recommended_mcp_tool = (manifest.get("next_action") or {}).get("recommended_tool")
+    elif next_pending_integrity_blocked and next_automation_step is None:
+        continuation_status = "evidence_integrity_reverification_required"
+        recommended_executor = "reviewed_copy_script_or_manual_gui_review"
+        recommended_action = (
+            "recapture_and_record_view_evidence_after_artifact_integrity_failure"
+        )
+        recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     elif runtime_accessibility_preflight_required:
         continuation_status = "runtime_accessibility_preflight_required"
         recommended_executor = "computer_use_or_manual_review"
@@ -6543,6 +6944,19 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             "project_id": manifest.get("project_id"),
         }
         continuation_high_level_payload_hint = dict(continuation_payload_hint)
+    elif next_pending_integrity_blocked and next_automation_step is None:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Recapture reviewed Copy Script and screenshot evidence for the "
+                f"prepared {selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view because a persisted evidence artifact failed integrity verification."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
     elif runtime_accessibility_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -6626,6 +7040,10 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "automatic_replay_ready": next_automation_step is not None,
         "recipe_upgrade_required": pending_recipe_upgrade_required,
         "recipe_contract": recipe_contract,
+        "evidence_integrity_reverification_required": bool(
+            integrity_blocked_view_names
+        ),
+        "integrity_blocked_view_names": integrity_blocked_view_names,
         "runtime_accessibility_preflight_required": (
             runtime_accessibility_preflight_required
         ),
@@ -6644,7 +7062,9 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             str(next_pending_step.get("view_name")) if next_pending_step is not None else None
         ),
         "next_automation_ready_view_name": (
-            str(next_automation_step.get("view_name")) if next_automation_step is not None else None
+            str(next_automation_step.get("view_name"))
+            if next_automation_step is not None
+            else None
         ),
         "next_view": {
             "view_name": selected_next_step.get("view_name"),
@@ -6666,6 +7086,7 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "evidence_values_must_be_observed_not_assumed": bool(
             miller_plane_payload_hint
             or runtime_accessibility_observation_blocks_automation
+            or next_pending_integrity_blocked
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
@@ -6675,6 +7096,8 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         return
     if all_confirmed:
         manifest["replay_status"] = "externally_confirmed"
+    elif integrity_blocked_view_names:
+        manifest["replay_status"] = "evidence_integrity_reverification_required"
     elif accepted_views:
         manifest["replay_status"] = "partially_confirmed"
 

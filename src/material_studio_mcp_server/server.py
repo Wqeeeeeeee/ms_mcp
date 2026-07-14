@@ -3045,6 +3045,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "reviewed_copy_script_artifact_directory": (
                 "gui_copy_script_evidence"
             ),
+            "evidence_integrity_algorithm": "sha256",
+            "evidence_integrity_required_artifact_kinds": [
+                "screenshot",
+                "copy_script",
+                "copy_script_metadata",
+                "structure",
+            ],
+            "evidence_integrity_reverified_on_status": True,
+            "evidence_integrity_failure_invalidates_view_acceptance": True,
+            "evidence_integrity_failure_invalidates_visual_confirmation": True,
             "optional_keyboard_evidence_fields": [
                 "key_sequence",
                 "reset_before_key_sequence",
@@ -5879,6 +5889,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 ),
                 "reviewed_copy_script_execution_allowed": False,
                 "reviewed_copy_script_requires_exact_window_and_screenshot": True,
+                "evidence_integrity_algorithm": "sha256",
+                "evidence_integrity_reverified_on_status": True,
+                "evidence_integrity_failure_preserves_append_only_event": True,
+                "evidence_integrity_failure_requires_reverification": True,
+                "evidence_integrity_failure_invalidates_visual_confirmation": True,
                 "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
                 "runtime_accessibility_preflight_filename": (
                     "gui_view_replay_accessibility_preflight.json"
@@ -17504,6 +17519,64 @@ def _latest_gui_visual_confirmation(response: dict[str, Any]) -> tuple[dict[str,
     return {}, None
 
 
+def _bind_replay_integrity_to_visual_confirmations(
+    report_json: dict[str, Any] | None,
+    replay_manifest: dict[str, Any] | None,
+) -> None:
+    """Attach the current replay-event integrity result to persisted confirmations."""
+
+    if not isinstance(report_json, dict) or not isinstance(replay_manifest, dict):
+        return
+    events_by_id = {
+        str(event.get("event_id")): event
+        for event in replay_manifest.get("replay_events") or []
+        if isinstance(event, dict) and event.get("event_id")
+    }
+
+    confirmations: list[dict[str, Any]] = []
+    direct = report_json.get("gui_visual_confirmation")
+    if isinstance(direct, dict):
+        confirmations.append(direct)
+    modeling_report = report_json.get("modeling_report")
+    if isinstance(modeling_report, dict):
+        gui_report = modeling_report.get("gui")
+        if isinstance(gui_report, dict):
+            persisted = gui_report.get("external_visual_confirmation")
+            if isinstance(persisted, dict):
+                confirmations.append(persisted)
+    for artifact in report_json.get("gui_artifacts") or []:
+        if isinstance(artifact, dict) and artifact.get("type") == "visual_confirmation":
+            confirmations.append(artifact)
+
+    for confirmation in confirmations:
+        event_id = confirmation.get("replay_event_id")
+        if not event_id:
+            continue
+        event = events_by_id.get(str(event_id))
+        if event is None:
+            confirmation["evidence_integrity"] = {
+                "status": "replay_event_missing",
+                "trusted_for_replay": False,
+                "issue_codes": ["visual_confirmation_replay_event_missing"],
+            }
+            confirmation["evidence_integrity_ok"] = False
+            continue
+        integrity = (
+            event.get("evidence_integrity")
+            if isinstance(event.get("evidence_integrity"), dict)
+            else {
+                "status": "missing_required_integrity",
+                "trusted_for_replay": False,
+                "issue_codes": ["evidence_integrity_record_missing"],
+            }
+        )
+        confirmation["evidence_integrity"] = integrity
+        confirmation["evidence_integrity_ok"] = bool(
+            event.get("accepted") is True
+            and integrity.get("trusted_for_replay") is True
+        )
+
+
 def _visual_confirmation_matches_current(response: dict[str, Any], confirmation: dict[str, Any]) -> bool:
     """Return True when a visual confirmation artifact belongs to this project revision."""
 
@@ -17520,6 +17593,14 @@ def _visual_confirmation_matches_current(response: dict[str, Any], confirmation:
         except (TypeError, ValueError):
             if str(expected_revision) != str(confirmation_revision):
                 return False
+    if confirmation.get("replay_event_id"):
+        integrity = (
+            confirmation.get("evidence_integrity")
+            if isinstance(confirmation.get("evidence_integrity"), dict)
+            else {}
+        )
+        if integrity.get("trusted_for_replay") is not True:
+            return False
     return True
 
 
@@ -27520,6 +27601,7 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
             "reviewed_copy_script_evidence_required",
             "reviewed_copy_script_evidence_complete",
             "reviewed_copy_script_evidence",
+            "evidence_integrity",
             "execution_recipe_contract",
         ),
     )
@@ -27536,10 +27618,17 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
         value,
         (
             "event_count",
+            "raw_accepted_event_count",
             "accepted_event_count",
+            "trusted_accepted_event_count",
             "rejected_event_count",
             "accepted_view_count",
             "accepted_view_names",
+            "raw_accepted_view_count",
+            "integrity_blocked_accepted_event_count",
+            "integrity_blocked_view_count",
+            "integrity_blocked_view_names",
+            "evidence_integrity_status",
             "pending_view_count",
             "pending_view_names",
             "automation_ready_pending_view_count",
@@ -27612,6 +27701,8 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "recommended_executor",
             "automatic_replay_ready",
             "recipe_upgrade_required",
+            "evidence_integrity_reverification_required",
+            "integrity_blocked_view_names",
             "runtime_ui_preflight_required",
             "runtime_accessibility_preflight_required",
             "runtime_accessibility_observation_blocks_automation",
@@ -29181,7 +29272,14 @@ def material_studio_live_project_status(
             view_replay_accessibility_preflight_error,
         ) = _read_json_file(view_replay_accessibility_preflight_path)
         if isinstance(view_replay_manifest, dict):
-            _refresh_view_replay_summary(view_replay_manifest)
+            _refresh_view_replay_summary(
+                view_replay_manifest,
+                workspace_root=store.workspace_root,
+            )
+        _bind_replay_integrity_to_visual_confirmations(
+            report_json_payload,
+            view_replay_manifest,
+        )
         view_replay_summary = {
             "manifest_path": str(view_replay_manifest_path),
             "manifest_exists": view_replay_manifest_path.exists(),
@@ -33110,6 +33208,7 @@ def material_studio_gui_record_view_replay(
             "reviewed_copy_script_evidence_complete": event.get(
                 "reviewed_copy_script_evidence_complete"
             ),
+            "evidence_integrity": event.get("evidence_integrity"),
             "expected_revision": int(context["revision"]),
             "expected_window_handle": expected_window_handle,
             "expected_window_title": expected_window_title,
@@ -33188,6 +33287,7 @@ def material_studio_gui_record_view_replay(
                 "reviewed_copy_script_evidence_complete": event.get(
                     "reviewed_copy_script_evidence_complete"
                 ),
+                "evidence_integrity": event.get("evidence_integrity"),
                 "miller_plane_evidence": event.get("miller_plane_evidence"),
                 "miller_plane_evidence_complete": event.get("miller_plane_evidence_complete"),
             }

@@ -114,6 +114,11 @@ screenshot, inert script, metadata, and structure artifact. Live status must
 reverify those artifacts. A mismatch preserves append-only history but removes
 the view from trusted acceptance and invalidates the replay-derived visual
 confirmation until new evidence is recorded.
+Every new replay event also exposes a stable record SHA-256. The manifest copy
+and durable JSONL copy must reconcile one-to-one on live status. Missing,
+duplicate, malformed, or digest-mismatched journal records block trusted view
+acceptance and replay-derived visual confirmation without rewriting either
+source.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

@@ -231,6 +231,11 @@ refresh. The screenshot, inert script, metadata, and structure artifact have
 separate SHA-256 records. If any artifact is missing or changed, the append-only
 event remains in history but no longer counts as an accepted view or valid
 external visual confirmation until fresh evidence is recorded.
+Each new replay event also has a stable SHA-256 record digest in both the
+manifest and the durable `gui_view_replay_events.jsonl` journal. Status compares
+the two independent copies. Missing, duplicate, or changed journal records keep
+their historical files but no longer satisfy trusted view acceptance. Status is
+read-only and never repairs one copy from the other.
 
 Conversation-style requests such as `continue the next GUI view replay` or
 `继续验证下一个 GUI 视角` route through the high-level live modeling tool. The

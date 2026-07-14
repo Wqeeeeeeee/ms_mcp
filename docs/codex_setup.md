@@ -204,6 +204,11 @@ Do not infer that an old `accepted=true` event is still trusted. Read the curren
 `integrity_blocked_view_names`. Status refresh rechecks SHA-256 for the bound
 screenshot, inert script, metadata, and structure artifact. A mismatch keeps the
 historical event but requires a fresh screenshot and reviewed Copy Script record.
+Also inspect `gui_view_replay.event_journal.consistency_status` and
+`replay_summary.journal_blocked_view_names`. New events are written to the
+append-only JSONL journal before manifest publication and are trusted only when
+the immutable event digests match. Do not copy a manifest event into the journal
+or vice versa to clear a mismatch; collect and record a fresh observed view.
 
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and

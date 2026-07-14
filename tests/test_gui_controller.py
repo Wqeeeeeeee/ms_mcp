@@ -1855,6 +1855,200 @@ def test_refresh_view_replay_invalidates_drifted_computer_use_screenshot(
     ] is False
 
 
+@pytest.mark.parametrize(
+    "drift_kind, expected_issue",
+    [
+        (
+            "manifest_mutation",
+            "manifest_journal_event_digest_mismatch",
+        ),
+        (
+            "journal_mutation",
+            "manifest_journal_event_digest_mismatch",
+        ),
+        ("journal_deleted", "journal_event_missing"),
+        ("journal_duplicate", "journal_event_duplicate"),
+    ],
+)
+def test_refresh_view_replay_invalidates_manifest_journal_divergence(
+    tmp_path: Path,
+    drift_kind: str,
+    expected_issue: str,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    prepared = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+    screenshot = tmp_path / "view_proj" / "outputs" / "r002" / "journal.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="reviewed_copy_script",
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=screenshot,
+        expected_window_handle=backend.window.handle,
+        expected_window_title=backend.window.title,
+        reviewed_copy_script_evidence=_reviewed_copy_script_evidence(),
+    )
+    assert recorded["accepted"] is True
+    assert recorded["event"]["journal_consistency"]["status"] == "matched"
+    assert recorded["event_journal"]["consistency_status"] == "consistent"
+
+    manifest_path = Path(prepared["manifest_path"])
+    events_path = Path(recorded["events_path"])
+    original_journal = events_path.read_text(encoding="utf-8")
+    if drift_kind == "manifest_mutation":
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["replay_events"][0]["note"] = "mutated manifest note"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    elif drift_kind == "journal_mutation":
+        journal_event = json.loads(original_journal.splitlines()[0])
+        journal_event["note"] = "mutated journal note"
+        events_path.write_text(
+            json.dumps(journal_event, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    elif drift_kind == "journal_deleted":
+        events_path.unlink()
+    else:
+        events_path.write_text(
+            original_journal + original_journal,
+            encoding="utf-8",
+        )
+
+    refreshed = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+
+    manifest = refreshed["manifest"]
+    event = manifest["replay_events"][0]
+    assert event["accepted"] is True
+    assert event["evidence_integrity"]["trusted_for_replay"] is True
+    assert event["journal_consistency"]["trusted_for_replay"] is False
+    assert expected_issue in event["journal_consistency"]["issue_codes"]
+    summary = manifest["replay_summary"]
+    assert summary["accepted_view_count"] == 0
+    assert summary["integrity_blocked_view_names"] == []
+    assert summary["journal_blocked_view_names"] == ["crystal_100"]
+    assert summary["journal_consistency_status"] == "blocked"
+    assert refreshed["replay_status"] == "event_journal_reverification_required"
+
+    if drift_kind == "journal_deleted":
+        rerecorded = controller.record_view_replay(
+            project_id="view_proj",
+            revision=2,
+            view_name="crystal_100",
+            source="reviewed_copy_script",
+            model_visible=True,
+            camera_matches_manifest=True,
+            screenshot_path=screenshot,
+            expected_window_handle=backend.window.handle,
+            expected_window_title=backend.window.title,
+            reviewed_copy_script_evidence=_reviewed_copy_script_evidence(),
+        )
+        restored_summary = rerecorded["replay_summary"]
+        assert rerecorded["accepted"] is True
+        assert rerecorded["replay_status"] == "externally_confirmed"
+        assert restored_summary["accepted_view_count"] == 1
+        assert restored_summary["journal_blocked_view_names"] == []
+        assert restored_summary["journal_consistency_status"] == (
+            "consistent_with_historical_divergence"
+        )
+
+
+def test_refresh_view_replay_reports_unrelated_invalid_journal_line(
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    controller.prepare_view_replay(audit, project_id="view_proj", revision=2)
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="computer_use",
+        model_visible=True,
+        camera_matches_manifest=True,
+    )
+    events_path = Path(recorded["events_path"])
+    with events_path.open("a", encoding="utf-8") as handle:
+        handle.write("not-json\n")
+
+    refreshed = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+
+    assert refreshed["replay_status"] == "externally_confirmed"
+    assert refreshed["manifest"]["replay_summary"]["accepted_view_count"] == 1
+    journal = refreshed["event_journal"]
+    assert journal["status"] == "invalid_lines"
+    assert journal["invalid_line_count"] == 1
+    assert journal["invalid_line_numbers"] == [2]
+    assert journal["consistency_status"] == (
+        "consistent_with_historical_divergence"
+    )
+
+
+def test_record_view_replay_journals_before_manifest_publish_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    prepared = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+    manifest_path = Path(prepared["manifest_path"])
+    manifest_before = manifest_path.read_bytes()
+
+    def fail_manifest_publish(_path: Path, _payload: dict) -> None:
+        raise OSError("simulated manifest publish failure")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(gui_module, "_write_json_atomic", fail_manifest_publish)
+        with pytest.raises(OSError, match="manifest publish failure"):
+            controller.record_view_replay(
+                project_id="view_proj",
+                revision=2,
+                view_name="crystal_100",
+                source="computer_use",
+                model_visible=True,
+                camera_matches_manifest=True,
+            )
+
+    events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
+    journal_event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[0])
+    assert len(journal_event["event_record_sha256"]) == 64
+    assert manifest_path.read_bytes() == manifest_before
+
+    refreshed = controller.prepare_view_replay(
+        audit,
+        project_id="view_proj",
+        revision=2,
+    )
+    assert refreshed["manifest"]["replay_events"] == []
+    assert refreshed["event_journal"]["journal_only_event_count"] == 1
+    assert refreshed["event_journal"]["consistency_status"] == (
+        "consistent_with_historical_divergence"
+    )
+
+
 def test_record_view_replay_blocks_and_does_not_persist_unsafe_copy_script_text(
     tmp_path: Path,
 ) -> None:

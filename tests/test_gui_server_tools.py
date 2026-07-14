@@ -925,6 +925,7 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
     assert prepared["response_mode"] == "compact"
     assert prepared["response_schema"] == "material_studio_live_compact_v2"
     assert prepared["view_names"] == ["front"]
+    assert prepared["event_journal"]["consistency_status"] == "not_applicable"
     assert "manifest" not in prepared
 
     recorded = server.material_studio_gui_record_view_replay(
@@ -939,6 +940,12 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
     assert recorded["response_schema"] == "material_studio_live_compact_v2"
     assert recorded["view_replay"]["accepted"] is True
     assert recorded["view_replay"]["replay_status"] == "externally_confirmed"
+    assert recorded["view_replay"]["event_journal"][
+        "consistency_status"
+    ] == "consistent"
+    event_digest = recorded["view_replay"]["event"]["event_record_sha256"]
+    assert len(event_digest) == 64
+    int(event_digest, 16)
     assert "modeling_report" not in recorded
     assert "view_replay_binding" in recorded
 
@@ -1036,6 +1043,35 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
         ensure_ascii=False,
     )
 
+    events_path = Path(recorded["events_path"])
+    original_journal = events_path.read_text(encoding="utf-8")
+    journal_event = json.loads(original_journal.splitlines()[0])
+    journal_event["note"] = "drifted journal copy"
+    events_path.write_text(
+        json.dumps(journal_event, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    journal_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    journal_replay = journal_status["gui_view_replay"]
+    assert journal_replay["replay_summary"]["accepted_view_count"] == 0
+    assert journal_replay["replay_summary"]["integrity_blocked_view_names"] == []
+    assert journal_replay["replay_summary"]["journal_blocked_view_names"] == [
+        "front"
+    ]
+    assert journal_replay["event_journal"]["consistency_status"] == "blocked"
+    assert journal_status["gui_visual_confirmation"][
+        "journal_consistency_ok"
+    ] is False
+    assert journal_status["modeling_report"]["gui"][
+        "external_visual_confirmation_ok"
+    ] is False
+    events_path.write_text(original_journal, encoding="utf-8")
+
     Path(evidence["script_path"]).write_text(
         "drifted after acceptance\n",
         encoding="utf-8",
@@ -1052,6 +1088,8 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
     assert replay["replay_summary"]["integrity_blocked_view_names"] == [
         "front"
     ]
+    assert replay["replay_summary"]["journal_blocked_view_names"] == []
+    assert replay["event_journal"]["consistency_status"] == "consistent"
     assert replay["replay_continuation"]["status"] == (
         "evidence_integrity_reverification_required"
     )
@@ -6151,6 +6189,16 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ] is True
     assert view_replay_policy[
         "evidence_integrity_failure_invalidates_visual_confirmation"
+    ] is True
+    assert view_replay_policy[
+        "event_journal_durable_append_before_manifest_publish"
+    ] is True
+    assert view_replay_policy["event_journal_reconciled_on_status"] is True
+    assert view_replay_policy[
+        "event_journal_divergence_preserves_append_only_history"
+    ] is True
+    assert view_replay_policy[
+        "event_journal_divergence_invalidates_visual_confirmation"
     ] is True
     assert view_replay_policy["arbitrary_camera_materialscript_api_verified"] is False
     assert view_replay_policy["local_mcp_backend"] == "manifest_only"

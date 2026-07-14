@@ -194,6 +194,10 @@ REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS = {
 }
 VIEW_REPLAY_EVIDENCE_INTEGRITY_SCHEMA_VERSION = 1
 VIEW_REPLAY_EVIDENCE_INTEGRITY_ALGORITHM = "sha256"
+VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION = 1
+VIEW_REPLAY_EVENT_JOURNAL_MAX_BYTES = 16 * 1024 * 1024
+VIEW_REPLAY_EVENT_JOURNAL_MAX_LINES = 10_000
+VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES = 100
 REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS = {
     "screenshot",
     "copy_script",
@@ -2847,6 +2851,7 @@ class MaterialsStudioGuiController:
         _refresh_view_replay_summary(
             manifest,
             workspace_root=self.workspace_root,
+            events_path=manifest_path.with_name("gui_view_replay_events.jsonl"),
         )
         current_recipe_contract = manifest.get("recipe_contract")
         manifest["recipe_migration"] = {
@@ -2895,6 +2900,7 @@ class MaterialsStudioGuiController:
                 "runtime_accessibility_preflight": manifest[
                     "runtime_accessibility_preflight"
                 ],
+                "event_journal": manifest.get("event_journal"),
                 "next_action": manifest["next_action"],
             },
         )
@@ -2918,6 +2924,7 @@ class MaterialsStudioGuiController:
             "supported_view_count": len(supported_steps),
             "unsupported_view_count": len(unsupported_steps),
             "replay_continuation": manifest.get("replay_continuation"),
+            "event_journal": manifest.get("event_journal"),
             "recipe_contract": manifest.get("recipe_contract"),
             "recipe_migration": manifest.get("recipe_migration"),
             "next_action": manifest["next_action"],
@@ -4017,6 +4024,16 @@ class MaterialsStudioGuiController:
             event["accepted"] = False
             event["rejection_reasons"] = rejection_reasons
             event["evidence_integrity"]["trusted_for_replay"] = False
+        event["event_record_schema_version"] = (
+            VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION
+        )
+        event["event_record_sha256"] = _view_replay_event_record_sha256(event)
+        events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
+        _append_view_replay_event_journal(
+            events_path,
+            event,
+            workspace_root=self.workspace_root,
+        )
         replay_events = [item for item in manifest.get("replay_events") or [] if isinstance(item, dict)]
         replay_events.append(event)
         manifest["replay_events"] = replay_events
@@ -4024,12 +4041,10 @@ class MaterialsStudioGuiController:
         _refresh_view_replay_summary(
             manifest,
             workspace_root=self.workspace_root,
+            events_path=events_path,
         )
         _write_json_atomic(manifest_path, manifest)
 
-        events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
-        with events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         log_path = self._write_log(
             "record_view_replay",
             project_id=safe_project,
@@ -4039,6 +4054,7 @@ class MaterialsStudioGuiController:
                 "events_path": str(events_path),
                 "event": event,
                 "replay_summary": manifest["replay_summary"],
+                "event_journal": manifest.get("event_journal"),
             },
         )
         return {
@@ -4054,6 +4070,7 @@ class MaterialsStudioGuiController:
             "replay_status": manifest.get("replay_status"),
             "replay_summary": manifest["replay_summary"],
             "replay_continuation": manifest.get("replay_continuation"),
+            "event_journal": manifest.get("event_journal"),
             "recipe_contract": manifest.get("recipe_contract"),
             "recipe_migration": manifest.get("recipe_migration"),
             "manifest_view_names": list(manifest.get("view_names") or []),
@@ -6121,6 +6138,392 @@ def _sha256_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), byte_count
 
 
+def _immutable_evidence_integrity_payload(value: Any) -> dict[str, Any] | None:
+    """Return only the recorded fields used by the immutable event digest."""
+
+    if not isinstance(value, dict):
+        return None
+    artifacts = []
+    for item in value.get("artifacts") or []:
+        if not isinstance(item, dict):
+            continue
+        artifacts.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "kind",
+                    "path",
+                    "required",
+                    "recorded_sha256",
+                    "recorded_byte_count",
+                )
+            }
+        )
+    artifacts.sort(key=lambda item: str(item.get("kind") or ""))
+    return {
+        "schema_version": value.get("schema_version"),
+        "algorithm": value.get("algorithm"),
+        "policy": value.get("policy"),
+        "strict": value.get("strict"),
+        "required_artifact_kinds": sorted(
+            str(item) for item in value.get("required_artifact_kinds") or []
+        ),
+        "artifacts": artifacts,
+    }
+
+
+def _view_replay_event_record_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Build the stable event payload shared by manifest and JSONL copies."""
+
+    payload = {
+        key: value
+        for key, value in event.items()
+        if key
+        not in {
+            "event_record_sha256",
+            "journal_consistency",
+        }
+    }
+    if "evidence_integrity" in payload:
+        payload["evidence_integrity"] = _immutable_evidence_integrity_payload(
+            payload.get("evidence_integrity")
+        )
+    return payload
+
+
+def _view_replay_event_record_sha256(event: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        _view_replay_event_record_payload(event),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _load_view_replay_event_journal(
+    events_path: Path | None,
+    *,
+    workspace_root: Path | None,
+) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+    """Read the bounded append-only journal without trusting its event payloads."""
+
+    if events_path is None or workspace_root is None:
+        return (
+            {
+                "status": "verification_unavailable",
+                "path": str(events_path) if events_path is not None else None,
+                "exists": bool(events_path and events_path.exists()),
+                "event_count": 0,
+                "physical_line_count": 0,
+                "invalid_line_numbers": [],
+                "duplicate_event_ids": [],
+                "read_error": "workspace_root_or_events_path_unavailable",
+            },
+            {},
+        )
+    try:
+        resolved = events_path.expanduser().resolve()
+        _ensure_inside(workspace_root, resolved)
+    except (GuiError, OSError, RuntimeError, ValueError) as exc:
+        return (
+            {
+                "status": "invalid_path",
+                "path": str(events_path),
+                "exists": False,
+                "event_count": 0,
+                "physical_line_count": 0,
+                "invalid_line_numbers": [],
+                "duplicate_event_ids": [],
+                "read_error": str(exc),
+            },
+            {},
+        )
+    if not resolved.exists():
+        return (
+            {
+                "status": "missing",
+                "path": str(resolved),
+                "exists": False,
+                "event_count": 0,
+                "physical_line_count": 0,
+                "invalid_line_numbers": [],
+                "duplicate_event_ids": [],
+                "read_error": None,
+            },
+            {},
+        )
+    try:
+        size_bytes = resolved.stat().st_size
+    except OSError as exc:
+        return (
+            {
+                "status": "unreadable",
+                "path": str(resolved),
+                "exists": True,
+                "event_count": 0,
+                "physical_line_count": 0,
+                "invalid_line_numbers": [],
+                "duplicate_event_ids": [],
+                "read_error": str(exc),
+            },
+            {},
+        )
+    if size_bytes > VIEW_REPLAY_EVENT_JOURNAL_MAX_BYTES:
+        return (
+            {
+                "status": "oversized",
+                "path": str(resolved),
+                "exists": True,
+                "size_bytes": size_bytes,
+                "event_count": 0,
+                "physical_line_count": 0,
+                "invalid_line_numbers": [],
+                "duplicate_event_ids": [],
+                "read_error": None,
+            },
+            {},
+        )
+
+    events_by_id: dict[str, list[dict[str, Any]]] = {}
+    invalid_line_numbers: list[int] = []
+    invalid_line_count = 0
+    physical_line_count = 0
+    try:
+        with resolved.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                physical_line_count = line_number
+                if line_number > VIEW_REPLAY_EVENT_JOURNAL_MAX_LINES:
+                    return (
+                        {
+                            "status": "too_many_lines",
+                            "path": str(resolved),
+                            "exists": True,
+                            "size_bytes": size_bytes,
+                            "event_count": sum(len(items) for items in events_by_id.values()),
+                            "physical_line_count": physical_line_count,
+                            "invalid_line_count": invalid_line_count,
+                            "invalid_line_numbers": invalid_line_numbers,
+                            "invalid_line_numbers_truncated": (
+                                invalid_line_count > len(invalid_line_numbers)
+                            ),
+                            "duplicate_event_ids": sorted(
+                                event_id
+                                for event_id, items in events_by_id.items()
+                                if len(items) > 1
+                            )[:VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES],
+                            "read_error": None,
+                        },
+                        events_by_id,
+                    )
+                if not line.strip():
+                    invalid_line_count += 1
+                    if (
+                        len(invalid_line_numbers)
+                        < VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+                    ):
+                        invalid_line_numbers.append(line_number)
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    invalid_line_count += 1
+                    if (
+                        len(invalid_line_numbers)
+                        < VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+                    ):
+                        invalid_line_numbers.append(line_number)
+                    continue
+                if not isinstance(item, dict) or not item.get("event_id"):
+                    invalid_line_count += 1
+                    if (
+                        len(invalid_line_numbers)
+                        < VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+                    ):
+                        invalid_line_numbers.append(line_number)
+                    continue
+                events_by_id.setdefault(str(item["event_id"]), []).append(item)
+    except (OSError, UnicodeError) as exc:
+        return (
+            {
+                "status": "unreadable",
+                "path": str(resolved),
+                "exists": True,
+                "size_bytes": size_bytes,
+                "event_count": sum(len(items) for items in events_by_id.values()),
+                "physical_line_count": physical_line_count,
+                "invalid_line_count": invalid_line_count,
+                "invalid_line_numbers": invalid_line_numbers,
+                "invalid_line_numbers_truncated": (
+                    invalid_line_count > len(invalid_line_numbers)
+                ),
+                "duplicate_event_ids": [],
+                "read_error": str(exc),
+            },
+            events_by_id,
+        )
+
+    all_duplicate_event_ids = sorted(
+        event_id for event_id, items in events_by_id.items() if len(items) > 1
+    )
+    duplicate_event_ids = all_duplicate_event_ids[
+        :VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+    ]
+    return (
+        {
+            "status": (
+                "invalid_lines"
+                if invalid_line_count
+                else "duplicate_event_ids"
+                if duplicate_event_ids
+                else "loaded"
+            ),
+            "path": str(resolved),
+            "exists": True,
+            "size_bytes": size_bytes,
+            "event_count": sum(len(items) for items in events_by_id.values()),
+            "physical_line_count": physical_line_count,
+            "invalid_line_count": invalid_line_count,
+            "invalid_line_numbers": invalid_line_numbers,
+            "invalid_line_numbers_truncated": (
+                invalid_line_count > len(invalid_line_numbers)
+            ),
+            "duplicate_event_id_count": len(all_duplicate_event_ids),
+            "duplicate_event_ids": duplicate_event_ids,
+            "read_error": None,
+        },
+        events_by_id,
+    )
+
+
+def _audit_view_replay_event_journal_consistency(
+    event: dict[str, Any],
+    *,
+    journal_events_by_id: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Compare one manifest event with its independent JSONL journal copy."""
+
+    accepted = event.get("accepted") is True
+    integrity = (
+        event.get("evidence_integrity")
+        if isinstance(event.get("evidence_integrity"), dict)
+        else {}
+    )
+    stored_digest = event.get("event_record_sha256")
+    event_id = str(event.get("event_id") or "")
+    manifest_digest = _view_replay_event_record_sha256(event)
+    candidates = journal_events_by_id.get(event_id, []) if event_id else []
+    required = bool(
+        event.get("source") == "reviewed_copy_script"
+        or integrity.get("strict") is True
+        or event.get("event_record_schema_version")
+        == VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION
+        or stored_digest
+        or any(
+            candidate.get("event_record_schema_version")
+            == VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION
+            or candidate.get("event_record_sha256")
+            for candidate in candidates
+        )
+    )
+    issue_codes: list[str] = []
+    journal_digest: str | None = None
+    journal_stored_digest: str | None = None
+    if not event_id:
+        issue_codes.append("manifest_event_id_missing")
+    if (
+        event.get("event_record_schema_version")
+        not in {None, VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION}
+    ):
+        issue_codes.append("manifest_event_record_schema_invalid")
+    if isinstance(stored_digest, str):
+        if not re.fullmatch(r"[0-9a-f]{64}", stored_digest):
+            issue_codes.append("manifest_event_record_sha256_invalid")
+        elif stored_digest != manifest_digest:
+            issue_codes.append("manifest_event_record_sha256_mismatch")
+    elif (
+        event.get("event_record_schema_version")
+        == VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION
+    ):
+        issue_codes.append("manifest_event_record_sha256_missing")
+
+    if not candidates:
+        if required:
+            issue_codes.append("journal_event_missing")
+    elif len(candidates) > 1:
+        issue_codes.append("journal_event_duplicate")
+    else:
+        journal_event = candidates[0]
+        journal_digest = _view_replay_event_record_sha256(journal_event)
+        raw_journal_stored_digest = journal_event.get("event_record_sha256")
+        journal_stored_digest = (
+            str(raw_journal_stored_digest)
+            if raw_journal_stored_digest is not None
+            else None
+        )
+        if (
+            journal_event.get("event_record_schema_version")
+            not in {None, VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION}
+        ):
+            issue_codes.append("journal_event_record_schema_invalid")
+        if journal_stored_digest is not None:
+            if not re.fullmatch(r"[0-9a-f]{64}", journal_stored_digest):
+                issue_codes.append("journal_event_record_sha256_invalid")
+            elif journal_stored_digest != journal_digest:
+                issue_codes.append("journal_event_record_sha256_mismatch")
+        if journal_digest != manifest_digest:
+            issue_codes.append("manifest_journal_event_digest_mismatch")
+        if (
+            isinstance(stored_digest, str)
+            and journal_stored_digest is not None
+            and stored_digest != journal_stored_digest
+        ):
+            issue_codes.append("manifest_journal_stored_digest_mismatch")
+
+    unique_issue_codes = list(dict.fromkeys(issue_codes))
+    status = (
+        "not_required"
+        if not required
+        else "matched"
+        if not unique_issue_codes
+        else "diverged"
+    )
+    return {
+        "schema_version": VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION,
+        "algorithm": "sha256",
+        "required": required,
+        "status": status,
+        "event_id": event_id or None,
+        "manifest_event_record_sha256": manifest_digest,
+        "stored_event_record_sha256": stored_digest,
+        "journal_event_record_sha256": journal_digest,
+        "journal_stored_event_record_sha256": journal_stored_digest,
+        "journal_match_count": len(candidates),
+        "issue_codes": unique_issue_codes,
+        "trusted_for_replay": bool(
+            accepted and (not required or status == "matched")
+        ),
+    }
+
+
+def _append_view_replay_event_journal(
+    path: Path,
+    event: dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> None:
+    """Durably append one event before publishing it through the manifest."""
+
+    resolved = path.expanduser().resolve()
+    _ensure_inside(workspace_root, resolved)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    with resolved.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _view_replay_evidence_artifact_bindings(
     event: dict[str, Any],
 ) -> dict[str, str | None]:
@@ -6393,7 +6796,7 @@ def _audit_view_replay_event_integrity(
     return integrity
 
 
-def _view_replay_event_is_trusted(event: dict[str, Any]) -> bool:
+def _view_replay_event_artifact_integrity_trusted(event: dict[str, Any]) -> bool:
     if event.get("accepted") is not True:
         return False
     integrity = (
@@ -6406,6 +6809,36 @@ def _view_replay_event_is_trusted(event: dict[str, Any]) -> bool:
     if integrity.get("strict") is True:
         return integrity.get("trusted_for_replay") is True
     return True
+
+
+def _view_replay_event_journal_trusted(event: dict[str, Any]) -> bool:
+    if event.get("accepted") is not True:
+        return False
+    journal = (
+        event.get("journal_consistency")
+        if isinstance(event.get("journal_consistency"), dict)
+        else {}
+    )
+    required = bool(
+        event.get("source") == "reviewed_copy_script"
+        or (
+            isinstance(event.get("evidence_integrity"), dict)
+            and event["evidence_integrity"].get("strict") is True
+        )
+        or event.get("event_record_schema_version")
+        == VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION
+        or event.get("event_record_sha256")
+    )
+    if required:
+        return journal.get("trusted_for_replay") is True
+    return True
+
+
+def _view_replay_event_is_trusted(event: dict[str, Any]) -> bool:
+    return bool(
+        _view_replay_event_artifact_integrity_trusted(event)
+        and _view_replay_event_journal_trusted(event)
+    )
 
 
 def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]:
@@ -6507,6 +6940,7 @@ def _refresh_view_replay_summary(
     manifest: dict[str, Any],
     *,
     workspace_root: Path | None = None,
+    events_path: Path | None = None,
 ) -> None:
     """Refresh replay progress while preserving the current preflight state."""
 
@@ -6518,11 +6952,32 @@ def _refresh_view_replay_summary(
             workspace_root=workspace_root,
             hash_cache=hash_cache,
         )
+    journal_read, journal_events_by_id = _load_view_replay_event_journal(
+        events_path,
+        workspace_root=workspace_root,
+    )
+    for event in replay_events:
+        event["journal_consistency"] = (
+            _audit_view_replay_event_journal_consistency(
+                event,
+                journal_events_by_id=journal_events_by_id,
+            )
+        )
     manifest["replay_events"] = replay_events
     if replay_events:
         manifest["last_replay_event"] = replay_events[-1]
     raw_accepted_events = [
         item for item in replay_events if item.get("accepted") is True
+    ]
+    artifact_trusted_events = [
+        item
+        for item in raw_accepted_events
+        if _view_replay_event_artifact_integrity_trusted(item)
+    ]
+    journal_trusted_events = [
+        item
+        for item in raw_accepted_events
+        if _view_replay_event_journal_trusted(item)
     ]
     trusted_accepted_events = [
         item for item in replay_events if _view_replay_event_is_trusted(item)
@@ -6530,7 +6985,12 @@ def _refresh_view_replay_summary(
     integrity_blocked_events = [
         item
         for item in raw_accepted_events
-        if not _view_replay_event_is_trusted(item)
+        if not _view_replay_event_artifact_integrity_trusted(item)
+    ]
+    journal_blocked_events = [
+        item
+        for item in raw_accepted_events
+        if not _view_replay_event_journal_trusted(item)
     ]
     accepted_views = {
         str(item.get("view_name"))
@@ -6540,6 +7000,16 @@ def _refresh_view_replay_summary(
     raw_accepted_views = {
         str(item.get("view_name"))
         for item in raw_accepted_events
+        if item.get("view_name") is not None
+    }
+    artifact_trusted_views = {
+        str(item.get("view_name"))
+        for item in artifact_trusted_events
+        if item.get("view_name") is not None
+    }
+    journal_trusted_views = {
+        str(item.get("view_name"))
+        for item in journal_trusted_events
         if item.get("view_name") is not None
     }
     supported_steps = [
@@ -6572,6 +7042,12 @@ def _refresh_view_replay_summary(
     review_required_view_names = [str(item.get("view_name")) for item in review_required_steps]
     all_confirmed = bool(supported_view_names) and supported_view_names <= accepted_views
     integrity_blocked_view_names = sorted(
+        (raw_accepted_views - artifact_trusted_views) & supported_view_names
+    )
+    journal_blocked_view_names = sorted(
+        (raw_accepted_views - journal_trusted_views) & supported_view_names
+    )
+    trust_blocked_view_names = sorted(
         (raw_accepted_views - accepted_views) & supported_view_names
     )
     if integrity_blocked_view_names:
@@ -6586,6 +7062,83 @@ def _refresh_view_replay_summary(
         evidence_integrity_status = "verified"
     else:
         evidence_integrity_status = "not_applicable"
+    manifest_event_ids = {
+        str(item.get("event_id"))
+        for item in replay_events
+        if item.get("event_id")
+    }
+    journal_event_ids = set(journal_events_by_id)
+    all_journal_only_event_ids = sorted(journal_event_ids - manifest_event_ids)
+    journal_only_event_ids = all_journal_only_event_ids[
+        :VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+    ]
+    journal_required_events = [
+        item
+        for item in replay_events
+        if isinstance(item.get("journal_consistency"), dict)
+        and item["journal_consistency"].get("required") is True
+    ]
+    journal_matched_events = [
+        item
+        for item in journal_required_events
+        if item["journal_consistency"].get("status") == "matched"
+    ]
+    journal_divergent_events = [
+        item
+        for item in journal_required_events
+        if item["journal_consistency"].get("status") != "matched"
+    ]
+    all_journal_divergent_event_ids = sorted(
+        str(item.get("event_id"))
+        for item in journal_divergent_events
+        if item.get("event_id")
+    )
+    journal_divergent_event_ids = all_journal_divergent_event_ids[
+        :VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES
+    ]
+    journal_read_has_errors = journal_read.get("status") in {
+        "invalid_path",
+        "unreadable",
+        "oversized",
+        "too_many_lines",
+        "invalid_lines",
+        "duplicate_event_ids",
+        "verification_unavailable",
+    }
+    if journal_blocked_view_names:
+        journal_consistency_status = "blocked"
+    elif (
+        journal_divergent_events
+        or all_journal_only_event_ids
+        or journal_read_has_errors
+    ):
+        journal_consistency_status = "consistent_with_historical_divergence"
+    elif journal_required_events:
+        journal_consistency_status = "consistent"
+    elif replay_events or journal_event_ids:
+        journal_consistency_status = "legacy_not_required"
+    else:
+        journal_consistency_status = "not_applicable"
+    manifest["event_journal"] = {
+        **journal_read,
+        "consistency_status": journal_consistency_status,
+        "manifest_event_count": len(replay_events),
+        "journal_required_event_count": len(journal_required_events),
+        "journal_matched_event_count": len(journal_matched_events),
+        "journal_divergent_event_count": len(all_journal_divergent_event_ids),
+        "journal_divergent_event_ids": journal_divergent_event_ids,
+        "journal_divergent_event_ids_truncated": (
+            len(all_journal_divergent_event_ids) > len(journal_divergent_event_ids)
+        ),
+        "journal_only_event_count": len(all_journal_only_event_ids),
+        "journal_only_event_ids": journal_only_event_ids,
+        "journal_only_event_ids_truncated": (
+            len(all_journal_only_event_ids) > len(journal_only_event_ids)
+        ),
+        "trusted_accepted_event_count": len(trusted_accepted_events),
+        "journal_blocked_accepted_event_count": len(journal_blocked_events),
+        "journal_blocked_view_names": journal_blocked_view_names,
+    }
     manifest["replay_summary"] = {
         "event_count": len(replay_events),
         "raw_accepted_event_count": len(raw_accepted_events),
@@ -6598,6 +7151,15 @@ def _refresh_view_replay_summary(
         "integrity_blocked_view_count": len(integrity_blocked_view_names),
         "integrity_blocked_view_names": integrity_blocked_view_names,
         "evidence_integrity_status": evidence_integrity_status,
+        "journal_consistency_status": journal_consistency_status,
+        "journal_required_event_count": len(journal_required_events),
+        "journal_matched_event_count": len(journal_matched_events),
+        "journal_divergent_event_count": len(all_journal_divergent_event_ids),
+        "journal_blocked_accepted_event_count": len(journal_blocked_events),
+        "journal_blocked_view_count": len(journal_blocked_view_names),
+        "journal_blocked_view_names": journal_blocked_view_names,
+        "trust_blocked_view_count": len(trust_blocked_view_names),
+        "trust_blocked_view_names": trust_blocked_view_names,
         "supported_view_count": len(supported_view_names),
         "pending_view_count": len(pending_steps),
         "pending_view_names": pending_view_names,
@@ -6617,6 +7179,9 @@ def _refresh_view_replay_summary(
     )
     next_pending_integrity_blocked = bool(
         next_pending_view_name in integrity_blocked_view_names
+    )
+    next_pending_journal_blocked = bool(
+        next_pending_view_name in journal_blocked_view_names
     )
     next_pending_recipe = (
         next_pending_step.get("execution_recipe")
@@ -6687,6 +7252,13 @@ def _refresh_view_replay_summary(
         recommended_executor = "reviewed_copy_script_or_manual_gui_review"
         recommended_action = (
             "recapture_and_record_view_evidence_after_artifact_integrity_failure"
+        )
+        recommended_mcp_tool = "material_studio_gui_copy_script_assist"
+    elif next_pending_journal_blocked and next_automation_step is None:
+        continuation_status = "event_journal_reverification_required"
+        recommended_executor = "reviewed_copy_script_or_manual_gui_review"
+        recommended_action = (
+            "recapture_and_record_view_evidence_after_event_journal_divergence"
         )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     elif runtime_accessibility_preflight_required:
@@ -6957,6 +7529,19 @@ def _refresh_view_replay_summary(
         continuation_high_level_payload_hint = {}
         post_review_record_payload_template = record_payload_hint
         post_review_high_level_payload_template = high_level_payload_hint
+    elif next_pending_journal_blocked and next_automation_step is None:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Recapture reviewed view evidence for the prepared "
+                f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view because its manifest and append-only journal records diverged."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
     elif runtime_accessibility_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -7044,6 +7629,11 @@ def _refresh_view_replay_summary(
             integrity_blocked_view_names
         ),
         "integrity_blocked_view_names": integrity_blocked_view_names,
+        "event_journal_reverification_required": bool(
+            journal_blocked_view_names
+        ),
+        "journal_consistency_status": journal_consistency_status,
+        "journal_blocked_view_names": journal_blocked_view_names,
         "runtime_accessibility_preflight_required": (
             runtime_accessibility_preflight_required
         ),
@@ -7087,6 +7677,7 @@ def _refresh_view_replay_summary(
             miller_plane_payload_hint
             or runtime_accessibility_observation_blocks_automation
             or next_pending_integrity_blocked
+            or next_pending_journal_blocked
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
@@ -7098,6 +7689,8 @@ def _refresh_view_replay_summary(
         manifest["replay_status"] = "externally_confirmed"
     elif integrity_blocked_view_names:
         manifest["replay_status"] = "evidence_integrity_reverification_required"
+    elif journal_blocked_view_names:
+        manifest["replay_status"] = "event_journal_reverification_required"
     elif accepted_views:
         manifest["replay_status"] = "partially_confirmed"
 

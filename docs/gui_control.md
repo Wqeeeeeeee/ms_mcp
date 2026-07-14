@@ -133,6 +133,14 @@ append-only event; it changes the trusted replay summary to
 accepted set, and prevents its derived visual confirmation from satisfying GUI
 validation until a new bound event is recorded.
 
+Replay events are durably appended to `gui_view_replay_events.jsonl` before the
+manifest publishes the new summary. A stable event SHA-256 binds immutable
+payload fields while excluding current revalidation fields. On resume, the
+manifest event and JSONL event must have one matching ID and digest. Missing,
+duplicate, or divergent copies set `event_journal_reverification_required` and
+invalidate replay-derived visual confirmation. Read-only status reports but does
+not reconcile files automatically; a new real observation is the recovery path.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

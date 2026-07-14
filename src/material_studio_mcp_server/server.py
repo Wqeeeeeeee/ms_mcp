@@ -3055,6 +3055,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "evidence_integrity_reverified_on_status": True,
             "evidence_integrity_failure_invalidates_view_acceptance": True,
             "evidence_integrity_failure_invalidates_visual_confirmation": True,
+            "event_record_digest_algorithm": "sha256",
+            "event_journal_filename": "gui_view_replay_events.jsonl",
+            "event_journal_durable_append_before_manifest_publish": True,
+            "event_journal_reconciled_on_status": True,
+            "event_journal_divergence_invalidates_view_acceptance": True,
+            "event_journal_divergence_invalidates_visual_confirmation": True,
             "optional_keyboard_evidence_fields": [
                 "key_sequence",
                 "reset_before_key_sequence",
@@ -5894,6 +5900,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "evidence_integrity_failure_preserves_append_only_event": True,
                 "evidence_integrity_failure_requires_reverification": True,
                 "evidence_integrity_failure_invalidates_visual_confirmation": True,
+                "event_record_digest_algorithm": "sha256",
+                "event_journal_durable_append_before_manifest_publish": True,
+                "event_journal_reconciled_on_status": True,
+                "event_journal_divergence_preserves_append_only_history": True,
+                "event_journal_divergence_requires_reverification": True,
+                "event_journal_divergence_invalidates_visual_confirmation": True,
                 "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
                 "runtime_accessibility_preflight_filename": (
                     "gui_view_replay_accessibility_preflight.json"
@@ -17560,6 +17572,12 @@ def _bind_replay_integrity_to_visual_confirmations(
                 "issue_codes": ["visual_confirmation_replay_event_missing"],
             }
             confirmation["evidence_integrity_ok"] = False
+            confirmation["journal_consistency"] = {
+                "status": "replay_event_missing",
+                "trusted_for_replay": False,
+                "issue_codes": ["visual_confirmation_replay_event_missing"],
+            }
+            confirmation["journal_consistency_ok"] = False
             continue
         integrity = (
             event.get("evidence_integrity")
@@ -17574,6 +17592,20 @@ def _bind_replay_integrity_to_visual_confirmations(
         confirmation["evidence_integrity_ok"] = bool(
             event.get("accepted") is True
             and integrity.get("trusted_for_replay") is True
+        )
+        journal_consistency = (
+            event.get("journal_consistency")
+            if isinstance(event.get("journal_consistency"), dict)
+            else {
+                "status": "missing_required_journal_consistency",
+                "trusted_for_replay": False,
+                "issue_codes": ["journal_consistency_record_missing"],
+            }
+        )
+        confirmation["journal_consistency"] = journal_consistency
+        confirmation["journal_consistency_ok"] = bool(
+            event.get("accepted") is True
+            and journal_consistency.get("trusted_for_replay") is True
         )
 
 
@@ -17600,6 +17632,13 @@ def _visual_confirmation_matches_current(response: dict[str, Any], confirmation:
             else {}
         )
         if integrity.get("trusted_for_replay") is not True:
+            return False
+        journal_consistency = (
+            confirmation.get("journal_consistency")
+            if isinstance(confirmation.get("journal_consistency"), dict)
+            else {}
+        )
+        if journal_consistency.get("trusted_for_replay") is not True:
             return False
     return True
 
@@ -27602,6 +27641,9 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
             "reviewed_copy_script_evidence_complete",
             "reviewed_copy_script_evidence",
             "evidence_integrity",
+            "event_record_schema_version",
+            "event_record_sha256",
+            "journal_consistency",
             "execution_recipe_contract",
         ),
     )
@@ -27629,6 +27671,15 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
             "integrity_blocked_view_count",
             "integrity_blocked_view_names",
             "evidence_integrity_status",
+            "journal_consistency_status",
+            "journal_required_event_count",
+            "journal_matched_event_count",
+            "journal_divergent_event_count",
+            "journal_blocked_accepted_event_count",
+            "journal_blocked_view_count",
+            "journal_blocked_view_names",
+            "trust_blocked_view_count",
+            "trust_blocked_view_names",
             "pending_view_count",
             "pending_view_names",
             "automation_ready_pending_view_count",
@@ -27703,6 +27754,9 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "recipe_upgrade_required",
             "evidence_integrity_reverification_required",
             "integrity_blocked_view_names",
+            "event_journal_reverification_required",
+            "journal_consistency_status",
+            "journal_blocked_view_names",
             "runtime_ui_preflight_required",
             "runtime_accessibility_preflight_required",
             "runtime_accessibility_observation_blocks_automation",
@@ -27744,6 +27798,41 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
     return continuation
 
 
+def _compact_view_replay_event_journal(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "status",
+            "consistency_status",
+            "path",
+            "exists",
+            "size_bytes",
+            "event_count",
+            "physical_line_count",
+            "invalid_line_count",
+            "invalid_line_numbers",
+            "invalid_line_numbers_truncated",
+            "duplicate_event_id_count",
+            "duplicate_event_ids",
+            "read_error",
+            "manifest_event_count",
+            "journal_required_event_count",
+            "journal_matched_event_count",
+            "journal_divergent_event_count",
+            "journal_divergent_event_ids",
+            "journal_divergent_event_ids_truncated",
+            "journal_only_event_count",
+            "journal_only_event_ids",
+            "journal_only_event_ids_truncated",
+            "trusted_accepted_event_count",
+            "journal_blocked_accepted_event_count",
+            "journal_blocked_view_names",
+        ),
+    )
+
+
 def _compact_view_replay(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -27766,6 +27855,9 @@ def _compact_view_replay(value: Any) -> dict[str, Any]:
     continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
     if continuation:
         replay["replay_continuation"] = continuation
+    event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
+    if event_journal:
+        replay["event_journal"] = event_journal
     recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
     if recipe_contract:
         replay["recipe_contract"] = recipe_contract
@@ -27809,6 +27901,9 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
     )
     if continuation:
         prepared["replay_continuation"] = continuation
+    event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
+    if event_journal:
+        prepared["event_journal"] = event_journal
     recipe_contract = _compact_view_replay_recipe_contract(
         value.get("recipe_contract")
     )
@@ -27853,6 +27948,9 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
     if continuation:
         replay["replay_continuation"] = continuation
+    event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
+    if event_journal:
+        replay["event_journal"] = event_journal
     recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
     if recipe_contract:
         replay["recipe_contract"] = recipe_contract
@@ -28085,6 +28183,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_replay_confirmation",
             "view_replay_binding",
             "view_replay",
+            "gui_view_replay",
             "detail_retrieval",
         ),
     )
@@ -28151,6 +28250,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "manifest_path",
             "events_path",
             "view_replay",
+            "gui_view_replay",
             "detail_retrieval",
         ),
     )
@@ -28476,6 +28576,11 @@ def _compact_live_response(
     )
     if view_replay_prepare:
         compact["view_replay_prepare"] = view_replay_prepare
+    event_journal = _compact_view_replay_event_journal(
+        response.get("event_journal")
+    )
+    if event_journal:
+        compact["event_journal"] = event_journal
     replay_summary = _compact_view_replay_summary(response.get("replay_summary"))
     if replay_summary:
         compact["replay_summary"] = replay_summary
@@ -29275,6 +29380,7 @@ def material_studio_live_project_status(
             _refresh_view_replay_summary(
                 view_replay_manifest,
                 workspace_root=store.workspace_root,
+                events_path=view_replay_events_path,
             )
         _bind_replay_integrity_to_visual_confirmations(
             report_json_payload,
@@ -29315,6 +29421,7 @@ def material_studio_live_project_status(
             "preflight": (view_replay_manifest or {}).get("preflight"),
             "replay_summary": (view_replay_manifest or {}).get("replay_summary"),
             "replay_continuation": (view_replay_manifest or {}).get("replay_continuation"),
+            "event_journal": (view_replay_manifest or {}).get("event_journal"),
             "recipe_contract": (view_replay_manifest or {}).get("recipe_contract"),
             "recipe_migration": (view_replay_manifest or {}).get("recipe_migration"),
             "last_replay_event": (view_replay_manifest or {}).get("last_replay_event"),
@@ -33209,6 +33316,8 @@ def material_studio_gui_record_view_replay(
                 "reviewed_copy_script_evidence_complete"
             ),
             "evidence_integrity": event.get("evidence_integrity"),
+            "event_record_sha256": event.get("event_record_sha256"),
+            "journal_consistency": event.get("journal_consistency"),
             "expected_revision": int(context["revision"]),
             "expected_window_handle": expected_window_handle,
             "expected_window_title": expected_window_title,
@@ -33288,6 +33397,8 @@ def material_studio_gui_record_view_replay(
                     "reviewed_copy_script_evidence_complete"
                 ),
                 "evidence_integrity": event.get("evidence_integrity"),
+                "event_record_sha256": event.get("event_record_sha256"),
+                "journal_consistency": event.get("journal_consistency"),
                 "miller_plane_evidence": event.get("miller_plane_evidence"),
                 "miller_plane_evidence_complete": event.get("miller_plane_evidence_complete"),
             }

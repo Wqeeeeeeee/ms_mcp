@@ -4076,10 +4076,21 @@ def _view_replay_execution_recipe(
                 "dialog_control_id": "MillerPlanesCtl",
                 "miller_indices_control_id": "TxtHKL",
                 "create_button_control_id": "CmdCreate",
+                "modeless_dialog": True,
+                "targeting_surface": "fresh_modeless_child_window_state",
+                "create_button_targeting": (
+                    "verified_accessibility_in_child_bounds_or_fresh_child_screenshot"
+                ),
+                "close_button_targeting": (
+                    "verified_accessibility_in_child_bounds_or_fresh_child_screenshot"
+                ),
+                "parent_window_coordinates_allowed": False,
+                "out_of_bounds_accessibility_targets_allowed": False,
                 "pointer_or_accessibility_menu_click_allowed": False,
                 "reason": (
                     "A pointer release on Tools > Miller Planes can click through into the modeless "
-                    "dialog and activate Create. Use the verified keyboard mnemonic path only."
+                    "dialog and activate Create. Use the verified keyboard mnemonic path, then "
+                    "target dialog controls only from a fresh child-window state."
                 ),
             },
             "unexpected_plane_guard": {
@@ -4162,8 +4173,10 @@ def _view_replay_execution_recipe(
                 "invoke_named_reset_view_control",
                 "invoke_tools_miller_planes_with_alt_t_then_m_keyboard_mnemonics",
                 "verify_miller_planes_dialog_and_exact_control_ids",
+                "capture_fresh_modeless_dialog_child_window_state",
                 "abort_after_exact_undo_if_unexpected_default_plane_was_created",
-                "enter_exact_three_index_dialog_values_and_create_one_plane",
+                "enter_exact_three_index_dialog_values",
+                "invoke_create_only_from_verified_child_bounds_or_fresh_child_screenshot",
                 *(
                     [
                         "capture_fresh_after_create_screenshot",
@@ -4196,6 +4209,7 @@ def _view_replay_execution_recipe(
                     else "Do not use blind viewport coordinates; derive the click rectangle from the exact Object Tree item."
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
+                "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",

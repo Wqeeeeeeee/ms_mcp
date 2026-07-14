@@ -155,7 +155,13 @@ omits example `miller_plane_evidence` values.
 Open Tools > Miller Planes only through the verified keyboard menu path
 `Alt+T`, then `M`. Do not invoke that menu item with a pointer or accessibility
 click: in MS 20.1 the release can click through into the modeless dialog and
-activate Create. If an unexpected default plane is created, invoke only the
+activate Create. After the modeless dialog appears, refresh its child-window
+state and target `TxtHKL`, `CmdCreate`, and the close control only through an
+accessibility element that resolves inside those child bounds or a coordinate
+derived from that fresh child screenshot. Never reuse a parent-window
+screenshot coordinate for a modeless dialog control, and reject duplicated
+accessibility elements that resolve outside the dialog. If an unexpected
+default plane is created, invoke only the
 exact named `Undo Create Miller Plane`, verify a clean document, no temporary
 node, and an unchanged structure hash, then abort the replay attempt and run
 the preflight again.

@@ -1780,12 +1780,30 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         "dialog_control_id": "MillerPlanesCtl",
         "miller_indices_control_id": "TxtHKL",
         "create_button_control_id": "CmdCreate",
+        "modeless_dialog": True,
+        "targeting_surface": "fresh_modeless_child_window_state",
+        "create_button_targeting": (
+            "verified_accessibility_in_child_bounds_or_fresh_child_screenshot"
+        ),
+        "close_button_targeting": (
+            "verified_accessibility_in_child_bounds_or_fresh_child_screenshot"
+        ),
+        "parent_window_coordinates_allowed": False,
+        "out_of_bounds_accessibility_targets_allowed": False,
         "pointer_or_accessibility_menu_click_allowed": False,
         "reason": (
             "A pointer release on Tools > Miller Planes can click through into the modeless "
-            "dialog and activate Create. Use the verified keyboard mnemonic path only."
+            "dialog and activate Create. Use the verified keyboard mnemonic path, then "
+            "target dialog controls only from a fresh child-window state."
         ),
     }
+    assert "capture_fresh_modeless_dialog_child_window_state" in plane_recipe[
+        "action_sequence"
+    ]
+    assert (
+        "invoke_create_only_from_verified_child_bounds_or_fresh_child_screenshot"
+        in plane_recipe["action_sequence"]
+    )
     assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
@@ -2043,7 +2061,7 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
         "properties_miller_label": "(100)",
         "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
         "plane_normal_matches_manifest": True,
-        "analytic_in_plane_basis_matches_manifest": False,
+        "analytic_in_plane_basis_matches_manifest": None,
         "native_in_plane_roll_policy_observed": True,
         "reset_view_before_alignment": True,
         "screenshot_captured_before_cleanup": True,
@@ -2127,6 +2145,37 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
     )
     assert normalized["undo_labels_match_contract"] is True
     assert "Undo Recenter" in normalized["undo_labels_applied"]
+    assert normalized["analytic_in_plane_basis_matches_manifest"] is None
+
+    live_recorded = server.material_studio_live_modeling_request(
+        "Record the reviewed crystal-plane viewport replay.",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        view_replay_confirmation={
+            "view_name": "crystal_plane_100",
+            "source": "computer_use",
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "expected_revision": created["revision"],
+            "expected_window_handle": target_window.handle,
+            "expected_window_title": target_window.title,
+            "native_command_id": "cmdViewer3DViewOnto",
+            "modifier_keys": [],
+            "screenshot_path": str(screenshot),
+            "miller_plane_evidence": evidence,
+        },
+    )
+    assert live_recorded["ok"] is True
+    assert live_recorded["workflow"] == "gui_view_replay_confirmation"
+    live_event = live_recorded["view_replay"]["event"]
+    assert live_event["miller_plane_evidence_complete"] is True
+    assert (
+        live_event["miller_plane_evidence"][
+            "analytic_in_plane_basis_matches_manifest"
+        ]
+        is None
+    )
 
 
 def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidence(
@@ -5197,6 +5246,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "runtime_registry_or_help_evidence_alone_is_sufficient": False,
         "miller_planes_dialog_invocation": ["Alt+T", "M"],
         "pointer_or_accessibility_menu_click_allowed": False,
+        "modeless_dialog_targeting_surface": "fresh_modeless_child_window_state",
+        "parent_window_coordinates_allowed": False,
+        "out_of_bounds_accessibility_targets_allowed": False,
         "temporary_plane_cleanup_required": True,
         "required_undo_labels": [
             "Undo View Onto Miller Plane",
@@ -5221,6 +5273,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "requires_miller_plane_evidence": True,
         "requires_current_bound_runtime_ui_preflight": True,
         "requires_direct_lattice_direction_match_evidence": True,
+        "inherits_crystallographic_plane_dialog_targeting": True,
         "non_collinear_views_remain_review_gated": True,
         "never_assumes_same_index_direction_equals_plane": True,
     }

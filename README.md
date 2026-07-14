@@ -177,8 +177,11 @@ current-window `runtime_ui_evidence` probe is bound to the exact revision and
 wrapper handle/title. Static registry/help evidence alone is insufficient. The
 dialog must be opened with `Alt+T`, then `M`; pointer/accessibility menu clicks
 are prohibited because they can click through and create a default plane. Any
-unexpected plane must be removed with the exact named undo and the replay
-attempt must stop. On versions that expose Object Tree, the recipe may select
+dialog control must then be targeted from a fresh modeless child-window state:
+use an in-bounds accessibility element or a coordinate derived from the fresh
+child screenshot, never a parent-window coordinate or an out-of-bounds duplicate
+element. Any unexpected plane must be removed with the exact named undo and the
+replay attempt must stop. On versions that expose Object Tree, the recipe may select
 its exact new leaf. The verified MS 20.1 fallback instead derives one unique
 transient-plane region from fresh before/after screenshots, selects it without
 modifiers, and requires Properties Explorer to show `Filter=Miller Plane` and

@@ -415,6 +415,19 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     ] = Field(..., min_length=3, max_length=16)
 
 
+def _dump_miller_plane_replay_evidence(
+    evidence: GuiMillerPlaneReplayEvidenceInput | dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize Miller evidence without dropping its required nullable field."""
+
+    validated = GuiMillerPlaneReplayEvidenceInput.model_validate(evidence)
+    payload = validated.model_dump(mode="json", exclude_none=True)
+    payload["analytic_in_plane_basis_matches_manifest"] = (
+        validated.analytic_in_plane_basis_matches_manifest
+    )
+    return payload
+
+
 class GuiViewReplayConfirmationInput(BaseModel):
     """Externally replayed camera/view evidence bound to one structured revision window."""
 
@@ -3028,6 +3041,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "static_registry_or_help_evidence_alone_is_sufficient": False,
             "miller_planes_dialog_keyboard_menu_sequence": ["Alt+T", "M"],
             "miller_planes_pointer_or_accessibility_menu_click_allowed": False,
+            "miller_planes_modeless_dialog_targeting_surface": (
+                "fresh_modeless_child_window_state"
+            ),
+            "miller_planes_parent_window_coordinates_allowed": False,
+            "miller_planes_out_of_bounds_accessibility_targets_allowed": False,
             "unexpected_default_plane_requires_exact_undo_and_abort": True,
             "crystallographic_plane_view_native_command_id": "cmdViewer3DViewOnto",
             "crystallographic_plane_view_selection_method": (
@@ -5844,6 +5862,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "runtime_registry_or_help_evidence_alone_is_sufficient": False,
                     "miller_planes_dialog_invocation": ["Alt+T", "M"],
                     "pointer_or_accessibility_menu_click_allowed": False,
+                    "modeless_dialog_targeting_surface": (
+                        "fresh_modeless_child_window_state"
+                    ),
+                    "parent_window_coordinates_allowed": False,
+                    "out_of_bounds_accessibility_targets_allowed": False,
                     "temporary_plane_cleanup_required": True,
                     "required_undo_labels": [
                         "Undo View Onto Miller Plane",
@@ -5868,6 +5891,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "requires_miller_plane_evidence": True,
                     "requires_current_bound_runtime_ui_preflight": True,
                     "requires_direct_lattice_direction_match_evidence": True,
+                    "inherits_crystallographic_plane_dialog_targeting": True,
                     "non_collinear_views_remain_review_gated": True,
                     "never_assumes_same_index_direction_equals_plane": True,
                 },
@@ -30566,9 +30590,8 @@ def material_studio_live_modeling_request(
                 movement_screen_factor=replay_evidence.movement_screen_factor,
                 movement_dialog_closed=replay_evidence.movement_dialog_closed,
                 miller_plane_evidence=(
-                    replay_evidence.miller_plane_evidence.model_dump(
-                        mode="json",
-                        exclude_none=True,
+                    _dump_miller_plane_replay_evidence(
+                        replay_evidence.miller_plane_evidence
                     )
                     if replay_evidence.miller_plane_evidence is not None
                     else None
@@ -32567,9 +32590,7 @@ def material_studio_gui_record_view_replay(
             movement_screen_factor=movement_screen_factor,
             movement_dialog_closed=movement_dialog_closed,
             miller_plane_evidence=(
-                GuiMillerPlaneReplayEvidenceInput.model_validate(
-                    miller_plane_evidence
-                ).model_dump(mode="json", exclude_none=True)
+                _dump_miller_plane_replay_evidence(miller_plane_evidence)
                 if miller_plane_evidence is not None
                 else None
             ),

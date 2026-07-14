@@ -429,6 +429,7 @@ def test_compact_dopant_reconcile_response_mode_preserves_receipt(tmp_path: Path
 
     reconciled = server.material_studio_project_reconcile_dopant_metadata(
         project_id=stale.project_id,
+        confirm_metadata_reconciliation=True,
         execution_mode="preview",
         open_in_gui=False,
         take_snapshot=False,

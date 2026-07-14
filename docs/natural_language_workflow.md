@@ -104,6 +104,28 @@ read `modeling_report.normality_gate` before answering. A preview can be
 `preview_ready` while `normality_gate.can_claim_model_normal=false`; live GUI
 answers should require `can_claim_live_gui_normal=true` and otherwise report
 the gate reasons and next action.
+
+### Dopant Metadata Reconciliation
+
+Stale concrete dopant-site metadata is a structural consistency blocker, but
+repairing it is still a write: the repair creates a new immutable metadata-only
+revision even when `execution_mode="preview"`. Diagnostics therefore return
+`needs_user_confirmation=true` and a payload containing
+`confirm_metadata_reconciliation=true`. The client must set that field only
+after the user explicitly approves the repair.
+
+The confirmation gate is enforced by
+`material_studio_project_reconcile_dopant_metadata`,
+`material_studio_live_modeling_request`,
+`material_studio_live_update_with_patch`, and the lower-level structured patch
+tool. A missing confirmation returns
+`status=dopant_metadata_reconcile_confirmation_required` without changing
+`current.json` or history. The `reconcile_dopant_metadata` operation must be the
+only operation in its patch; a structural repair, such as restoring the
+declared dopant atom, belongs in a separate normal `SemanticPatch` revision.
+When metadata is already consistent, the tools return `already_consistent`
+without confirmation and without creating an empty revision.
+
 `material_studio_live_capabilities.diagnostics.diagnostic_focus_profiles`
 lists the supported semiconductor diagnostic profiles, their expected summary
 paths, CSV artifact keys, and example prompts. Use it to decide whether a

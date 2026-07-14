@@ -1812,6 +1812,7 @@ def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_bl
     assert status["next_action_plan"]["payload_hint"] == {
         "project_id": stale.project_id,
         "base_revision": 0,
+        "confirm_metadata_reconciliation": True,
         "execution_mode": "preview",
         "open_in_gui": False,
         "take_snapshot": False,
@@ -1900,6 +1901,111 @@ def test_stale_dopant_metadata_can_be_repaired_by_structural_patch(tmp_path: Pat
     assert [entry["revision"] for entry in history] == [0, 1]
 
 
+def test_dopant_metadata_reconcile_requires_explicit_confirmation_on_every_write_path(
+    tmp_path: Path,
+) -> None:
+    plan = infer_modeling_plan(
+        "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."
+    )
+    doped = ModelSpec.model_validate(plan.payload)
+    stale_atoms = [
+        atom.model_copy(update={"element": "Si"}) if atom.id == "Si1_000" else atom
+        for atom in doped.model.basis_atoms
+    ]
+    stale = doped.model_copy(update={"model": doped.model.model_copy(update={"basis_atoms": stale_atoms})})
+    created = server.material_studio_model_create_from_spec(
+        stale.model_dump(mode="json"),
+        user_text="Legacy stale dopant metadata fixture.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    denied_direct_tool = server.material_studio_project_reconcile_dopant_metadata(
+        project_id=stale.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    denied_natural_language = server.material_studio_live_modeling_request(
+        "Repair current dopant metadata and re-audit the model.",
+        project_id=stale.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    denied_patch_bypass = server.material_studio_live_update_with_patch(
+        project_id=stale.project_id,
+        base_revision=0,
+        patch={"operations": [{"type": "reconcile_dopant_metadata"}]},
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    denied_structured_patch_bypass = server.material_studio_model_modify_with_patch(
+        project_id=stale.project_id,
+        base_revision=0,
+        patch={"operations": [{"type": "reconcile_dopant_metadata"}]},
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+    )
+
+    for denied in (
+        denied_direct_tool,
+        denied_natural_language,
+        denied_patch_bypass,
+        denied_structured_patch_bypass,
+    ):
+        assert denied["ok"] is False
+        assert denied["status"] == "dopant_metadata_reconcile_confirmation_required"
+        assert denied["confirmation_required"] is True
+        assert denied["confirmation_received"] is False
+        assert denied["revision_created"] is False
+        assert denied["metadata_reconciliation"]["status"] == "confirmation_required"
+        assert denied["metadata_reconciliation"]["before"]["stale_site_count"] == 1
+        next_action = denied["live_modeling_contract"]["next_action"]
+        assert next_action["needs_user_confirmation"] is True
+        assert next_action["safe_to_call_without_confirmation"] is False
+        assert next_action["payload_hint"]["confirm_metadata_reconciliation"] is True
+
+    assert (
+        denied_direct_tool["live_modeling_contract"]["next_action"]["recommended_tool"]
+        == "material_studio_project_reconcile_dopant_metadata"
+    )
+    assert (
+        denied_patch_bypass["live_modeling_contract"]["next_action"]["recommended_tool"]
+        == "material_studio_live_update_with_patch"
+    )
+    mixed_patch = server.material_studio_live_update_with_patch(
+        project_id=stale.project_id,
+        base_revision=0,
+        patch={
+            "operations": [
+                {"type": "reconcile_dopant_metadata"},
+                {"type": "set_metadata", "metadata_updates": {"reviewed": True}},
+            ]
+        },
+        confirm_metadata_reconciliation=True,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert mixed_patch["ok"] is False
+    assert mixed_patch["revision_created"] is False
+    assert (
+        mixed_patch["live_modeling_contract"]["status"]
+        == "mixed_dopant_metadata_reconcile_patch_not_allowed"
+    )
+    current = server.material_studio_model_get_current(stale.project_id, working_dir=str(tmp_path))
+    assert current["revision"] == 0
+    assert current["spec"]["metadata"]["semiconductor_dopant_sites"][0]["atom_id"] == "Si1_000"
+    history = server.material_studio_project_history(stale.project_id, working_dir=str(tmp_path))
+    assert [entry["revision"] for entry in history["history"]] == [0]
+
+
 def test_dopant_metadata_reconcile_routes_natural_language_and_avoids_empty_revision(
     monkeypatch,
     tmp_path: Path,
@@ -1927,6 +2033,7 @@ def test_dopant_metadata_reconcile_routes_natural_language_and_avoids_empty_revi
         "Clean up the stale dopant metadata and re-audit the model.",
         project_id=stale.project_id,
         execution_mode="preview",
+        confirm_metadata_reconciliation=True,
         open_in_gui=False,
         take_snapshot=False,
         working_dir=str(tmp_path),
@@ -1938,6 +2045,8 @@ def test_dopant_metadata_reconcile_routes_natural_language_and_avoids_empty_revi
     assert repaired["base_revision"] == 0
     assert repaired["new_revision"] == 1
     assert repaired["revision_created"] is True
+    assert repaired["confirmation_required"] is True
+    assert repaired["confirmation_received"] is True
     assert repaired["reconciliation_status"] == "reconciled"
     reconciliation = repaired["metadata_reconciliation"]
     assert reconciliation["before"]["stale_site_count"] == 1
@@ -1975,6 +2084,20 @@ def test_dopant_metadata_reconcile_routes_natural_language_and_avoids_empty_revi
     assert repeated["metadata_reconciliation"]["metadata_changed"] is False
     assert len(server.material_studio_project_history(stale.project_id, working_dir=str(tmp_path))["history"]) == 2
 
+    direct_repeated = server.material_studio_live_update_with_patch(
+        project_id=stale.project_id,
+        base_revision=1,
+        patch={"operations": [{"type": "reconcile_dopant_metadata"}]},
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert direct_repeated["ok"] is True
+    assert direct_repeated["reconciliation_status"] == "already_consistent"
+    assert direct_repeated["revision_created"] is False
+    assert len(server.material_studio_project_history(stale.project_id, working_dir=str(tmp_path))["history"]) == 2
+
 
 def test_dopant_metadata_reconcile_explicit_hotload_reuses_single_gui_process(
     monkeypatch,
@@ -2001,6 +2124,7 @@ def test_dopant_metadata_reconcile_explicit_hotload_reuses_single_gui_process(
     repaired = server.material_studio_live_modeling_request(
         "\u4fee\u590d\u5f53\u524d\u63ba\u6742\u4f4d\u70b9\u5143\u6570\u636e\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
         project_id=stale.project_id,
+        confirm_metadata_reconciliation=True,
         take_snapshot=False,
         working_dir=str(tmp_path),
     )
@@ -2149,6 +2273,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         == "material_studio_project_reconcile_dopant_metadata"
     )
     assert capabilities["dopant_metadata_reconcile_operation"] == "reconcile_dopant_metadata"
+    assert (
+        capabilities["dopant_metadata_reconcile_confirmation_field"]
+        == "confirm_metadata_reconciliation"
+    )
+    assert capabilities["dopant_metadata_reconcile_requires_explicit_confirmation"] is True
     assert capabilities["live_update_project_id_optional"] is True
     assert capabilities["live_update_base_revision_optional"] is True
     assert capabilities["live_update_context_resolution_order"] == [
@@ -3306,6 +3435,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert dopant_consistency["blocking_risk_flag"] == "dopant_site_metadata_inconsistent"
     assert dopant_consistency["reconcile_tool"] == "material_studio_project_reconcile_dopant_metadata"
     assert dopant_consistency["reconcile_operation"] == "reconcile_dopant_metadata"
+    assert dopant_consistency["confirmation_field"] == "confirm_metadata_reconciliation"
+    assert dopant_consistency["explicit_confirmation_required_when_write_needed"] is True
     assert dopant_consistency["geometry_invariant_fields"] == [
         "structure_unchanged",
         "simulation_unchanged",

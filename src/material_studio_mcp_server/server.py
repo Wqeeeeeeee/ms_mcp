@@ -2763,6 +2763,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "live_update_tool": "material_studio_live_update_with_patch",
         "dopant_metadata_reconcile_tool": "material_studio_project_reconcile_dopant_metadata",
         "dopant_metadata_reconcile_operation": "reconcile_dopant_metadata",
+        "dopant_metadata_reconcile_confirmation_field": "confirm_metadata_reconciliation",
+        "dopant_metadata_reconcile_requires_explicit_confirmation": True,
         "live_update_project_id_optional": True,
         "live_update_base_revision_optional": True,
         "live_update_context_resolution_order": ["project_id argument", "patch.project_id", "latest current project"],
@@ -3663,6 +3665,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "next_action": "reconcile_dopant_metadata_with_current_structure_then_reaudit",
                 "reconcile_tool": "material_studio_project_reconcile_dopant_metadata",
                 "reconcile_operation": "reconcile_dopant_metadata",
+                "confirmation_field": "confirm_metadata_reconciliation",
+                "explicit_confirmation_required_when_write_needed": True,
                 "revision_policy": "Creates a new metadata-only revision when stale records exist; never edits an existing revision in place.",
                 "already_consistent_policy": "Returns already_consistent and exports fresh diagnostics without creating an empty revision.",
                 "geometry_invariant_fields": ["structure_unchanged", "simulation_unchanged"],
@@ -17522,6 +17526,7 @@ def _semiconductor_calculation_action_hint(
         payload_hint = {
             "project_id": project_id,
             "base_revision": revision,
+            "confirm_metadata_reconciliation": True,
             "execution_mode": ExecutionMode.PREVIEW.value,
             "open_in_gui": False,
             "take_snapshot": False,
@@ -20239,6 +20244,8 @@ def _attach_live_failure_contract(
     recommended_action: str,
     payload_hint: dict[str, Any] | None = None,
     workflow: str | None = None,
+    recommended_tool: str | None = None,
+    needs_user_confirmation: bool = False,
 ) -> dict[str, Any]:
     response["live_modeling_contract"] = _live_failure_contract(
         status=status,
@@ -20262,6 +20269,17 @@ def _attach_live_failure_contract(
         recommended_action=recommended_action,
         payload_hint=payload_hint,
     )
+    contract = (
+        response.get("live_modeling_contract")
+        if isinstance(response.get("live_modeling_contract"), dict)
+        else {}
+    )
+    next_action = contract.get("next_action") if isinstance(contract.get("next_action"), dict) else {}
+    if next_action:
+        if recommended_tool:
+            next_action["recommended_tool"] = recommended_tool
+        next_action["needs_user_confirmation"] = needs_user_confirmation
+        next_action["safe_to_call_without_confirmation"] = not needs_user_confirmation
     return response
 
 
@@ -20273,6 +20291,7 @@ def _attach_live_patch_failure_contract(
     payload_hint: dict[str, Any] | None = None,
     current_spec: ModelSpec | None = None,
     project_resolution: dict[str, Any] | None = None,
+    needs_user_confirmation: bool = False,
 ) -> dict[str, Any]:
     """Attach a live failure contract tailored for direct SemanticPatch updates."""
 
@@ -20287,6 +20306,7 @@ def _attach_live_patch_failure_contract(
         recommended_action=recommended_action,
         payload_hint=payload_hint,
         workflow="live_patch",
+        needs_user_confirmation=needs_user_confirmation,
     )
     contract = attached.get("live_modeling_contract") if isinstance(attached.get("live_modeling_contract"), dict) else {}
     next_action = contract.get("next_action") if isinstance(contract.get("next_action"), dict) else {}
@@ -20382,6 +20402,7 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         payload_hint = {
             "project_id": report.get("project_id"),
             "base_revision": report.get("revision"),
+            "confirm_metadata_reconciliation": True,
             "execution_mode": ExecutionMode.PREVIEW.value,
             "open_in_gui": False,
             "take_snapshot": False,
@@ -27921,6 +27942,7 @@ def material_studio_model_modify_with_patch(
     execution_mode: Annotated[ExecutionMode, Field(description="preview or execute. Defaults to preview.")] = ExecutionMode.PREVIEW,
     working_dir: Annotated[str | None, Field(description="Optional structured workflow workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
+    confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation when the patch reconciles dopant metadata.")] = False,
 ) -> dict[str, Any]:
     """Apply a semantic patch to current project state and preview by default."""
 
@@ -27931,6 +27953,30 @@ def material_studio_model_modify_with_patch(
         project_resolution = _explicit_project_resolution(current, current_resolution)
         patch_payload = {**patch, "project_id": project_id, "base_revision": base_revision, "execution_mode": mode.value}
         semantic_patch = SemanticPatch.model_validate(patch_payload)
+        reconcile_operations = [
+            operation
+            for operation in semantic_patch.operations
+            if operation.operation == "reconcile_dopant_metadata"
+        ]
+        if reconcile_operations:
+            if len(semantic_patch.operations) != 1:
+                return _error(
+                    ValueError(
+                        "reconcile_dopant_metadata must be the only operation in a SemanticPatch; "
+                        "submit structural corrections as a separate revision."
+                    )
+                )
+            return material_studio_project_reconcile_dopant_metadata(
+                project_id=project_id,
+                base_revision=base_revision,
+                user_text=user_text,
+                confirm_metadata_reconciliation=confirm_metadata_reconciliation,
+                execution_mode=mode,
+                open_in_gui=False,
+                take_snapshot=False,
+                working_dir=working_dir,
+                timeout_seconds=timeout_seconds,
+            )
         new_spec, patch_diff = apply_semantic_patch(current, semantic_patch)
         new_spec = new_spec.model_copy(
             update={"revision": store.next_revision_number(project_id)}
@@ -28998,6 +29044,70 @@ def _dopant_metadata_consistency_from_audit(audit: dict[str, Any] | None) -> dic
     }
 
 
+def _dopant_metadata_reconciliation_confirmation_failure(
+    *,
+    current_spec: ModelSpec,
+    project_id: str,
+    revision: int,
+    project_resolution: dict[str, Any],
+    user_text: str | None,
+    consistency: dict[str, Any],
+    recommended_tool: str,
+    payload_hint: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a non-mutating receipt when a metadata-only revision lacks confirmation."""
+
+    response = {
+        "ok": False,
+        "workflow": "dopant_metadata_reconcile",
+        "status": "dopant_metadata_reconcile_confirmation_required",
+        "error": (
+            "Explicit user confirmation is required before creating a metadata-only dopant "
+            "reconciliation revision."
+        ),
+        "required_next_step": (
+            "Confirm the metadata-only revision, then retry with "
+            "confirm_metadata_reconciliation=true."
+        ),
+        "user_request": user_text,
+        "project_id": project_id,
+        "project_resolution": project_resolution,
+        "revision": revision,
+        "base_revision": revision,
+        "revision_created": False,
+        "confirmation_required": True,
+        "confirmation_received": False,
+        "metadata_reconciliation": {
+            "status": "confirmation_required",
+            "revision_created": False,
+            "base_revision": revision,
+            "new_revision": None,
+            "before": consistency,
+            "structure_unchanged": True,
+            "simulation_unchanged": True,
+            "metadata_changed": False,
+        },
+    }
+    attached = _attach_live_patch_failure_contract(
+        response,
+        status="dopant_metadata_reconcile_confirmation_required",
+        recommended_action="request_explicit_user_confirmation_before_metadata_revision",
+        payload_hint=payload_hint,
+        current_spec=current_spec,
+        project_resolution=project_resolution,
+        needs_user_confirmation=True,
+    )
+    contract = (
+        attached.get("live_modeling_contract")
+        if isinstance(attached.get("live_modeling_contract"), dict)
+        else {}
+    )
+    next_action = contract.get("next_action") if isinstance(contract.get("next_action"), dict) else {}
+    if next_action:
+        next_action["recommended_tool"] = recommended_tool
+    return attached
+
+
 @mcp.tool(
     name="material_studio_project_reconcile_dopant_metadata",
     annotations={
@@ -29019,6 +29129,7 @@ def material_studio_project_reconcile_dopant_metadata(
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP reconciliation receipt.")] = McpResponseMode.FULL,
+    confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation before a metadata-only revision can be written.")] = False,
 ) -> dict[str, Any]:
     """Repair stale concrete dopant-site metadata without changing model geometry."""
 
@@ -29066,6 +29177,8 @@ def material_studio_project_reconcile_dopant_metadata(
                     "base_revision": effective_base_revision,
                     "revision_created": False,
                     "reconciliation_status": "already_consistent",
+                    "confirmation_required": False,
+                    "confirmation_received": confirm_metadata_reconciliation,
                     "requested_execution_mode": mode.value,
                     "requested_execution_mode_source": execution_mode_source,
                     "execution_skipped_reason": "dopant_metadata_already_consistent",
@@ -29090,11 +29203,33 @@ def material_studio_project_reconcile_dopant_metadata(
             )
             return finish(status)
 
+        if not confirm_metadata_reconciliation:
+            return finish(
+                _dopant_metadata_reconciliation_confirmation_failure(
+                    current_spec=current,
+                    project_id=project_id,
+                    revision=effective_base_revision,
+                    project_resolution=project_resolution,
+                    user_text=effective_user_text,
+                    consistency=before,
+                    recommended_tool="material_studio_project_reconcile_dopant_metadata",
+                    payload_hint={
+                        "project_id": project_id,
+                        "base_revision": effective_base_revision,
+                        "confirm_metadata_reconciliation": True,
+                        "execution_mode": mode.value,
+                        "open_in_gui": open_in_gui,
+                        "take_snapshot": take_snapshot,
+                    },
+                )
+            )
+
         result = material_studio_live_update_with_patch(
             project_id=project_id,
             base_revision=effective_base_revision,
             patch={"operations": [{"type": "reconcile_dopant_metadata"}]},
             user_text=effective_user_text,
+            confirm_metadata_reconciliation=True,
             execution_mode=mode,
             open_in_gui=open_in_gui,
             take_snapshot=take_snapshot,
@@ -29157,6 +29292,8 @@ def material_studio_project_reconcile_dopant_metadata(
                 "normality_check_requested": True,
                 "requested_diagnostic_focuses": ["dopant_site_preflight"],
                 "revision_created": True,
+                "confirmation_required": True,
+                "confirmation_received": True,
                 "reconciliation_status": reconciliation["status"],
                 "metadata_reconciliation": reconciliation,
             }
@@ -29195,6 +29332,7 @@ def material_studio_live_update_with_patch(
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP change receipt.")] = McpResponseMode.FULL,
+    confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation when the patch reconciles dopant metadata.")] = False,
 ) -> dict[str, Any]:
     """Patch current state, persist a revision, and optionally execute/open it in the GUI."""
 
@@ -29301,12 +29439,101 @@ def material_studio_live_update_with_patch(
                 current_spec=current,
                 project_resolution=project_resolution,
             )
-        patch_workflow = (
-            "dopant_metadata_reconcile"
-            if len(semantic_patch.operations) == 1
-            and semantic_patch.operations[0].operation == "reconcile_dopant_metadata"
-            else "live_patch"
-        )
+        reconcile_operations = [
+            operation
+            for operation in semantic_patch.operations
+            if operation.operation == "reconcile_dopant_metadata"
+        ]
+        if reconcile_operations and len(semantic_patch.operations) != 1:
+            failure = _attach_live_patch_failure_contract(
+                {
+                    "ok": False,
+                    "workflow": "live_patch",
+                    "user_request": user_text,
+                    "project_id": project_id,
+                    "project_resolution": project_resolution,
+                    "revision": current.revision,
+                    "base_revision": base_revision,
+                    "error": (
+                        "reconcile_dopant_metadata must be the only operation in a SemanticPatch; "
+                        "submit structural corrections as a separate revision."
+                    ),
+                    "required_next_step": (
+                        "Use a structural SemanticPatch without reconcile_dopant_metadata, or submit "
+                        "a separately confirmed metadata-only reconciliation."
+                    ),
+                    "revision_created": False,
+                },
+                status="mixed_dopant_metadata_reconcile_patch_not_allowed",
+                recommended_action="split_structural_and_metadata_reconciliation_revisions",
+                payload_hint={
+                    "project_id": project_id,
+                    "base_revision": current.revision,
+                    "structural_patch": "SemanticPatch without reconcile_dopant_metadata",
+                    "metadata_reconcile_tool": "material_studio_project_reconcile_dopant_metadata",
+                    "confirm_metadata_reconciliation": True,
+                },
+                current_spec=current,
+                project_resolution=project_resolution,
+            )
+            return _compact_live_response(failure, response_mode)
+        patch_workflow = "dopant_metadata_reconcile" if reconcile_operations else "live_patch"
+        if patch_workflow == "dopant_metadata_reconcile":
+            before = _dopant_metadata_consistency_from_audit(model_view_audit(current, views))
+            if before["metadata_consistent"] and before["stale_site_count"] == 0:
+                status = material_studio_live_project_status(
+                    project_id=project_id,
+                    include_gui_status=True,
+                    working_dir=working_dir,
+                )
+                status.update(
+                    {
+                        "workflow": patch_workflow,
+                        "user_request": user_text,
+                        "project_resolution": project_resolution,
+                        "base_revision": current.revision,
+                        "revision_created": False,
+                        "reconciliation_status": "already_consistent",
+                        "confirmation_required": False,
+                        "confirmation_received": confirm_metadata_reconciliation,
+                        "requested_execution_mode": mode.value,
+                        "requested_execution_mode_source": execution_mode_source,
+                        "execution_skipped_reason": "dopant_metadata_already_consistent",
+                        "metadata_reconciliation": {
+                            "status": "already_consistent",
+                            "revision_created": False,
+                            "base_revision": current.revision,
+                            "new_revision": None,
+                            "before": before,
+                            "after": before,
+                            "structure_unchanged": True,
+                            "simulation_unchanged": True,
+                            "metadata_changed": False,
+                        },
+                    }
+                )
+                return _compact_live_response(status, response_mode)
+            if not confirm_metadata_reconciliation:
+                failure = _dopant_metadata_reconciliation_confirmation_failure(
+                    current_spec=current,
+                    project_id=project_id,
+                    revision=current.revision,
+                    project_resolution=project_resolution,
+                    user_text=user_text,
+                    consistency=before,
+                    recommended_tool="material_studio_live_update_with_patch",
+                    payload_hint={
+                        "project_id": project_id,
+                        "base_revision": current.revision,
+                        "patch": {"operations": [{"type": "reconcile_dopant_metadata"}]},
+                        "confirm_metadata_reconciliation": True,
+                        "execution_mode": mode.value,
+                        "open_in_gui": open_in_gui,
+                        "take_snapshot": take_snapshot,
+                        "export_view_audit": True,
+                    },
+                )
+                return _compact_live_response(failure, response_mode)
         try:
             new_spec, patch_diff = apply_semantic_patch(current, semantic_patch)
         except ValueError as exc:
@@ -29408,6 +29635,9 @@ def material_studio_live_update_with_patch(
             "current_pointer_after_write": current_resolution_after_write,
             "gui_status": gui_status,
         }
+        if patch_workflow == "dopant_metadata_reconcile":
+            response["confirmation_required"] = True
+            response["confirmation_received"] = confirm_metadata_reconciliation
         audit_artifacts: list[dict[str, Any]] = []
         if effective_export_view_audit:
             audit = model_view_audit(new_spec, views)
@@ -29524,6 +29754,7 @@ def material_studio_live_modeling_request(
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP modeling receipt.")] = McpResponseMode.FULL,
     visual_confirmation: Annotated[dict[str, Any] | None, Field(description="Optional externally observed GUI evidence bound to the current wrapper window.")] = None,
     view_replay_confirmation: Annotated[dict[str, Any] | None, Field(description="Optional externally replayed camera/view evidence bound to the current wrapper window.")] = None,
+    confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation before reconciling dopant metadata into a new revision.")] = False,
 ) -> dict[str, Any]:
     """One-stop structured entry point for live modeling requests."""
 
@@ -29844,6 +30075,7 @@ def material_studio_live_modeling_request(
                         project_id=project_id,
                         base_revision=base_revision,
                         user_text=user_request,
+                        confirm_metadata_reconciliation=confirm_metadata_reconciliation,
                         execution_mode=mode,
                         open_in_gui=open_in_gui,
                         take_snapshot=take_snapshot,
@@ -30229,6 +30461,7 @@ def material_studio_live_modeling_request(
                 base_revision,
                 patch,
                 user_text=user_request,
+                confirm_metadata_reconciliation=confirm_metadata_reconciliation,
                 execution_mode=mode,
                 open_in_gui=open_in_gui,
                 take_snapshot=take_snapshot,

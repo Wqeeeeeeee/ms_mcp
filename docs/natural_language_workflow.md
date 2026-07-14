@@ -144,12 +144,14 @@ blende, 2D MoS2 monolayer, GaN wurtzite, a deterministic Si p-n junction start,
 and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
 Si/SiO2(100) semiconductor-oxide, Al/SiO2/Si MOS capacitor gate-stack,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
-Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), and metal/4H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
+Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/4H-SiC(0001), and
+metal/6H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
 GaAs/AlAs(001) zinc-blende, Al0.25Ga0.75N/GaN(0001), AlN/GaN(0001), and
 In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
-Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001), InN(0001), and ZnO(0001) with vacuum along the c axis. Requests such as
+Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
+InN(0001), ZnO(0001), and a hydrogen-backed 6H-SiC(0001) Si-face slab. Requests such as
 "build silicon crystal", "build a silicon p-n junction", "build GaAs zinc blende", "build AlAs zinc blende", "build AlP zinc blende", "build AlSb zinc blende", "build GaP zinc blende", "build GaSb zinc blende", "build InP zinc blende", "build InAs zinc blende", "build InSb zinc blende", "build GaN wurtzite",
 "build AlN wurtzite", "build InN wurtzite", "build 3C-SiC zinc blende",
 "build 6H-SiC crystal", "build cubic BN zinc blende", "build silicon carbide", "build ZnO wurtzite", "build CdTe zinc blende",
@@ -165,6 +167,7 @@ Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001), I
 "build an Al/Si Schottky contact", "build an Au/ZnO Schottky contact",
 "build an Au/beta-Ga2O3(010) Schottky contact",
 "build an Au/4H-SiC(0001) Si-face Schottky contact",
+"build an Au/6H-SiC(0001) Si-face Schottky contact",
 "build a metal-semiconductor contact",
 "build GaAs/AlAs superlattice", "build GaAs/AlAs quantum well",
 "build AlGaN/GaN HEMT heterostructure", "build AlN/GaN HEMT heterostructure", "build InGaN/GaN quantum well",
@@ -175,6 +178,7 @@ Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001), I
 "build AlN(0001) surface slab",
 "build InN(0001) surface slab",
 "build GaAs(001) surface", or
+"build a 6H-SiC(0001) Si-face slab", or
 "build ZnO(0001) surface slab" can be routed
 directly through `material_studio_live_modeling_request`.
 
@@ -185,9 +189,25 @@ from the single-crystal X-ray refinement by Capitani et al.,
 The example metadata records the citation, symmetry expansion, formula units,
 reference lattice, and reference average Si-C bond length. Explicit execution
 materializes the reviewed bulk spec as CIF and may hot-load it into the current
-Materials Studio window. No reviewed 6H-SiC slab, surface, MOS, interface, or
-metal-contact template is currently provided; those requests return
-`kind="unsupported"` and do not fall back to 3C-SiC, 4H-SiC, or silicon.
+Materials Studio window.
+
+Two reviewed derived starts are also available. The
+`silicon_carbide_6h_0001_si_face_slab` virtual template reorders the cited bulk
+cell into a centered `2x2` slab with six C-Si bilayers, a Si-terminated `(0001)`
+top face, and four H atoms saturating the C-terminated back face. The
+`metal_silicon_carbide_6h_0001_schottky_contact` virtual template adds a top-site
+metal layer plus a shifted second visualization layer so contact thickness can
+be diagnosed. The six-bilayer, `2x2`, back-H model is grounded in
+[Tanaka et al., DOI 10.2320/matertrans.47.2690](https://www.jstage.jst.go.jp/article/matertrans/47/11/47_11_2690/_pdf),
+whose reference calculation used one metal monolayer. The generated contact
+records that difference and remains an unrelaxed, unreconstructed preflight
+scaffold. The 3.85 eV electron affinity and 3.0 eV band gap come from the TCAD
+inputs reported by
+[Li et al., DOI 10.3390/ma10060583](https://www.mdpi.com/1996-1944/10/6/583);
+they are metadata-only screening values, not CASTEP or surface-reconstruction
+results. Explicit C-face `(000-1)`, ambiguous unoriented surfaces, 6H-SiC MOS,
+and other 6H-SiC interface/device requests remain unsupported and never fall
+back to 3C-SiC, 4H-SiC, or silicon.
 
 The metal/beta-Ga2O3(010) scaffold is centered in a vacuum cell and remains an
 unrelaxed visualization and diagnostic starting point. Its 4.0 eV electron

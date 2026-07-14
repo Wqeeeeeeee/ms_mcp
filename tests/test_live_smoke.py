@@ -218,6 +218,44 @@ def test_default_sic_4h_contact_scenario_requires_contact_surface_and_view_diagn
     assert "semiconductor_surface_polarity_csv" in expectation["files"]
 
 
+def test_default_sic_6h_surface_scenario_requires_surface_and_view_diagnostics() -> None:
+    preview = live_smoke.default_request_for_scenario("sic_6h_slab")
+    hotload = live_smoke.default_request_for_scenario("sic_6h_slab", hotload=True)
+    expectation = live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+
+    assert "6H-SiC(0001) Si-face slab" in preview
+    assert "surface and all-view diagnostics" in preview
+    assert "hot-load it in Materials Studio" in hotload
+    assert "check whether the model is normal" in hotload
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_slab"] == (
+        "silicon_carbide_6h_0001_si_face_slab"
+    )
+    assert expectation["row_counts"]["semiconductor_surface_model"] == 1
+    assert expectation["row_counts"]["semiconductor_surface_termination"] == 1
+    assert expectation["row_counts"]["semiconductor_surface_polarity"] == 1
+    assert "semiconductor_surface_model_csv" in expectation["files"]
+    assert "semiconductor_surface_termination_csv" in expectation["files"]
+
+
+def test_default_sic_6h_contact_scenario_requires_contact_surface_and_view_diagnostics() -> None:
+    preview = live_smoke.default_request_for_scenario("sic_6h_contact")
+    hotload = live_smoke.default_request_for_scenario("sic_6h_contact", hotload=True)
+    expectation = live_smoke.SCENARIO_EXPECTATIONS["sic_6h_contact"]
+
+    assert "Au/6H-SiC(0001) Si-face Schottky contact" in preview
+    assert "contact and view diagnostics" in preview
+    assert "hot-load it in Materials Studio" in hotload
+    assert "check whether the model is normal" in hotload
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_contact"] == (
+        "metal_silicon_carbide_6h_0001_schottky_contact"
+    )
+    assert expectation["row_counts"]["semiconductor_contact"] == 2
+    assert expectation["row_counts"]["semiconductor_surface_polarity"] == 1
+    assert expectation["row_counts"]["view_quality"] == 1
+    assert "semiconductor_contact_csv" in expectation["files"]
+    assert "semiconductor_surface_polarity_csv" in expectation["files"]
+
+
 def test_live_smoke_custom_request_preserves_inferred_crystallographic_views(tmp_path: Path) -> None:
     result = live_smoke.run_live_smoke(
         request="Build 4H-SiC crystal and export [0001], [100], and [010] crystallographic view parameters.",

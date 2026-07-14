@@ -130,6 +130,46 @@ x2, Left x3`, followed by `35.26438968 degrees: Down x1`. Also submit
 `rotation_increment_restored_degrees: 45`, the returned Movement command and
 control IDs, `movement_screen_factor: 2.0`, and
 `movement_dialog_closed: true`.
+
+Before a standard recipe can be automatic-ready, submit a fresh exact-window
+accessibility observation to the prepare tool:
+
+```json
+{
+  "project_id": "current project id",
+  "revision": 1,
+  "views": ["front", "top", "isometric"],
+  "runtime_accessibility_evidence": {
+    "source": "computer_use",
+    "expected_revision": 1,
+    "expected_window_handle": 12345,
+    "expected_window_title": "msmcp_r001_xxxxxxxxxx - Materials Studio",
+    "accessibility_tree_refreshed": true,
+    "viewer_document_observed": true,
+    "empty_viewport_focus_target_observed": true,
+    "unnamed_toolbar_children_observed": false,
+    "controls": [
+      {
+        "command_id": "cmdViewer3DResetView",
+        "observed_control_name": "3D Viewer Reset View",
+        "invoke_supported": true
+      },
+      {
+        "command_id": "cmdViewer3DMovementOptions",
+        "observed_control_name": "3D Movement Options",
+        "invoke_supported": true
+      }
+    ]
+  }
+}
+```
+
+Observed unnamed toolbar children must instead use a null
+`observed_control_name` and `invoke_supported: false`. That evidence is useful:
+it prevents automatic replay and routes continuation to reviewed manual or
+Copy Script handling. Never replace the missing name with an element index or
+coordinate.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

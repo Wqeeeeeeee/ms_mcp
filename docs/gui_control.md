@@ -26,7 +26,7 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_open_structure`: opens an existing structure file only when an existing Materials Studio window is available. On Windows, the fallback uses the already-running window's File/Open dialog to load the generated workspace `.stp` wrapper; it does not implicitly launch `MatStudio.exe`, and it refuses file-open methods that may spawn another Materials Studio window. When `project_id` and `revision` are provided, it also persists the GUI-open artifact into the structured revision's `view_audit.json`, view bundle, `modeling_health`, `modeling_report`, and `report.json` by default. If `project_id` is provided and `revision` is omitted, it resolves that project's current revision; if `project_id` is omitted, it only syncs diagnostics when `structure_path` matches the latest current revision's planned structure.
 - `material_studio_gui_apply_current_revision`: validates the saved revision script, exports the current revision's `view_audit.json`/`modeling_health` by default, previews by default, may omit `project_id` for the latest current project, and only executes when `execution_mode="execute"`.
 - `material_studio_gui_copy_script_assist`: returns a checklist for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied.
-- `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_ui_evidence` records a current-window Miller-plane UI probe in `gui_view_replay_runtime_preflight.json`; the evidence is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
+- `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_accessibility_evidence` records named Reset/Movement observations in `gui_view_replay_accessibility_preflight.json`; optional `runtime_ui_evidence` records the separate Miller-plane probe in `gui_view_replay_runtime_preflight.json`. Either artifact is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
 - `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. Optional exact handle/title binding and a reviewed `native_command_id` make the event machine-auditable.
 - `material_studio_gui_record_visual_confirmation`: persists Computer Use or manual viewport evidence after verifying the current project/revision, exact wrapper title and handle, wrapper metadata, and single-window state. The same path is available through `material_studio_live_modeling_request.visual_confirmation` for restricted MCP allowlists. In an ongoing session, either entry may omit `project_id`; the supplied observed revision must match the latest current project's revision before window binding is evaluated.
 
@@ -134,18 +134,30 @@ Every manifest view also has an `execution_recipe`. The companion
 `replay_continuation` receipt reports pending, automatic-ready, and
 review-required view names plus the next view and its camera/projection checks.
 On Materials Studio 20.1, all six face-aligned orthographic recipes are
-automatic-ready when both the local command registry and installed keyboard
-help are verified. `front` targets the named Reset View control; `back` uses
+statically eligible when the local command registry and installed keyboard
+help are verified. They become automatic-ready only when a refreshed
+current-window accessibility observation also proves the exact named Reset
+View control is invocable, the target document is visible, and keyboard views
+have a verified empty viewport focus target. `front` targets Reset View; `back` uses
 Reset + `Left x4`; `right` uses Reset + `Up x2, Left x2`; `left` uses Reset +
 `Up x2, Right x2`; `top` uses Reset + `Up x2`; and `bottom` uses Reset +
 `Left x4, Down x2`. The installed help defines each arrow rotation as 45
 degrees and
 states that Shift+arrow rotates selected objects, so Shift is prohibited and
 the camera axis layout plus projection/overlap counts require a fresh visual
-postcheck. Isometric is also automatic-ready through the verified staged
-recipe Reset, `45 degrees: Up x2, Left x3`, then `35.26438968 degrees: Down`.
+postcheck. Isometric additionally requires the exact named Movement control at
+runtime before its staged recipe can become automatic-ready: Reset, `45
+degrees: Up x2, Left x3`, then `35.26438968 degrees: Down`.
 It must show A left-down, B right-down, C up, restore Angle to 45 degrees,
 preserve Screen factor 2.0, and close Movement.
+
+The observation is submitted through `runtime_accessibility_evidence` and is
+persisted as `gui_view_replay_accessibility_preflight.json`. Static registry or
+help files never substitute for that live binding. If MS 20.1 exposes unnamed
+toolbar children, record null observed names and `invoke_supported=false`.
+`automation_ready` then remains false and continuation routes to reviewed
+manual or Copy Script handling; an unnamed accessibility index or blind toolbar
+coordinate is never an acceptable substitute.
 
 `crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
 Miller Plane, Properties Explorer, and View Onto registry/help evidence is

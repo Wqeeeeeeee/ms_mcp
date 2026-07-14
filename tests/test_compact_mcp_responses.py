@@ -83,6 +83,15 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     ] == 45.0
     assert compact["view_replay_automation_policy"]["shift_arrow_keys_allowed"] is False
     assert compact["view_replay_automation_policy"]["front_native_command_id"] == "cmdViewer3DResetView"
+    assert compact["view_replay_automation_policy"][
+        "standard_views_require_current_bound_runtime_accessibility_preflight"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "runtime_accessibility_preflight_payload_field"
+    ] == "runtime_accessibility_evidence"
+    assert compact["view_replay_automation_policy"][
+        "standard_view_static_registry_or_help_evidence_alone_is_sufficient"
+    ] is False
     assert compact["view_replay_automation_policy"]["structure_nudge_or_align_commands_allowed_for_camera_replay"] is False
     assert _json_size(compact) < server.COMPACT_RESPONSE_MAX_BYTES
     assert _json_size(compact) * 4 < _json_size(full)

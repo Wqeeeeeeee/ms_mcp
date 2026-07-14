@@ -93,11 +93,16 @@ event is appended.
 
 Compact capabilities also expose `view_replay_automation_policy`, while compact
 project status preserves `gui_view_replay.replay_continuation`. Clients must
-honor `automation_ready`; the current MS 20.1 policy permits named Reset View
-automation for `front` and installed-help-backed unmodified arrow-key recipes
-for `back`, `right`, `left`, `top`, `bottom`, and staged `isometric`. The receipt
-must prove the exact key sequence or stages, Reset precondition, angle, no
-modifiers, setting restoration, and visual axis/projection match.
+honor `automation_ready`; the current MS 20.1 policy defines named Reset View
+for `front`, installed-help-backed unmodified arrow-key recipes for `back`,
+`right`, `left`, `top`, `bottom`, and staged `isometric`. Static eligibility is
+not automatic readiness. `runtime_accessibility_evidence` must bind the current
+revision and wrapper handle/title, prove the exact named controls are invocable,
+and persist as `gui_view_replay_accessibility_preflight.json`. Protocol
+acceptance verifies that this nested schema is discoverable and strict
+(`extra="forbid"`). Unnamed toolbar children must keep automation blocked. The
+receipt must also prove the exact key sequence or stages, Reset precondition,
+angle, no modifiers, setting restoration, and visual axis/projection match.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

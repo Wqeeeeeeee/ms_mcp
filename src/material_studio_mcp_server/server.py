@@ -251,6 +251,41 @@ class GuiVisualConfirmationInput(BaseModel):
     expected_window_title: str = Field(..., description="Observed Materials Studio wrapper window title.", min_length=1, max_length=500)
 
 
+class GuiViewRuntimeAccessibilityControlEvidenceInput(BaseModel):
+    """One named-control observation from the live Materials Studio window."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    command_id: str = Field(
+        ...,
+        pattern=r"^(cmdViewer3DResetView|cmdViewer3DMovementOptions)$",
+    )
+    observed_control_name: str | None = Field(default=None, max_length=200)
+    invoke_supported: bool
+
+
+class GuiViewRuntimeAccessibilityEvidenceInput(BaseModel):
+    """Current-window accessibility evidence for standard GUI view replay."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    source: str = Field(default="computer_use", pattern=r"^(computer_use|manual_review)$")
+    expected_revision: int = Field(..., ge=0)
+    expected_window_handle: int = Field(..., gt=0)
+    expected_window_title: str = Field(..., min_length=1, max_length=500)
+    accessibility_tree_refreshed: bool
+    viewer_document_observed: bool
+    empty_viewport_focus_target_observed: bool
+    unnamed_toolbar_children_observed: bool
+    controls: list[GuiViewRuntimeAccessibilityControlEvidenceInput] = Field(
+        ...,
+        min_length=1,
+        max_length=2,
+    )
+    screenshot_path: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class GuiMillerPlaneViewportSelectionProbeInput(BaseModel):
     """Current-window proof that a transient plane can be selected without Object Tree."""
 
@@ -3015,6 +3050,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ],
             "front_native_command_id": "cmdViewer3DResetView",
             "front_accessibility_control_name": "3D Viewer Reset View",
+            "standard_views_require_current_bound_runtime_accessibility_preflight": True,
+            "runtime_accessibility_preflight_payload_field": (
+                "runtime_accessibility_evidence"
+            ),
+            "runtime_accessibility_preflight_artifact": (
+                "gui_view_replay_accessibility_preflight.json"
+            ),
+            "standard_view_static_registry_or_help_evidence_alone_is_sufficient": False,
             "documented_keyboard_sequences": {
                 "back": ["Left", "Left", "Left", "Left"],
                 "right": ["Up", "Up", "Left", "Left"],
@@ -5789,6 +5832,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "manifest_filename": "gui_view_replay_manifest.json",
                 "events_filename": "gui_view_replay_events.jsonl",
                 "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
+                "runtime_accessibility_preflight_filename": (
+                    "gui_view_replay_accessibility_preflight.json"
+                ),
                 "supports_crystal_direction_views": sorted(CRYSTAL_DIRECTION_VIEW_INDICES),
                 "supports_crystal_plane_views": sorted(CRYSTAL_PLANE_VIEW_INDICES),
                 "supports_oriented_frame_views": sorted(ORIENTED_FRAME_VIEW_SPECS),
@@ -5810,6 +5856,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "isometric",
                 ],
                 "native_accessibility_view_names": ["front"],
+                "standard_views_require_current_bound_runtime_accessibility_preflight": True,
+                "runtime_accessibility_preflight_payload_field": (
+                    "runtime_accessibility_evidence"
+                ),
+                "standard_view_static_registry_or_help_evidence_alone_is_sufficient": False,
                 "documented_keyboard_view_names": [
                     "back",
                     "right",
@@ -27220,6 +27271,11 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
             "observation_available",
             "observed_at",
             "binding_verified",
+            "base_preflight_satisfied",
+            "base_gate_satisfied",
+            "all_observed_named_controls_invocable",
+            "all_standard_recipe_controls_observed",
+            "all_standard_recipe_controls_ready",
             "automation_gate_satisfied",
             "selection_profile",
             "artifact_path",
@@ -27231,6 +27287,14 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
             "required_menu_key_sequence",
             "required_dialog_identifiers",
             "selection_modifier_keys",
+            "required_command_ids",
+            "missing_required_command_ids",
+            "required_control_evidence_complete",
+            "observed_required_control_blocks_automation",
+            "require_viewer_document",
+            "require_empty_viewport_focus_target",
+            "unnamed_toolbar_children_observed",
+            "command_gates",
         ),
     )
     binding = value.get("binding")
@@ -27272,6 +27336,7 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "status",
             "recipe_kind",
             "automation_ready",
+            "static_recipe_ready",
             "block_reasons",
             "native_command_id",
             "native_command",
@@ -27341,6 +27406,11 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         compact["runtime_ui_preflight"] = runtime_ui_preflight
+    runtime_accessibility_preflight = _compact_runtime_ui_preflight(
+        value.get("runtime_accessibility_preflight")
+    )
+    if runtime_accessibility_preflight:
+        compact["runtime_accessibility_preflight"] = runtime_accessibility_preflight
     transient_change_contract = value.get("transient_change_contract")
     if isinstance(transient_change_contract, dict):
         compact["transient_change_contract"] = _mapping_subset(
@@ -27492,11 +27562,15 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "automatic_replay_ready",
             "recipe_upgrade_required",
             "runtime_ui_preflight_required",
+            "runtime_accessibility_preflight_required",
+            "runtime_accessibility_observation_blocks_automation",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
             "payload_hint",
             "payload_hint_is_directly_callable",
             "high_level_payload_hint",
+            "post_review_record_payload_template",
+            "post_review_high_level_payload_template",
             "evidence_values_must_be_observed_not_assumed",
         ),
     )
@@ -27558,6 +27632,52 @@ def _compact_view_replay(value: Any) -> dict[str, Any]:
     return replay
 
 
+def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    prepared = _mapping_subset(
+        value,
+        (
+            "ok",
+            "project_id",
+            "revision",
+            "manifest_path",
+            "gui_log_path",
+            "replay_status",
+            "ready_for_external_replay",
+            "preflight_block_reasons",
+            "runtime_ui_preflight_path",
+            "runtime_accessibility_preflight_path",
+            "activation_required",
+            "view_names",
+            "requested_view_count",
+            "supported_view_count",
+            "unsupported_view_count",
+            "recipe_migration",
+            "next_action",
+            "spec_fingerprint",
+            "model_type",
+            "gui_modified",
+            "structure_modified",
+        ),
+    )
+    continuation = _compact_view_replay_continuation(
+        value.get("replay_continuation")
+    )
+    if continuation:
+        prepared["replay_continuation"] = continuation
+    recipe_contract = _compact_view_replay_recipe_contract(
+        value.get("recipe_contract")
+    )
+    if recipe_contract:
+        prepared["recipe_contract"] = recipe_contract
+    for key in ("runtime_ui_preflight", "runtime_accessibility_preflight"):
+        runtime_preflight = _compact_runtime_ui_preflight(value.get(key))
+        if runtime_preflight:
+            prepared[key] = runtime_preflight
+    return prepared
+
+
 def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -27573,6 +27693,10 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "runtime_ui_preflight_exists",
             "runtime_ui_preflight_read_error",
             "runtime_ui_preflight_observed_at",
+            "runtime_accessibility_preflight_path",
+            "runtime_accessibility_preflight_exists",
+            "runtime_accessibility_preflight_read_error",
+            "runtime_accessibility_preflight_observed_at",
             "replay_status",
             "view_names",
             "requested_view_count",
@@ -27592,6 +27716,13 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         replay["runtime_ui_preflight"] = runtime_ui_preflight
+    runtime_accessibility_preflight = _compact_runtime_ui_preflight(
+        value.get("runtime_accessibility_preflight")
+    )
+    if runtime_accessibility_preflight:
+        replay["runtime_accessibility_preflight"] = (
+            runtime_accessibility_preflight
+        )
     last_event = _compact_view_replay_event(value.get("last_replay_event"))
     if last_event:
         replay["last_replay_event"] = last_event
@@ -27805,7 +27936,9 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "manifest_path",
             "events_path",
             "runtime_ui_preflight_path",
+            "runtime_accessibility_preflight_path",
             "runtime_ui_preflight",
+            "runtime_accessibility_preflight",
             "view_replay_confirmation",
             "view_replay_binding",
             "view_replay",
@@ -28166,6 +28299,7 @@ def _compact_live_response(
             "ready_for_external_replay",
             "preflight_block_reasons",
             "runtime_ui_preflight_path",
+            "runtime_accessibility_preflight_path",
             "activation_required",
             "view_names",
             "requested_view_count",
@@ -28189,6 +28323,16 @@ def _compact_live_response(
     )
     if gui_evidence_reaudit:
         compact["gui_evidence_reaudit"] = gui_evidence_reaudit
+    view_replay_continuation = _compact_view_replay_continuation(
+        response.get("view_replay_continuation")
+    )
+    if view_replay_continuation:
+        compact["view_replay_continuation"] = view_replay_continuation
+    view_replay_prepare = _compact_view_replay_prepare(
+        response.get("view_replay_prepare")
+    )
+    if view_replay_prepare:
+        compact["view_replay_prepare"] = view_replay_prepare
     replay_summary = _compact_view_replay_summary(response.get("replay_summary"))
     if replay_summary:
         compact["replay_summary"] = replay_summary
@@ -28207,6 +28351,13 @@ def _compact_live_response(
     )
     if runtime_ui_preflight:
         compact["runtime_ui_preflight"] = runtime_ui_preflight
+    runtime_accessibility_preflight = _compact_runtime_ui_preflight(
+        response.get("runtime_accessibility_preflight")
+    )
+    if runtime_accessibility_preflight:
+        compact["runtime_accessibility_preflight"] = (
+            runtime_accessibility_preflight
+        )
     compact["full_detail_available"] = bool(
         artifacts.get("report_json_path") or response.get("report_json_path")
     )
@@ -28960,6 +29111,9 @@ def material_studio_live_project_status(
         view_replay_manifest_path = output_dir / "gui_view_replay_manifest.json"
         view_replay_events_path = output_dir / "gui_view_replay_events.jsonl"
         view_replay_runtime_preflight_path = output_dir / "gui_view_replay_runtime_preflight.json"
+        view_replay_accessibility_preflight_path = (
+            output_dir / "gui_view_replay_accessibility_preflight.json"
+        )
         generated = _generate_structured_script(spec, store)
         planned_structure = generated["planned_outputs"].get("structure")
         planned_structure_path = Path(str(planned_structure)).expanduser() if planned_structure else None
@@ -28970,6 +29124,10 @@ def material_studio_live_project_status(
         view_replay_runtime_preflight, view_replay_runtime_preflight_error = _read_json_file(
             view_replay_runtime_preflight_path
         )
+        (
+            view_replay_accessibility_preflight,
+            view_replay_accessibility_preflight_error,
+        ) = _read_json_file(view_replay_accessibility_preflight_path)
         if isinstance(view_replay_manifest, dict):
             _refresh_view_replay_summary(view_replay_manifest)
         view_replay_summary = {
@@ -28984,6 +29142,21 @@ def material_studio_live_project_status(
             "runtime_ui_preflight": (view_replay_manifest or {}).get("runtime_ui_preflight"),
             "runtime_ui_preflight_observed_at": (
                 view_replay_runtime_preflight or {}
+            ).get("observed_at"),
+            "runtime_accessibility_preflight_path": str(
+                view_replay_accessibility_preflight_path
+            ),
+            "runtime_accessibility_preflight_exists": (
+                view_replay_accessibility_preflight_path.exists()
+            ),
+            "runtime_accessibility_preflight_read_error": (
+                view_replay_accessibility_preflight_error
+            ),
+            "runtime_accessibility_preflight": (view_replay_manifest or {}).get(
+                "runtime_accessibility_preflight"
+            ),
+            "runtime_accessibility_preflight_observed_at": (
+                view_replay_accessibility_preflight or {}
             ).get("observed_at"),
             "replay_status": (view_replay_manifest or {}).get("replay_status"),
             "view_names": list((view_replay_manifest or {}).get("view_names") or []),
@@ -32659,6 +32832,7 @@ def material_studio_gui_prepare_view_replay(
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
     views: Annotated[list[str] | None, Field(description="View names to prepare, including Cartesian, crystal direction/plane, or surface/interface frame views.", min_length=1, max_length=32)] = None,
     runtime_ui_evidence: Annotated[GuiMillerPlaneRuntimeUiEvidenceInput | None, Field(description="Optional current-window Miller-plane UI observation. It is persisted only after exact project/revision/window binding succeeds.")] = None,
+    runtime_accessibility_evidence: Annotated[GuiViewRuntimeAccessibilityEvidenceInput | None, Field(description="Optional current-window named Reset/Movement accessibility observation. Static command registration alone never enables automatic standard-view replay.")] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full replay manifest or compact MCP preparation receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
@@ -32692,6 +32866,21 @@ def material_studio_gui_prepare_view_replay(
                 else GuiMillerPlaneRuntimeUiEvidenceInput.model_validate(runtime_ui_evidence)
             )
             normalized_runtime_ui_evidence = evidence_model.model_dump(mode="json")
+        normalized_runtime_accessibility_evidence: dict[str, Any] | None = None
+        if runtime_accessibility_evidence is not None:
+            accessibility_evidence_model = (
+                runtime_accessibility_evidence
+                if isinstance(
+                    runtime_accessibility_evidence,
+                    GuiViewRuntimeAccessibilityEvidenceInput,
+                )
+                else GuiViewRuntimeAccessibilityEvidenceInput.model_validate(
+                    runtime_accessibility_evidence
+                )
+            )
+            normalized_runtime_accessibility_evidence = (
+                accessibility_evidence_model.model_dump(mode="json")
+            )
         store = _structured_store(working_dir)
         spec = store.get_revision(str(context["project_id"]), int(context["revision"]))
         audit = model_view_audit(spec, normalized_views)
@@ -32700,6 +32889,9 @@ def material_studio_gui_prepare_view_replay(
             project_id=spec.project_id,
             revision=spec.revision,
             runtime_ui_evidence=normalized_runtime_ui_evidence,
+            runtime_accessibility_evidence=(
+                normalized_runtime_accessibility_evidence
+            ),
         )
         result["project_resolution"] = context.get("project_resolution") or _explicit_project_resolution(spec)
         result["resolved_latest_current_for_view_replay"] = (

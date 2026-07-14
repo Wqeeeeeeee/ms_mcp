@@ -166,8 +166,9 @@ a model revision.
 
 Each prepared view now carries an `execution_recipe`, and the manifest exposes
 `replay_continuation` with pending views and the next safe action. Materials
-Studio 20.1 currently verifies automatic six-face orthographic replay plus a
-staged isometric replay.
+Studio 20.1 supplies deterministic six-face orthographic recipes plus a staged
+isometric recipe. They become automatic-ready only after exact-window runtime
+accessibility evidence verifies the required named controls.
 `front` uses the named `cmdViewer3DResetView` accessibility command; `back`
 uses Reset + `Left x4`; `right` uses Reset + `Up x2, Left x2`; `left` uses
 Reset + `Up x2, Right x2`; `top` uses Reset + `Up x2`; and `bottom` uses Reset
@@ -177,7 +178,13 @@ the replay receipt must record `modifier_keys=[]` and visual axis/projection
 checks. Isometric uses a verified staged recipe: Reset, `45 degrees: Up x2,
 Left x3`, then `35.26438968 degrees: Down x1`; it must restore the Movement
 angle to 45 degrees, preserve Screen factor 2.0, close Movement, and verify A
-left-down, B right-down, C up. `crystal_plane_*` views can also become
+left-down, B right-down, C up. Submit that live observation as
+`runtime_accessibility_evidence`; it is persisted in
+`gui_view_replay_accessibility_preflight.json` only after revision, wrapper
+handle/title, and single-window binding pass. Static registry/help evidence is
+not an automation grant. When MS exposes only unnamed toolbar children, the
+recipe stays review-gated and unnamed element indexes or coordinates are
+prohibited. `crystal_plane_*` views can also become
 automatic-ready when the installed Miller Plane/Properties/View Onto evidence
 is complete, a supported semantic selection profile is verified, and a
 current-window `runtime_ui_evidence` probe is bound to the exact revision and

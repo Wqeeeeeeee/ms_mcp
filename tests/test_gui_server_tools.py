@@ -102,6 +102,41 @@ def _complete_miller_runtime_ui_evidence(*, revision: int, window: WindowInfo) -
     }
 
 
+def _complete_view_runtime_accessibility_evidence(
+    *,
+    revision: int,
+    window: WindowInfo,
+    include_movement: bool = True,
+) -> dict:
+    controls = [
+        {
+            "command_id": "cmdViewer3DResetView",
+            "observed_control_name": "3D Viewer Reset View",
+            "invoke_supported": True,
+        }
+    ]
+    if include_movement:
+        controls.append(
+            {
+                "command_id": "cmdViewer3DMovementOptions",
+                "observed_control_name": "3D Movement Options",
+                "invoke_supported": True,
+            }
+        )
+    return {
+        "source": "computer_use",
+        "expected_revision": revision,
+        "expected_window_handle": window.handle,
+        "expected_window_title": window.title,
+        "accessibility_tree_refreshed": True,
+        "viewer_document_observed": True,
+        "empty_viewport_focus_target_observed": True,
+        "unnamed_toolbar_children_observed": False,
+        "controls": controls,
+        "note": "Named controls were observed on the exact current wrapper window.",
+    }
+
+
 def _complete_miller_viewport_runtime_ui_evidence(
     *,
     revision: int,
@@ -967,10 +1002,26 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         project_id=created["project_id"],
         revision=created["revision"],
         views=["front", "right", "top", "back", "left", "bottom", "isometric", "crystal_100"],
+        runtime_accessibility_evidence=_complete_view_runtime_accessibility_evidence(
+            revision=created["revision"],
+            window=target_window,
+        ),
         working_dir=str(tmp_path),
     )
 
     assert prepared["ok"] is True
+    assert prepared["runtime_accessibility_preflight"]["status"] == (
+        "verified_automation_ready"
+    )
+    assert prepared["runtime_accessibility_preflight"][
+        "all_observed_named_controls_invocable"
+    ] is True
+    assert prepared["runtime_accessibility_preflight"][
+        "all_standard_recipe_controls_ready"
+    ] is True
+    assert prepared["runtime_accessibility_preflight"][
+        "automation_gate_satisfied"
+    ] is True
     view_by_name = {item["view_name"]: item for item in prepared["manifest"]["views"]}
     front_recipe = view_by_name["front"]["execution_recipe"]
     assert front_recipe["status"] == "native_accessibility_command_ready"
@@ -1157,6 +1208,7 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "bottom",
         "isometric",
     ]
+
 
     wrong_keys = server.material_studio_gui_record_view_replay(
         view_name="right",
@@ -1361,6 +1413,216 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert len(json.dumps(isometric_recorded, ensure_ascii=False).encode("utf-8")) < (
         server.COMPACT_RESPONSE_MAX_BYTES
     )
+
+
+def test_gui_view_replay_runtime_accessibility_gate_blocks_unnamed_controls(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    history_before = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+
+    missing = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front", "isometric"],
+        working_dir=str(tmp_path),
+    )
+    assert missing["ok"] is True
+    missing_front = missing["manifest"]["views"][0]["execution_recipe"]
+    assert missing_front["static_recipe_ready"] is True
+    assert missing_front["automation_ready"] is False
+    assert "runtime_view_accessibility_preflight_missing" in missing_front[
+        "block_reasons"
+    ]
+    assert missing["replay_continuation"]["status"] == (
+        "runtime_accessibility_preflight_required"
+    )
+    assert missing["replay_continuation"]["payload_hint_is_directly_callable"] is False
+
+    partial = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["isometric"],
+        runtime_accessibility_evidence=_complete_view_runtime_accessibility_evidence(
+            revision=revision,
+            window=backend.window,
+            include_movement=False,
+        ),
+        working_dir=str(tmp_path),
+    )
+    assert partial["ok"] is True
+    partial_recipe = partial["manifest"]["views"][0]["execution_recipe"]
+    assert partial_recipe["automation_ready"] is False
+    assert partial_recipe["runtime_accessibility_preflight"][
+        "missing_required_command_ids"
+    ] == ["cmdViewer3DMovementOptions"]
+    assert partial["replay_continuation"]["status"] == (
+        "runtime_accessibility_preflight_required"
+    )
+    assert partial["replay_continuation"]["payload_hint"][
+        "missing_required_command_ids"
+    ] == ["cmdViewer3DMovementOptions"]
+
+    negative_evidence = {
+        "source": "computer_use",
+        "expected_revision": revision,
+        "expected_window_handle": backend.window.handle,
+        "expected_window_title": backend.window.title,
+        "accessibility_tree_refreshed": True,
+        "viewer_document_observed": True,
+        "empty_viewport_focus_target_observed": True,
+        "unnamed_toolbar_children_observed": True,
+        "controls": [
+            {
+                "command_id": "cmdViewer3DResetView",
+                "observed_control_name": None,
+                "invoke_supported": False,
+            },
+            {
+                "command_id": "cmdViewer3DMovementOptions",
+                "observed_control_name": None,
+                "invoke_supported": False,
+            },
+        ],
+        "note": "The MS 20.1 toolbar children were present but unnamed.",
+    }
+    blocked = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front", "isometric"],
+        runtime_accessibility_evidence=negative_evidence,
+        working_dir=str(tmp_path),
+    )
+    assert blocked["ok"] is True
+    assert blocked["runtime_accessibility_preflight"]["status"] == (
+        "verified_observation_blocks_automation"
+    )
+    assert blocked["runtime_accessibility_preflight"]["base_gate_satisfied"] is True
+    assert blocked["runtime_accessibility_preflight"][
+        "all_observed_named_controls_invocable"
+    ] is False
+    assert blocked["runtime_accessibility_preflight"][
+        "all_standard_recipe_controls_observed"
+    ] is True
+    assert blocked["runtime_accessibility_preflight"][
+        "all_standard_recipe_controls_ready"
+    ] is False
+    assert blocked["runtime_accessibility_preflight"][
+        "automation_gate_satisfied"
+    ] is False
+    blocked_front = blocked["manifest"]["views"][0]["execution_recipe"]
+    assert blocked_front["automation_ready"] is False
+    assert "runtime_named_reset_view_control_not_observed" in blocked_front[
+        "block_reasons"
+    ]
+    blocked_isometric = blocked["manifest"]["views"][1]["execution_recipe"]
+    assert "runtime_named_movement_control_not_observed" in blocked_isometric[
+        "block_reasons"
+    ]
+    assert blocked["replay_continuation"]["status"] == (
+        "runtime_accessibility_blocks_automatic_replay"
+    )
+    assert blocked["replay_continuation"][
+        "runtime_accessibility_observation_blocks_automation"
+    ] is True
+    assert blocked["replay_continuation"]["recommended_mcp_tool"] == (
+        "material_studio_gui_copy_script_assist"
+    )
+    assert blocked["replay_continuation"]["payload_hint_is_directly_callable"] is True
+    assert set(blocked["replay_continuation"]["payload_hint"]) == {
+        "project_id",
+        "revision",
+        "context",
+    }
+    assert blocked["replay_continuation"][
+        "post_review_record_payload_template"
+    ]["view_name"] == "front"
+    assert blocked["replay_continuation"][
+        "evidence_values_must_be_observed_not_assumed"
+    ] is True
+    artifact_path = Path(blocked["runtime_accessibility_preflight_path"])
+    assert artifact_path.exists()
+    artifact_before = artifact_path.read_text(encoding="utf-8")
+
+    mismatched = dict(negative_evidence)
+    mismatched["expected_window_handle"] = backend.window.handle + 1
+    rejected = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        runtime_accessibility_evidence=mismatched,
+        working_dir=str(tmp_path),
+    )
+    assert rejected["ok"] is False
+    assert "does not match the current single Materials Studio wrapper window" in rejected[
+        "error"
+    ]
+    assert artifact_path.read_text(encoding="utf-8") == artifact_before
+
+    invalid_extra = json.loads(json.dumps(negative_evidence))
+    invalid_extra["controls"][0]["unreviewed_index"] = 105
+    extra_rejected = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        runtime_accessibility_evidence=invalid_extra,
+        working_dir=str(tmp_path),
+    )
+    assert extra_rejected["ok"] is False
+    assert "Extra inputs are not permitted" in extra_rejected["error"]
+    assert artifact_path.read_text(encoding="utf-8") == artifact_before
+
+    invalid_invoke = json.loads(json.dumps(negative_evidence))
+    invalid_invoke["controls"][0]["invoke_supported"] = True
+    invoke_rejected = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        runtime_accessibility_evidence=invalid_invoke,
+        working_dir=str(tmp_path),
+    )
+    assert invoke_rejected["ok"] is False
+    assert "cannot mark an unnamed or mismatched control as invocable" in invoke_rejected[
+        "error"
+    ]
+    assert artifact_path.read_text(encoding="utf-8") == artifact_before
+
+    outside_screenshot = tmp_path.parent / f"{tmp_path.name}_outside.bmp"
+    outside_screenshot.write_bytes(_tiny_bmp())
+    outside_evidence = json.loads(json.dumps(negative_evidence))
+    outside_evidence["screenshot_path"] = str(outside_screenshot)
+    outside_rejected = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        runtime_accessibility_evidence=outside_evidence,
+        working_dir=str(tmp_path),
+    )
+    assert outside_rejected["ok"] is False
+    assert "工作区" in outside_rejected["error"]
+    assert artifact_path.read_text(encoding="utf-8") == artifact_before
+    history_after = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+    assert len(history_after) == len(history_before)
 
 
 def test_miller_plane_recipe_requires_all_installed_selection_evidence() -> None:
@@ -2713,8 +2975,19 @@ def test_live_modeling_request_continues_view_replay_without_creating_revision(
     assert continued["view_replay_continuation_requested"] is True
     assert continued["view_replay_prepared"] is True
     assert continued["view_replay_prepare"]["ok"] is True
-    assert continued["view_replay_continuation"]["status"] == "automatic_recipe_ready"
-    assert continued["view_replay_continuation"]["next_automation_ready_view_name"] == "front"
+    assert continued["view_replay_continuation"]["status"] == (
+        "runtime_accessibility_preflight_required"
+    )
+    assert continued["view_replay_continuation"]["next_automation_ready_view_name"] is None
+    assert continued["view_replay_continuation"]["recommended_mcp_tool"] == (
+        "material_studio_gui_prepare_view_replay"
+    )
+    assert continued["view_replay_continuation"][
+        "runtime_accessibility_preflight_required"
+    ] is True
+    assert continued["view_replay_continuation"][
+        "payload_hint_is_directly_callable"
+    ] is False
     assert continued["gui_view_replay"]["replay_summary"]["event_count"] == 0
     assert continued["gui_view_replay"]["events_exist"] is False
 
@@ -2727,7 +3000,7 @@ def test_live_modeling_request_continues_view_replay_without_creating_revision(
     assert resumed_english["ok"] is True
     assert resumed_english["workflow"] == "continue_view_replay"
     assert resumed_english["view_replay_prepared"] is False
-    assert resumed_english["view_replay_continuation"]["next_automation_ready_view_name"] == "front"
+    assert resumed_english["view_replay_continuation"]["next_automation_ready_view_name"] is None
 
     resumed_explicit = server.material_studio_live_modeling_request(
         "Continue the next GUI view replay.",
@@ -2738,7 +3011,7 @@ def test_live_modeling_request_continues_view_replay_without_creating_revision(
     assert resumed_explicit["ok"] is True
     assert resumed_explicit["workflow"] == "continue_view_replay"
     assert resumed_explicit["view_replay_prepared"] is False
-    assert resumed_explicit["view_replay_continuation"]["next_automation_ready_view_name"] == "front"
+    assert resumed_explicit["view_replay_continuation"]["next_automation_ready_view_name"] is None
 
     resumed = server.material_studio_live_modeling_request(
         "继续验证下一个 GUI 视角",
@@ -2749,7 +3022,7 @@ def test_live_modeling_request_continues_view_replay_without_creating_revision(
     assert resumed["ok"] is True
     assert resumed["workflow"] == "continue_view_replay"
     assert resumed["view_replay_prepared"] is False
-    assert resumed["view_replay_continuation"]["next_automation_ready_view_name"] == "front"
+    assert resumed["view_replay_continuation"]["next_automation_ready_view_name"] is None
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
     assert len(history_after) == len(history_before)
 
@@ -2780,9 +3053,24 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         project_id=project_id,
         revision=revision,
         views=["front", "right"],
+        runtime_accessibility_evidence=_complete_view_runtime_accessibility_evidence(
+            revision=revision,
+            window=backend.window,
+            include_movement=False,
+        ),
         working_dir=str(tmp_path),
     )
     assert prepared["ok"] is True
+    assert prepared["runtime_accessibility_preflight"]["status"] == (
+        "verified_partial_control_coverage"
+    )
+    assert prepared["runtime_accessibility_preflight"][
+        "automation_gate_satisfied"
+    ] is False
+    assert all(
+        view["execution_recipe"]["automation_ready"] is True
+        for view in prepared["manifest"]["views"]
+    )
     assert prepared["recipe_contract"]["status"] == "current"
 
     front = server.material_studio_gui_record_view_replay(
@@ -2871,7 +3159,9 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
     migrated_right = next(
         view for view in migrated_manifest["views"] if view["view_name"] == "right"
     )
-    assert migrated_right["execution_recipe"]["schema_version"] == 1
+    assert migrated_right["execution_recipe"]["schema_version"] == (
+        gui_module.VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+    )
     assert [event["event_id"] for event in migrated_manifest["replay_events"]] == [
         accepted_event_id
     ]

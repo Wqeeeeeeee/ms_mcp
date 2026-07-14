@@ -31,8 +31,8 @@ class GuiError(RuntimeError):
     """当本地 GUI 控制无法完成时引发。"""
 
 
-VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 3
-VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 1
+VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 4
+VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 2
 VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 2
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 6
 
@@ -150,6 +150,37 @@ MILLER_PLANE_SELECTION_METHOD = "object_tree_exact_item_rect_semantic_click"
 MILLER_PLANE_VIEWPORT_SELECTION_METHOD = (
     "viewport_unique_transient_plane_properties_verified"
 )
+
+VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS = {
+    "cmdViewer3DResetView": "3D Viewer Reset View",
+    "cmdViewer3DMovementOptions": "3D Movement Options",
+}
+VIEW_RUNTIME_ACCESSIBILITY_CONTROL_FIELDS = {
+    "command_id",
+    "observed_control_name",
+    "invoke_supported",
+}
+VIEW_RUNTIME_ACCESSIBILITY_CONTROL_DERIVED_FIELDS = {
+    "expected_control_name",
+    "named_control_observed",
+}
+VIEW_RUNTIME_ACCESSIBILITY_CONTROL_ALLOWED_FIELDS = (
+    VIEW_RUNTIME_ACCESSIBILITY_CONTROL_FIELDS
+    | VIEW_RUNTIME_ACCESSIBILITY_CONTROL_DERIVED_FIELDS
+)
+VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS = {
+    "source",
+    "expected_revision",
+    "expected_window_handle",
+    "expected_window_title",
+    "accessibility_tree_refreshed",
+    "viewer_document_observed",
+    "empty_viewport_focus_target_observed",
+    "unnamed_toolbar_children_observed",
+    "controls",
+    "screenshot_path",
+    "note",
+}
 MILLER_PLANE_SELECTION_METHODS = {
     MILLER_PLANE_SELECTION_METHOD,
     MILLER_PLANE_VIEWPORT_SELECTION_METHOD,
@@ -345,6 +376,152 @@ MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
     "document_clean_before_probe": "runtime_document_not_clean_before_probe",
     "document_clean_after_probe": "runtime_document_not_clean_after_probe",
 }
+
+
+def _normalize_view_runtime_accessibility_evidence(
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate named-control observations from the exact live wrapper window."""
+
+    if not isinstance(value, dict):
+        raise GuiError("runtime_accessibility_evidence must be a JSON object")
+    extra_fields = sorted(set(value) - VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS)
+    if extra_fields:
+        raise GuiError(
+            "runtime_accessibility_evidence contains unsupported fields: "
+            + ", ".join(extra_fields)
+        )
+    required_fields = VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS - {
+        "screenshot_path",
+        "note",
+    }
+    missing_fields = sorted(required_fields - set(value))
+    if missing_fields:
+        raise GuiError(
+            "runtime_accessibility_evidence is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    normalized = dict(value)
+    source = str(normalized.get("source") or "").strip()
+    if source not in {"computer_use", "manual_review"}:
+        raise GuiError("unsupported runtime_accessibility_evidence source")
+    normalized["source"] = source
+    try:
+        expected_revision = int(normalized.get("expected_revision"))
+        expected_window_handle = int(normalized.get("expected_window_handle"))
+    except (TypeError, ValueError) as exc:
+        raise GuiError(
+            "runtime_accessibility_evidence revision and window handle must be integers"
+        ) from exc
+    if expected_revision < 0:
+        raise GuiError(
+            "runtime_accessibility_evidence expected_revision must be non-negative"
+        )
+    if expected_window_handle <= 0:
+        raise GuiError(
+            "runtime_accessibility_evidence expected_window_handle must be positive"
+        )
+    expected_window_title = str(normalized.get("expected_window_title") or "").strip()
+    if not expected_window_title:
+        raise GuiError(
+            "runtime_accessibility_evidence expected_window_title must not be empty"
+        )
+    normalized["expected_revision"] = expected_revision
+    normalized["expected_window_handle"] = expected_window_handle
+    normalized["expected_window_title"] = expected_window_title
+
+    for field in (
+        "accessibility_tree_refreshed",
+        "viewer_document_observed",
+        "empty_viewport_focus_target_observed",
+        "unnamed_toolbar_children_observed",
+    ):
+        if not isinstance(normalized.get(field), bool):
+            raise GuiError(f"runtime_accessibility_evidence.{field} must be a boolean")
+
+    raw_controls = normalized.get("controls")
+    if not isinstance(raw_controls, list) or not 1 <= len(raw_controls) <= len(
+        VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS
+    ):
+        raise GuiError(
+            "runtime_accessibility_evidence.controls must contain one or two control observations"
+        )
+    controls: list[dict[str, Any]] = []
+    seen_command_ids: set[str] = set()
+    for index, raw_control in enumerate(raw_controls, start=1):
+        if not isinstance(raw_control, dict):
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}] must be a JSON object"
+            )
+        extra_control_fields = sorted(
+            set(raw_control) - VIEW_RUNTIME_ACCESSIBILITY_CONTROL_ALLOWED_FIELDS
+        )
+        if extra_control_fields:
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}] contains unsupported fields: "
+                + ", ".join(extra_control_fields)
+            )
+        missing_control_fields = sorted(
+            VIEW_RUNTIME_ACCESSIBILITY_CONTROL_FIELDS - set(raw_control)
+        )
+        if missing_control_fields:
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}] is missing required fields: "
+                + ", ".join(missing_control_fields)
+            )
+        command_id = str(raw_control.get("command_id") or "").strip()
+        if command_id not in VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS:
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}] has an unsupported command_id"
+            )
+        if command_id in seen_command_ids:
+            raise GuiError(
+                "runtime_accessibility_evidence.controls contains a duplicate command_id"
+            )
+        seen_command_ids.add(command_id)
+        observed_name_value = raw_control.get("observed_control_name")
+        if observed_name_value is not None and not isinstance(observed_name_value, str):
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}].observed_control_name "
+                "must be a string or null"
+            )
+        observed_name = (
+            str(observed_name_value).strip() if observed_name_value is not None else None
+        )
+        if observed_name == "":
+            observed_name = None
+        invoke_supported = raw_control.get("invoke_supported")
+        if not isinstance(invoke_supported, bool):
+            raise GuiError(
+                f"runtime_accessibility_evidence.controls[{index}].invoke_supported "
+                "must be a boolean"
+            )
+        expected_name = VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS[command_id]
+        named_control_observed = observed_name == expected_name
+        if invoke_supported and not named_control_observed:
+            raise GuiError(
+                "runtime_accessibility_evidence cannot mark an unnamed or mismatched control "
+                "as invocable"
+            )
+        controls.append(
+            {
+                "command_id": command_id,
+                "expected_control_name": expected_name,
+                "observed_control_name": observed_name,
+                "named_control_observed": named_control_observed,
+                "invoke_supported": invoke_supported,
+            }
+        )
+    normalized["controls"] = controls
+
+    for field in ("screenshot_path", "note"):
+        item = normalized.get(field)
+        if item is not None and not isinstance(item, str):
+            raise GuiError(
+                f"runtime_accessibility_evidence.{field} must be a string or null"
+            )
+    return normalized
 
 
 def _normalize_miller_runtime_viewport_selection_probe(
@@ -2305,6 +2482,7 @@ class MaterialsStudioGuiController:
         project_id: str,
         revision: int,
         runtime_ui_evidence: dict[str, Any] | None = None,
+        runtime_accessibility_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Persist a preview-only, externally replayable GUI view manifest."""
 
@@ -2326,6 +2504,14 @@ class MaterialsStudioGuiController:
             project_id=safe_project,
             revision=revision,
             supplied_evidence=runtime_ui_evidence,
+        )
+        runtime_accessibility_preflight = (
+            self._resolve_view_replay_runtime_accessibility_preflight(
+                status=status,
+                project_id=safe_project,
+                revision=revision,
+                supplied_evidence=runtime_accessibility_evidence,
+            )
         )
         steps = [_view_replay_step(view, index=index) for index, view in enumerate(audit.get("views") or [])]
         supported_steps = [step for step in steps if step["supported"]]
@@ -2377,6 +2563,7 @@ class MaterialsStudioGuiController:
                 step,
                 command_evidence,
                 runtime_ui_preflight=runtime_ui_preflight,
+                runtime_accessibility_preflight=runtime_accessibility_preflight,
             )
         next_tool = status.get("recommended_tool")
         next_action = status.get("recommended_action")
@@ -2433,6 +2620,7 @@ class MaterialsStudioGuiController:
                 "known_native_commands": command_evidence,
             },
             "runtime_ui_preflight": runtime_ui_preflight,
+            "runtime_accessibility_preflight": runtime_accessibility_preflight,
             "safety_gate": {
                 "activate_target_window_before_screenshot_or_input": True,
                 "verify_project_revision_wrapper_identity": True,
@@ -2549,6 +2737,9 @@ class MaterialsStudioGuiController:
                 "replay_status": manifest["replay_status"],
                 "preflight": manifest["preflight"],
                 "runtime_ui_preflight": manifest["runtime_ui_preflight"],
+                "runtime_accessibility_preflight": manifest[
+                    "runtime_accessibility_preflight"
+                ],
                 "next_action": manifest["next_action"],
             },
         )
@@ -2562,6 +2753,10 @@ class MaterialsStudioGuiController:
             "preflight_block_reasons": block_reasons,
             "runtime_ui_preflight_path": runtime_ui_preflight.get("artifact_path"),
             "runtime_ui_preflight": runtime_ui_preflight,
+            "runtime_accessibility_preflight_path": (
+                runtime_accessibility_preflight.get("artifact_path")
+            ),
+            "runtime_accessibility_preflight": runtime_accessibility_preflight,
             "activation_required": activation_required,
             "view_names": manifest["view_names"],
             "requested_view_count": len(steps),
@@ -2572,6 +2767,184 @@ class MaterialsStudioGuiController:
             "recipe_migration": manifest.get("recipe_migration"),
             "next_action": manifest["next_action"],
             "manifest": manifest,
+        }
+
+    def _resolve_view_replay_runtime_accessibility_preflight(
+        self,
+        *,
+        status: dict[str, Any],
+        project_id: str,
+        revision: int,
+        supplied_evidence: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Load or persist exact-window named-control accessibility evidence."""
+
+        artifact_path = self._view_replay_runtime_accessibility_preflight_path(
+            project_id=project_id,
+            revision=revision,
+        )
+        if supplied_evidence is None and not artifact_path.exists():
+            return {
+                "status": "missing",
+                "observation_available": False,
+                "binding_verified": False,
+                "automation_gate_satisfied": False,
+                "artifact_path": str(artifact_path),
+                "artifact_exists": False,
+                "block_reasons": ["runtime_view_accessibility_preflight_missing"],
+            }
+
+        evidence: dict[str, Any]
+        observed_at: str | None = None
+        source = "supplied"
+        if supplied_evidence is not None:
+            evidence = _normalize_view_runtime_accessibility_evidence(
+                supplied_evidence
+            )
+            screenshot_path = evidence.get("screenshot_path")
+            if screenshot_path:
+                screenshot = Path(str(screenshot_path)).expanduser().resolve()
+                _ensure_inside(self.workspace_root, screenshot)
+                if not screenshot.exists() or not screenshot.is_file():
+                    raise GuiError(
+                        f"runtime accessibility preflight screenshot does not exist: {screenshot}"
+                    )
+                evidence["screenshot_path"] = str(screenshot)
+            binding = _view_replay_runtime_ui_binding(
+                status,
+                project_id=project_id,
+                revision=revision,
+                evidence=evidence,
+            )
+            if binding.get("ok") is not True:
+                reasons = ", ".join(
+                    str(item) for item in binding.get("rejection_reasons") or []
+                )
+                raise GuiError(
+                    "runtime_accessibility_evidence does not match the current single "
+                    "Materials Studio wrapper window: "
+                    f"{reasons or 'window binding rejected'}"
+                )
+            observed_at = (
+                datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            artifact = {
+                "schema_version": 1,
+                "kind": "materials_studio_view_runtime_accessibility_preflight",
+                "observed_at": observed_at,
+                "project_id": project_id,
+                "revision": revision,
+                "evidence": evidence,
+                "binding_at_observation": binding,
+            }
+            _write_json_atomic(artifact_path, artifact)
+        else:
+            source = "persisted"
+            try:
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                if not isinstance(artifact, dict):
+                    raise ValueError("artifact root must be an object")
+                if (
+                    artifact.get("project_id") != project_id
+                    or artifact.get("revision") != revision
+                ):
+                    raise ValueError("artifact project/revision identity mismatch")
+                evidence = _normalize_view_runtime_accessibility_evidence(
+                    artifact.get("evidence")
+                )
+                observed_at = str(artifact.get("observed_at") or "") or None
+            except Exception as exc:
+                return {
+                    "status": "invalid_persisted_evidence",
+                    "observation_available": False,
+                    "binding_verified": False,
+                    "automation_gate_satisfied": False,
+                    "artifact_path": str(artifact_path),
+                    "artifact_exists": True,
+                    "artifact_error": str(exc),
+                    "block_reasons": [
+                        "runtime_view_accessibility_preflight_artifact_invalid"
+                    ],
+                }
+            binding = _view_replay_runtime_ui_binding(
+                status,
+                project_id=project_id,
+                revision=revision,
+                evidence=evidence,
+            )
+
+        gate_reasons = [
+            f"runtime_accessibility_binding_{reason}"
+            for reason in binding.get("rejection_reasons") or []
+        ]
+        if evidence.get("accessibility_tree_refreshed") is not True:
+            gate_reasons.append("runtime_accessibility_tree_not_refreshed")
+        gate_reasons = _unique_strings(gate_reasons)
+        base_gate_satisfied = not gate_reasons
+        controls = evidence.get("controls") or []
+        observed_command_ids = {
+            str(control.get("command_id"))
+            for control in controls
+            if isinstance(control, dict) and control.get("command_id")
+        }
+        all_standard_recipe_controls_observed = (
+            set(VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS) <= observed_command_ids
+        )
+        all_observed_named_controls_invocable = bool(controls) and all(
+            isinstance(control, dict)
+            and control.get("named_control_observed") is True
+            and control.get("invoke_supported") is True
+            for control in controls
+        )
+        all_standard_recipe_controls_ready = bool(
+            all_standard_recipe_controls_observed
+            and all_observed_named_controls_invocable
+        )
+        automation_gate_satisfied = bool(
+            base_gate_satisfied and all_standard_recipe_controls_ready
+        )
+        observed_control_blocks_automation = bool(
+            controls and not all_observed_named_controls_invocable
+        )
+        return {
+            "status": (
+                "verified_automation_ready"
+                if automation_gate_satisfied
+                else "verified_observation_blocks_automation"
+                if base_gate_satisfied and observed_control_blocks_automation
+                else "verified_partial_control_coverage"
+                if base_gate_satisfied
+                else "verified_incomplete"
+                if binding.get("ok") is True
+                else "stale_window_binding"
+            ),
+            "source": source,
+            "observation_available": True,
+            "observed_at": observed_at,
+            "binding_verified": binding.get("ok") is True,
+            "base_gate_satisfied": base_gate_satisfied,
+            "all_observed_named_controls_invocable": (
+                all_observed_named_controls_invocable
+            ),
+            "all_standard_recipe_controls_observed": (
+                all_standard_recipe_controls_observed
+            ),
+            "all_standard_recipe_controls_ready": (
+                all_standard_recipe_controls_ready
+            ),
+            "automation_gate_satisfied": automation_gate_satisfied,
+            "artifact_path": str(artifact_path),
+            "artifact_exists": artifact_path.exists(),
+            "binding": binding,
+            "evidence": evidence,
+            "controls": controls,
+            "unnamed_toolbar_children_observed": evidence.get(
+                "unnamed_toolbar_children_observed"
+            ),
+            "block_reasons": gate_reasons,
         }
 
     def _resolve_view_replay_runtime_ui_preflight(
@@ -2712,6 +3085,26 @@ class MaterialsStudioGuiController:
             / "outputs"
             / f"r{revision:03d}"
             / "gui_view_replay_runtime_preflight.json"
+        ).resolve()
+        _ensure_inside(self.workspace_root, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _view_replay_runtime_accessibility_preflight_path(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> Path:
+        """Return the immutable-revision-scoped accessibility preflight path."""
+
+        safe_project = sanitize_project_id(project_id)
+        path = (
+            self.workspace_root
+            / safe_project
+            / "outputs"
+            / f"r{revision:03d}"
+            / "gui_view_replay_accessibility_preflight.json"
         ).resolve()
         _ensure_inside(self.workspace_root, path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -3819,11 +4212,123 @@ def _miller_runtime_ui_gate_block_reasons(
     return _unique_strings(reasons)
 
 
+def _view_runtime_accessibility_gate(
+    preflight: dict[str, Any] | None,
+    *,
+    required_command_ids: list[str],
+    require_viewer_document: bool,
+    require_empty_viewport_focus_target: bool,
+) -> dict[str, Any]:
+    """Resolve recipe-specific named-control readiness from bound live evidence."""
+
+    runtime = preflight if isinstance(preflight, dict) else {}
+    reasons = [str(item) for item in runtime.get("block_reasons") or [] if str(item)]
+    if not runtime or runtime.get("observation_available") is not True:
+        reasons.append("runtime_view_accessibility_preflight_missing")
+    if runtime.get("binding_verified") is not True:
+        reasons.append("runtime_view_accessibility_binding_not_verified")
+    evidence = runtime.get("evidence") if isinstance(runtime.get("evidence"), dict) else {}
+    if evidence.get("accessibility_tree_refreshed") is not True:
+        reasons.append("runtime_accessibility_tree_not_refreshed")
+    if require_viewer_document and evidence.get("viewer_document_observed") is not True:
+        reasons.append("runtime_viewer_document_not_observed")
+    if (
+        require_empty_viewport_focus_target
+        and evidence.get("empty_viewport_focus_target_observed") is not True
+    ):
+        reasons.append("runtime_empty_viewport_focus_target_not_observed")
+
+    controls_by_id = {
+        str(item.get("command_id")): item
+        for item in evidence.get("controls") or []
+        if isinstance(item, dict) and item.get("command_id")
+    }
+    command_gates: list[dict[str, Any]] = []
+    missing_required_command_ids: list[str] = []
+    reason_prefixes = {
+        "cmdViewer3DResetView": "reset_view",
+        "cmdViewer3DMovementOptions": "movement",
+    }
+    for command_id in required_command_ids:
+        control = controls_by_id.get(command_id)
+        reason_prefix = reason_prefixes.get(command_id, command_id)
+        named_control_observed = bool(
+            control is not None and control.get("named_control_observed") is True
+        )
+        invoke_supported = bool(
+            control is not None and control.get("invoke_supported") is True
+        )
+        if control is None:
+            missing_required_command_ids.append(command_id)
+            reasons.append(f"runtime_{reason_prefix}_control_evidence_missing")
+        elif not named_control_observed:
+            reasons.append(f"runtime_named_{reason_prefix}_control_not_observed")
+        elif not invoke_supported:
+            reasons.append(f"runtime_named_{reason_prefix}_control_not_invocable")
+        command_gates.append(
+            {
+                "command_id": command_id,
+                "expected_control_name": VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS.get(
+                    command_id
+                ),
+                "observed_control_name": (
+                    control.get("observed_control_name") if control is not None else None
+                ),
+                "named_control_observed": named_control_observed,
+                "invoke_supported": invoke_supported,
+            }
+        )
+    reasons = _unique_strings(reasons)
+    base_preflight_satisfied = bool(
+        runtime.get("base_gate_satisfied") is True
+        and runtime.get("binding_verified") is True
+    )
+    required_control_evidence_complete = not missing_required_command_ids
+    observed_required_control_blocks_automation = bool(
+        required_control_evidence_complete
+        and any(
+            item.get("named_control_observed") is not True
+            or item.get("invoke_supported") is not True
+            for item in command_gates
+        )
+    )
+    gate_satisfied = not reasons
+    return {
+        "required": True,
+        "status": (
+            "verified_ready"
+            if gate_satisfied
+            else "missing"
+            if runtime.get("observation_available") is not True
+            else "verified_blocked"
+        ),
+        "automation_gate_satisfied": gate_satisfied,
+        "observation_available": runtime.get("observation_available") is True,
+        "binding_verified": runtime.get("binding_verified") is True,
+        "base_preflight_satisfied": base_preflight_satisfied,
+        "artifact_path": runtime.get("artifact_path"),
+        "required_command_ids": list(required_command_ids),
+        "missing_required_command_ids": missing_required_command_ids,
+        "required_control_evidence_complete": required_control_evidence_complete,
+        "observed_required_control_blocks_automation": (
+            observed_required_control_blocks_automation
+        ),
+        "require_viewer_document": require_viewer_document,
+        "require_empty_viewport_focus_target": require_empty_viewport_focus_target,
+        "unnamed_toolbar_children_observed": runtime.get(
+            "unnamed_toolbar_children_observed"
+        ),
+        "command_gates": command_gates,
+        "block_reasons": reasons,
+    }
+
+
 def _view_replay_execution_recipe(
     step: dict[str, Any],
     command_evidence: dict[str, Any],
     *,
     runtime_ui_preflight: dict[str, Any] | None = None,
+    runtime_accessibility_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a conservative machine-readable recipe for one prepared view."""
 
@@ -3887,22 +4392,38 @@ def _view_replay_execution_recipe(
     if front_camera:
         command_id = "cmdViewer3DResetView"
         command_available = command_id in command_ids
-        automation_ready = bool(registry_verified and command_available)
+        static_recipe_ready = bool(registry_verified and command_available)
+        runtime_accessibility_gate = _view_runtime_accessibility_gate(
+            runtime_accessibility_preflight,
+            required_command_ids=[command_id],
+            require_viewer_document=True,
+            require_empty_viewport_focus_target=False,
+        )
+        automation_ready = bool(
+            static_recipe_ready
+            and runtime_accessibility_gate["automation_gate_satisfied"]
+        )
         block_reasons: list[str] = []
         if not registry_verified:
             block_reasons.append("local_view_command_registry_not_verified")
         if not command_available:
             block_reasons.append("reset_view_command_not_registered")
+        block_reasons.extend(runtime_accessibility_gate["block_reasons"])
+        block_reasons = _unique_strings(block_reasons)
         return {
             **base,
             "status": (
                 "native_accessibility_command_ready"
                 if automation_ready
+                else "native_accessibility_command_runtime_unverified"
+                if static_recipe_ready
                 else "native_accessibility_command_unverified"
             ),
             "automation_ready": automation_ready,
+            "static_recipe_ready": static_recipe_ready,
             "allowed_native_command_ids": [command_id],
             "native_command_id": command_id,
+            "runtime_accessibility_preflight": runtime_accessibility_gate,
             "accessibility_target": {
                 "toolbar_name": "3D Viewer",
                 "control_name": "3D Viewer Reset View",
@@ -3940,11 +4461,24 @@ def _view_replay_execution_recipe(
                 and movement_help_verified
             )
         )
-        automation_ready = bool(
+        static_recipe_ready = bool(
             registry_verified
             and reset_command_available
             and keyboard_help_verified
             and movement_command_available
+        )
+        required_accessibility_command_ids = [reset_command_id]
+        if staged_keyboard_recipe and isinstance(movement_command_id, str):
+            required_accessibility_command_ids.append(movement_command_id)
+        runtime_accessibility_gate = _view_runtime_accessibility_gate(
+            runtime_accessibility_preflight,
+            required_command_ids=required_accessibility_command_ids,
+            require_viewer_document=True,
+            require_empty_viewport_focus_target=True,
+        )
+        automation_ready = bool(
+            static_recipe_ready
+            and runtime_accessibility_gate["automation_gate_satisfied"]
         )
         block_reasons: list[str] = []
         if not registry_verified:
@@ -3955,6 +4489,8 @@ def _view_replay_execution_recipe(
             block_reasons.append("installed_arrow_key_view_rotation_help_not_verified")
         if staged_keyboard_recipe and not movement_command_available:
             block_reasons.append("movement_angle_control_not_verified")
+        block_reasons.extend(runtime_accessibility_gate["block_reasons"])
+        block_reasons = _unique_strings(block_reasons)
 
         common_recipe: dict[str, Any] = {
             **base,
@@ -3963,11 +4499,17 @@ def _view_replay_execution_recipe(
                 if automation_ready and staged_keyboard_recipe
                 else "documented_keyboard_sequence_ready"
                 if automation_ready
+                else "documented_staged_keyboard_sequence_runtime_unverified"
+                if static_recipe_ready and staged_keyboard_recipe
+                else "documented_keyboard_sequence_runtime_unverified"
+                if static_recipe_ready
                 else "documented_staged_keyboard_sequence_unverified"
                 if staged_keyboard_recipe
                 else "documented_keyboard_sequence_unverified"
             ),
             "automation_ready": automation_ready,
+            "static_recipe_ready": static_recipe_ready,
+            "runtime_accessibility_preflight": runtime_accessibility_gate,
             "allowed_native_command_ids": [
                 command_id
                 for command_id in (reset_command_id, movement_command_id)
@@ -5389,6 +5931,37 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             for reason in next_pending_recipe.get("block_reasons") or []
         )
     )
+    runtime_accessibility_recipe = (
+        next_pending_recipe.get("runtime_accessibility_preflight")
+        if isinstance(next_pending_recipe.get("runtime_accessibility_preflight"), dict)
+        else {}
+    )
+    runtime_accessibility_preflight_required = bool(
+        runtime_accessibility_recipe.get("required") is True
+        and (
+            runtime_accessibility_recipe.get("observation_available") is not True
+            or runtime_accessibility_recipe.get("binding_verified") is not True
+            or runtime_accessibility_recipe.get("base_preflight_satisfied") is not True
+            or (
+                runtime_accessibility_recipe.get("required_control_evidence_complete")
+                is not True
+            )
+        )
+    )
+    runtime_accessibility_observation_blocks_automation = bool(
+        runtime_accessibility_recipe.get("required") is True
+        and runtime_accessibility_recipe.get("observation_available") is True
+        and runtime_accessibility_recipe.get("binding_verified") is True
+        and runtime_accessibility_recipe.get("base_preflight_satisfied") is True
+        and runtime_accessibility_recipe.get("required_control_evidence_complete") is True
+        and (
+            runtime_accessibility_recipe.get(
+                "observed_required_control_blocks_automation"
+            )
+            is True
+        )
+        and runtime_accessibility_recipe.get("automation_gate_satisfied") is not True
+    )
     pending_recipe_upgrade_required = bool(
         recipe_contract.get("pending_recipe_upgrade_required") is True
     )
@@ -5409,6 +5982,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         recommended_executor = None
         recommended_action = "resolve_view_replay_preflight_blockers"
         recommended_mcp_tool = (manifest.get("next_action") or {}).get("recommended_tool")
+    elif runtime_accessibility_preflight_required:
+        continuation_status = "runtime_accessibility_preflight_required"
+        recommended_executor = "computer_use_or_manual_review"
+        recommended_action = (
+            "observe_current_window_named_view_controls_then_submit_bound_runtime_accessibility_evidence"
+        )
+        recommended_mcp_tool = "material_studio_gui_prepare_view_replay"
     elif runtime_ui_preflight_required:
         continuation_status = "runtime_ui_preflight_required"
         recommended_executor = "computer_use_or_manual_review"
@@ -5439,9 +6019,17 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         )
         recommended_mcp_tool = "material_studio_gui_record_view_replay"
     elif next_pending_step is not None:
-        continuation_status = "reviewed_camera_backend_required"
+        continuation_status = (
+            "runtime_accessibility_blocks_automatic_replay"
+            if runtime_accessibility_observation_blocks_automation
+            else "reviewed_camera_backend_required"
+        )
         recommended_executor = "reviewed_copy_script_or_manual_gui_review"
-        recommended_action = "obtain_reviewed_camera_backend_then_record_view"
+        recommended_action = (
+            "use_reviewed_manual_or_copy_script_view_path_then_record_view"
+            if runtime_accessibility_observation_blocks_automation
+            else "obtain_reviewed_camera_backend_then_record_view"
+        )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     else:
         continuation_status = "no_supported_pending_view"
@@ -5622,6 +6210,8 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     )
     continuation_payload_hint = record_payload_hint
     continuation_high_level_payload_hint = high_level_payload_hint
+    post_review_record_payload_template: dict[str, Any] | None = None
+    post_review_high_level_payload_template: dict[str, Any] | None = None
     payload_hint_is_directly_callable = True
     if pending_recipe_upgrade_required:
         continuation_payload_hint = {
@@ -5629,6 +6219,46 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             "project_id": manifest.get("project_id"),
         }
         continuation_high_level_payload_hint = dict(continuation_payload_hint)
+    elif runtime_accessibility_preflight_required:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "views": [selected_next_step.get("view_name")] if selected_next_step else [],
+            "runtime_accessibility_evidence_required": True,
+            "runtime_accessibility_evidence_schema_ref": (
+                "material_studio_gui_prepare_view_replay.inputSchema.properties."
+                "runtime_accessibility_evidence"
+            ),
+            "required_command_ids": runtime_accessibility_recipe.get(
+                "required_command_ids"
+            )
+            or [],
+            "missing_required_command_ids": runtime_accessibility_recipe.get(
+                "missing_required_command_ids"
+            )
+            or [],
+            "expected_window_binding": {
+                "expected_revision": manifest.get("revision"),
+                "expected_window_handle": preflight_target_window.get("handle"),
+                "expected_window_title": preflight_target_window.get("title"),
+            },
+            "observed_values_must_not_be_assumed_from_static_command_registry": True,
+        }
+        continuation_high_level_payload_hint = {}
+        payload_hint_is_directly_callable = False
+    elif runtime_accessibility_observation_blocks_automation:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Obtain a reviewed non-coordinate GUI or Copy Script path for the "
+                f"prepared {selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view before recording observed camera evidence."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
     elif runtime_ui_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -5659,6 +6289,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "automatic_replay_ready": next_automation_step is not None,
         "recipe_upgrade_required": pending_recipe_upgrade_required,
         "recipe_contract": recipe_contract,
+        "runtime_accessibility_preflight_required": (
+            runtime_accessibility_preflight_required
+        ),
+        "runtime_accessibility_observation_blocks_automation": (
+            runtime_accessibility_observation_blocks_automation
+        ),
+        "runtime_accessibility_preflight": runtime_accessibility_recipe,
         "runtime_ui_preflight_required": runtime_ui_preflight_required,
         "runtime_ui_preflight": selected_recipe.get("runtime_ui_preflight"),
         "recommended_executor": recommended_executor,
@@ -5684,7 +6321,14 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "payload_hint": continuation_payload_hint,
         "payload_hint_is_directly_callable": payload_hint_is_directly_callable,
         "high_level_payload_hint": continuation_high_level_payload_hint,
-        "evidence_values_must_be_observed_not_assumed": bool(miller_plane_payload_hint),
+        "post_review_record_payload_template": post_review_record_payload_template,
+        "post_review_high_level_payload_template": (
+            post_review_high_level_payload_template
+        ),
+        "evidence_values_must_be_observed_not_assumed": bool(
+            miller_plane_payload_hint
+            or runtime_accessibility_observation_blocks_automation
+        ),
     }
     if preflight.get("ready_for_external_replay") is not True:
         if accepted_views:

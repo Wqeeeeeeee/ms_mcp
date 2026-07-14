@@ -162,6 +162,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "revision",
             "views",
             "runtime_ui_evidence",
+            "runtime_accessibility_evidence",
             "working_dir",
             "response_mode",
         },
@@ -198,7 +199,10 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
 }
 
 _NESTED_FORBID_SCHEMA_EXPECTATIONS: dict[str, set[str]] = {
-    "material_studio_gui_prepare_view_replay": {"runtime_ui_evidence"},
+    "material_studio_gui_prepare_view_replay": {
+        "runtime_ui_evidence",
+        "runtime_accessibility_evidence",
+    },
 }
 
 

@@ -29,6 +29,14 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. It never activates the window or changes the GUI.
 - `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. Optional exact handle/title binding and a reviewed `native_command_id` make the event machine-auditable.
 - `material_studio_gui_record_visual_confirmation`: persists Computer Use or manual viewport evidence after verifying the current project/revision, exact wrapper title and handle, wrapper metadata, and single-window state. The same path is available through `material_studio_live_modeling_request.visual_confirmation` for restricted MCP allowlists.
+
+Accepted visual and view-replay evidence recomputes the current revision's
+diagnostic report, but that automatic re-audit is not itself a user-requested
+normality check. The `gui_evidence_reaudit` receipt records the trigger, prior
+and current-request diagnostic intent, effective intent, and proves that no
+revision, structure, or simulation state was changed. Existing explicit intent
+is preserved; a plain evidence-recording request cannot silently set
+`normality_check_requested=true`.
 - `material_studio_live_session_preflight`: read-only session check that combines runner status, GUI status, latest current project, readiness flags, and next recommended tool.
 - `material_studio_live_capabilities`: lists the high-level live-modeling entry point, deterministic natural-language templates, supported patch commands, schema paths, GUI tools, and diagnostic fields.
 - `material_studio_live_update_with_patch`: applies a semantic patch, creates a new revision, and can execute/open it in the live GUI when explicitly requested.

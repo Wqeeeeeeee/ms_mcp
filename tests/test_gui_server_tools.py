@@ -22691,6 +22691,20 @@ def test_gui_record_visual_confirmation_persists_for_latest_current_project(monk
     assert recorded["revision"] == result["revision"]
     assert recorded["visual_confirmation"]["model_visible"] is True
     assert recorded["visual_confirmation"]["source"] == "computer_use"
+    assert recorded["diagnostic_export_requested"] is False
+    assert recorded["normality_check_requested"] is False
+    assert recorded["modeling_report"]["diagnostic_export_requested"] is False
+    assert recorded["modeling_report"]["normality_check_requested"] is False
+    reaudit = recorded["gui_evidence_reaudit"]
+    assert reaudit["performed"] is True
+    assert reaudit["trigger"] == "gui_visual_confirmation"
+    assert reaudit["evidence_request_context_provided"] is False
+    assert reaudit["prior_normality_check_requested"] is False
+    assert reaudit["evidence_request_normality_check_requested"] is False
+    assert reaudit["effective_normality_check_requested"] is False
+    assert reaudit["automatic_reaudit_does_not_imply_normality_request"] is True
+    assert reaudit["revision_created"] is False
+    assert reaudit["structure_modified"] is False
     assert recorded["modeling_report"]["gui"]["external_visual_confirmation_ok"] is True
     assert recorded["modeling_report"]["gui"]["visual_validation_source"] == "external_visual_confirmation"
     assert recorded["live_gui_acceptance"]["external_visual_confirmation_ok"] is True
@@ -22700,6 +22714,10 @@ def test_gui_record_visual_confirmation_persists_for_latest_current_project(monk
     assert status["ok"] is True
     assert status["project_id"] == result["project_id"]
     assert status["report_json"]["gui_visual_confirmation"]["model_visible"] is True
+    assert status["report_json"]["normality_check_requested"] is False
+    assert status["report_json"]["gui_evidence_reaudit"]["effective_normality_check_requested"] is False
+    assert status["gui_evidence_reaudit"]["trigger"] == "gui_visual_confirmation"
+    assert status["modeling_report"]["gui_evidence_reaudit"]["performed"] is True
     assert status["modeling_report"]["gui"]["external_visual_confirmation_ok"] is True
     assert status["live_gui_acceptance"]["external_visual_confirmation_ok"] is True
 
@@ -22764,6 +22782,13 @@ def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, t
     assert recorded["visual_confirmation"]["model_visible"] is True
     assert recorded["visual_confirmation_binding"]["status"] == "verified_current_wrapper_window"
     assert recorded["live_gui_acceptance"]["external_visual_confirmation_ok"] is True
+    assert recorded["diagnostic_export_requested"] is False
+    assert recorded["normality_check_requested"] is False
+    assert recorded["gui_evidence_reaudit"]["evidence_request_context_provided"] is True
+    assert recorded["gui_evidence_reaudit"]["evidence_request_diagnostic_export_requested"] is False
+    assert recorded["gui_evidence_reaudit"]["evidence_request_normality_check_requested"] is False
+    assert recorded["gui_evidence_reaudit"]["effective_normality_check_requested"] is False
+    assert "evidence_request" not in recorded["gui_evidence_reaudit"]
     assert "modeling_report" not in recorded
     assert len(json.dumps(recorded, ensure_ascii=False).encode("utf-8")) < server.COMPACT_RESPONSE_MAX_BYTES
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
@@ -22772,7 +22797,39 @@ def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, t
     persisted = json.loads(report_path.read_text(encoding="utf-8"))
     assert persisted["gui_visual_confirmation"]["model_visible"] is True
     assert persisted["gui_visual_confirmation"]["window_binding"]["ok"] is True
+    assert persisted["normality_check_requested"] is False
+    assert persisted["modeling_report"]["normality_check_requested"] is False
+    assert persisted["gui_evidence_reaudit"]["prior_explicit_intent_preserved"] is True
+    assert persisted["gui_evidence_reaudit"]["evidence_request"] == (
+        "Record the Computer Use visual observation for the current MS viewport."
+    )
     assert persisted["modeling_report"]["gui"]["external_visual_confirmation_ok"] is True
+
+    explicitly_checked = server.material_studio_live_modeling_request(
+        "Record the current MS viewport and check whether the model is normal.",
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        visual_confirmation={
+            "source": "computer_use",
+            "model_visible": True,
+            "note": "The current model remains visible while normality diagnostics are requested.",
+            "expected_revision": revision,
+            "expected_window_handle": window_handle,
+            "expected_window_title": window_title,
+        },
+    )
+    assert explicitly_checked["ok"] is True
+    assert explicitly_checked["diagnostic_export_requested"] is True
+    assert explicitly_checked["normality_check_requested"] is True
+    explicit_reaudit = explicitly_checked["gui_evidence_reaudit"]
+    assert explicit_reaudit["prior_normality_check_requested"] is False
+    assert explicit_reaudit["evidence_request_normality_check_requested"] is True
+    assert explicit_reaudit["effective_normality_check_requested"] is True
+    assert "evidence_request" not in explicit_reaudit
+    persisted_after_explicit_check = json.loads(report_path.read_text(encoding="utf-8"))
+    assert persisted_after_explicit_check["normality_check_requested"] is True
+    assert persisted_after_explicit_check["modeling_report"]["normality_check_requested"] is True
 
 
 def test_live_visual_confirmation_payload_forbids_extra_fields(tmp_path: Path) -> None:
@@ -22876,6 +22933,17 @@ def test_live_entry_records_only_window_bound_view_replay_confirmation(monkeypat
     assert recorded["view_replay_binding"]["status"] == "verified_current_wrapper_window"
     assert recorded["view_replay"]["accepted"] is True
     assert recorded["view_replay"]["replay_status"] == "externally_confirmed"
+    assert recorded["diagnostic_export_requested"] is False
+    assert recorded["normality_check_requested"] is False
+    replay_reaudit = recorded["gui_evidence_reaudit"]
+    assert replay_reaudit["performed"] is True
+    assert replay_reaudit["trigger"] == "gui_view_replay_confirmation"
+    assert replay_reaudit["replay_view_name"] == "front"
+    assert replay_reaudit["evidence_request_context_provided"] is True
+    assert replay_reaudit["evidence_request_normality_check_requested"] is False
+    assert replay_reaudit["effective_normality_check_requested"] is False
+    assert replay_reaudit["revision_created"] is False
+    assert replay_reaudit["structure_modified"] is False
     event = recorded["view_replay"]["event"]
     assert event["native_command_id"] == "cmdViewer3DResetView"
     assert event["native_command"]["action"] == "reset_view"
@@ -22895,6 +22963,8 @@ def test_live_entry_records_only_window_bound_view_replay_confirmation(monkeypat
     assert compact_status["gui_view_replay_status"] == "externally_confirmed"
     assert compact_status["gui_view_replay"]["replay_summary"]["accepted_view_count"] == 1
     assert compact_status["gui_view_replay"]["last_replay_event"]["native_command_id"] == "cmdViewer3DResetView"
+    assert compact_status["gui_evidence_reaudit"]["trigger"] == "gui_view_replay_confirmation"
+    assert compact_status["gui_evidence_reaudit"]["effective_normality_check_requested"] is False
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
     assert len(history_after) == len(history_before)
     assert len(json.dumps(recorded, ensure_ascii=False).encode("utf-8")) < server.COMPACT_RESPONSE_MAX_BYTES

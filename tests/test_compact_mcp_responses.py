@@ -40,8 +40,17 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         "auto_launch_before_open_when_window_missing"
     ] is False
     assert "material_studio_live_modeling_request" == compact["live_entry_tool"]
+    assert compact["visual_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
+        "gui_evidence_reaudit"
+    )
+    assert compact["visual_confirmation_entry"][
+        "automatic_reaudit_does_not_imply_normality_request"
+    ] is True
     assert compact["view_replay_confirmation_entry"]["payload_field"] == "view_replay_confirmation"
     assert compact["view_replay_confirmation_entry"]["creates_revision"] is False
+    assert compact["view_replay_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
+        "gui_evidence_reaudit"
+    )
     assert compact["view_replay_automation_policy"]["automatic_native_view_names"] == [
         "front",
         "back",

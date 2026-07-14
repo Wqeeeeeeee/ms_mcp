@@ -87,6 +87,14 @@ window identity, current revision, and single-window policy to match. A visual
 pass does not override geometry, metadata, acceptance, or semiconductor
 normality failures.
 
+The server still re-audits the current revision after accepting the evidence,
+but reports that internal work separately in `gui_evidence_reaudit`. A plain
+"record visual evidence" request preserves the existing
+`diagnostic_export_requested`, `normality_check_requested`, and requested-focus
+state. Only an evidence request that explicitly asks for diagnostics or a
+normality check can add that intent; the receipt also records that no revision,
+structure, or simulation state changed.
+
 For one prepared standard or crystallographic view, the same high-level tool
 can persist strict replay evidence without requiring the direct replay tool:
 

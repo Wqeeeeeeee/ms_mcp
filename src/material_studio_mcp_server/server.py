@@ -2813,6 +2813,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "payload_field": "visual_confirmation",
             "direct_tool": "material_studio_gui_record_visual_confirmation",
             "creates_revision": False,
+            "evidence_reaudit_receipt_field": "gui_evidence_reaudit",
+            "automatic_reaudit_does_not_imply_normality_request": True,
+            "preserves_prior_explicit_diagnostic_intent": True,
             "requires_verified_current_wrapper_window": True,
             "required_payload_fields": [
                 "model_visible",
@@ -2829,6 +2832,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "prepare_tool": "material_studio_gui_prepare_view_replay",
             "direct_record_tool": "material_studio_gui_record_view_replay",
             "creates_revision": False,
+            "evidence_reaudit_receipt_field": "gui_evidence_reaudit",
+            "automatic_reaudit_does_not_imply_normality_request": True,
+            "preserves_prior_explicit_diagnostic_intent": True,
             "requires_prepared_manifest_view": True,
             "requires_verified_current_wrapper_window": True,
             "required_payload_fields": [
@@ -3931,6 +3937,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "diagnostic_export_manifest",
                 "diagnostic_export_requested",
                 "normality_check_requested",
+                "gui_evidence_reaudit",
                 "requested_diagnostic_focuses",
                 "auto_completed_diagnostic_focuses",
                 "requested_diagnostic_focus_status",
@@ -3980,6 +3987,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "execution_mode_source",
                 "diagnostic_export_requested",
                 "normality_check_requested",
+                "gui_evidence_reaudit",
                 "requested_diagnostic_focuses",
                 "auto_completed_diagnostic_focuses",
                 "requested_diagnostic_focus_status",
@@ -16141,6 +16149,7 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "execution_mode_source": response.get("execution_mode_source"),
         "diagnostic_export_requested": response.get("diagnostic_export_requested"),
         "normality_check_requested": response.get("normality_check_requested"),
+        "gui_evidence_reaudit": response.get("gui_evidence_reaudit"),
         "requested_diagnostic_focuses": response.get("requested_diagnostic_focuses"),
         "auto_completed_diagnostic_focuses": response.get("auto_completed_diagnostic_focuses"),
         "requested_diagnostic_focus_status": (modeling_report or {}).get("requested_diagnostic_focus_status")
@@ -16341,6 +16350,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "execution_backend": result.get("execution_backend"),
         "diagnostic_export_requested": bool(response.get("diagnostic_export_requested")),
         "normality_check_requested": normality_check_requested,
+        "gui_evidence_reaudit": response.get("gui_evidence_reaudit"),
         "requested_diagnostic_focuses": requested_diagnostic_focuses,
         "auto_completed_diagnostic_focuses": auto_completed_default_focuses,
         "semiconductor_template_profile": semiconductor_template_profile,
@@ -27203,6 +27213,36 @@ def _compact_response_receipt(*, detail_paths: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _compact_gui_evidence_reaudit(value: Any) -> dict[str, Any]:
+    """Keep GUI evidence intent semantics without duplicating request text."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "performed",
+            "trigger",
+            "evidence_request_context_provided",
+            "prior_diagnostic_export_requested",
+            "prior_normality_check_requested",
+            "prior_requested_diagnostic_focuses",
+            "evidence_request_diagnostic_export_requested",
+            "evidence_request_normality_check_requested",
+            "evidence_request_diagnostic_focuses",
+            "effective_diagnostic_export_requested",
+            "effective_normality_check_requested",
+            "effective_requested_diagnostic_focuses",
+            "automatic_reaudit_does_not_imply_normality_request",
+            "prior_explicit_intent_preserved",
+            "revision_created",
+            "structure_modified",
+            "simulation_modified",
+            "replay_view_name",
+        ),
+    )
+
+
 def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     """Guarantee a bounded live receipt with explicit deterministic fallback."""
 
@@ -27308,6 +27348,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_mode_source",
             "diagnostic_export_requested",
             "normality_check_requested",
+            "gui_evidence_reaudit",
             "requested_diagnostic_focuses",
             "normality",
             "health_verdict",
@@ -27653,6 +27694,7 @@ def _compact_live_response(
             "execution_mode_source",
             "diagnostic_export_requested",
             "normality_check_requested",
+            "gui_evidence_reaudit",
             "requested_diagnostic_focuses",
             "auto_completed_diagnostic_focuses",
             "normality",
@@ -27721,6 +27763,11 @@ def _compact_live_response(
     )
     compact["response_mode"] = McpResponseMode.COMPACT.value
     compact["response_schema"] = LIVE_COMPACT_RESPONSE_SCHEMA
+    gui_evidence_reaudit = _compact_gui_evidence_reaudit(
+        response.get("gui_evidence_reaudit") or report.get("gui_evidence_reaudit")
+    )
+    if gui_evidence_reaudit:
+        compact["gui_evidence_reaudit"] = gui_evidence_reaudit
     replay_summary = _compact_view_replay_summary(response.get("replay_summary"))
     if replay_summary:
         compact["replay_summary"] = replay_summary
@@ -28570,6 +28617,10 @@ def material_studio_live_project_status(
             or (persisted_modeling_report or {}).get("normality_check_requested")
             or (persisted_change_receipt or {}).get("normality_check_requested")
         )
+        persisted_gui_evidence_reaudit = (
+            (report_json_payload or {}).get("gui_evidence_reaudit")
+            or (persisted_modeling_report or {}).get("gui_evidence_reaudit")
+        )
         persisted_requested_diagnostic_focuses = _persisted_requested_diagnostic_focuses(
             report_json_payload,
             persisted_modeling_report,
@@ -28600,6 +28651,7 @@ def material_studio_live_project_status(
             ).get("execution_mode_source"),
             "diagnostic_export_requested": persisted_diagnostic_export_requested,
             "normality_check_requested": persisted_normality_check_requested,
+            "gui_evidence_reaudit": persisted_gui_evidence_reaudit,
             "requested_diagnostic_focuses": persisted_requested_diagnostic_focuses,
             "auto_completed_diagnostic_focuses": persisted_auto_completed_diagnostic_focuses,
             "acceptance": spec.acceptance.model_dump(mode="json"),
@@ -30285,6 +30337,7 @@ def material_studio_live_modeling_request(
                     if replay_evidence.miller_plane_evidence is not None
                     else None
                 ),
+                evidence_request=user_request,
                 working_dir=working_dir,
                 response_mode=McpResponseMode.FULL,
             )
@@ -30350,6 +30403,7 @@ def material_studio_live_modeling_request(
                 screenshot_path=evidence.screenshot_path,
                 expected_window_handle=evidence.expected_window_handle,
                 expected_window_title=evidence.expected_window_title,
+                evidence_request=user_request,
                 working_dir=working_dir,
                 response_mode=McpResponseMode.FULL,
             )
@@ -31352,6 +31406,7 @@ def _persist_gui_visual_confirmation_report(
     working_dir: str | None,
     views: list[str] | None,
     project_resolution: dict[str, Any] | None = None,
+    evidence_request: str | None = None,
 ) -> dict[str, Any]:
     """Persist current-revision diagnostics after external visual confirmation."""
 
@@ -31373,6 +31428,69 @@ def _persist_gui_visual_confirmation_report(
         if isinstance(report_json_payload, dict) and isinstance(report_json_payload.get("modeling_report"), dict)
         else {}
     )
+    previous_user_request = previous_modeling_report.get("user_request")
+    prior_diagnostic_export_requested = bool(
+        (report_json_payload or {}).get("diagnostic_export_requested")
+        or previous_modeling_report.get("diagnostic_export_requested")
+        or _diagnostic_export_requested_from_text(previous_user_request)
+    )
+    prior_normality_check_requested = bool(
+        (report_json_payload or {}).get("normality_check_requested")
+        or previous_modeling_report.get("normality_check_requested")
+        or _normality_check_requested_from_text(previous_user_request)
+    )
+    prior_requested_focuses = _dedupe_strings(
+        [
+            *[
+                str(item)
+                for item in (report_json_payload or {}).get("requested_diagnostic_focuses") or []
+                if str(item).strip()
+            ],
+            *[
+                str(item)
+                for item in previous_modeling_report.get("requested_diagnostic_focuses") or []
+                if str(item).strip()
+            ],
+            *(_requested_diagnostic_focuses_from_text(previous_user_request) or []),
+        ]
+    )
+    evidence_diagnostic_export_requested = _diagnostic_export_requested_from_text(evidence_request)
+    evidence_normality_check_requested = _normality_check_requested_from_text(evidence_request)
+    evidence_requested_focuses = _requested_diagnostic_focuses_from_text(evidence_request)
+    effective_diagnostic_export_requested = bool(
+        prior_diagnostic_export_requested or evidence_diagnostic_export_requested
+    )
+    effective_normality_check_requested = bool(
+        prior_normality_check_requested or evidence_normality_check_requested
+    )
+    effective_requested_focuses = _dedupe_strings(
+        [*prior_requested_focuses, *(evidence_requested_focuses or [])]
+    )
+    replay_view_name = confirmation.get("replay_view_name")
+    reaudit_trigger = "gui_view_replay_confirmation" if replay_view_name else "gui_visual_confirmation"
+    gui_evidence_reaudit = _drop_none_values(
+        {
+            "performed": True,
+            "trigger": reaudit_trigger,
+            "evidence_request": evidence_request,
+            "evidence_request_context_provided": evidence_request is not None,
+            "prior_diagnostic_export_requested": prior_diagnostic_export_requested,
+            "prior_normality_check_requested": prior_normality_check_requested,
+            "prior_requested_diagnostic_focuses": prior_requested_focuses,
+            "evidence_request_diagnostic_export_requested": evidence_diagnostic_export_requested,
+            "evidence_request_normality_check_requested": evidence_normality_check_requested,
+            "evidence_request_diagnostic_focuses": evidence_requested_focuses or [],
+            "effective_diagnostic_export_requested": effective_diagnostic_export_requested,
+            "effective_normality_check_requested": effective_normality_check_requested,
+            "effective_requested_diagnostic_focuses": effective_requested_focuses,
+            "automatic_reaudit_does_not_imply_normality_request": True,
+            "prior_explicit_intent_preserved": True,
+            "revision_created": False,
+            "structure_modified": False,
+            "simulation_modified": False,
+            "replay_view_name": replay_view_name,
+        }
+    )
     response: dict[str, Any] = {
         "ok": True,
         "workflow": "gui_visual_confirmation",
@@ -31382,8 +31500,10 @@ def _persist_gui_visual_confirmation_report(
         "revision": revision,
         "execution_mode": (previous_modeling_report or {}).get("execution_mode") or ExecutionMode.EXECUTE.value,
         "execution_mode_source": "gui_visual_confirmation",
-        "diagnostic_export_requested": bool((previous_modeling_report or {}).get("diagnostic_export_requested")),
-        "normality_check_requested": True,
+        "diagnostic_export_requested": effective_diagnostic_export_requested,
+        "normality_check_requested": effective_normality_check_requested,
+        "requested_diagnostic_focuses": effective_requested_focuses,
+        "gui_evidence_reaudit": gui_evidence_reaudit,
         "validation": generated["script_validation"],
         "warnings": generated["warnings"],
         "planned_outputs": generated["planned_outputs"],
@@ -31422,6 +31542,10 @@ def _persist_gui_visual_confirmation_report(
         "project_resolution": response.get("project_resolution"),
         "execution_mode": response.get("execution_mode"),
         "execution_mode_source": response.get("execution_mode_source"),
+        "diagnostic_export_requested": response.get("diagnostic_export_requested"),
+        "normality_check_requested": response.get("normality_check_requested"),
+        "requested_diagnostic_focuses": response.get("requested_diagnostic_focuses"),
+        "gui_evidence_reaudit": response.get("gui_evidence_reaudit"),
         "result": response.get("result"),
         "validation": response.get("validation"),
         "warnings": response.get("warnings"),
@@ -31794,6 +31918,7 @@ def material_studio_gui_record_visual_confirmation(
     screenshot_path: Annotated[str | None, Field(description="Optional external screenshot path used as evidence.", max_length=500)] = None,
     expected_window_handle: Annotated[int | None, Field(description="Optional observed Materials Studio window handle used to bind the evidence.", gt=0)] = None,
     expected_window_title: Annotated[str | None, Field(description="Optional observed wrapper window title used to bind the evidence.", min_length=1, max_length=500)] = None,
+    evidence_request: Annotated[str | None, Field(description="Optional natural-language request whose explicit diagnostic intent should be merged into the persisted evidence audit.", min_length=1, max_length=5000)] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP visual confirmation receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
@@ -31888,6 +32013,7 @@ def material_studio_gui_record_visual_confirmation(
             working_dir=working_dir,
             views=None,
             project_resolution=sync_context.get("project_resolution"),
+            evidence_request=evidence_request,
         )
         response.update(structured)
         return _compact_live_response(_ok(response), response_mode)
@@ -32114,6 +32240,7 @@ def material_studio_gui_record_view_replay(
     movement_screen_factor: Annotated[float | None, Field(description="Observed Movement screen factor after replay.", gt=0, le=100)] = None,
     movement_dialog_closed: Annotated[bool | None, Field(description="Whether the Movement dialog was closed after restoring settings.")] = None,
     miller_plane_evidence: Annotated[GuiMillerPlaneReplayEvidenceInput | None, Field(description="Exact transient Miller-plane selection, native View Onto, hash, and cleanup evidence.")] = None,
+    evidence_request: Annotated[str | None, Field(description="Optional natural-language request whose explicit diagnostic intent should be merged into the persisted evidence audit.", min_length=1, max_length=5000)] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP view-replay receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
@@ -32294,6 +32421,7 @@ def material_studio_gui_record_view_replay(
                 working_dir=working_dir,
                 views=list(replay.get("manifest_view_names") or []) or None,
                 project_resolution=context.get("project_resolution"),
+                evidence_request=evidence_request,
             )
             response.update(structured)
             response["view_replay"] = replay

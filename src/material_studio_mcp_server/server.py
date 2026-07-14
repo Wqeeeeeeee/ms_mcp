@@ -246,6 +246,43 @@ class GuiVisualConfirmationInput(BaseModel):
     expected_window_title: str = Field(..., description="Observed Materials Studio wrapper window title.", min_length=1, max_length=500)
 
 
+class GuiMillerPlaneViewportSelectionProbeInput(BaseModel):
+    """Current-window proof that a transient plane can be selected without Object Tree."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    selection_method: str = Field(
+        ...,
+        pattern=r"^viewport_unique_transient_plane_properties_verified$",
+    )
+    probe_miller_indices: list[int] = Field(..., min_length=3, max_length=4)
+    dialog_miller_indices: list[int] = Field(..., min_length=3, max_length=3)
+    unique_transient_plane_visual_target_observed: bool
+    viewport_plane_selection_observed: bool
+    properties_selection_verified: bool
+    view_onto_popup_menu_observed: bool
+    hit_test_basis: str = Field(
+        ...,
+        pattern=r"^fresh_before_after_screenshot_unique_transient_plane_region$",
+    )
+    properties_filter: str = Field(..., min_length=1, max_length=120)
+    properties_miller_label: str = Field(..., min_length=3, max_length=80)
+    view_onto_command_id: str = Field(..., pattern=r"^cmdViewer3DViewOnto$")
+    undo_labels_observed: list[
+        Annotated[
+            str,
+            Field(
+                pattern=(
+                    r"^Undo (?:Reset View|View Onto Miller Plane|Recenter|Create Miller Plane)$"
+                )
+            ),
+        ]
+    ] = Field(..., min_length=2, max_length=8)
+    structure_artifact_path: str = Field(..., min_length=1, max_length=1000)
+    structure_artifact_sha256_before: str = Field(..., pattern=r"^[0-9A-Fa-f]{64}$")
+    structure_artifact_sha256_after: str = Field(..., pattern=r"^[0-9A-Fa-f]{64}$")
+
+
 class GuiMillerPlaneRuntimeUiEvidenceInput(BaseModel):
     """Runtime-observed Miller-plane controls bound to one current wrapper window."""
 
@@ -279,6 +316,7 @@ class GuiMillerPlaneRuntimeUiEvidenceInput(BaseModel):
     selection_modifier_keys: list[
         Annotated[str, Field(pattern=r"^(Shift|Ctrl|Alt|Win)$")]
     ] = Field(..., max_length=4)
+    viewport_selection_probe: GuiMillerPlaneViewportSelectionProbeInput | None = None
     screenshot_path: str | None = Field(default=None, max_length=500)
     note: str | None = Field(default=None, max_length=1000)
 
@@ -325,9 +363,22 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     miller_plane_count_after_cleanup: int = Field(..., ge=0)
     selection_method: str = Field(
         ...,
-        pattern=r"^object_tree_exact_item_rect_semantic_click$",
+        pattern=(
+            r"^(?:object_tree_exact_item_rect_semantic_click|"
+            r"viewport_unique_transient_plane_properties_verified)$"
+        ),
     )
-    object_tree_path_suffix: list[str] = Field(..., min_length=3, max_length=3)
+    object_tree_path_suffix: list[str] | None = Field(default=None, max_length=3)
+    viewport_hit_test_basis: str | None = Field(
+        default=None,
+        pattern=r"^fresh_before_after_screenshot_unique_transient_plane_region$",
+    )
+    fresh_before_after_screenshots_observed: bool | None = None
+    unique_transient_plane_region_observed: bool | None = None
+    properties_selection_verified: bool | None = None
+    view_onto_popup_menu_observed: bool | None = None
+    dialog_show_set_of_parallel_planes: bool | None = None
+    dialog_show_symmetry_images: bool | None = None
     properties_filter: str = Field(..., min_length=1, max_length=120)
     properties_miller_label: str = Field(..., min_length=3, max_length=80)
     camera_match_scope: str = Field(
@@ -354,9 +405,14 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     undo_labels_applied: list[
         Annotated[
             str,
-            Field(pattern=r"^Undo (?:View Onto (?:Miller Plane|Lattice 3D)|Create Miller Plane)$"),
+            Field(
+                pattern=(
+                    r"^Undo (?:View Onto (?:Miller Plane|Lattice 3D)|"
+                    r"Recenter|Create Miller Plane|Reset View)$"
+                )
+            ),
         ]
-    ] = Field(..., min_length=2, max_length=16)
+    ] = Field(..., min_length=3, max_length=16)
 
 
 class GuiViewReplayConfirmationInput(BaseModel):
@@ -5772,7 +5828,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "crystallographic_plane_recipe": {
                     "view_name_pattern": "crystal_plane_*",
                     "native_command_id": "cmdViewer3DViewOnto",
-                    "selection_method": "object_tree_exact_item_rect_semantic_click",
+                    "selection_methods": [
+                        "object_tree_exact_item_rect_semantic_click",
+                        "viewport_unique_transient_plane_properties_verified",
+                    ],
+                    "materials_studio_20_1_verified_selection_method": (
+                        "viewport_unique_transient_plane_properties_verified"
+                    ),
+                    "viewport_hit_test_basis": (
+                        "fresh_before_after_screenshot_unique_transient_plane_region"
+                    ),
                     "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
                     "requires_miller_plane_evidence": True,
                     "requires_current_bound_runtime_ui_preflight": True,
@@ -5780,6 +5845,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "miller_planes_dialog_invocation": ["Alt+T", "M"],
                     "pointer_or_accessibility_menu_click_allowed": False,
                     "temporary_plane_cleanup_required": True,
+                    "required_undo_labels": [
+                        "Undo View Onto Miller Plane",
+                        "Undo Create Miller Plane",
+                        "Undo Reset View",
+                    ],
+                    "optional_observed_undo_labels": ["Undo Recenter"],
                     "structure_artifact_sha256_must_remain_unchanged": True,
                     "exact_analytic_in_plane_roll_required": False,
                 },
@@ -5787,7 +5858,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "view_name_pattern": "crystal_*",
                     "eligibility_status": "exact_integer_plane_collinear",
                     "native_command_id": "cmdViewer3DViewOnto",
-                    "selection_method": "object_tree_exact_item_rect_semantic_click",
+                    "selection_methods": [
+                        "object_tree_exact_item_rect_semantic_click",
+                        "viewport_unique_transient_plane_properties_verified",
+                    ],
                     "camera_match_scope": (
                         "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
                     ),
@@ -27043,6 +27117,7 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
             "observed_at",
             "binding_verified",
             "automation_gate_satisfied",
+            "selection_profile",
             "artifact_path",
             "artifact_exists",
             "artifact_error",
@@ -27067,6 +27142,7 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
                 "actual_window_handle",
                 "expected_window_title",
                 "actual_window_title",
+                "target_structure_artifact_path",
                 "current_revision_loaded",
                 "target_window_is_visible",
                 "target_window_is_minimized",
@@ -27109,6 +27185,9 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "movement_dialog_closed_after_restore",
             "expected_axis_layout",
             "selection_required",
+            "selection_method",
+            "selection_path_suffix",
+            "viewport_selection_contract",
             "miller_plane_indices",
             "source_crystal_direction_indices",
             "direction_plane_mapping",
@@ -27121,6 +27200,21 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         compact["runtime_ui_preflight"] = runtime_ui_preflight
+    transient_change_contract = value.get("transient_change_contract")
+    if isinstance(transient_change_contract, dict):
+        compact["transient_change_contract"] = _mapping_subset(
+            transient_change_contract,
+            (
+                "allowed_undo_label_patterns",
+                "required_undo_labels",
+                "require_exactly_one_new_miller_plane",
+                "require_selected_plane_count",
+                "require_document_clean_before_and_after",
+                "require_no_temporary_miller_nodes_after_cleanup",
+                "require_structure_artifact_sha256_unchanged",
+                "restore_initial_view_via_whitelisted_undo",
+            ),
+        )
     return compact
 
 

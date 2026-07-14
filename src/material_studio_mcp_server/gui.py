@@ -31,7 +31,7 @@ class GuiError(RuntimeError):
     """当本地 GUI 控制无法完成时引发。"""
 
 
-VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 2
+VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 3
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -144,6 +144,16 @@ VIEW_REPLAY_KEYBOARD_STAGE_FIELDS = {
 }
 
 MILLER_PLANE_SELECTION_METHOD = "object_tree_exact_item_rect_semantic_click"
+MILLER_PLANE_VIEWPORT_SELECTION_METHOD = (
+    "viewport_unique_transient_plane_properties_verified"
+)
+MILLER_PLANE_SELECTION_METHODS = {
+    MILLER_PLANE_SELECTION_METHOD,
+    MILLER_PLANE_VIEWPORT_SELECTION_METHOD,
+}
+MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS = (
+    "fresh_before_after_screenshot_unique_transient_plane_region"
+)
 MILLER_PLANE_CAMERA_MATCH_SCOPE = "crystal_plane_normal_with_native_in_plane_roll"
 MILLER_DIRECTION_CAMERA_MATCH_SCOPE = (
     "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
@@ -167,6 +177,13 @@ MILLER_PLANE_REPLAY_EVIDENCE_FIELDS = {
     "miller_plane_count_after_cleanup",
     "selection_method",
     "object_tree_path_suffix",
+    "viewport_hit_test_basis",
+    "fresh_before_after_screenshots_observed",
+    "unique_transient_plane_region_observed",
+    "properties_selection_verified",
+    "view_onto_popup_menu_observed",
+    "dialog_show_set_of_parallel_planes",
+    "dialog_show_symmetry_images",
     "properties_filter",
     "properties_miller_label",
     "camera_match_scope",
@@ -188,6 +205,14 @@ MILLER_PLANE_REPLAY_EVIDENCE_FIELDS = {
 }
 MILLER_PLANE_OPTIONAL_REPLAY_EVIDENCE_FIELDS = {
     "direct_lattice_direction_matches_manifest",
+    "object_tree_path_suffix",
+    "viewport_hit_test_basis",
+    "fresh_before_after_screenshots_observed",
+    "unique_transient_plane_region_observed",
+    "properties_selection_verified",
+    "view_onto_popup_menu_observed",
+    "dialog_show_set_of_parallel_planes",
+    "dialog_show_symmetry_images",
 }
 MILLER_PLANE_REQUIRED_TRUE_EVIDENCE_FIELDS = (
     "plane_normal_matches_manifest",
@@ -202,7 +227,9 @@ MILLER_PLANE_REQUIRED_TRUE_EVIDENCE_FIELDS = (
 )
 MILLER_PLANE_UNDO_LABEL_PATTERNS = (
     re.compile(r"^Undo View Onto (?:Miller Plane|Lattice 3D)$"),
+    re.compile(r"^Undo Recenter$"),
     re.compile(r"^Undo Create Miller Plane$"),
+    re.compile(r"^Undo Reset View$"),
 )
 MILLER_RUNTIME_UI_BOOLEAN_FIELDS = (
     "reset_view_control_observed",
@@ -227,11 +254,44 @@ MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS = (
     "miller_planes_dialog_observed",
     "miller_indices_control_observed",
     "create_button_observed",
-    "tree_explorer_menu_observed",
     "properties_explorer_menu_observed",
     "view_onto_control_observed",
     "document_clean_before_probe",
     "document_clean_after_probe",
+)
+MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS = (
+    "unique_transient_plane_visual_target_observed",
+    "viewport_plane_selection_observed",
+    "properties_selection_verified",
+    "view_onto_popup_menu_observed",
+)
+MILLER_RUNTIME_VIEWPORT_PROBE_FIELDS = {
+    "selection_method",
+    "probe_miller_indices",
+    "dialog_miller_indices",
+    *MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS,
+    "hit_test_basis",
+    "properties_filter",
+    "properties_miller_label",
+    "view_onto_command_id",
+    "undo_labels_observed",
+    "structure_artifact_path",
+    "structure_artifact_sha256_before",
+    "structure_artifact_sha256_after",
+}
+MILLER_RUNTIME_VIEWPORT_PROBE_DERIVED_FIELDS = {
+    "structure_artifact_sha256_current",
+    "block_reasons",
+    "complete",
+}
+MILLER_RUNTIME_VIEWPORT_PROBE_ALLOWED_FIELDS = (
+    MILLER_RUNTIME_VIEWPORT_PROBE_FIELDS | MILLER_RUNTIME_VIEWPORT_PROBE_DERIVED_FIELDS
+)
+MILLER_RUNTIME_VIEWPORT_PROBE_UNDO_LABEL_PATTERNS = (
+    re.compile(r"^Undo Reset View$"),
+    re.compile(r"^Undo View Onto Miller Plane$"),
+    re.compile(r"^Undo Recenter$"),
+    re.compile(r"^Undo Create Miller Plane$"),
 )
 MILLER_RUNTIME_UI_EVIDENCE_FIELDS = {
     "source",
@@ -245,6 +305,7 @@ MILLER_RUNTIME_UI_EVIDENCE_FIELDS = {
     "miller_indices_control_id",
     "create_button_control_id",
     "selection_modifier_keys",
+    "viewport_selection_probe",
     "screenshot_path",
     "note",
 }
@@ -264,7 +325,6 @@ MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
     "miller_planes_dialog_observed": "runtime_miller_planes_dialog_not_observed",
     "miller_indices_control_observed": "runtime_miller_indices_control_not_observed",
     "create_button_observed": "runtime_miller_plane_create_button_not_observed",
-    "tree_explorer_menu_observed": "runtime_tree_explorer_menu_not_observed",
     "properties_explorer_menu_observed": "runtime_properties_explorer_menu_not_observed",
     "view_onto_control_observed": "runtime_view_onto_control_not_observed",
     "document_clean_before_probe": "runtime_document_not_clean_before_probe",
@@ -272,7 +332,137 @@ MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
 }
 
 
-def _normalize_miller_runtime_ui_evidence(value: dict[str, Any]) -> dict[str, Any]:
+def _normalize_miller_runtime_viewport_selection_probe(
+    value: dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Validate a transient-plane viewport selection probe from the live MS window."""
+
+    if not isinstance(value, dict):
+        raise GuiError("runtime_ui_evidence.viewport_selection_probe must be a JSON object")
+    extra_fields = sorted(set(value) - MILLER_RUNTIME_VIEWPORT_PROBE_ALLOWED_FIELDS)
+    if extra_fields:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe contains unsupported fields: "
+            + ", ".join(extra_fields)
+        )
+    missing_fields = sorted(MILLER_RUNTIME_VIEWPORT_PROBE_FIELDS - set(value))
+    if missing_fields:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    normalized = dict(value)
+    for field in MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS:
+        if not isinstance(normalized.get(field), bool):
+            raise GuiError(
+                f"runtime_ui_evidence.viewport_selection_probe.{field} must be a boolean"
+            )
+
+    probe_indices = _normalize_miller_plane_indices(
+        normalized.get("probe_miller_indices"),
+        field_name="runtime_ui_evidence.viewport_selection_probe.probe_miller_indices",
+    )
+    dialog_indices = _normalize_miller_plane_indices(
+        normalized.get("dialog_miller_indices"),
+        field_name="runtime_ui_evidence.viewport_selection_probe.dialog_miller_indices",
+    )
+    if len(dialog_indices) != 3:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe.dialog_miller_indices must contain "
+            "exactly three values"
+        )
+    normalized["probe_miller_indices"] = probe_indices
+    normalized["dialog_miller_indices"] = dialog_indices
+
+    for field in (
+        "selection_method",
+        "hit_test_basis",
+        "properties_filter",
+        "properties_miller_label",
+        "view_onto_command_id",
+    ):
+        if not isinstance(normalized.get(field), str):
+            raise GuiError(
+                f"runtime_ui_evidence.viewport_selection_probe.{field} must be a string"
+            )
+        normalized[field] = str(normalized[field]).strip()
+
+    artifact_path = Path(str(normalized.get("structure_artifact_path") or "")).expanduser().resolve()
+    _ensure_inside(workspace_root, artifact_path)
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise GuiError(f"runtime viewport probe structure artifact does not exist: {artifact_path}")
+    before_hash = str(normalized.get("structure_artifact_sha256_before") or "").strip().lower()
+    after_hash = str(normalized.get("structure_artifact_sha256_after") or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{64}", before_hash) is None:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe.structure_artifact_sha256_before "
+            "must be SHA-256"
+        )
+    if re.fullmatch(r"[0-9a-f]{64}", after_hash) is None:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe.structure_artifact_sha256_after "
+            "must be SHA-256"
+        )
+    current_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    normalized["structure_artifact_path"] = str(artifact_path)
+    normalized["structure_artifact_sha256_before"] = before_hash
+    normalized["structure_artifact_sha256_after"] = after_hash
+    normalized["structure_artifact_sha256_current"] = current_hash
+
+    raw_undo_labels = normalized.get("undo_labels_observed")
+    if not isinstance(raw_undo_labels, list) or not 2 <= len(raw_undo_labels) <= 8:
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe.undo_labels_observed must contain "
+            "2 to 8 labels"
+        )
+    undo_labels = [str(item).strip() for item in raw_undo_labels]
+    if any(
+        not any(pattern.fullmatch(label) for pattern in MILLER_RUNTIME_VIEWPORT_PROBE_UNDO_LABEL_PATTERNS)
+        for label in undo_labels
+    ):
+        raise GuiError(
+            "runtime_ui_evidence.viewport_selection_probe.undo_labels_observed contains a "
+            "non-whitelisted undo"
+        )
+    normalized["undo_labels_observed"] = undo_labels
+
+    block_reasons: list[str] = []
+    if normalized["selection_method"] != MILLER_PLANE_VIEWPORT_SELECTION_METHOD:
+        block_reasons.append("runtime_viewport_selection_method_mismatch")
+    if dialog_indices != _miller_plane_dialog_indices(probe_indices):
+        block_reasons.append("runtime_viewport_probe_dialog_indices_mismatch")
+    for field in MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS:
+        if normalized.get(field) is not True:
+            block_reasons.append(f"runtime_viewport_{field}_not_verified")
+    if normalized["hit_test_basis"] != MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS:
+        block_reasons.append("runtime_viewport_hit_test_basis_mismatch")
+    if normalized["properties_filter"] != "Miller Plane":
+        block_reasons.append("runtime_viewport_properties_filter_mismatch")
+    if normalized["properties_miller_label"] != _miller_plane_label(dialog_indices):
+        block_reasons.append("runtime_viewport_properties_miller_label_mismatch")
+    if normalized["view_onto_command_id"] != "cmdViewer3DViewOnto":
+        block_reasons.append("runtime_viewport_view_onto_command_id_mismatch")
+    if before_hash != after_hash:
+        block_reasons.append("runtime_viewport_structure_artifact_hash_changed")
+    if after_hash != current_hash:
+        block_reasons.append("runtime_viewport_structure_artifact_hash_not_current")
+    if "Undo View Onto Miller Plane" not in undo_labels:
+        block_reasons.append("runtime_viewport_view_onto_undo_not_observed")
+    if "Undo Create Miller Plane" not in undo_labels:
+        block_reasons.append("runtime_viewport_create_plane_undo_not_observed")
+    normalized["block_reasons"] = _unique_strings(block_reasons)
+    normalized["complete"] = not block_reasons
+    return normalized
+
+
+def _normalize_miller_runtime_ui_evidence(
+    value: dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> dict[str, Any]:
     """Validate the exact runtime UI observation accepted by replay preparation."""
 
     if not isinstance(value, dict):
@@ -334,6 +524,14 @@ def _normalize_miller_runtime_ui_evidence(value: dict[str, Any]) -> dict[str, An
             "runtime_ui_evidence.selection_modifier_keys must contain only Shift, Ctrl, Alt, or Win"
         )
     normalized["selection_modifier_keys"] = list(modifier_keys)
+    viewport_probe = normalized.get("viewport_selection_probe")
+    if viewport_probe is not None:
+        normalized["viewport_selection_probe"] = (
+            _normalize_miller_runtime_viewport_selection_probe(
+                viewport_probe,
+                workspace_root=workspace_root,
+            )
+        )
     for field in MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS:
         item = normalized.get(field)
         if item is not None and not isinstance(item, str):
@@ -457,6 +655,7 @@ def _miller_plane_label(indices: list[int]) -> str:
 def _normalize_miller_plane_replay_evidence(
     evidence: dict[str, Any],
     *,
+    expected_selection_method: str,
     expected_indices: list[int],
     expected_dialog_indices: list[int],
     expected_properties_label: str,
@@ -521,17 +720,65 @@ def _normalize_miller_plane_replay_evidence(
         counts[field_name] = value
 
     selection_method = str(evidence["selection_method"]).strip()
-    if selection_method != MILLER_PLANE_SELECTION_METHOD:
+    if selection_method not in MILLER_PLANE_SELECTION_METHODS:
         raise GuiError(
-            "miller_plane_evidence.selection_method must use the prepared exact Object Tree method"
+            "miller_plane_evidence.selection_method is not a prepared semantic selection method"
         )
-    raw_path_suffix = evidence["object_tree_path_suffix"]
-    if not isinstance(raw_path_suffix, list):
-        raise GuiError("miller_plane_evidence.object_tree_path_suffix must be a list")
-    path_suffix = [str(value).strip() for value in raw_path_suffix]
-    if path_suffix != MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX:
+    if selection_method != expected_selection_method:
         raise GuiError(
-            "miller_plane_evidence.object_tree_path_suffix does not match the prepared recipe"
+            "miller_plane_evidence.selection_method does not match the prepared recipe: "
+            f"expected {expected_selection_method!r}, received {selection_method!r}"
+        )
+    raw_path_suffix = evidence.get("object_tree_path_suffix")
+    path_suffix: list[str] | None = None
+    viewport_selection_contract_matches = True
+    viewport_fields: dict[str, Any] = {}
+    if selection_method == MILLER_PLANE_SELECTION_METHOD:
+        if not isinstance(raw_path_suffix, list):
+            raise GuiError("miller_plane_evidence.object_tree_path_suffix must be a list")
+        path_suffix = [str(value).strip() for value in raw_path_suffix]
+        if path_suffix != MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX:
+            raise GuiError(
+                "miller_plane_evidence.object_tree_path_suffix does not match the prepared recipe"
+            )
+    else:
+        if raw_path_suffix not in (None, []):
+            raise GuiError(
+                "miller_plane_evidence.object_tree_path_suffix must be null or empty for the "
+                "viewport selection method"
+            )
+        required_viewport_fields = (
+            "viewport_hit_test_basis",
+            "fresh_before_after_screenshots_observed",
+            "unique_transient_plane_region_observed",
+            "properties_selection_verified",
+            "view_onto_popup_menu_observed",
+            "dialog_show_set_of_parallel_planes",
+            "dialog_show_symmetry_images",
+        )
+        missing_viewport_fields = [
+            field for field in required_viewport_fields if field not in evidence
+        ]
+        if missing_viewport_fields:
+            raise GuiError(
+                "miller_plane_evidence is missing viewport selection fields: "
+                + ", ".join(missing_viewport_fields)
+            )
+        viewport_hit_test_basis = str(evidence["viewport_hit_test_basis"]).strip()
+        viewport_fields["viewport_hit_test_basis"] = viewport_hit_test_basis
+        for field in required_viewport_fields[1:]:
+            value = evidence[field]
+            if not isinstance(value, bool):
+                raise GuiError(f"miller_plane_evidence.{field} must be a boolean")
+            viewport_fields[field] = value
+        viewport_selection_contract_matches = bool(
+            viewport_hit_test_basis == MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS
+            and viewport_fields["fresh_before_after_screenshots_observed"] is True
+            and viewport_fields["unique_transient_plane_region_observed"] is True
+            and viewport_fields["properties_selection_verified"] is True
+            and viewport_fields["view_onto_popup_menu_observed"] is True
+            and viewport_fields["dialog_show_set_of_parallel_planes"] is False
+            and viewport_fields["dialog_show_symmetry_images"] is False
         )
     properties_filter = str(evidence["properties_filter"]).strip()
     if properties_filter != "Miller Plane":
@@ -576,8 +823,8 @@ def _normalize_miller_plane_replay_evidence(
     current_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
 
     raw_undo_labels = evidence["undo_labels_applied"]
-    if not isinstance(raw_undo_labels, list) or not 2 <= len(raw_undo_labels) <= 16:
-        raise GuiError("miller_plane_evidence.undo_labels_applied must contain 2 to 16 labels")
+    if not isinstance(raw_undo_labels, list) or not 3 <= len(raw_undo_labels) <= 16:
+        raise GuiError("miller_plane_evidence.undo_labels_applied must contain 3 to 16 labels")
     undo_labels = [str(value).strip() for value in raw_undo_labels]
     if any(
         not any(pattern.fullmatch(label) for pattern in MILLER_PLANE_UNDO_LABEL_PATTERNS)
@@ -586,6 +833,7 @@ def _normalize_miller_plane_replay_evidence(
         raise GuiError("miller_plane_evidence.undo_labels_applied contains a non-whitelisted undo")
     view_onto_undo_present = any(label.startswith("Undo View Onto ") for label in undo_labels)
     create_plane_undo_present = "Undo Create Miller Plane" in undo_labels
+    reset_view_undo_present = "Undo Reset View" in undo_labels
 
     counts_match_contract = bool(
         counts["created_plane_count"] == 1
@@ -604,7 +852,9 @@ def _normalize_miller_plane_replay_evidence(
     )
     structure_artifact_hash_unchanged = before_hash == after_hash
     structure_artifact_hash_matches_current = after_hash == current_hash
-    undo_labels_match_contract = view_onto_undo_present and create_plane_undo_present
+    undo_labels_match_contract = bool(
+        view_onto_undo_present and create_plane_undo_present and reset_view_undo_present
+    )
 
     return {
         "miller_plane_indices": normalized_indices,
@@ -612,6 +862,7 @@ def _normalize_miller_plane_replay_evidence(
         **counts,
         "selection_method": selection_method,
         "object_tree_path_suffix": path_suffix,
+        **viewport_fields,
         "properties_filter": properties_filter,
         "properties_miller_label": properties_miller_label,
         "camera_match_scope": camera_match_scope,
@@ -626,12 +877,14 @@ def _normalize_miller_plane_replay_evidence(
         "structure_artifact_hash_unchanged": structure_artifact_hash_unchanged,
         "structure_artifact_hash_matches_current": structure_artifact_hash_matches_current,
         "undo_labels_match_contract": undo_labels_match_contract,
+        "selection_evidence_matches_contract": viewport_selection_contract_matches,
         "complete": bool(
             counts_match_contract
             and required_true_fields_match
             and structure_artifact_hash_unchanged
             and structure_artifact_hash_matches_current
             and undo_labels_match_contract
+            and viewport_selection_contract_matches
         ),
     }
 
@@ -2114,7 +2367,10 @@ class MaterialsStudioGuiController:
         observed_at: str | None = None
         source = "supplied"
         if supplied_evidence is not None:
-            evidence = _normalize_miller_runtime_ui_evidence(supplied_evidence)
+            evidence = _normalize_miller_runtime_ui_evidence(
+                supplied_evidence,
+                workspace_root=self.workspace_root,
+            )
             screenshot_path = evidence.get("screenshot_path")
             if screenshot_path:
                 screenshot = Path(str(screenshot_path)).expanduser().resolve()
@@ -2141,7 +2397,7 @@ class MaterialsStudioGuiController:
                 .replace("+00:00", "Z")
             )
             artifact = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "materials_studio_miller_plane_runtime_ui_preflight",
                 "observed_at": observed_at,
                 "project_id": project_id,
@@ -2158,7 +2414,10 @@ class MaterialsStudioGuiController:
                     raise ValueError("artifact root must be an object")
                 if artifact.get("project_id") != project_id or artifact.get("revision") != revision:
                     raise ValueError("artifact project/revision identity mismatch")
-                evidence = _normalize_miller_runtime_ui_evidence(artifact.get("evidence"))
+                evidence = _normalize_miller_runtime_ui_evidence(
+                    artifact.get("evidence"),
+                    workspace_root=self.workspace_root,
+                )
                 observed_at = str(artifact.get("observed_at") or "") or None
             except Exception as exc:
                 return {
@@ -2179,6 +2438,7 @@ class MaterialsStudioGuiController:
             )
 
         gate_reasons = _miller_runtime_ui_gate_block_reasons(evidence, binding)
+        selection_profile = _miller_runtime_ui_selection_profile(evidence)
         gate_satisfied = not gate_reasons
         return {
             "status": (
@@ -2193,6 +2453,7 @@ class MaterialsStudioGuiController:
             "observed_at": observed_at,
             "binding_verified": binding.get("ok") is True,
             "automation_gate_satisfied": gate_satisfied,
+            "selection_profile": selection_profile,
             "artifact_path": str(artifact_path),
             "artifact_exists": artifact_path.exists(),
             "binding": binding,
@@ -2330,6 +2591,7 @@ class MaterialsStudioGuiController:
             )
             normalized_miller_plane_evidence = _normalize_miller_plane_replay_evidence(
                 miller_plane_evidence,
+                expected_selection_method=str(execution_recipe.get("selection_method") or ""),
                 expected_indices=expected_indices,
                 expected_dialog_indices=expected_dialog_indices,
                 expected_properties_label=str(
@@ -2651,6 +2913,11 @@ class MaterialsStudioGuiController:
                     rejection_reasons.append("miller_plane_count_or_selection_contract_failed")
                 if normalized_miller_plane_evidence.get("required_true_fields_match") is not True:
                     rejection_reasons.append("miller_plane_cleanup_or_camera_evidence_incomplete")
+                if (
+                    normalized_miller_plane_evidence.get("selection_evidence_matches_contract")
+                    is not True
+                ):
+                    rejection_reasons.append("miller_plane_selection_evidence_incomplete")
                 if (
                     direction_via_miller_plane_recipe
                     and normalized_miller_plane_evidence.get(
@@ -3151,6 +3418,15 @@ def _view_replay_runtime_ui_binding(
         if isinstance(target_resolution.get("target_project_wrapper_metadata"), dict)
         else {}
     )
+    raw_structure_artifact_path = wrapper_metadata.get("source_path")
+    try:
+        target_structure_artifact_path = (
+            str(Path(str(raw_structure_artifact_path)).expanduser().resolve())
+            if raw_structure_artifact_path
+            else None
+        )
+    except OSError:
+        target_structure_artifact_path = None
     actual_handle = target_window.get("handle") or window_management.get("target_window_handle")
     actual_title = target_window.get("title") or window_management.get("target_window_title")
     reasons: list[str] = []
@@ -3204,6 +3480,7 @@ def _view_replay_runtime_ui_binding(
         "matched_project_window": target_resolution.get("matched_project_window"),
         "target_window_project_id": wrapper_metadata.get("project_id"),
         "target_window_revision": wrapper_revision,
+        "target_structure_artifact_path": target_structure_artifact_path,
         "current_revision_loaded": status.get("current_revision_loaded"),
         "target_window_is_visible": status.get("target_window_is_visible"),
         "target_window_is_minimized": status.get("target_window_is_minimized"),
@@ -3219,6 +3496,17 @@ def _view_replay_runtime_ui_binding(
     }
 
 
+def _miller_runtime_ui_selection_profile(evidence: dict[str, Any]) -> str | None:
+    """Return the exact runtime selection path proven by the observation."""
+
+    if evidence.get("tree_explorer_menu_observed") is True:
+        return "object_tree_exact_item"
+    viewport_probe = evidence.get("viewport_selection_probe")
+    if isinstance(viewport_probe, dict) and viewport_probe.get("complete") is True:
+        return "viewport_unique_plane_properties_verified"
+    return None
+
+
 def _miller_runtime_ui_gate_block_reasons(
     evidence: dict[str, Any],
     binding: dict[str, Any],
@@ -3231,6 +3519,24 @@ def _miller_runtime_ui_gate_block_reasons(
     for field in MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS:
         if evidence.get(field) is not True:
             reasons.append(MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD[field])
+    selection_profile = _miller_runtime_ui_selection_profile(evidence)
+    if selection_profile is None:
+        if evidence.get("tree_explorer_menu_observed") is not True:
+            reasons.append("runtime_tree_explorer_menu_not_observed")
+        viewport_probe = evidence.get("viewport_selection_probe")
+        if not isinstance(viewport_probe, dict):
+            reasons.append("runtime_viewport_selection_probe_missing")
+        else:
+            reasons.extend(str(item) for item in viewport_probe.get("block_reasons") or [])
+    if selection_profile == "viewport_unique_plane_properties_verified":
+        viewport_probe = evidence.get("viewport_selection_probe")
+        expected_artifact_path = binding.get("target_structure_artifact_path")
+        if not expected_artifact_path:
+            reasons.append("runtime_target_structure_artifact_path_unavailable")
+        elif not isinstance(viewport_probe, dict) or (
+            viewport_probe.get("structure_artifact_path") != expected_artifact_path
+        ):
+            reasons.append("runtime_viewport_structure_artifact_path_mismatch")
     if evidence.get("miller_planes_menu_key_sequence") != MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE:
         reasons.append("runtime_miller_planes_keyboard_menu_sequence_mismatch")
     for field, expected in MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS.items():
@@ -3547,6 +3853,8 @@ def _view_replay_execution_recipe(
         view_onto_command_id = "cmdViewer3DViewOnto"
         reset_command_available = reset_command_id in command_ids
         view_onto_command_available = view_onto_command_id in command_ids
+        runtime_preflight = runtime_ui_preflight if isinstance(runtime_ui_preflight, dict) else {}
+        selection_profile = runtime_preflight.get("selection_profile")
         evidence_requirements = {
             "symmetry_builder_registry_found": command_evidence.get(
                 "symmetry_builder_registry_found"
@@ -3554,14 +3862,6 @@ def _view_replay_execution_recipe(
             is True,
             "miller_plane_command_registered": command_evidence.get(
                 "miller_plane_command_registered"
-            )
-            is True,
-            "tree_explorer_registry_found": command_evidence.get(
-                "tree_explorer_registry_found"
-            )
-            is True,
-            "tree_explorer_command_registered": command_evidence.get(
-                "tree_explorer_command_registered"
             )
             is True,
             "properties_explorer_registry_found": command_evidence.get(
@@ -3588,18 +3888,43 @@ def _view_replay_execution_recipe(
                 "miller_plane_selection_view_onto_workflow_verified"
             )
             is True,
-            "object_tree_hierarchy_help_verified": command_evidence.get(
-                "object_tree_hierarchy_help_verified"
-            )
-            is True,
             "positioning_help_found": command_evidence.get("positioning_help_found") is True,
             "native_view_roll_policy_documented": command_evidence.get(
                 "native_view_roll_policy_documented"
             )
             is True,
         }
-        runtime_preflight = runtime_ui_preflight if isinstance(runtime_ui_preflight, dict) else {}
+        if selection_profile == "object_tree_exact_item":
+            evidence_requirements.update(
+                {
+                    "tree_explorer_registry_found": command_evidence.get(
+                        "tree_explorer_registry_found"
+                    )
+                    is True,
+                    "tree_explorer_command_registered": command_evidence.get(
+                        "tree_explorer_command_registered"
+                    )
+                    is True,
+                    "object_tree_hierarchy_help_verified": command_evidence.get(
+                        "object_tree_hierarchy_help_verified"
+                    )
+                    is True,
+                }
+            )
+        elif selection_profile == "viewport_unique_plane_properties_verified":
+            evidence_requirements[
+                "viewport_miller_plane_selection_properties_workflow_verified"
+            ] = (
+                command_evidence.get(
+                    "viewport_miller_plane_selection_properties_workflow_verified"
+                )
+                is True
+            )
         runtime_gate_satisfied = runtime_preflight.get("automation_gate_satisfied") is True
+        selection_profile_verified = selection_profile in {
+            "object_tree_exact_item",
+            "viewport_unique_plane_properties_verified",
+        }
         runtime_block_reasons = [
             str(item)
             for item in runtime_preflight.get("block_reasons") or []
@@ -3614,6 +3939,7 @@ def _view_replay_execution_recipe(
             and index_error is None
             and all(evidence_requirements.values())
             and runtime_gate_satisfied
+            and selection_profile_verified
         )
         block_reasons: list[str] = []
         if not registry_verified:
@@ -3624,12 +3950,29 @@ def _view_replay_execution_recipe(
             block_reasons.append("view_onto_command_not_registered")
         if index_error is not None:
             block_reasons.append("invalid_miller_plane_indices")
+        if not selection_profile_verified:
+            block_reasons.append("runtime_miller_plane_selection_profile_not_verified")
         for requirement, verified in evidence_requirements.items():
             if not verified:
                 block_reasons.append(f"{requirement}_not_verified")
         block_reasons.extend(runtime_block_reasons)
         block_reasons = _unique_strings(block_reasons)
         properties_label = _miller_plane_label(dialog_indices) if dialog_indices else None
+        viewport_selection_profile = (
+            selection_profile == "viewport_unique_plane_properties_verified"
+        )
+        prepared_selection_method = (
+            MILLER_PLANE_VIEWPORT_SELECTION_METHOD
+            if viewport_selection_profile
+            else MILLER_PLANE_SELECTION_METHOD
+        )
+        supporting_native_command_ids = [
+            reset_command_id,
+            "cmdSymmetryBuilderMillerPlanes",
+            "cmdGPEToggleExplorer",
+        ]
+        if not viewport_selection_profile:
+            supporting_native_command_ids.append("cmdTEToggleExplorer")
         recipe_kind = (
             "crystal_direction_via_collinear_miller_plane_view_onto"
             if direction_via_miller_plane
@@ -3642,7 +3985,7 @@ def _view_replay_execution_recipe(
         )
         return {
             **base,
-            "schema_version": 2,
+            "schema_version": 3,
             "recipe_kind": recipe_kind,
             "status": (
                 "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
@@ -3658,12 +4001,7 @@ def _view_replay_execution_recipe(
             "native_command_id": view_onto_command_id,
             "modifier_keys": [],
             "prohibited_modifier_keys": ["Shift", "Ctrl", "Alt", "Win"],
-            "supporting_native_command_ids": [
-                reset_command_id,
-                "cmdSymmetryBuilderMillerPlanes",
-                "cmdTEToggleExplorer",
-                "cmdGPEToggleExplorer",
-            ],
+            "supporting_native_command_ids": supporting_native_command_ids,
             "runtime_ui_preflight": {
                 "required": True,
                 "status": runtime_preflight.get("status") or "missing",
@@ -3671,6 +4009,7 @@ def _view_replay_execution_recipe(
                 "artifact_path": runtime_preflight.get("artifact_path"),
                 "binding_verified": runtime_preflight.get("binding_verified") is True,
                 "block_reasons": runtime_block_reasons,
+                "selection_profile": selection_profile,
                 "required_true_fields": list(MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS),
                 "required_menu_key_sequence": list(MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE),
                 "required_dialog_identifiers": dict(MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS),
@@ -3696,8 +4035,27 @@ def _view_replay_execution_recipe(
             "direction_plane_mapping": (
                 direction_plane_mapping if direction_via_miller_plane else None
             ),
-            "selection_method": MILLER_PLANE_SELECTION_METHOD,
-            "selection_path_suffix": list(MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX),
+            "selection_method": prepared_selection_method,
+            "selection_path_suffix": (
+                None
+                if viewport_selection_profile
+                else list(MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX)
+            ),
+            "viewport_selection_contract": (
+                {
+                    "hit_test_basis": MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
+                    "capture_fresh_screenshot_before_create": True,
+                    "capture_fresh_screenshot_after_create": True,
+                    "require_unique_newly_rendered_plane_region": True,
+                    "click_coordinates_source": "fresh_after_create_screenshot",
+                    "require_no_modifier_keys": True,
+                    "properties_filter": "Miller Plane",
+                    "properties_miller_label": properties_label,
+                    "failure_action": "abort_and_cleanup_without_view_record",
+                }
+                if viewport_selection_profile
+                else None
+            ),
             "properties_verification": {
                 "filter": "Miller Plane",
                 "miller_label": properties_label,
@@ -3770,6 +4128,11 @@ def _view_replay_execution_recipe(
                 "allowed_undo_label_patterns": [
                     pattern.pattern for pattern in MILLER_PLANE_UNDO_LABEL_PATTERNS
                 ],
+                "required_undo_labels": [
+                    "Undo View Onto Miller Plane",
+                    "Undo Create Miller Plane",
+                    "Undo Reset View",
+                ],
                 "require_exactly_one_new_miller_plane": True,
                 "require_selected_plane_count": 1,
                 "require_document_clean_before_and_after": True,
@@ -3801,8 +4164,18 @@ def _view_replay_execution_recipe(
                 "verify_miller_planes_dialog_and_exact_control_ids",
                 "abort_after_exact_undo_if_unexpected_default_plane_was_created",
                 "enter_exact_three_index_dialog_values_and_create_one_plane",
-                "diff_object_tree_and_isolate_exactly_one_new_miller_plane_leaf",
-                "select_leaf_by_exact_tree_item_rect_with_no_modifier_keys",
+                *(
+                    [
+                        "capture_fresh_after_create_screenshot",
+                        "isolate_unique_newly_rendered_transient_plane_region_from_fresh_before_after_screenshots",
+                        "select_unique_plane_region_from_fresh_screenshot_with_no_modifier_keys",
+                    ]
+                    if viewport_selection_profile
+                    else [
+                        "diff_object_tree_and_isolate_exactly_one_new_miller_plane_leaf",
+                        "select_leaf_by_exact_tree_item_rect_with_no_modifier_keys",
+                    ]
+                ),
                 "verify_properties_filter_and_miller_label",
                 "invoke_named_3d_viewer_recenter_popup_view_onto_item",
                 "capture_fresh_screenshot_before_cleanup",
@@ -3812,12 +4185,16 @@ def _view_replay_execution_recipe(
                     else []
                 ),
                 "verify_plane_normal_and_report_native_in_plane_roll_separately",
-                "undo_only_whitelisted_view_onto_and_create_miller_plane_actions",
+                "undo_only_whitelisted_view_onto_create_miller_plane_and_reset_view_actions",
                 "verify_document_clean_tree_restored_view_restored_and_sha256_unchanged",
                 "record_view_replay_event_with_miller_plane_evidence",
             ],
             "safety_notes": [
-                "Do not use blind viewport coordinates; derive the click rectangle from the exact Object Tree item.",
+                (
+                    "Do not reuse viewport coordinates; derive the unique transient-plane hit region from fresh before/after screenshots and verify the result in Properties Explorer."
+                    if viewport_selection_profile
+                    else "Do not use blind viewport coordinates; derive the click rectangle from the exact Object Tree item."
+                ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
@@ -3829,7 +4206,7 @@ def _view_replay_execution_recipe(
                     if direction_via_miller_plane
                     else []
                 ),
-                "Stop cleanup before any undo label outside the explicit whitelist.",
+                "Undo View Onto, Create Miller Plane, and Reset View in exact stack order; stop before any label outside the explicit whitelist.",
             ],
             "installed_evidence": {
                 **evidence_requirements,
@@ -3839,8 +4216,27 @@ def _view_replay_execution_recipe(
                 "tree_explorer_registry_path": command_evidence.get(
                     "tree_explorer_registry_path"
                 ),
+                "tree_explorer_component_path": command_evidence.get(
+                    "tree_explorer_component_path"
+                ),
+                "tree_explorer_component_hidden": command_evidence.get(
+                    "tree_explorer_component_hidden"
+                ),
                 "properties_explorer_registry_path": command_evidence.get(
                     "properties_explorer_registry_path"
+                ),
+                "explorers_help_path": command_evidence.get("explorers_help_path"),
+                "public_explorer_inventory_verified": command_evidence.get(
+                    "public_explorer_inventory_verified"
+                ),
+                "public_explorer_inventory_excludes_tree": command_evidence.get(
+                    "public_explorer_inventory_excludes_tree"
+                ),
+                "project_explorer_help_path": command_evidence.get(
+                    "project_explorer_help_path"
+                ),
+                "project_explorer_documents_only_verified": command_evidence.get(
+                    "project_explorer_documents_only_verified"
                 ),
                 "miller_plane_create_help_path": command_evidence.get(
                     "miller_plane_create_help_path"
@@ -3918,7 +4314,10 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
     registry_path: Path | None = None
     symmetry_builder_registry_path: Path | None = None
     tree_explorer_registry_path: Path | None = None
+    tree_explorer_component_path: Path | None = None
     properties_explorer_registry_path: Path | None = None
+    explorers_help_path: Path | None = None
+    project_explorer_help_path: Path | None = None
     keyboard_help_path: Path | None = None
     movement_help_path: Path | None = None
     miller_plane_create_help_path: Path | None = None
@@ -3932,10 +4331,15 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
     movement_dialog_angle_supported = False
     miller_plane_command_registered = False
     tree_explorer_command_registered = False
+    tree_explorer_component_hidden = False
     properties_explorer_command_registered = False
     miller_plane_create_workflow_verified = False
     miller_plane_selection_view_onto_workflow_verified = False
     object_tree_hierarchy_help_verified = False
+    viewport_miller_plane_selection_properties_workflow_verified = False
+    public_explorer_inventory_verified = False
+    public_explorer_inventory_excludes_tree = False
+    project_explorer_documents_only_verified = False
     native_view_roll_policy_documented = False
     matstudio_exe = _resolve_matstudio_exe()
     if matstudio_exe is not None:
@@ -3973,6 +4377,23 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
                 tree_text = ""
             tree_explorer_command_registered = "cmdTEToggleExplorer" in tree_text
 
+        tree_component_candidate = (
+            share_root / "Components" / "SMTreeExplorer.xml"
+        ).resolve()
+        if tree_component_candidate.exists() and tree_component_candidate.is_file():
+            tree_explorer_component_path = tree_component_candidate
+            try:
+                tree_component_text = tree_component_candidate.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                tree_component_text = ""
+            tree_explorer_component_hidden = all(
+                marker in tree_component_text
+                for marker in ('NAME="Object Tree"', 'HIDDEN="Yes"')
+            )
+
         properties_candidate = (share_root / "Commands" / "SMGenPropEditor.xml").resolve()
         if properties_candidate.exists() and properties_candidate.is_file():
             properties_explorer_registry_path = properties_candidate
@@ -3984,6 +4405,59 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
             except OSError:
                 properties_text = ""
             properties_explorer_command_registered = "cmdGPEToggleExplorer" in properties_text
+
+        explorers_help_candidate = (
+            share_root / "doc" / "content" / "core" / "interface" / "explorers.htm"
+        ).resolve()
+        if explorers_help_candidate.exists() and explorers_help_candidate.is_file():
+            explorers_help_path = explorers_help_candidate
+            try:
+                explorers_help_text = explorers_help_candidate.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                explorers_help_text = ""
+            normalized_explorers_help = re.sub(r"\s+", " ", explorers_help_text).lower()
+            public_explorer_inventory_verified = all(
+                phrase in normalized_explorers_help
+                for phrase in ("project explorer", "properties explorer", "job explorer")
+            )
+            public_explorer_inventory_excludes_tree = bool(
+                public_explorer_inventory_verified
+                and "tree explorer" not in normalized_explorers_help
+                and "object tree" not in normalized_explorers_help
+            )
+
+        project_explorer_help_candidate = (
+            share_root
+            / "doc"
+            / "content"
+            / "core"
+            / "interface"
+            / "projectexplorer.htm"
+        ).resolve()
+        if project_explorer_help_candidate.exists() and project_explorer_help_candidate.is_file():
+            project_explorer_help_path = project_explorer_help_candidate
+            try:
+                project_explorer_help_text = project_explorer_help_candidate.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                project_explorer_help_text = ""
+            normalized_project_explorer_help = re.sub(
+                r"\s+",
+                " ",
+                project_explorer_help_text,
+            ).lower()
+            project_explorer_documents_only_verified = all(
+                phrase in normalized_project_explorer_help
+                for phrase in (
+                    "access the documents associated with a project",
+                    "project documents and folders",
+                )
+            )
 
         help_candidate = (
             share_root
@@ -4099,6 +4573,11 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
             except OSError:
                 working_help_text = ""
             normalized_working_help = re.sub(r"\s+", " ", working_help_text).lower()
+            normalized_working_plain_help = re.sub(
+                r"\s+",
+                " ",
+                re.sub(r"(?s)<[^>]+>", " ", working_help_text),
+            ).lower()
             miller_plane_selection_view_onto_workflow_verified = all(
                 phrase in normalized_working_help
                 for phrase in (
@@ -4106,6 +4585,15 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
                     "parallel to the screen",
                     "3d viewer recenter",
                     "view onto",
+                )
+            )
+            viewport_miller_plane_selection_properties_workflow_verified = all(
+                phrase in normalized_working_plain_help
+                for phrase in (
+                    "select a single miller plane",
+                    "select miller plane from the filter dropdown list in the properties explorer",
+                    "options arrow associated with the 3d viewer recenter button",
+                    "select view onto from the dropdown list",
                 )
             )
             object_tree_hierarchy_help_verified = all(
@@ -4162,6 +4650,12 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         "tree_explorer_registry_found": tree_explorer_registry_path is not None,
         "tree_explorer_command_id": "cmdTEToggleExplorer",
         "tree_explorer_command_registered": tree_explorer_command_registered,
+        "tree_explorer_component_path": (
+            str(tree_explorer_component_path)
+            if tree_explorer_component_path is not None
+            else None
+        ),
+        "tree_explorer_component_hidden": tree_explorer_component_hidden,
         "properties_explorer_registry_path": (
             str(properties_explorer_registry_path)
             if properties_explorer_registry_path is not None
@@ -4170,6 +4664,17 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         "properties_explorer_registry_found": properties_explorer_registry_path is not None,
         "properties_explorer_command_id": "cmdGPEToggleExplorer",
         "properties_explorer_command_registered": properties_explorer_command_registered,
+        "explorers_help_path": (
+            str(explorers_help_path) if explorers_help_path is not None else None
+        ),
+        "public_explorer_inventory_verified": public_explorer_inventory_verified,
+        "public_explorer_inventory_excludes_tree": public_explorer_inventory_excludes_tree,
+        "project_explorer_help_path": (
+            str(project_explorer_help_path)
+            if project_explorer_help_path is not None
+            else None
+        ),
+        "project_explorer_documents_only_verified": project_explorer_documents_only_verified,
         "keyboard_help_path": str(keyboard_help_path) if keyboard_help_path is not None else None,
         "keyboard_help_found": keyboard_help_path is not None,
         "unmodified_arrow_keys_rotate_view": unmodified_arrow_keys_rotate_view,
@@ -4201,6 +4706,9 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         "miller_plane_selection_view_onto_workflow_verified": (
             miller_plane_selection_view_onto_workflow_verified
         ),
+        "viewport_miller_plane_selection_properties_workflow_verified": (
+            viewport_miller_plane_selection_properties_workflow_verified
+        ),
         "object_tree_hierarchy_help_verified": object_tree_hierarchy_help_verified,
         "positioning_help_path": (
             str(positioning_help_path) if positioning_help_path is not None else None
@@ -4208,6 +4716,8 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         "positioning_help_found": positioning_help_path is not None,
         "native_view_roll_policy_documented": native_view_roll_policy_documented,
         "miller_plane_selection_method": MILLER_PLANE_SELECTION_METHOD,
+        "miller_plane_selection_methods": sorted(MILLER_PLANE_SELECTION_METHODS),
+        "miller_plane_viewport_hit_test_basis": MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
         "miller_plane_object_tree_path_suffix": list(MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX),
         "scope": "reviewed_gui_command_evidence_only",
         "arbitrary_camera_vector_api_confirmed": False,
@@ -4379,6 +4889,20 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             "miller_plane_count_after_cleanup": 0,
             "selection_method": selected_recipe.get("selection_method"),
             "object_tree_path_suffix": selected_recipe.get("selection_path_suffix"),
+            **(
+                {
+                    "viewport_hit_test_basis": MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
+                    "fresh_before_after_screenshots_observed": True,
+                    "unique_transient_plane_region_observed": True,
+                    "properties_selection_verified": True,
+                    "view_onto_popup_menu_observed": True,
+                    "dialog_show_set_of_parallel_planes": False,
+                    "dialog_show_symmetry_images": False,
+                }
+                if selected_recipe.get("selection_method")
+                == MILLER_PLANE_VIEWPORT_SELECTION_METHOD
+                else {}
+            ),
             "properties_filter": (
                 selected_recipe.get("properties_verification") or {}
             ).get("filter"),
@@ -4408,6 +4932,7 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             "undo_labels_applied": [
                 "Undo View Onto Miller Plane",
                 "Undo Create Miller Plane",
+                "Undo Reset View",
             ],
         }
     record_payload_hint = {

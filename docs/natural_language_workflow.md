@@ -358,13 +358,18 @@ events must persist `modifier_keys=[]`; Shift+arrow is a structure-editing
 operation and is never a camera replay action.
 
 When the next automatic view is `crystal_plane_*`, the recipe instead uses a
-temporary Miller Plane, exact Object Tree leaf selection, Properties Explorer
-verification, and the named View Onto command. A successful record requires
-`miller_plane_evidence` showing one created/selected plane, a pre-cleanup
-screenshot, unchanged structure SHA-256, whitelisted undo labels, no remaining
-temporary plane node, a clean document, and restoration of the reset view
-baseline. Its camera contract verifies the reciprocal-plane normal and the MS
-native smallest-acute-angle roll separately; it does not assert exact analytic
+temporary Miller Plane, a verified semantic selection profile, Properties
+Explorer verification, and the named View Onto command. Object Tree before/after
+leaf selection remains valid only when that explorer is exposed. On the verified
+MS 20.1 path, fresh before/after screenshots must isolate one unique new plane
+region; a no-modifier selection must then make Properties Explorer report
+`Filter=Miller Plane` and the exact label. Project Explorer is not accepted as
+Object Tree. A successful record requires `miller_plane_evidence` showing one
+created/selected plane, fresh screenshot-derived selection, a pre-cleanup
+screenshot, unchanged structure SHA-256, whitelisted View Onto/Create/Reset
+undo labels, no remaining temporary plane, a clean document, and restoration
+of the reset view baseline. Its camera contract verifies the reciprocal-plane
+normal and the MS native smallest-acute-angle roll separately; it does not assert exact analytic
 up/right agreement. A `crystal_*` lattice-direction view is automatic-ready
 only when its direct-space vector has an exact bounded integer reciprocal-plane
 normal mapping. Use the recipe's mapped Miller indices and require

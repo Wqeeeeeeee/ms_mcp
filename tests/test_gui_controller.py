@@ -1351,7 +1351,18 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     registry = install_root / "share" / "Commands" / "#SVViewer3d.xml"
     symmetry_registry = install_root / "share" / "Commands" / "SMPSymmetryBuilderMenu.xml"
     tree_registry = install_root / "share" / "Commands" / "SMTreeExplorer.xml"
+    tree_component = install_root / "share" / "Components" / "SMTreeExplorer.xml"
     properties_registry = install_root / "share" / "Commands" / "SMGenPropEditor.xml"
+    explorers_help_path = (
+        install_root
+        / "share"
+        / "doc"
+        / "content"
+        / "core"
+        / "interface"
+        / "explorers.htm"
+    )
+    project_explorer_help_path = explorers_help_path.parent / "projectexplorer.htm"
     help_path = (
         install_root
         / "share"
@@ -1400,6 +1411,7 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     executable.parent.mkdir(parents=True)
     registry.parent.mkdir(parents=True)
     help_path.parent.mkdir(parents=True)
+    tree_component.parent.mkdir(parents=True)
     movement_help_path.parent.mkdir(parents=True)
     positioning_help_path.parent.mkdir(parents=True)
     executable.write_bytes(b"")
@@ -1419,8 +1431,23 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
         '<commands><item name="cmdTEToggleExplorer"/></commands>',
         encoding="utf-8",
     )
+    tree_component.write_text(
+        '<explorer NAME="Object Tree" HIDDEN="Yes"/>',
+        encoding="utf-8",
+    )
     properties_registry.write_text(
         '<commands><item name="cmdGPEToggleExplorer"/></commands>',
+        encoding="utf-8",
+    )
+    explorers_help_path.write_text(
+        "The following explorers are used: Project Explorer, Properties Explorer, Job Explorer.",
+        encoding="utf-8",
+    )
+    project_explorer_help_path.write_text(
+        (
+            "The Project Explorer enables you to access the documents associated with a project. "
+            "It shows project documents and folders."
+        ),
         encoding="utf-8",
     )
     help_path.write_text(
@@ -1450,8 +1477,10 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     )
     working_help_path.write_text(
         (
-            "Create the plane, select a single Miller plane, then use the 3D Viewer Recenter "
-            "dropdown and View Onto so the plane is parallel to the screen. "
+            "Create the plane and select a single Miller plane. Select Miller Plane from the "
+            "Filter dropdown list in the Properties Explorer. Use the options arrow associated "
+            "with the 3D Viewer Recenter button and select View Onto from the dropdown list so "
+            "the plane is parallel to the screen. "
             "The Object Tree parents are Miller Parallel Planes and Miller Family."
         ),
         encoding="utf-8",
@@ -1488,9 +1517,17 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     ]
     assert evidence["miller_plane_command_registered"] is True
     assert evidence["tree_explorer_command_registered"] is True
+    assert evidence["tree_explorer_component_hidden"] is True
+    assert evidence["public_explorer_inventory_verified"] is True
+    assert evidence["public_explorer_inventory_excludes_tree"] is True
+    assert evidence["project_explorer_documents_only_verified"] is True
     assert evidence["properties_explorer_command_registered"] is True
     assert evidence["miller_plane_create_workflow_verified"] is True
     assert evidence["miller_plane_selection_view_onto_workflow_verified"] is True
+    assert (
+        evidence["viewport_miller_plane_selection_properties_workflow_verified"]
+        is True
+    )
     assert evidence["object_tree_hierarchy_help_verified"] is True
     assert evidence["native_view_roll_policy_documented"] is True
 

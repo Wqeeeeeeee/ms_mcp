@@ -139,14 +139,15 @@ It must show A left-down, B right-down, C up, restore Angle to 45 degrees,
 preserve Screen factor 2.0, and close Movement.
 
 `crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
-Miller Plane, Tree Explorer, Properties Explorer, and View Onto registry/help
-evidence is necessary but not sufficient. Automatic replay also requires a
-current `gui_view_replay_runtime_preflight.json` observation whose revision,
-wrapper handle/title, and single-window binding still match. The observation
-must prove that Reset View, Tools > Miller Planes, the `Miller Planes` dialog,
-`MillerPlanesCtl`, `TxtHKL`, `CmdCreate`, Tree Explorer, Properties Explorer,
-and View Onto are present at runtime. Missing, incomplete, or stale evidence
-returns `runtime_ui_preflight_required` and keeps `automation_ready=false`.
+Miller Plane, Properties Explorer, and View Onto registry/help evidence is
+necessary but not sufficient. Automatic replay also requires a current
+`gui_view_replay_runtime_preflight.json` observation whose revision, wrapper
+handle/title, and single-window binding still match. The observation must prove
+that Reset View, Tools > Miller Planes, the `Miller Planes` dialog,
+`MillerPlanesCtl`, `TxtHKL`, `CmdCreate`, Properties Explorer, View Onto, and
+one supported semantic plane-selection profile are present at runtime. Missing,
+incomplete, or stale evidence returns `runtime_ui_preflight_required` and keeps
+`automation_ready=false`.
 In that state, `replay_continuation.payload_hint_is_directly_callable=false`;
 the hint identifies the evidence schema and window binding but deliberately
 omits example `miller_plane_evidence` values.
@@ -159,17 +160,23 @@ exact named `Undo Create Miller Plane`, verify a clean document, no temporary
 node, and an unchanged structure hash, then abort the replay attempt and run
 the preflight again.
 
-After that gate passes, the recipe resets the view, creates exactly one
-temporary plane with the requested three-index dialog values, isolates its
-new `<Miller Family>/<Miller Parallel Planes>/<Miller Plane>` leaf by Object
-Tree before/after diff, selects the exact semantic item rectangle with no
-modifiers, verifies `Filter=Miller Plane` and the expected Miller label, and
-invokes the named 3D Viewer Recenter > View Onto item. It captures the aligned
-view before cleanup, then accepts only whitelisted View Onto/Create Miller
-Plane undo labels and requires the document to be clean, the temporary tree
-node to be gone, the reset view baseline to be restored, and the wrapper
-source structure SHA-256 to be unchanged. These observations are submitted in
-`miller_plane_evidence`.
+After that gate passes, the recipe resets the view and creates exactly one
+temporary plane with the requested three-index dialog values. On an installation
+that exposes Object Tree, it may isolate the exact new
+`<Miller Family>/<Miller Parallel Planes>/<Miller Plane>` leaf by before/after
+diff and select its semantic item rectangle. The local MS 20.1 installation
+instead verifies that Object Tree is hidden and that Project Explorer contains
+project documents, so Project Explorer must not be used as a substitute. Its
+supported `viewport_unique_plane_properties_verified` profile captures fresh
+screenshots before and after creation, derives one unique newly rendered plane
+region, selects only that fresh region with no modifiers, and verifies
+`Filter=Miller Plane` plus the expected Miller label in Properties Explorer.
+Only then may it invoke the named 3D Viewer Recenter > View Onto item. It
+captures the aligned view before cleanup, then accepts only observed whitelisted
+View Onto/Create Miller Plane/Reset View undo labels (plus Recenter when present)
+and requires the document to be clean, no temporary plane to remain, the reset
+view baseline to be restored, and the wrapper source structure SHA-256 to be
+unchanged. These observations are submitted in `miller_plane_evidence`.
 
 Native View Onto guarantees the requested reciprocal-plane normal, but local
 help documents that its in-plane roll uses the smallest acute angle from the

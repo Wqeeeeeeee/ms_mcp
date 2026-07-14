@@ -99,15 +99,20 @@ for `back`, `right`, `left`, `top`, `bottom`, and staged `isometric`. The receip
 must prove the exact key sequence or stages, Reset precondition, angle, no
 modifiers, setting restoration, and visual axis/projection match.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
-Miller Plane/Object Tree/Properties/View Onto evidence and a current-window
-`runtime_ui_evidence` probe are both verified. Protocol acceptance checks that
-the prepare-tool field is discoverable and strict (`extra="forbid"`). Runtime
-evidence must bind the exact revision and wrapper handle/title, verify the
-required live controls, and use the `Alt+T`, then `M` dialog path. Static
-registry/help files alone never satisfy this gate. The record-tool schema also
-exposes strict `miller_plane_evidence`; runtime acceptance additionally requires exact
-plane selection, pre-cleanup screenshot, whitelisted cleanup, restored
-document/tree/view state, and an unchanged wrapper-source SHA-256. The camera
+Miller Plane/Properties/View Onto evidence, one supported semantic selection
+profile, and a current-window `runtime_ui_evidence` probe are all verified.
+Protocol acceptance checks that the prepare-tool field and its nested viewport
+probe are discoverable and strict (`extra="forbid"`). Runtime evidence must bind
+the exact revision and wrapper handle/title, verify the required live controls,
+and use the `Alt+T`, then `M` dialog path. Static registry/help files alone never
+satisfy this gate. The MS 20.1 viewport profile additionally requires fresh
+before/after screenshot hit testing, unique transient-plane selection,
+Properties filter/label verification, native View Onto evidence, whitelisted
+undo labels, and equal before/after/current structure hashes. Project Explorer
+is not accepted as Object Tree. The record-tool schema also exposes strict
+`miller_plane_evidence`; runtime acceptance additionally requires exact plane
+selection, pre-cleanup screenshot, whitelisted cleanup including Reset View,
+restored document/temporary-plane/view state, and an unchanged wrapper-source SHA-256. The camera
 scope is plane-normal plus native MS roll rather than exact analytic up/right.
 The same schema supports crystallographic directions only when the prepared
 recipe reports an exact direct-direction/reciprocal-normal collinearity

@@ -44,15 +44,23 @@ def _verified_view_command_evidence() -> dict:
         "tree_explorer_registry_path": "C:\\Materials Studio\\SMTreeExplorer.xml",
         "tree_explorer_registry_found": True,
         "tree_explorer_command_registered": True,
+        "tree_explorer_component_path": "C:\\Materials Studio\\SMTreeExplorer.xml",
+        "tree_explorer_component_hidden": True,
         "properties_explorer_registry_path": "C:\\Materials Studio\\SMGenPropEditor.xml",
         "properties_explorer_registry_found": True,
         "properties_explorer_command_registered": True,
+        "explorers_help_path": "C:\\Materials Studio\\explorers.htm",
+        "public_explorer_inventory_verified": True,
+        "public_explorer_inventory_excludes_tree": True,
+        "project_explorer_help_path": "C:\\Materials Studio\\projectexplorer.htm",
+        "project_explorer_documents_only_verified": True,
         "miller_plane_create_help_path": "C:\\Materials Studio\\tskmillerplanes_create.htm",
         "miller_plane_create_help_found": True,
         "miller_plane_create_workflow_verified": True,
         "miller_plane_working_help_path": "C:\\Materials Studio\\tskmillerplanes_working.htm",
         "miller_plane_working_help_found": True,
         "miller_plane_selection_view_onto_workflow_verified": True,
+        "viewport_miller_plane_selection_properties_workflow_verified": True,
         "object_tree_hierarchy_help_verified": True,
         "positioning_help_path": "C:\\Materials Studio\\settingpositionandorientation.htm",
         "positioning_help_found": True,
@@ -92,11 +100,48 @@ def _complete_miller_runtime_ui_evidence(*, revision: int, window: WindowInfo) -
     }
 
 
+def _complete_miller_viewport_runtime_ui_evidence(
+    *,
+    revision: int,
+    window: WindowInfo,
+    structure_path: Path,
+) -> dict:
+    evidence = _complete_miller_runtime_ui_evidence(revision=revision, window=window)
+    artifact_hash = hashlib.sha256(structure_path.read_bytes()).hexdigest()
+    evidence["tree_explorer_menu_observed"] = False
+    evidence["viewport_selection_probe"] = {
+        "selection_method": "viewport_unique_transient_plane_properties_verified",
+        "probe_miller_indices": [1, 0, 0],
+        "dialog_miller_indices": [1, 0, 0],
+        "unique_transient_plane_visual_target_observed": True,
+        "viewport_plane_selection_observed": True,
+        "properties_selection_verified": True,
+        "view_onto_popup_menu_observed": True,
+        "hit_test_basis": (
+            "fresh_before_after_screenshot_unique_transient_plane_region"
+        ),
+        "properties_filter": "Miller Plane",
+        "properties_miller_label": "(100)",
+        "view_onto_command_id": "cmdViewer3DViewOnto",
+        "undo_labels_observed": [
+            "Undo Reset View",
+            "Undo View Onto Miller Plane",
+            "Undo Recenter",
+            "Undo Create Miller Plane",
+        ],
+        "structure_artifact_path": str(structure_path),
+        "structure_artifact_sha256_before": artifact_hash,
+        "structure_artifact_sha256_after": artifact_hash,
+    }
+    return evidence
+
+
 def _verified_miller_runtime_ui_preflight() -> dict:
     return {
         "status": "verified_complete",
         "binding_verified": True,
         "automation_gate_satisfied": True,
+        "selection_profile": "object_tree_exact_item",
         "artifact_path": "C:\\workspace\\gui_view_replay_runtime_preflight.json",
         "block_reasons": [],
     }
@@ -1543,6 +1588,135 @@ def test_miller_runtime_ui_preflight_is_bound_persisted_and_revalidated(
     )
 
 
+def test_miller_viewport_properties_probe_unblocks_ms20_without_tree_explorer(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    schema = server.GuiMillerPlaneRuntimeUiEvidenceInput.model_json_schema()
+    assert schema["additionalProperties"] is False
+    assert schema["$defs"]["GuiMillerPlaneViewportSelectionProbeInput"][
+        "additionalProperties"
+    ] is False
+
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    structure_path = Path(created["planned_outputs"]["structure"])
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        structure_path.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=676,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+
+    incomplete = _complete_miller_viewport_runtime_ui_evidence(
+        revision=created["revision"],
+        window=target_window,
+        structure_path=structure_path,
+    )
+    incomplete["viewport_selection_probe"]["properties_selection_verified"] = False
+    blocked = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=incomplete,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert blocked["ok"] is True
+    assert blocked["runtime_ui_preflight"]["automation_gate_satisfied"] is False
+    assert (
+        "runtime_viewport_properties_selection_verified_not_verified"
+        in blocked["runtime_ui_preflight"]["block_reasons"]
+    )
+
+    decoy_structure = tmp_path / "outputs" / "decoy_structure.cif"
+    decoy_structure.parent.mkdir(parents=True, exist_ok=True)
+    decoy_structure.write_text("data_decoy\n", encoding="utf-8")
+    wrong_artifact = _complete_miller_viewport_runtime_ui_evidence(
+        revision=created["revision"],
+        window=target_window,
+        structure_path=decoy_structure,
+    )
+    wrong_artifact_result = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=wrong_artifact,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert wrong_artifact_result["ok"] is True
+    assert (
+        "runtime_viewport_structure_artifact_path_mismatch"
+        in wrong_artifact_result["runtime_ui_preflight"]["block_reasons"]
+    )
+    assert wrong_artifact_result["runtime_ui_preflight"]["binding"][
+        "target_structure_artifact_path"
+    ] == str(structure_path.resolve())
+
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=_complete_miller_viewport_runtime_ui_evidence(
+            revision=created["revision"],
+            window=target_window,
+            structure_path=structure_path,
+        ),
+        working_dir=str(tmp_path),
+    )
+
+    assert prepared["ok"] is True
+    preflight = prepared["runtime_ui_preflight"]
+    assert preflight["status"] == "verified_complete"
+    assert preflight["automation_gate_satisfied"] is True
+    assert preflight["selection_profile"] == (
+        "viewport_unique_plane_properties_verified"
+    )
+    assert "runtime_tree_explorer_menu_not_observed" not in preflight["block_reasons"]
+    recipe = prepared["manifest"]["views"][0]["execution_recipe"]
+    assert recipe["automation_ready"] is True
+    assert recipe["selection_method"] == (
+        "viewport_unique_transient_plane_properties_verified"
+    )
+    assert recipe["selection_path_suffix"] is None
+    assert recipe["viewport_selection_contract"]["hit_test_basis"] == (
+        "fresh_before_after_screenshot_unique_transient_plane_region"
+    )
+    assert "cmdTEToggleExplorer" not in recipe["supporting_native_command_ids"]
+    assert "capture_fresh_after_create_screenshot" in recipe["action_sequence"]
+    assert recipe["transient_change_contract"]["required_undo_labels"] == [
+        "Undo View Onto Miller Plane",
+        "Undo Create Miller Plane",
+        "Undo Reset View",
+    ]
+    artifact = json.loads(
+        Path(prepared["runtime_ui_preflight_path"]).read_text(encoding="utf-8")
+    )
+    assert artifact["schema_version"] == 2
+    assert artifact["evidence"]["viewport_selection_probe"]["complete"] is True
+
+
 def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -1684,7 +1858,9 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         "structure_artifact_sha256_after": artifact_hash,
         "undo_labels_applied": [
             "Undo View Onto Miller Plane",
+            "Undo Recenter",
             "Undo Create Miller Plane",
+            "Undo Reset View",
         ],
     }
     wrong_indices = dict(complete_evidence)
@@ -1791,6 +1967,168 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert len(history) == 1
 
 
+def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cleanup(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    structure_path = Path(created["planned_outputs"]["structure"])
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        structure_path.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=708,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+    screenshot = tmp_path / "screenshots" / "crystal_plane_100_viewport.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    artifact_hash = hashlib.sha256(structure_path.read_bytes()).hexdigest()
+
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=_complete_miller_viewport_runtime_ui_evidence(
+            revision=created["revision"],
+            window=target_window,
+            structure_path=structure_path,
+        ),
+        working_dir=str(tmp_path),
+    )
+    assert prepared["ok"] is True
+    assert prepared["manifest"]["views"][0]["execution_recipe"]["selection_method"] == (
+        "viewport_unique_transient_plane_properties_verified"
+    )
+
+    evidence = {
+        "miller_plane_indices": [1, 0, 0],
+        "dialog_miller_indices": [1, 0, 0],
+        "created_plane_count": 1,
+        "selected_plane_count": 1,
+        "miller_plane_count_before": 0,
+        "miller_plane_count_after_create": 1,
+        "miller_plane_count_after_cleanup": 0,
+        "selection_method": "viewport_unique_transient_plane_properties_verified",
+        "viewport_hit_test_basis": (
+            "fresh_before_after_screenshot_unique_transient_plane_region"
+        ),
+        "fresh_before_after_screenshots_observed": True,
+        "unique_transient_plane_region_observed": True,
+        "properties_selection_verified": True,
+        "view_onto_popup_menu_observed": True,
+        "dialog_show_set_of_parallel_planes": False,
+        "dialog_show_symmetry_images": False,
+        "properties_filter": "Miller Plane",
+        "properties_miller_label": "(100)",
+        "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
+        "plane_normal_matches_manifest": True,
+        "analytic_in_plane_basis_matches_manifest": False,
+        "native_in_plane_roll_policy_observed": True,
+        "reset_view_before_alignment": True,
+        "screenshot_captured_before_cleanup": True,
+        "document_was_clean_before_replay": True,
+        "temporary_miller_plane_cleanup_verified": True,
+        "no_temporary_miller_nodes_remaining": True,
+        "document_clean_after_replay": True,
+        "post_replay_view_restored": True,
+        "structure_artifact_path": str(structure_path),
+        "structure_artifact_sha256_before": artifact_hash,
+        "structure_artifact_sha256_after": artifact_hash,
+        "undo_labels_applied": [
+            "Undo View Onto Miller Plane",
+            "Undo Recenter",
+            "Undo Create Miller Plane",
+            "Undo Reset View",
+        ],
+    }
+
+    wrong_method = dict(evidence)
+    wrong_method["selection_method"] = "object_tree_exact_item_rect_semantic_click"
+    wrong_method["object_tree_path_suffix"] = [
+        "<Miller Family>",
+        "<Miller Parallel Planes>",
+        "<Miller Plane>",
+    ]
+    wrong_method_result = server.material_studio_gui_record_view_replay(
+        view_name="crystal_plane_100",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="computer_use",
+        native_command_id="cmdViewer3DViewOnto",
+        modifier_keys=[],
+        screenshot_path=str(screenshot),
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        miller_plane_evidence=wrong_method,
+        working_dir=str(tmp_path),
+    )
+    assert wrong_method_result["ok"] is False
+    assert "does not match the prepared recipe" in wrong_method_result["error"]
+
+    parallel_set_enabled = dict(evidence)
+    parallel_set_enabled["dialog_show_set_of_parallel_planes"] = True
+    rejected = server.material_studio_gui_record_view_replay(
+        view_name="crystal_plane_100",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="computer_use",
+        native_command_id="cmdViewer3DViewOnto",
+        modifier_keys=[],
+        screenshot_path=str(screenshot),
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        miller_plane_evidence=parallel_set_enabled,
+        working_dir=str(tmp_path),
+    )
+    assert rejected["ok"] is True
+    assert rejected["accepted"] is False
+    assert "miller_plane_selection_evidence_incomplete" in rejected["rejection_reasons"]
+
+    recorded = server.material_studio_gui_record_view_replay(
+        view_name="crystal_plane_100",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="computer_use",
+        native_command_id="cmdViewer3DViewOnto",
+        modifier_keys=[],
+        screenshot_path=str(screenshot),
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        miller_plane_evidence=evidence,
+        working_dir=str(tmp_path),
+    )
+    assert recorded["ok"] is True
+    assert recorded["accepted"] is True
+    normalized = recorded["event"]["miller_plane_evidence"]
+    assert normalized["selection_evidence_matches_contract"] is True
+    assert normalized["selection_method"] == (
+        "viewport_unique_transient_plane_properties_verified"
+    )
+    assert normalized["undo_labels_match_contract"] is True
+    assert "Undo Recenter" in normalized["undo_labels_applied"]
+
+
 def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -1892,6 +2230,7 @@ def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidenc
         "undo_labels_applied": [
             "Undo View Onto Miller Plane",
             "Undo Create Miller Plane",
+            "Undo Reset View",
         ],
     }
     missing_direction = server.material_studio_gui_record_view_replay(
@@ -4842,7 +5181,16 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy["crystallographic_plane_recipe"] == {
         "view_name_pattern": "crystal_plane_*",
         "native_command_id": "cmdViewer3DViewOnto",
-        "selection_method": "object_tree_exact_item_rect_semantic_click",
+        "selection_methods": [
+            "object_tree_exact_item_rect_semantic_click",
+            "viewport_unique_transient_plane_properties_verified",
+        ],
+        "materials_studio_20_1_verified_selection_method": (
+            "viewport_unique_transient_plane_properties_verified"
+        ),
+        "viewport_hit_test_basis": (
+            "fresh_before_after_screenshot_unique_transient_plane_region"
+        ),
         "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
         "requires_miller_plane_evidence": True,
         "requires_current_bound_runtime_ui_preflight": True,
@@ -4850,6 +5198,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "miller_planes_dialog_invocation": ["Alt+T", "M"],
         "pointer_or_accessibility_menu_click_allowed": False,
         "temporary_plane_cleanup_required": True,
+        "required_undo_labels": [
+            "Undo View Onto Miller Plane",
+            "Undo Create Miller Plane",
+            "Undo Reset View",
+        ],
+        "optional_observed_undo_labels": ["Undo Recenter"],
         "structure_artifact_sha256_must_remain_unchanged": True,
         "exact_analytic_in_plane_roll_required": False,
     }
@@ -4857,7 +5211,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "view_name_pattern": "crystal_*",
         "eligibility_status": "exact_integer_plane_collinear",
         "native_command_id": "cmdViewer3DViewOnto",
-        "selection_method": "object_tree_exact_item_rect_semantic_click",
+        "selection_methods": [
+            "object_tree_exact_item_rect_semantic_click",
+            "viewport_unique_transient_plane_properties_verified",
+        ],
         "camera_match_scope": (
             "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
         ),

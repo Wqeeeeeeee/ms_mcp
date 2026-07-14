@@ -171,15 +171,21 @@ checks. Isometric uses a verified staged recipe: Reset, `45 degrees: Up x2,
 Left x3`, then `35.26438968 degrees: Down x1`; it must restore the Movement
 angle to 45 degrees, preserve Screen factor 2.0, close Movement, and verify A
 left-down, B right-down, C up. `crystal_plane_*` views can also become
-automatic-ready when the installed Miller Plane/Object Tree/Properties/View
-Onto evidence is complete and a current-window `runtime_ui_evidence` probe is
-bound to the exact revision and wrapper handle/title. Static registry/help
-evidence alone is insufficient. The dialog must be opened with `Alt+T`, then
-`M`; pointer/accessibility menu clicks are prohibited because they can click
-through and create a default plane. Any unexpected plane must be removed with
-the exact named undo and the replay attempt must stop. The normal recipe creates one temporary plane, selects
-its exact Object Tree leaf, captures the View Onto result, and records strict
-`miller_plane_evidence` proving cleanup and an unchanged structure hash. The
+automatic-ready when the installed Miller Plane/Properties/View Onto evidence
+is complete, a supported semantic selection profile is verified, and a
+current-window `runtime_ui_evidence` probe is bound to the exact revision and
+wrapper handle/title. Static registry/help evidence alone is insufficient. The
+dialog must be opened with `Alt+T`, then `M`; pointer/accessibility menu clicks
+are prohibited because they can click through and create a default plane. Any
+unexpected plane must be removed with the exact named undo and the replay
+attempt must stop. On versions that expose Object Tree, the recipe may select
+its exact new leaf. The verified MS 20.1 fallback instead derives one unique
+transient-plane region from fresh before/after screenshots, selects it without
+modifiers, and requires Properties Explorer to show `Filter=Miller Plane` and
+the exact Miller label before the named View Onto action. Project Explorer is
+not an Object Tree substitute, and old viewport coordinates are never reused.
+The recipe records strict `miller_plane_evidence` proving exact cleanup, Reset
+View restoration, and an unchanged structure hash. The
 camera receipt verifies the reciprocal-plane normal plus MS native in-plane
 roll; it does not misreport exact analytic up/right agreement. A lattice
 direction `crystal_*` view can use the same transient-plane workflow only when

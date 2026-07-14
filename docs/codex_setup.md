@@ -150,7 +150,7 @@ submit them back to the prepare tool. A complete payload has this shape:
     "miller_planes_dialog_observed": true,
     "miller_indices_control_observed": true,
     "create_button_observed": true,
-    "tree_explorer_menu_observed": true,
+    "tree_explorer_menu_observed": false,
     "properties_explorer_menu_observed": true,
     "view_onto_control_observed": true,
     "pointer_menu_click_through_risk_observed": true,
@@ -163,26 +163,59 @@ submit them back to the prepare tool. A complete payload has this shape:
     "miller_planes_dialog_control_id": "MillerPlanesCtl",
     "miller_indices_control_id": "TxtHKL",
     "create_button_control_id": "CmdCreate",
-    "selection_modifier_keys": []
+    "selection_modifier_keys": [],
+    "viewport_selection_probe": {
+      "selection_method": "viewport_unique_transient_plane_properties_verified",
+      "probe_miller_indices": [1, 0, 0],
+      "dialog_miller_indices": [1, 0, 0],
+      "unique_transient_plane_visual_target_observed": true,
+      "viewport_plane_selection_observed": true,
+      "properties_selection_verified": true,
+      "view_onto_popup_menu_observed": true,
+      "hit_test_basis": "fresh_before_after_screenshot_unique_transient_plane_region",
+      "properties_filter": "Miller Plane",
+      "properties_miller_label": "(100)",
+      "view_onto_command_id": "cmdViewer3DViewOnto",
+      "undo_labels_observed": [
+        "Undo Reset View",
+        "Undo View Onto Miller Plane",
+        "Undo Recenter",
+        "Undo Create Miller Plane"
+      ],
+      "structure_artifact_path": "C:\\Users\\user\\ms-mcp-workspace\\projects\\current\\outputs\\r001\\structure_r001.cif",
+      "structure_artifact_sha256_before": "0000000000000000000000000000000000000000000000000000000000000000",
+      "structure_artifact_sha256_after": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
   }
 }
 ```
 
-Report observed values only. Static XML/help evidence cannot replace this
-probe. Never click Tools > Miller Planes with the pointer or an accessibility
-menu action; use `Alt+T`, then `M`. If that invocation creates an unexpected
-plane, use only the exact named `Undo Create Miller Plane`, verify cleanup, set
-the cleanup evidence truthfully, and abort the replay attempt.
+Report observed values only, and replace the example path and zero hashes with
+the exact current workspace artifact and its observed SHA-256 values. Static
+XML/help evidence cannot replace this probe. Never click Tools > Miller Planes
+with the pointer or an accessibility menu action; use `Alt+T`, then `M`. If that
+invocation creates an unexpected plane, use only the exact named
+`Undo Create Miller Plane`, verify cleanup, set the cleanup evidence truthfully,
+and abort the replay attempt. The installed MS 20.1 Object Tree component is
+hidden, and Project Explorer lists project documents rather than structure
+objects. Do not set `tree_explorer_menu_observed=true` for Project Explorer.
+The nested viewport probe is accepted only after fresh before/after screenshots
+isolate one unique new plane, a no-modifier selection is semantically verified
+in Properties Explorer, the native View Onto popup is observed, and the source
+structure hash is unchanged.
 While this gate is blocked, the continuation receipt sets
 `payload_hint_is_directly_callable=false` and does not supply record-evidence
 examples. Fill the strict runtime evidence schema from the current observation.
 For `crystal_plane_*`, submit the returned `miller_plane_evidence` only after
-observing every value. It binds the requested/dialog Miller indices, exact
-Object Tree leaf selection and Properties label, plane-normal/native-roll
-camera scope, screenshot timing, temporary-plane counts, whitelisted undo
-labels, clean document/tree/view restoration, and equal before/after SHA-256
-for the wrapper source structure. Do not reuse the payload hint's example
-counts without inspecting the current Object Tree. Exact analytic in-plane
+observing every value. It binds the requested/dialog Miller indices, the exact
+prepared selection method, Properties label, plane-normal/native-roll camera
+scope, screenshot timing, temporary-plane counts, whitelisted undo labels,
+clean document/temporary-plane/view restoration, and equal before/after SHA-256
+for the wrapper source structure. For the viewport method, also record the exact
+hit-test basis, both fresh screenshots, unique transient-plane region,
+Properties selection, native popup, and disabled parallel/symmetry options.
+Do not reuse the payload hint's example counts or old viewport coordinates.
+Exact analytic in-plane
 roll is optional and must be reported separately from the required plane
 normal match. Lattice-direction views use this workflow only when their
 execution recipe reports `exact_integer_plane_collinear`; then submit the

@@ -3061,6 +3061,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "event_journal_reconciled_on_status": True,
             "event_journal_divergence_invalidates_view_acceptance": True,
             "event_journal_divergence_invalidates_visual_confirmation": True,
+            "prepare_and_record_writes_serialized": True,
+            "write_transaction_lock_scope": "project_revision",
+            "write_transaction_lock_kernel_released_on_process_exit": True,
             "optional_keyboard_evidence_fields": [
                 "key_sequence",
                 "reset_before_key_sequence",
@@ -5906,6 +5909,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "event_journal_divergence_preserves_append_only_history": True,
                 "event_journal_divergence_requires_reverification": True,
                 "event_journal_divergence_invalidates_visual_confirmation": True,
+                "prepare_and_record_writes_serialized": True,
+                "write_transaction_lock_scope": "project_revision",
+                "write_transaction_lock_kernel_released_on_process_exit": True,
                 "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
                 "runtime_accessibility_preflight_filename": (
                     "gui_view_replay_accessibility_preflight.json"

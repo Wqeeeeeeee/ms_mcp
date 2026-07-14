@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -18,8 +19,10 @@ import struct
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Protocol
 from xml.sax.saxutils import escape as xml_escape
@@ -198,6 +201,8 @@ VIEW_REPLAY_EVENT_RECORD_SCHEMA_VERSION = 1
 VIEW_REPLAY_EVENT_JOURNAL_MAX_BYTES = 16 * 1024 * 1024
 VIEW_REPLAY_EVENT_JOURNAL_MAX_LINES = 10_000
 VIEW_REPLAY_EVENT_JOURNAL_MAX_REPORTED_ISSUES = 100
+VIEW_REPLAY_WRITE_LOCK_TIMEOUT_SECONDS = 10.0
+VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS = 0.05
 REVIEWED_COPY_SCRIPT_INTEGRITY_ARTIFACT_KINDS = {
     "screenshot",
     "copy_script",
@@ -1903,6 +1908,123 @@ class WindowsGuiBackend:
         return dismissed
 
 
+def _lock_file_descriptor_nonblocking(file_descriptor: int) -> None:
+    """Acquire one kernel-managed advisory byte lock without blocking."""
+
+    os.lseek(file_descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file_descriptor, msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file_descriptor(file_descriptor: int) -> None:
+    """Release the platform advisory lock held by this descriptor."""
+
+    os.lseek(file_descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file_descriptor, msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file_descriptor, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _view_replay_write_lock(
+    path: Path,
+    *,
+    workspace_root: Path,
+    timeout_seconds: float,
+):
+    """Serialize manifest/journal writers across threads and MCP processes."""
+
+    resolved = path.expanduser().resolve()
+    _ensure_inside(workspace_root, resolved)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor = os.open(resolved, os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
+    started = time.monotonic()
+    try:
+        if os.fstat(file_descriptor).st_size == 0:
+            os.write(file_descriptor, b"\0")
+            os.fsync(file_descriptor)
+        deadline = started + max(float(timeout_seconds), 0.0)
+        while True:
+            try:
+                _lock_file_descriptor_nonblocking(file_descriptor)
+            except OSError as exc:
+                busy = exc.errno in {errno.EACCES, errno.EAGAIN}
+                if not busy:
+                    raise GuiError(
+                        f"view replay write lock could not be acquired: {resolved}"
+                    ) from exc
+                if time.monotonic() >= deadline:
+                    raise GuiError(
+                        "view replay write transaction is busy; retry after the current "
+                        "prepare or record operation completes"
+                    ) from exc
+                time.sleep(VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS)
+                continue
+            acquired = True
+            break
+        yield {
+            "path": str(resolved),
+            "scope": "project_revision",
+            "waited_seconds": round(time.monotonic() - started, 6),
+            "timeout_seconds": float(timeout_seconds),
+        }
+    finally:
+        if acquired:
+            try:
+                _unlock_file_descriptor(file_descriptor)
+            except OSError:
+                pass
+        os.close(file_descriptor)
+
+
+def _serialize_view_replay_write(method: Any) -> Any:
+    """Run one manifest-mutating controller method under its revision lock."""
+
+    @wraps(method)
+    def wrapped(
+        self: "MaterialsStudioGuiController",
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        project_id = kwargs.get("project_id")
+        revision = kwargs.get("revision")
+        if project_id is None or revision is None:
+            raise GuiError(
+                "view replay write serialization requires project_id and revision"
+            )
+        safe_project = sanitize_project_id(str(project_id))
+        manifest_path = self._view_replay_manifest_path(
+            project_id=safe_project,
+            revision=int(revision),
+        )
+        lock_path = manifest_path.with_name("gui_view_replay_transaction.lock")
+        with _view_replay_write_lock(
+            lock_path,
+            workspace_root=self.workspace_root,
+            timeout_seconds=VIEW_REPLAY_WRITE_LOCK_TIMEOUT_SECONDS,
+        ) as transaction:
+            result = method(self, *args, **kwargs)
+        if isinstance(result, dict):
+            result["write_transaction"] = transaction
+        return result
+
+    return wrapped
+
+
 class MaterialsStudioGuiController:
     """MCP 工具使用的高级 GUI 会话助手。"""
 
@@ -2631,6 +2753,7 @@ class MaterialsStudioGuiController:
         self._write_log("copy_script_assist", project_id=project_id, revision=revision, payload=payload)
         return payload
 
+    @_serialize_view_replay_write
     def prepare_view_replay(
         self,
         audit: dict[str, Any],
@@ -3272,6 +3395,7 @@ class MaterialsStudioGuiController:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    @_serialize_view_replay_write
     def record_view_replay(
         self,
         *,

@@ -119,6 +119,10 @@ and durable JSONL copy must reconcile one-to-one on live status. Missing,
 duplicate, malformed, or digest-mismatched journal records block trusted view
 acceptance and replay-derived visual confirmation without rewriting either
 source.
+Protocol acceptance also requires project/revision-scoped serialization for
+prepare and record writes. Two concurrent records must both survive in the
+manifest and JSONL journal, prepare must preserve an event committed ahead of
+it, and lock timeout must occur before a journal append.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

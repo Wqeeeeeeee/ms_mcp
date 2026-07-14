@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -2047,6 +2049,207 @@ def test_record_view_replay_journals_before_manifest_publish_failure(
     assert refreshed["event_journal"]["consistency_status"] == (
         "consistent_with_historical_divergence"
     )
+
+
+def test_view_replay_write_lock_serializes_concurrent_records(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    prepared = controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+    original_append = gui_module._append_view_replay_event_journal
+    first_append_started = threading.Event()
+    release_first_append = threading.Event()
+    contention_observed = threading.Event()
+    call_count = 0
+    call_count_lock = threading.Lock()
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def delayed_first_append(*args: object, **kwargs: object) -> None:
+        nonlocal call_count
+        with call_count_lock:
+            call_count += 1
+            current_call = call_count
+        if current_call == 1:
+            first_append_started.set()
+            assert release_first_append.wait(timeout=5.0)
+        original_append(*args, **kwargs)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(
+        gui_module,
+        "_append_view_replay_event_journal",
+        delayed_first_append,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_lock_file_descriptor_nonblocking",
+        observed_lock_attempt,
+    )
+    record_kwargs = {
+        "project_id": "view_proj",
+        "revision": 2,
+        "view_name": "crystal_100",
+        "source": "computer_use",
+        "model_visible": True,
+        "camera_matches_manifest": True,
+    }
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            controller.record_view_replay,
+            **record_kwargs,
+            note="first concurrent event",
+        )
+        assert first_append_started.wait(timeout=5.0)
+        second = executor.submit(
+            controller.record_view_replay,
+            **record_kwargs,
+            note="second concurrent event",
+        )
+        assert contention_observed.wait(timeout=5.0)
+        assert second.done() is False
+        release_first_append.set()
+        first_result = first.result(timeout=5.0)
+        second_result = second.result(timeout=5.0)
+
+    manifest = json.loads(Path(prepared["manifest_path"]).read_text(encoding="utf-8"))
+    journal_events = [
+        json.loads(line)
+        for line in Path(first_result["events_path"]).read_text(encoding="utf-8").splitlines()
+    ]
+    manifest_ids = [event["event_id"] for event in manifest["replay_events"]]
+    journal_ids = [event["event_id"] for event in journal_events]
+    assert len(manifest_ids) == 2
+    assert len(set(manifest_ids)) == 2
+    assert journal_ids == manifest_ids
+    assert second_result["replay_summary"]["event_count"] == 2
+    assert second_result["replay_summary"]["accepted_event_count"] == 2
+    assert second_result["event_journal"]["journal_matched_event_count"] == 2
+    assert second_result["event_journal"]["consistency_status"] == "consistent"
+    assert first_result["write_transaction"]["path"] == second_result[
+        "write_transaction"
+    ]["path"]
+    assert second_result["write_transaction"]["waited_seconds"] > 0.0
+
+
+def test_view_replay_prepare_waits_for_record_and_preserves_the_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    audit = _view_replay_audit("view_proj", 2)
+    controller.prepare_view_replay(audit, project_id="view_proj", revision=2)
+    original_append = gui_module._append_view_replay_event_journal
+    append_started = threading.Event()
+    release_append = threading.Event()
+    contention_observed = threading.Event()
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def delayed_append(*args: object, **kwargs: object) -> None:
+        append_started.set()
+        assert release_append.wait(timeout=5.0)
+        original_append(*args, **kwargs)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(
+        gui_module,
+        "_append_view_replay_event_journal",
+        delayed_append,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_lock_file_descriptor_nonblocking",
+        observed_lock_attempt,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        recorded_future = executor.submit(
+            controller.record_view_replay,
+            project_id="view_proj",
+            revision=2,
+            view_name="crystal_100",
+            source="computer_use",
+            model_visible=True,
+            camera_matches_manifest=True,
+        )
+        assert append_started.wait(timeout=5.0)
+        prepared_future = executor.submit(
+            controller.prepare_view_replay,
+            audit,
+            project_id="view_proj",
+            revision=2,
+        )
+        assert contention_observed.wait(timeout=5.0)
+        assert prepared_future.done() is False
+        release_append.set()
+        recorded_future.result(timeout=5.0)
+        refreshed = prepared_future.result(timeout=5.0)
+
+    assert refreshed["manifest"]["preserved_replay_event_count"] == 1
+    assert refreshed["manifest"]["replay_summary"]["event_count"] == 1
+    assert refreshed["manifest"]["replay_summary"]["accepted_event_count"] == 1
+    assert refreshed["event_journal"]["journal_matched_event_count"] == 1
+    assert refreshed["event_journal"]["consistency_status"] == "consistent"
+    assert refreshed["write_transaction"]["waited_seconds"] > 0.0
+
+
+def test_view_replay_write_lock_times_out_without_partial_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    prepared = controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+    manifest_path = Path(prepared["manifest_path"])
+    lock_path = manifest_path.with_name("gui_view_replay_transaction.lock")
+    monkeypatch.setattr(gui_module, "VIEW_REPLAY_WRITE_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(gui_module, "VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS", 0.005)
+
+    with gui_module._view_replay_write_lock(
+        lock_path,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+    ):
+        with pytest.raises(GuiError, match="write transaction is busy"):
+            controller.record_view_replay(
+                project_id="view_proj",
+                revision=2,
+                view_name="crystal_100",
+                source="computer_use",
+                model_visible=True,
+                camera_matches_manifest=True,
+            )
+
+    events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
+    assert events_path.exists() is False
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="computer_use",
+        model_visible=True,
+        camera_matches_manifest=True,
+    )
+    assert recorded["accepted"] is True
+    assert recorded["event_journal"]["journal_matched_event_count"] == 1
 
 
 def test_record_view_replay_blocks_and_does_not_persist_unsafe_copy_script_text(

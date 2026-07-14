@@ -236,6 +236,9 @@ manifest and the durable `gui_view_replay_events.jsonl` journal. Status compares
 the two independent copies. Missing, duplicate, or changed journal records keep
 their historical files but no longer satisfy trusted view acceptance. Status is
 read-only and never repairs one copy from the other.
+Prepare and record writes for the same project/revision are serialized with an
+OS-managed advisory lock. Concurrent MCP calls therefore read the latest
+manifest in order, and a lock timeout fails before any event is appended.
 
 Conversation-style requests such as `continue the next GUI view replay` or
 `继续验证下一个 GUI 视角` route through the high-level live modeling tool. The

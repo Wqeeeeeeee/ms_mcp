@@ -69,6 +69,15 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["view_replay_confirmation_entry"][
         "event_journal_divergence_invalidates_visual_confirmation"
     ] is True
+    assert compact["view_replay_confirmation_entry"][
+        "prepare_and_record_writes_serialized"
+    ] is True
+    assert compact["view_replay_confirmation_entry"][
+        "write_transaction_lock_scope"
+    ] == "project_revision"
+    assert compact["view_replay_confirmation_entry"][
+        "write_transaction_lock_kernel_released_on_process_exit"
+    ] is True
     assert compact["view_replay_automation_policy"]["automatic_native_view_names"] == [
         "front",
         "back",

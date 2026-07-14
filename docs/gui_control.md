@@ -141,6 +141,13 @@ duplicate, or divergent copies set `event_journal_reverification_required` and
 invalidate replay-derived visual confirmation. Read-only status reports but does
 not reconcile files automatically; a new real observation is the recovery path.
 
+`prepare_view_replay` and `record_view_replay` share a project/revision-scoped
+kernel file lock. The lock covers each complete manifest mutation, including
+evidence persistence and journal publication. Concurrent callers are serialized;
+if the bounded wait expires, the operation fails before writing a partial event.
+The lock is released by the operating system when a process exits, and callers
+must not delete the persistent lock file to force progress.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

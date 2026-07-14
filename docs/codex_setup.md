@@ -209,6 +209,10 @@ Also inspect `gui_view_replay.event_journal.consistency_status` and
 append-only JSONL journal before manifest publication and are trusted only when
 the immutable event digests match. Do not copy a manifest event into the journal
 or vice versa to clear a mismatch; collect and record a fresh observed view.
+Prepare and record calls for one project/revision are serialized by a bounded
+kernel lock. A `view replay write transaction is busy` error means another write
+is active; retry the same observed payload after it completes, without deleting
+the lock file or editing the manifest/journal.
 
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and

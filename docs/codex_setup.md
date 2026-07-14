@@ -130,6 +130,52 @@ x2, Left x3`, followed by `35.26438968 degrees: Down x1`. Also submit
 `rotation_increment_restored_degrees: 45`, the returned Movement command and
 control IDs, `movement_screen_factor: 2.0`, and
 `movement_dialog_closed: true`.
+Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
+automatic-ready, observe the live controls on the exact current wrapper and
+submit them back to the prepare tool. A complete payload has this shape:
+
+```json
+{
+  "project_id": "current project id",
+  "revision": 1,
+  "views": ["crystal_plane_100"],
+  "runtime_ui_evidence": {
+    "source": "computer_use",
+    "expected_revision": 1,
+    "expected_window_handle": 12345,
+    "expected_window_title": "msmcp_r001_xxxxxxxxxx - Materials Studio",
+    "reset_view_control_observed": true,
+    "tools_miller_planes_menu_observed": true,
+    "miller_planes_keyboard_menu_path_verified": true,
+    "miller_planes_dialog_observed": true,
+    "miller_indices_control_observed": true,
+    "create_button_observed": true,
+    "tree_explorer_menu_observed": true,
+    "properties_explorer_menu_observed": true,
+    "view_onto_control_observed": true,
+    "pointer_menu_click_through_risk_observed": true,
+    "unexpected_plane_created_during_probe": false,
+    "unexpected_plane_cleanup_verified": false,
+    "document_clean_before_probe": true,
+    "document_clean_after_probe": true,
+    "miller_planes_menu_key_sequence": ["Alt+T", "M"],
+    "miller_planes_dialog_title": "Miller Planes",
+    "miller_planes_dialog_control_id": "MillerPlanesCtl",
+    "miller_indices_control_id": "TxtHKL",
+    "create_button_control_id": "CmdCreate",
+    "selection_modifier_keys": []
+  }
+}
+```
+
+Report observed values only. Static XML/help evidence cannot replace this
+probe. Never click Tools > Miller Planes with the pointer or an accessibility
+menu action; use `Alt+T`, then `M`. If that invocation creates an unexpected
+plane, use only the exact named `Undo Create Miller Plane`, verify cleanup, set
+the cleanup evidence truthfully, and abort the replay attempt.
+While this gate is blocked, the continuation receipt sets
+`payload_hint_is_directly_callable=false` and does not supply record-evidence
+examples. Fill the strict runtime evidence schema from the current observation.
 For `crystal_plane_*`, submit the returned `miller_plane_evidence` only after
 observing every value. It binds the requested/dialog Miller indices, exact
 Object Tree leaf selection and Properties label, plane-normal/native-roll

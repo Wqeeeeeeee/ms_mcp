@@ -161,6 +161,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "project_id",
             "revision",
             "views",
+            "runtime_ui_evidence",
             "working_dir",
             "response_mode",
         },
@@ -194,6 +195,10 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
         },
         "required": {"view_name"},
     },
+}
+
+_NESTED_FORBID_SCHEMA_EXPECTATIONS: dict[str, set[str]] = {
+    "material_studio_gui_prepare_view_replay": {"runtime_ui_evidence"},
 }
 
 
@@ -329,6 +334,22 @@ def _validate_tool_discovery(tool_map: dict[str, Tool]) -> dict[str, Any]:
                     "unexpected_required": unexpected_required,
                 }
             )
+        for property_name in sorted(_NESTED_FORBID_SCHEMA_EXPECTATIONS.get(tool_name, set())):
+            property_schema = (schema.get("properties") or {}).get(property_name)
+            resolved_schema = _resolve_object_schema(property_schema, schema)
+            if resolved_schema is None or resolved_schema.get("additionalProperties") is not False:
+                schema_errors.append(
+                    {
+                        "tool": tool_name,
+                        "property": property_name,
+                        "error": "nested_schema_must_forbid_additional_properties",
+                        "actual_additional_properties": (
+                            resolved_schema.get("additionalProperties")
+                            if isinstance(resolved_schema, dict)
+                            else None
+                        ),
+                    }
+                )
 
     return {
         "ok": not missing_tools and not annotation_errors and not schema_errors,
@@ -337,6 +358,33 @@ def _validate_tool_discovery(tool_map: dict[str, Tool]) -> dict[str, Any]:
         "annotation_errors": annotation_errors,
         "schema_errors": schema_errors,
     }
+
+
+def _resolve_object_schema(value: Any, root_schema: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve a nullable/ref property schema to its object definition."""
+
+    if not isinstance(value, dict):
+        return None
+    candidates = [value]
+    for union_key in ("anyOf", "oneOf"):
+        union = value.get(union_key)
+        if isinstance(union, list):
+            candidates.extend(item for item in union if isinstance(item, dict))
+    for candidate in candidates:
+        resolved = candidate
+        reference = candidate.get("$ref")
+        if isinstance(reference, str) and reference.startswith("#/"):
+            resolved_value: Any = root_schema
+            for part in reference[2:].split("/"):
+                if not isinstance(resolved_value, dict):
+                    resolved_value = None
+                    break
+                resolved_value = resolved_value.get(part.replace("~1", "/").replace("~0", "~"))
+            if isinstance(resolved_value, dict):
+                resolved = resolved_value
+        if resolved.get("type") == "object" or "properties" in resolved:
+            return resolved
+    return None
 
 
 async def _run_preview_calls(

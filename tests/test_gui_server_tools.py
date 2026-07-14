@@ -62,6 +62,46 @@ def _verified_view_command_evidence() -> dict:
     }
 
 
+def _complete_miller_runtime_ui_evidence(*, revision: int, window: WindowInfo) -> dict:
+    return {
+        "source": "computer_use",
+        "expected_revision": revision,
+        "expected_window_handle": window.handle,
+        "expected_window_title": window.title,
+        "reset_view_control_observed": True,
+        "tools_miller_planes_menu_observed": True,
+        "miller_planes_keyboard_menu_path_verified": True,
+        "miller_planes_dialog_observed": True,
+        "miller_indices_control_observed": True,
+        "create_button_observed": True,
+        "tree_explorer_menu_observed": True,
+        "properties_explorer_menu_observed": True,
+        "view_onto_control_observed": True,
+        "pointer_menu_click_through_risk_observed": True,
+        "unexpected_plane_created_during_probe": True,
+        "unexpected_plane_cleanup_verified": True,
+        "document_clean_before_probe": True,
+        "document_clean_after_probe": True,
+        "miller_planes_menu_key_sequence": ["Alt+T", "M"],
+        "miller_planes_dialog_title": "Miller Planes",
+        "miller_planes_dialog_control_id": "MillerPlanesCtl",
+        "miller_indices_control_id": "TxtHKL",
+        "create_button_control_id": "CmdCreate",
+        "selection_modifier_keys": [],
+        "note": "Runtime controls were observed on the exact current wrapper window.",
+    }
+
+
+def _verified_miller_runtime_ui_preflight() -> dict:
+    return {
+        "status": "verified_complete",
+        "binding_verified": True,
+        "automation_gate_satisfied": True,
+        "artifact_path": "C:\\workspace\\gui_view_replay_runtime_preflight.json",
+        "block_reasons": [],
+    }
+
+
 class FakeGuiBackend:
     supported = True
     unavailable_reason = None
@@ -980,9 +1020,20 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     }
     crystal_recipe = view_by_name["crystal_100"]["execution_recipe"]
     assert crystal_recipe["status"] == (
-        "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
+        "documented_crystal_direction_via_miller_plane_view_onto_recipe_unverified"
     )
-    assert crystal_recipe["automation_ready"] is True
+    assert crystal_recipe["automation_ready"] is False
+    assert "runtime_miller_plane_ui_preflight_missing" in crystal_recipe["block_reasons"]
+    assert crystal_recipe["miller_planes_dialog_invocation"]["key_sequence"] == [
+        "Alt+T",
+        "M",
+    ]
+    assert (
+        crystal_recipe["miller_planes_dialog_invocation"][
+            "pointer_or_accessibility_menu_click_allowed"
+        ]
+        is False
+    )
     assert crystal_recipe["selection_required"] is True
     assert crystal_recipe["recipe_kind"] == (
         "crystal_direction_via_collinear_miller_plane_view_onto"
@@ -1058,7 +1109,6 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "left",
         "bottom",
         "isometric",
-        "crystal_100",
     ]
 
     wrong_keys = server.material_studio_gui_record_view_replay(
@@ -1178,8 +1228,10 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "key_sequence": ["Down"],
         "modifier_keys": [],
     }
-    assert bottom_recorded["view_replay"]["replay_summary"]["automation_ready_pending_view_count"] == 2
-    assert recorded["view_replay"]["replay_summary"]["review_required_pending_view_names"] == []
+    assert bottom_recorded["view_replay"]["replay_summary"]["automation_ready_pending_view_count"] == 1
+    assert recorded["view_replay"]["replay_summary"]["review_required_pending_view_names"] == [
+        "crystal_100"
+    ]
 
     incomplete_isometric = server.material_studio_gui_record_view_replay(
         view_name="isometric",
@@ -1231,7 +1283,7 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert isometric_event["movement_screen_factor"] == 2.0
     assert isometric_event["movement_dialog_closed"] is True
     assert isometric_recorded["view_replay"]["replay_continuation"]["status"] == (
-        "automatic_recipe_ready"
+        "runtime_ui_preflight_required"
     )
     assert isometric_recorded["view_replay"]["replay_continuation"][
         "next_pending_view_name"
@@ -1239,7 +1291,25 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert isometric_recorded["view_replay"]["replay_continuation"][
         "recommended_action"
     ] == (
-        "execute_documented_direction_via_collinear_miller_plane_view_onto_recipe_cleanup_then_record_view"
+        "observe_current_window_miller_plane_controls_then_submit_bound_runtime_ui_evidence"
+    )
+    assert (
+        isometric_recorded["view_replay"]["replay_continuation"][
+            "next_automation_ready_view_name"
+        ]
+        is None
+    )
+    runtime_hint = isometric_recorded["view_replay"]["replay_continuation"][
+        "payload_hint"
+    ]
+    assert runtime_hint["runtime_ui_evidence_required"] is True
+    assert runtime_hint["observed_values_must_not_be_copied_from_record_payload_examples"] is True
+    assert "miller_plane_evidence" not in runtime_hint
+    assert (
+        isometric_recorded["view_replay"]["replay_continuation"][
+            "payload_hint_is_directly_callable"
+        ]
+        is False
     )
     assert len(json.dumps(isometric_recorded, ensure_ascii=False).encode("utf-8")) < (
         server.COMPACT_RESPONSE_MAX_BYTES
@@ -1287,12 +1357,190 @@ def test_miller_plane_recipe_requires_all_installed_selection_evidence() -> None
     hexagonal_recipe = gui_module._view_replay_execution_recipe(
         hexagonal_step,
         _verified_view_command_evidence(),
+        runtime_ui_preflight=_verified_miller_runtime_ui_preflight(),
     )
     assert hexagonal_recipe["automation_ready"] is True
     assert hexagonal_recipe["miller_plane_indices"] == [1, 0, -1, 0]
     assert hexagonal_recipe["dialog_miller_indices"] == [1, 0, 0]
     assert hexagonal_recipe["dialog_miller_indices_text"] == "1 0 0"
     assert hexagonal_recipe["properties_miller_label"] == "(100)"
+
+
+def test_miller_runtime_ui_preflight_is_bound_persisted_and_revalidated(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    assert (
+        server.GuiMillerPlaneRuntimeUiEvidenceInput.model_json_schema()[
+            "additionalProperties"
+        ]
+        is False
+    )
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=606,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+    incomplete_evidence = _complete_miller_runtime_ui_evidence(
+        revision=created["revision"],
+        window=target_window,
+    )
+    incomplete_evidence["tree_explorer_menu_observed"] = False
+
+    unclean_probe = _complete_miller_runtime_ui_evidence(
+        revision=created["revision"],
+        window=target_window,
+    )
+    unclean_probe["unexpected_plane_cleanup_verified"] = False
+    blocked_cleanup = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=unclean_probe,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert blocked_cleanup["ok"] is True
+    assert (
+        "runtime_unexpected_plane_cleanup_not_verified"
+        in blocked_cleanup["runtime_ui_preflight"]["block_reasons"]
+    )
+
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=incomplete_evidence,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert prepared["ok"] is True
+    assert prepared["runtime_ui_preflight"]["status"] == "verified_incomplete"
+    assert prepared["runtime_ui_preflight"]["binding_verified"] is True
+    assert prepared["runtime_ui_preflight"]["automation_gate_satisfied"] is False
+    assert (
+        "runtime_tree_explorer_menu_not_observed"
+        in prepared["runtime_ui_preflight"]["block_reasons"]
+    )
+    assert prepared["replay_continuation"]["status"] == "runtime_ui_preflight_required"
+    assert prepared["replay_continuation"]["recommended_mcp_tool"] == (
+        "material_studio_gui_prepare_view_replay"
+    )
+    assert prepared["replay_continuation"]["payload_hint_is_directly_callable"] is False
+    assert "miller_plane_evidence" not in prepared["replay_continuation"]["payload_hint"]
+    artifact_path = Path(prepared["runtime_ui_preflight_path"])
+    assert artifact_path.exists()
+    artifact_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+
+    reused = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert reused["ok"] is True
+    assert reused["runtime_ui_preflight"]["source"] == "persisted"
+    assert reused["runtime_ui_preflight"]["binding_verified"] is True
+    assert reused["runtime_ui_preflight"]["automation_gate_satisfied"] is False
+    live_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert live_status["ok"] is True
+    assert live_status["gui_view_replay"]["runtime_ui_preflight_exists"] is True
+    assert live_status["gui_view_replay"]["runtime_ui_preflight"]["status"] == (
+        "verified_incomplete"
+    )
+    assert live_status["gui_view_replay"]["replay_continuation"]["status"] == (
+        "runtime_ui_preflight_required"
+    )
+
+    mismatched = dict(incomplete_evidence)
+    mismatched["expected_window_handle"] = 999999
+    rejected = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        runtime_ui_evidence=mismatched,
+        working_dir=str(tmp_path),
+    )
+    assert rejected["ok"] is False
+    assert "observed_window_handle_mismatch" in rejected["error"]
+    assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() == artifact_hash
+
+    backend.window = WindowInfo(
+        handle=607,
+        title=target_window.title,
+        pid=target_window.pid,
+        rect=target_window.rect,
+    )
+    backend.windows = [backend.window]
+    stale = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert stale["ok"] is True
+    assert stale["runtime_ui_preflight"]["status"] == "stale_window_binding"
+    assert stale["runtime_ui_preflight"]["binding_verified"] is False
+    assert (
+        "runtime_ui_binding_observed_window_handle_mismatch"
+        in stale["runtime_ui_preflight"]["block_reasons"]
+    )
+
+    backend.window = WindowInfo(
+        handle=target_window.handle,
+        title=target_window.title,
+        pid=target_window.pid,
+        rect=target_window.rect,
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    backend.windows = [backend.window]
+    background = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert background["ok"] is True
+    assert background["runtime_ui_preflight"]["binding_verified"] is False
+    assert (
+        "runtime_ui_binding_target_window_not_foreground"
+        in background["runtime_ui_preflight"]["block_reasons"]
+    )
 
 
 def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
@@ -1337,6 +1585,10 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         project_id=created["project_id"],
         revision=created["revision"],
         views=["crystal_plane_100"],
+        runtime_ui_evidence=_complete_miller_runtime_ui_evidence(
+            revision=created["revision"],
+            window=target_window,
+        ),
         working_dir=str(tmp_path),
     )
 
@@ -1345,6 +1597,23 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     plane_recipe = view_by_name["crystal_plane_100"]["execution_recipe"]
     assert plane_recipe["automation_ready"] is True
     assert plane_recipe["status"] == "documented_miller_plane_view_onto_recipe_ready"
+    assert plane_recipe["runtime_ui_preflight"]["automation_gate_satisfied"] is True
+    assert plane_recipe["miller_planes_dialog_invocation"] == {
+        "method": "keyboard_menu_mnemonic",
+        "menu_path": ["Tools", "Miller Planes"],
+        "key_sequence": ["Alt+T", "M"],
+        "dialog_title": "Miller Planes",
+        "dialog_control_id": "MillerPlanesCtl",
+        "miller_indices_control_id": "TxtHKL",
+        "create_button_control_id": "CmdCreate",
+        "pointer_or_accessibility_menu_click_allowed": False,
+        "reason": (
+            "A pointer release on Tools > Miller Planes can click through into the modeless "
+            "dialog and activate Create. Use the verified keyboard mnemonic path only."
+        ),
+    }
+    assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
+    assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
     assert plane_recipe["properties_miller_label"] == "(100)"
     assert plane_recipe["camera_match_contract"] == {
@@ -1564,6 +1833,10 @@ def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidenc
         project_id=created["project_id"],
         revision=created["revision"],
         views=["crystal_110"],
+        runtime_ui_evidence=_complete_miller_runtime_ui_evidence(
+            revision=created["revision"],
+            window=target_window,
+        ),
         working_dir=str(tmp_path),
     )
 
@@ -4563,12 +4836,19 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     )
     assert view_replay_policy["documented_keyboard_modifier_keys"] == []
     assert view_replay_policy["shift_arrow_keys_allowed"] is False
+    assert view_replay_policy["runtime_ui_preflight_filename"] == (
+        "gui_view_replay_runtime_preflight.json"
+    )
     assert view_replay_policy["crystallographic_plane_recipe"] == {
         "view_name_pattern": "crystal_plane_*",
         "native_command_id": "cmdViewer3DViewOnto",
         "selection_method": "object_tree_exact_item_rect_semantic_click",
         "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
         "requires_miller_plane_evidence": True,
+        "requires_current_bound_runtime_ui_preflight": True,
+        "runtime_registry_or_help_evidence_alone_is_sufficient": False,
+        "miller_planes_dialog_invocation": ["Alt+T", "M"],
+        "pointer_or_accessibility_menu_click_allowed": False,
         "temporary_plane_cleanup_required": True,
         "structure_artifact_sha256_must_remain_unchanged": True,
         "exact_analytic_in_plane_roll_required": False,
@@ -4582,6 +4862,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
             "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
         ),
         "requires_miller_plane_evidence": True,
+        "requires_current_bound_runtime_ui_preflight": True,
         "requires_direct_lattice_direction_match_evidence": True,
         "non_collinear_views_remain_review_gated": True,
         "never_assumes_same_index_direction_equals_plane": True,

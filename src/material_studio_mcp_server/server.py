@@ -246,6 +246,43 @@ class GuiVisualConfirmationInput(BaseModel):
     expected_window_title: str = Field(..., description="Observed Materials Studio wrapper window title.", min_length=1, max_length=500)
 
 
+class GuiMillerPlaneRuntimeUiEvidenceInput(BaseModel):
+    """Runtime-observed Miller-plane controls bound to one current wrapper window."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    source: str = Field(default="computer_use", pattern=r"^(computer_use|manual_review)$")
+    expected_revision: int = Field(..., ge=0)
+    expected_window_handle: int = Field(..., gt=0)
+    expected_window_title: str = Field(..., min_length=1, max_length=500)
+    reset_view_control_observed: bool
+    tools_miller_planes_menu_observed: bool
+    miller_planes_keyboard_menu_path_verified: bool
+    miller_planes_dialog_observed: bool
+    miller_indices_control_observed: bool
+    create_button_observed: bool
+    tree_explorer_menu_observed: bool
+    properties_explorer_menu_observed: bool
+    view_onto_control_observed: bool
+    pointer_menu_click_through_risk_observed: bool
+    unexpected_plane_created_during_probe: bool
+    unexpected_plane_cleanup_verified: bool
+    document_clean_before_probe: bool
+    document_clean_after_probe: bool
+    miller_planes_menu_key_sequence: list[
+        Annotated[str, Field(pattern=r"^(Alt\+T|M)$")]
+    ] = Field(..., min_length=2, max_length=2)
+    miller_planes_dialog_title: str | None = Field(default=None, max_length=120)
+    miller_planes_dialog_control_id: str | None = Field(default=None, max_length=120)
+    miller_indices_control_id: str | None = Field(default=None, max_length=120)
+    create_button_control_id: str | None = Field(default=None, max_length=120)
+    selection_modifier_keys: list[
+        Annotated[str, Field(pattern=r"^(Shift|Ctrl|Alt|Win)$")]
+    ] = Field(..., max_length=4)
+    screenshot_path: str | None = Field(default=None, max_length=500)
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class GuiViewReplayKeyboardStageInput(BaseModel):
     """One exact unmodified arrow-key stage at a configured Movement angle."""
 
@@ -2929,6 +2966,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "shift_arrow_keys_allowed": False,
             "remaining_standard_views_require_reviewed_camera_backend": False,
             "crystallographic_plane_views_use_documented_miller_plane_recipe": True,
+            "crystallographic_plane_views_require_current_bound_runtime_ui_preflight": True,
+            "runtime_ui_preflight_payload_field": "runtime_ui_evidence",
+            "runtime_ui_preflight_artifact": "gui_view_replay_runtime_preflight.json",
+            "static_registry_or_help_evidence_alone_is_sufficient": False,
+            "miller_planes_dialog_keyboard_menu_sequence": ["Alt+T", "M"],
+            "miller_planes_pointer_or_accessibility_menu_click_allowed": False,
+            "unexpected_default_plane_requires_exact_undo_and_abort": True,
             "crystallographic_plane_view_native_command_id": "cmdViewer3DViewOnto",
             "crystallographic_plane_view_selection_method": (
                 "object_tree_exact_item_rect_semantic_click"
@@ -2937,7 +2981,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "crystal_plane_normal_with_native_in_plane_roll"
             ),
             "crystallographic_direction_view_policy": (
-                "automatic_when_exact_integer_plane_collinear_otherwise_reviewed"
+                "automatic_when_exact_integer_plane_collinear_and_runtime_ui_preflight_verified_otherwise_reviewed"
             ),
             "crystallographic_direction_collinear_plane_recipe_kind": (
                 "crystal_direction_via_collinear_miller_plane_view_onto"
@@ -5649,6 +5693,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "persists_revision_manifest": True,
                 "manifest_filename": "gui_view_replay_manifest.json",
                 "events_filename": "gui_view_replay_events.jsonl",
+                "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
                 "supports_crystal_direction_views": sorted(CRYSTAL_DIRECTION_VIEW_INDICES),
                 "supports_crystal_plane_views": sorted(CRYSTAL_PLANE_VIEW_INDICES),
                 "supports_oriented_frame_views": sorted(ORIENTED_FRAME_VIEW_SPECS),
@@ -5730,6 +5775,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "selection_method": "object_tree_exact_item_rect_semantic_click",
                     "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
                     "requires_miller_plane_evidence": True,
+                    "requires_current_bound_runtime_ui_preflight": True,
+                    "runtime_registry_or_help_evidence_alone_is_sufficient": False,
+                    "miller_planes_dialog_invocation": ["Alt+T", "M"],
+                    "pointer_or_accessibility_menu_click_allowed": False,
                     "temporary_plane_cleanup_required": True,
                     "structure_artifact_sha256_must_remain_unchanged": True,
                     "exact_analytic_in_plane_roll_required": False,
@@ -5743,6 +5792,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                         "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
                     ),
                     "requires_miller_plane_evidence": True,
+                    "requires_current_bound_runtime_ui_preflight": True,
                     "requires_direct_lattice_direction_match_evidence": True,
                     "non_collinear_views_remain_review_gated": True,
                     "never_assumes_same_index_direction_equals_plane": True,
@@ -26981,10 +27031,61 @@ def _compact_capabilities_gui(value: Any) -> dict[str, Any]:
     return compact
 
 
+def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "source",
+            "observation_available",
+            "observed_at",
+            "binding_verified",
+            "automation_gate_satisfied",
+            "artifact_path",
+            "artifact_exists",
+            "artifact_error",
+            "block_reasons",
+            "required",
+            "required_true_fields",
+            "required_menu_key_sequence",
+            "required_dialog_identifiers",
+            "selection_modifier_keys",
+        ),
+    )
+    binding = value.get("binding")
+    if isinstance(binding, dict):
+        compact["binding"] = _mapping_subset(
+            binding,
+            (
+                "ok",
+                "status",
+                "project_id",
+                "revision",
+                "expected_window_handle",
+                "actual_window_handle",
+                "expected_window_title",
+                "actual_window_title",
+                "current_revision_loaded",
+                "target_window_is_visible",
+                "target_window_is_minimized",
+                "target_window_foreground_observed",
+                "target_window_is_foreground",
+                "needs_dialog_resolution",
+                "single_window_policy_ok",
+                "process_count",
+                "window_count",
+                "rejection_reasons",
+            ),
+        )
+    return compact
+
+
 def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    return _mapping_subset(
+    compact = _mapping_subset(
         value,
         (
             "status",
@@ -27013,8 +27114,14 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "direction_plane_mapping",
             "camera_match_contract",
             "required_record_evidence",
+            "miller_planes_dialog_invocation",
+            "unexpected_plane_guard",
         ),
     )
+    runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
+    if runtime_ui_preflight:
+        compact["runtime_ui_preflight"] = runtime_ui_preflight
+    return compact
 
 
 def _compact_view_replay_event(value: Any) -> dict[str, Any]:
@@ -27099,11 +27206,17 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "next_pending_view_name",
             "next_automation_ready_view_name",
             "recommended_action",
+            "recommended_mcp_tool",
             "recommended_tool",
+            "recommended_executor",
+            "automatic_replay_ready",
+            "runtime_ui_preflight_required",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
             "payload_hint",
+            "payload_hint_is_directly_callable",
             "high_level_payload_hint",
+            "evidence_values_must_be_observed_not_assumed",
         ),
     )
     for nullable_key in (
@@ -27127,6 +27240,9 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
         if recipe:
             compact_next_view["execution_recipe"] = recipe
         continuation["next_view"] = compact_next_view
+    runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
+    if runtime_ui_preflight:
+        continuation["runtime_ui_preflight"] = runtime_ui_preflight
     return continuation
 
 
@@ -27169,6 +27285,10 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "manifest_read_error",
             "events_path",
             "events_exist",
+            "runtime_ui_preflight_path",
+            "runtime_ui_preflight_exists",
+            "runtime_ui_preflight_read_error",
+            "runtime_ui_preflight_observed_at",
             "replay_status",
             "view_names",
             "requested_view_count",
@@ -27182,6 +27302,9 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
     if continuation:
         replay["replay_continuation"] = continuation
+    runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
+    if runtime_ui_preflight:
+        replay["runtime_ui_preflight"] = runtime_ui_preflight
     last_event = _compact_view_replay_event(value.get("last_replay_event"))
     if last_event:
         replay["last_replay_event"] = last_event
@@ -27387,6 +27510,8 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "replay_continuation",
             "manifest_path",
             "events_path",
+            "runtime_ui_preflight_path",
+            "runtime_ui_preflight",
             "view_replay_confirmation",
             "view_replay_binding",
             "view_replay",
@@ -27746,6 +27871,7 @@ def _compact_live_response(
             "events_path",
             "ready_for_external_replay",
             "preflight_block_reasons",
+            "runtime_ui_preflight_path",
             "activation_required",
             "view_names",
             "requested_view_count",
@@ -27776,6 +27902,11 @@ def _compact_live_response(
     )
     if replay_continuation:
         compact["replay_continuation"] = replay_continuation
+    runtime_ui_preflight = _compact_runtime_ui_preflight(
+        response.get("runtime_ui_preflight")
+    )
+    if runtime_ui_preflight:
+        compact["runtime_ui_preflight"] = runtime_ui_preflight
     compact["full_detail_available"] = bool(
         artifacts.get("report_json_path") or response.get("report_json_path")
     )
@@ -28528,6 +28659,7 @@ def material_studio_live_project_status(
         result_metadata_path = output_dir / "result_metadata.json"
         view_replay_manifest_path = output_dir / "gui_view_replay_manifest.json"
         view_replay_events_path = output_dir / "gui_view_replay_events.jsonl"
+        view_replay_runtime_preflight_path = output_dir / "gui_view_replay_runtime_preflight.json"
         generated = _generate_structured_script(spec, store)
         planned_structure = generated["planned_outputs"].get("structure")
         planned_structure_path = Path(str(planned_structure)).expanduser() if planned_structure else None
@@ -28535,12 +28667,22 @@ def material_studio_live_project_status(
         report_json_payload, report_json_error = _read_json_file(report_json_path)
         result_metadata, result_error = _read_json_file(result_metadata_path)
         view_replay_manifest, view_replay_error = _read_json_file(view_replay_manifest_path)
+        view_replay_runtime_preflight, view_replay_runtime_preflight_error = _read_json_file(
+            view_replay_runtime_preflight_path
+        )
         view_replay_summary = {
             "manifest_path": str(view_replay_manifest_path),
             "manifest_exists": view_replay_manifest_path.exists(),
             "manifest_read_error": view_replay_error,
             "events_path": str(view_replay_events_path),
             "events_exist": view_replay_events_path.exists(),
+            "runtime_ui_preflight_path": str(view_replay_runtime_preflight_path),
+            "runtime_ui_preflight_exists": view_replay_runtime_preflight_path.exists(),
+            "runtime_ui_preflight_read_error": view_replay_runtime_preflight_error,
+            "runtime_ui_preflight": (view_replay_manifest or {}).get("runtime_ui_preflight"),
+            "runtime_ui_preflight_observed_at": (
+                view_replay_runtime_preflight or {}
+            ).get("observed_at"),
             "replay_status": (view_replay_manifest or {}).get("replay_status"),
             "view_names": list((view_replay_manifest or {}).get("view_names") or []),
             "requested_view_count": (view_replay_manifest or {}).get("requested_view_count"),
@@ -32159,6 +32301,7 @@ def material_studio_gui_prepare_view_replay(
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
     views: Annotated[list[str] | None, Field(description="View names to prepare, including Cartesian, crystal direction/plane, or surface/interface frame views.", min_length=1, max_length=32)] = None,
+    runtime_ui_evidence: Annotated[GuiMillerPlaneRuntimeUiEvidenceInput | None, Field(description="Optional current-window Miller-plane UI observation. It is persisted only after exact project/revision/window binding succeeds.")] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full replay manifest or compact MCP preparation receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
@@ -32184,6 +32327,14 @@ def material_studio_gui_prepare_view_replay(
                     raise ValueError("view names must not contain control characters")
                 if view_name not in normalized_views:
                     normalized_views.append(view_name)
+        normalized_runtime_ui_evidence: dict[str, Any] | None = None
+        if runtime_ui_evidence is not None:
+            evidence_model = (
+                runtime_ui_evidence
+                if isinstance(runtime_ui_evidence, GuiMillerPlaneRuntimeUiEvidenceInput)
+                else GuiMillerPlaneRuntimeUiEvidenceInput.model_validate(runtime_ui_evidence)
+            )
+            normalized_runtime_ui_evidence = evidence_model.model_dump(mode="json")
         store = _structured_store(working_dir)
         spec = store.get_revision(str(context["project_id"]), int(context["revision"]))
         audit = model_view_audit(spec, normalized_views)
@@ -32191,6 +32342,7 @@ def material_studio_gui_prepare_view_replay(
             audit,
             project_id=spec.project_id,
             revision=spec.revision,
+            runtime_ui_evidence=normalized_runtime_ui_evidence,
         )
         result["project_resolution"] = context.get("project_resolution") or _explicit_project_resolution(spec)
         result["resolved_latest_current_for_view_replay"] = (

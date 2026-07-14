@@ -26,7 +26,7 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_open_structure`: opens an existing structure file only when an existing Materials Studio window is available. On Windows, the fallback uses the already-running window's File/Open dialog to load the generated workspace `.stp` wrapper; it does not implicitly launch `MatStudio.exe`, and it refuses file-open methods that may spawn another Materials Studio window. When `project_id` and `revision` are provided, it also persists the GUI-open artifact into the structured revision's `view_audit.json`, view bundle, `modeling_health`, `modeling_report`, and `report.json` by default. If `project_id` is provided and `revision` is omitted, it resolves that project's current revision; if `project_id` is omitted, it only syncs diagnostics when `structure_path` matches the latest current revision's planned structure.
 - `material_studio_gui_apply_current_revision`: validates the saved revision script, exports the current revision's `view_audit.json`/`modeling_health` by default, previews by default, may omit `project_id` for the latest current project, and only executes when `execution_mode="execute"`.
 - `material_studio_gui_copy_script_assist`: returns a checklist for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied.
-- `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. It never activates the window or changes the GUI.
+- `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_ui_evidence` records a current-window Miller-plane UI probe in `gui_view_replay_runtime_preflight.json`; the evidence is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
 - `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. Optional exact handle/title binding and a reviewed `native_command_id` make the event machine-auditable.
 - `material_studio_gui_record_visual_confirmation`: persists Computer Use or manual viewport evidence after verifying the current project/revision, exact wrapper title and handle, wrapper metadata, and single-window state. The same path is available through `material_studio_live_modeling_request.visual_confirmation` for restricted MCP allowlists.
 
@@ -138,9 +138,28 @@ recipe Reset, `45 degrees: Up x2, Left x3`, then `35.26438968 degrees: Down`.
 It must show A left-down, B right-down, C up, restore Angle to 45 degrees,
 preserve Screen factor 2.0, and close Movement.
 
-`crystal_plane_*` views have a separate documented MS 20.1 recipe when the
-installed Miller Plane, Tree Explorer, Properties Explorer, and View Onto
-registries/help all pass. The recipe resets the view, creates exactly one
+`crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
+Miller Plane, Tree Explorer, Properties Explorer, and View Onto registry/help
+evidence is necessary but not sufficient. Automatic replay also requires a
+current `gui_view_replay_runtime_preflight.json` observation whose revision,
+wrapper handle/title, and single-window binding still match. The observation
+must prove that Reset View, Tools > Miller Planes, the `Miller Planes` dialog,
+`MillerPlanesCtl`, `TxtHKL`, `CmdCreate`, Tree Explorer, Properties Explorer,
+and View Onto are present at runtime. Missing, incomplete, or stale evidence
+returns `runtime_ui_preflight_required` and keeps `automation_ready=false`.
+In that state, `replay_continuation.payload_hint_is_directly_callable=false`;
+the hint identifies the evidence schema and window binding but deliberately
+omits example `miller_plane_evidence` values.
+
+Open Tools > Miller Planes only through the verified keyboard menu path
+`Alt+T`, then `M`. Do not invoke that menu item with a pointer or accessibility
+click: in MS 20.1 the release can click through into the modeless dialog and
+activate Create. If an unexpected default plane is created, invoke only the
+exact named `Undo Create Miller Plane`, verify a clean document, no temporary
+node, and an unchanged structure hash, then abort the replay attempt and run
+the preflight again.
+
+After that gate passes, the recipe resets the view, creates exactly one
 temporary plane with the requested three-index dialog values, isolates its
 new `<Miller Family>/<Miller Parallel Planes>/<Miller Plane>` leaf by Object
 Tree before/after diff, selects the exact semantic item rectangle with no

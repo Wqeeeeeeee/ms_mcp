@@ -204,6 +204,145 @@ MILLER_PLANE_UNDO_LABEL_PATTERNS = (
     re.compile(r"^Undo View Onto (?:Miller Plane|Lattice 3D)$"),
     re.compile(r"^Undo Create Miller Plane$"),
 )
+MILLER_RUNTIME_UI_BOOLEAN_FIELDS = (
+    "reset_view_control_observed",
+    "tools_miller_planes_menu_observed",
+    "miller_planes_keyboard_menu_path_verified",
+    "miller_planes_dialog_observed",
+    "miller_indices_control_observed",
+    "create_button_observed",
+    "tree_explorer_menu_observed",
+    "properties_explorer_menu_observed",
+    "view_onto_control_observed",
+    "pointer_menu_click_through_risk_observed",
+    "unexpected_plane_created_during_probe",
+    "unexpected_plane_cleanup_verified",
+    "document_clean_before_probe",
+    "document_clean_after_probe",
+)
+MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS = (
+    "reset_view_control_observed",
+    "tools_miller_planes_menu_observed",
+    "miller_planes_keyboard_menu_path_verified",
+    "miller_planes_dialog_observed",
+    "miller_indices_control_observed",
+    "create_button_observed",
+    "tree_explorer_menu_observed",
+    "properties_explorer_menu_observed",
+    "view_onto_control_observed",
+    "document_clean_before_probe",
+    "document_clean_after_probe",
+)
+MILLER_RUNTIME_UI_EVIDENCE_FIELDS = {
+    "source",
+    "expected_revision",
+    "expected_window_handle",
+    "expected_window_title",
+    *MILLER_RUNTIME_UI_BOOLEAN_FIELDS,
+    "miller_planes_menu_key_sequence",
+    "miller_planes_dialog_title",
+    "miller_planes_dialog_control_id",
+    "miller_indices_control_id",
+    "create_button_control_id",
+    "selection_modifier_keys",
+    "screenshot_path",
+    "note",
+}
+MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS = {
+    "miller_planes_dialog_title": "Miller Planes",
+    "miller_planes_dialog_control_id": "MillerPlanesCtl",
+    "miller_indices_control_id": "TxtHKL",
+    "create_button_control_id": "CmdCreate",
+}
+MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE = ["Alt+T", "M"]
+MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
+    "reset_view_control_observed": "runtime_reset_view_control_not_observed",
+    "tools_miller_planes_menu_observed": "runtime_tools_miller_planes_menu_not_observed",
+    "miller_planes_keyboard_menu_path_verified": (
+        "runtime_miller_planes_keyboard_menu_path_not_verified"
+    ),
+    "miller_planes_dialog_observed": "runtime_miller_planes_dialog_not_observed",
+    "miller_indices_control_observed": "runtime_miller_indices_control_not_observed",
+    "create_button_observed": "runtime_miller_plane_create_button_not_observed",
+    "tree_explorer_menu_observed": "runtime_tree_explorer_menu_not_observed",
+    "properties_explorer_menu_observed": "runtime_properties_explorer_menu_not_observed",
+    "view_onto_control_observed": "runtime_view_onto_control_not_observed",
+    "document_clean_before_probe": "runtime_document_not_clean_before_probe",
+    "document_clean_after_probe": "runtime_document_not_clean_after_probe",
+}
+
+
+def _normalize_miller_runtime_ui_evidence(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate the exact runtime UI observation accepted by replay preparation."""
+
+    if not isinstance(value, dict):
+        raise GuiError("runtime_ui_evidence must be a JSON object")
+    extra_fields = sorted(set(value) - MILLER_RUNTIME_UI_EVIDENCE_FIELDS)
+    if extra_fields:
+        raise GuiError(
+            "runtime_ui_evidence contains unsupported fields: " + ", ".join(extra_fields)
+        )
+    required_fields = {
+        "source",
+        "expected_revision",
+        "expected_window_handle",
+        "expected_window_title",
+        *MILLER_RUNTIME_UI_BOOLEAN_FIELDS,
+        "miller_planes_menu_key_sequence",
+        *MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS,
+        "selection_modifier_keys",
+    }
+    missing_fields = sorted(required_fields - set(value))
+    if missing_fields:
+        raise GuiError(
+            "runtime_ui_evidence is missing required fields: " + ", ".join(missing_fields)
+        )
+
+    normalized = dict(value)
+    source = str(normalized.get("source") or "").strip()
+    if source not in {"computer_use", "manual_review"}:
+        raise GuiError("unsupported runtime_ui_evidence source")
+    normalized["source"] = source
+    try:
+        expected_revision = int(normalized.get("expected_revision"))
+        expected_window_handle = int(normalized.get("expected_window_handle"))
+    except (TypeError, ValueError) as exc:
+        raise GuiError("runtime_ui_evidence revision and window handle must be integers") from exc
+    if expected_revision < 0:
+        raise GuiError("runtime_ui_evidence expected_revision must be non-negative")
+    if expected_window_handle <= 0:
+        raise GuiError("runtime_ui_evidence expected_window_handle must be positive")
+    expected_window_title = str(normalized.get("expected_window_title") or "").strip()
+    if not expected_window_title:
+        raise GuiError("runtime_ui_evidence expected_window_title must not be empty")
+    normalized["expected_revision"] = expected_revision
+    normalized["expected_window_handle"] = expected_window_handle
+    normalized["expected_window_title"] = expected_window_title
+
+    for field in MILLER_RUNTIME_UI_BOOLEAN_FIELDS:
+        if not isinstance(normalized.get(field), bool):
+            raise GuiError(f"runtime_ui_evidence.{field} must be a boolean")
+    key_sequence = normalized.get("miller_planes_menu_key_sequence")
+    if not isinstance(key_sequence, list) or not all(isinstance(item, str) for item in key_sequence):
+        raise GuiError("runtime_ui_evidence.miller_planes_menu_key_sequence must be a string list")
+    normalized["miller_planes_menu_key_sequence"] = list(key_sequence)
+    modifier_keys = normalized.get("selection_modifier_keys")
+    if not isinstance(modifier_keys, list) or not all(
+        isinstance(item, str) and item in VIEW_REPLAY_MODIFIER_KEYS for item in modifier_keys
+    ):
+        raise GuiError(
+            "runtime_ui_evidence.selection_modifier_keys must contain only Shift, Ctrl, Alt, or Win"
+        )
+    normalized["selection_modifier_keys"] = list(modifier_keys)
+    for field in MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS:
+        item = normalized.get(field)
+        if item is not None and not isinstance(item, str):
+            raise GuiError(f"runtime_ui_evidence.{field} must be a string or null")
+    for field in ("screenshot_path", "note"):
+        item = normalized.get(field)
+        if item is not None and not isinstance(item, str):
+            raise GuiError(f"runtime_ui_evidence.{field} must be a string or null")
+    return normalized
 
 
 def _normalize_view_replay_keyboard_stages(
@@ -1709,6 +1848,7 @@ class MaterialsStudioGuiController:
         *,
         project_id: str,
         revision: int,
+        runtime_ui_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Persist a preview-only, externally replayable GUI view manifest."""
 
@@ -1725,6 +1865,12 @@ class MaterialsStudioGuiController:
             raise GuiError("view audit revision does not match the replay target")
 
         status = self.status(project_id=safe_project, revision=revision)
+        runtime_ui_preflight = self._resolve_view_replay_runtime_ui_preflight(
+            status=status,
+            project_id=safe_project,
+            revision=revision,
+            supplied_evidence=runtime_ui_evidence,
+        )
         steps = [_view_replay_step(view, index=index) for index, view in enumerate(audit.get("views") or [])]
         supported_steps = [step for step in steps if step["supported"]]
         unsupported_steps = [step for step in steps if not step["supported"]]
@@ -1771,7 +1917,11 @@ class MaterialsStudioGuiController:
         ready_for_external_replay = not block_reasons
         command_evidence = _materials_studio_view_command_evidence()
         for step in steps:
-            step["execution_recipe"] = _view_replay_execution_recipe(step, command_evidence)
+            step["execution_recipe"] = _view_replay_execution_recipe(
+                step,
+                command_evidence,
+                runtime_ui_preflight=runtime_ui_preflight,
+            )
         next_tool = status.get("recommended_tool")
         next_action = status.get("recommended_action")
         if ready_for_external_replay:
@@ -1826,6 +1976,7 @@ class MaterialsStudioGuiController:
                 ),
                 "known_native_commands": command_evidence,
             },
+            "runtime_ui_preflight": runtime_ui_preflight,
             "safety_gate": {
                 "activate_target_window_before_screenshot_or_input": True,
                 "verify_project_revision_wrapper_identity": True,
@@ -1910,6 +2061,7 @@ class MaterialsStudioGuiController:
                 "view_names": manifest["view_names"],
                 "replay_status": manifest["replay_status"],
                 "preflight": manifest["preflight"],
+                "runtime_ui_preflight": manifest["runtime_ui_preflight"],
                 "next_action": manifest["next_action"],
             },
         )
@@ -1921,6 +2073,8 @@ class MaterialsStudioGuiController:
             "replay_status": manifest["replay_status"],
             "ready_for_external_replay": ready_for_external_replay,
             "preflight_block_reasons": block_reasons,
+            "runtime_ui_preflight_path": runtime_ui_preflight.get("artifact_path"),
+            "runtime_ui_preflight": runtime_ui_preflight,
             "activation_required": activation_required,
             "view_names": manifest["view_names"],
             "requested_view_count": len(steps),
@@ -1930,6 +2084,141 @@ class MaterialsStudioGuiController:
             "next_action": manifest["next_action"],
             "manifest": manifest,
         }
+
+    def _resolve_view_replay_runtime_ui_preflight(
+        self,
+        *,
+        status: dict[str, Any],
+        project_id: str,
+        revision: int,
+        supplied_evidence: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Load or persist runtime UI evidence and rebind it to the live wrapper window."""
+
+        artifact_path = self._view_replay_runtime_ui_preflight_path(
+            project_id=project_id,
+            revision=revision,
+        )
+        if supplied_evidence is None and not artifact_path.exists():
+            return {
+                "status": "missing",
+                "observation_available": False,
+                "binding_verified": False,
+                "automation_gate_satisfied": False,
+                "artifact_path": str(artifact_path),
+                "artifact_exists": False,
+                "block_reasons": ["runtime_miller_plane_ui_preflight_missing"],
+            }
+
+        evidence: dict[str, Any]
+        observed_at: str | None = None
+        source = "supplied"
+        if supplied_evidence is not None:
+            evidence = _normalize_miller_runtime_ui_evidence(supplied_evidence)
+            screenshot_path = evidence.get("screenshot_path")
+            if screenshot_path:
+                screenshot = Path(str(screenshot_path)).expanduser().resolve()
+                _ensure_inside(self.workspace_root, screenshot)
+                if not screenshot.exists() or not screenshot.is_file():
+                    raise GuiError(f"runtime UI preflight screenshot does not exist: {screenshot}")
+                evidence["screenshot_path"] = str(screenshot)
+            binding = _view_replay_runtime_ui_binding(
+                status,
+                project_id=project_id,
+                revision=revision,
+                evidence=evidence,
+            )
+            if binding.get("ok") is not True:
+                reasons = ", ".join(str(item) for item in binding.get("rejection_reasons") or [])
+                raise GuiError(
+                    "runtime_ui_evidence does not match the current single Materials Studio wrapper "
+                    f"window: {reasons or 'window binding rejected'}"
+                )
+            observed_at = (
+                datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+            artifact = {
+                "schema_version": 1,
+                "kind": "materials_studio_miller_plane_runtime_ui_preflight",
+                "observed_at": observed_at,
+                "project_id": project_id,
+                "revision": revision,
+                "evidence": evidence,
+                "binding_at_observation": binding,
+            }
+            _write_json_atomic(artifact_path, artifact)
+        else:
+            source = "persisted"
+            try:
+                artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+                if not isinstance(artifact, dict):
+                    raise ValueError("artifact root must be an object")
+                if artifact.get("project_id") != project_id or artifact.get("revision") != revision:
+                    raise ValueError("artifact project/revision identity mismatch")
+                evidence = _normalize_miller_runtime_ui_evidence(artifact.get("evidence"))
+                observed_at = str(artifact.get("observed_at") or "") or None
+            except Exception as exc:
+                return {
+                    "status": "invalid_persisted_evidence",
+                    "observation_available": False,
+                    "binding_verified": False,
+                    "automation_gate_satisfied": False,
+                    "artifact_path": str(artifact_path),
+                    "artifact_exists": True,
+                    "artifact_error": str(exc),
+                    "block_reasons": ["runtime_miller_plane_ui_preflight_artifact_invalid"],
+                }
+            binding = _view_replay_runtime_ui_binding(
+                status,
+                project_id=project_id,
+                revision=revision,
+                evidence=evidence,
+            )
+
+        gate_reasons = _miller_runtime_ui_gate_block_reasons(evidence, binding)
+        gate_satisfied = not gate_reasons
+        return {
+            "status": (
+                "verified_complete"
+                if gate_satisfied
+                else "verified_incomplete"
+                if binding.get("ok") is True
+                else "stale_window_binding"
+            ),
+            "source": source,
+            "observation_available": True,
+            "observed_at": observed_at,
+            "binding_verified": binding.get("ok") is True,
+            "automation_gate_satisfied": gate_satisfied,
+            "artifact_path": str(artifact_path),
+            "artifact_exists": artifact_path.exists(),
+            "binding": binding,
+            "evidence": evidence,
+            "block_reasons": gate_reasons,
+        }
+
+    def _view_replay_runtime_ui_preflight_path(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> Path:
+        """Return the immutable-revision-scoped runtime UI preflight artifact path."""
+
+        safe_project = sanitize_project_id(project_id)
+        path = (
+            self.workspace_root
+            / safe_project
+            / "outputs"
+            / f"r{revision:03d}"
+            / "gui_view_replay_runtime_preflight.json"
+        ).resolve()
+        _ensure_inside(self.workspace_root, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def record_view_replay(
         self,
@@ -2837,9 +3126,131 @@ def _view_replay_step(view: Any, *, index: int) -> dict[str, Any]:
     }
 
 
+def _view_replay_runtime_ui_binding(
+    status: dict[str, Any],
+    *,
+    project_id: str,
+    revision: int,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind a runtime UI observation to the exact currently loaded wrapper window."""
+
+    target_resolution = (
+        status.get("target_window_resolution")
+        if isinstance(status.get("target_window_resolution"), dict)
+        else {}
+    )
+    target_window = status.get("target_window") if isinstance(status.get("target_window"), dict) else {}
+    window_management = (
+        status.get("window_management")
+        if isinstance(status.get("window_management"), dict)
+        else {}
+    )
+    wrapper_metadata = (
+        target_resolution.get("target_project_wrapper_metadata")
+        if isinstance(target_resolution.get("target_project_wrapper_metadata"), dict)
+        else {}
+    )
+    actual_handle = target_window.get("handle") or window_management.get("target_window_handle")
+    actual_title = target_window.get("title") or window_management.get("target_window_title")
+    reasons: list[str] = []
+    if status.get("supported") is not True:
+        reasons.append("gui_backend_unavailable")
+    if status.get("process_count") != 1:
+        reasons.append("exactly_one_matstudio_process_required")
+    if status.get("single_window_policy_ok") is not True:
+        reasons.append("single_window_policy_not_verified")
+    if status.get("target_window_found") is not True:
+        reasons.append("target_revision_window_not_found")
+    if target_resolution.get("matched_project_window") is not True:
+        reasons.append("target_revision_window_identity_unverified")
+    if status.get("current_revision_loaded") is not True:
+        reasons.append("target_revision_not_loaded_in_gui")
+    if status.get("target_window_is_minimized") is True:
+        reasons.append("target_window_minimized")
+    if status.get("target_window_is_visible") is False:
+        reasons.append("target_window_not_visible")
+    if (
+        status.get("target_window_foreground_observed") is True
+        and status.get("target_window_is_foreground") is False
+    ):
+        reasons.append("target_window_not_foreground")
+    if status.get("needs_dialog_resolution") is True:
+        reasons.append("modal_dialog_blocks_runtime_ui_preflight")
+    if wrapper_metadata.get("project_id") != project_id:
+        reasons.append("target_window_project_mismatch")
+    try:
+        wrapper_revision = int(wrapper_metadata.get("revision"))
+    except (TypeError, ValueError):
+        wrapper_revision = None
+    if wrapper_revision != revision:
+        reasons.append("target_window_revision_mismatch")
+    if evidence.get("expected_revision") != revision:
+        reasons.append("observed_revision_mismatch")
+    if evidence.get("expected_window_handle") != actual_handle:
+        reasons.append("observed_window_handle_mismatch")
+    if evidence.get("expected_window_title") != actual_title:
+        reasons.append("observed_window_title_mismatch")
+    reasons = _unique_strings(reasons)
+    return {
+        "ok": not reasons,
+        "status": "verified_current_wrapper_window" if not reasons else "rejected_window_binding",
+        "project_id": project_id,
+        "revision": revision,
+        "expected_window_handle": evidence.get("expected_window_handle"),
+        "actual_window_handle": actual_handle,
+        "expected_window_title": evidence.get("expected_window_title"),
+        "actual_window_title": actual_title,
+        "matched_project_window": target_resolution.get("matched_project_window"),
+        "target_window_project_id": wrapper_metadata.get("project_id"),
+        "target_window_revision": wrapper_revision,
+        "current_revision_loaded": status.get("current_revision_loaded"),
+        "target_window_is_visible": status.get("target_window_is_visible"),
+        "target_window_is_minimized": status.get("target_window_is_minimized"),
+        "target_window_foreground_observed": status.get(
+            "target_window_foreground_observed"
+        ),
+        "target_window_is_foreground": status.get("target_window_is_foreground"),
+        "needs_dialog_resolution": status.get("needs_dialog_resolution"),
+        "single_window_policy_ok": status.get("single_window_policy_ok"),
+        "process_count": status.get("process_count"),
+        "window_count": status.get("window_count"),
+        "rejection_reasons": reasons,
+    }
+
+
+def _miller_runtime_ui_gate_block_reasons(
+    evidence: dict[str, Any],
+    binding: dict[str, Any],
+) -> list[str]:
+    """Return stable blockers for the runtime Miller-plane UI automation gate."""
+
+    reasons: list[str] = []
+    for reason in binding.get("rejection_reasons") or []:
+        reasons.append(f"runtime_ui_binding_{reason}")
+    for field in MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS:
+        if evidence.get(field) is not True:
+            reasons.append(MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD[field])
+    if evidence.get("miller_planes_menu_key_sequence") != MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE:
+        reasons.append("runtime_miller_planes_keyboard_menu_sequence_mismatch")
+    for field, expected in MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS.items():
+        if evidence.get(field) != expected:
+            reasons.append(f"runtime_{field}_mismatch")
+    if evidence.get("selection_modifier_keys") != []:
+        reasons.append("runtime_selection_modifier_keys_not_empty")
+    if (
+        evidence.get("unexpected_plane_created_during_probe") is True
+        and evidence.get("unexpected_plane_cleanup_verified") is not True
+    ):
+        reasons.append("runtime_unexpected_plane_cleanup_not_verified")
+    return _unique_strings(reasons)
+
+
 def _view_replay_execution_recipe(
     step: dict[str, Any],
     command_evidence: dict[str, Any],
+    *,
+    runtime_ui_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a conservative machine-readable recipe for one prepared view."""
 
@@ -3187,12 +3598,22 @@ def _view_replay_execution_recipe(
             )
             is True,
         }
+        runtime_preflight = runtime_ui_preflight if isinstance(runtime_ui_preflight, dict) else {}
+        runtime_gate_satisfied = runtime_preflight.get("automation_gate_satisfied") is True
+        runtime_block_reasons = [
+            str(item)
+            for item in runtime_preflight.get("block_reasons") or []
+            if str(item)
+        ]
+        if not runtime_preflight:
+            runtime_block_reasons = ["runtime_miller_plane_ui_preflight_missing"]
         automation_ready = bool(
             registry_verified
             and reset_command_available
             and view_onto_command_available
             and index_error is None
             and all(evidence_requirements.values())
+            and runtime_gate_satisfied
         )
         block_reasons: list[str] = []
         if not registry_verified:
@@ -3206,6 +3627,8 @@ def _view_replay_execution_recipe(
         for requirement, verified in evidence_requirements.items():
             if not verified:
                 block_reasons.append(f"{requirement}_not_verified")
+        block_reasons.extend(runtime_block_reasons)
+        block_reasons = _unique_strings(block_reasons)
         properties_label = _miller_plane_label(dialog_indices) if dialog_indices else None
         recipe_kind = (
             "crystal_direction_via_collinear_miller_plane_view_onto"
@@ -3241,6 +3664,18 @@ def _view_replay_execution_recipe(
                 "cmdTEToggleExplorer",
                 "cmdGPEToggleExplorer",
             ],
+            "runtime_ui_preflight": {
+                "required": True,
+                "status": runtime_preflight.get("status") or "missing",
+                "automation_gate_satisfied": runtime_gate_satisfied,
+                "artifact_path": runtime_preflight.get("artifact_path"),
+                "binding_verified": runtime_preflight.get("binding_verified") is True,
+                "block_reasons": runtime_block_reasons,
+                "required_true_fields": list(MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS),
+                "required_menu_key_sequence": list(MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE),
+                "required_dialog_identifiers": dict(MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS),
+                "selection_modifier_keys": [],
+            },
             "selection_required": True,
             "miller_plane_indices": plane_indices or None,
             "dialog_miller_indices": dialog_indices or None,
@@ -3274,6 +3709,31 @@ def _view_replay_execution_recipe(
                 "menu_item_name": "View Onto",
                 "command_id": view_onto_command_id,
                 "semantic_targeting": "named_toolbar_and_native_popup_menu_item_rect",
+            },
+            "miller_planes_dialog_invocation": {
+                "method": "keyboard_menu_mnemonic",
+                "menu_path": ["Tools", "Miller Planes"],
+                "key_sequence": list(MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE),
+                "dialog_title": "Miller Planes",
+                "dialog_control_id": "MillerPlanesCtl",
+                "miller_indices_control_id": "TxtHKL",
+                "create_button_control_id": "CmdCreate",
+                "pointer_or_accessibility_menu_click_allowed": False,
+                "reason": (
+                    "A pointer release on Tools > Miller Planes can click through into the modeless "
+                    "dialog and activate Create. Use the verified keyboard mnemonic path only."
+                ),
+            },
+            "unexpected_plane_guard": {
+                "detect_named_undo_label": "Undo Create Miller Plane",
+                "cleanup_action": "invoke_exact_named_undo_create_miller_plane",
+                "continue_after_cleanup": False,
+                "required_post_cleanup_checks": [
+                    "document_clean",
+                    "no_temporary_miller_nodes_remaining",
+                    "structure_artifact_sha256_unchanged",
+                ],
+                "failure_action": "abort_current_view_replay_and_prepare_runtime_ui_preflight_again",
             },
             "camera_match_contract": {
                 "scope": camera_match_scope,
@@ -3316,6 +3776,7 @@ def _view_replay_execution_recipe(
                 "require_no_temporary_miller_nodes_after_cleanup": True,
                 "require_structure_artifact_sha256_unchanged": True,
                 "restore_initial_view_via_whitelisted_undo": True,
+                "unexpected_dialog_click_through_requires_exact_undo_and_abort": True,
             },
             "required_record_evidence": {
                 "field": "miller_plane_evidence",
@@ -3333,9 +3794,12 @@ def _view_replay_execution_recipe(
             "action_sequence": [
                 "verify_exact_current_wrapper_window_and_single_process",
                 "activate_target_window_and_verify_foreground",
+                "verify_current_bound_runtime_ui_preflight_gate",
                 "record_clean_document_state_and_structure_artifact_sha256",
                 "invoke_named_reset_view_control",
-                "invoke_named_tools_miller_planes_command",
+                "invoke_tools_miller_planes_with_alt_t_then_m_keyboard_mnemonics",
+                "verify_miller_planes_dialog_and_exact_control_ids",
+                "abort_after_exact_undo_if_unexpected_default_plane_was_created",
                 "enter_exact_three_index_dialog_values_and_create_one_plane",
                 "diff_object_tree_and_isolate_exactly_one_new_miller_plane_leaf",
                 "select_leaf_by_exact_tree_item_rect_with_no_modifier_keys",
@@ -3354,6 +3818,8 @@ def _view_replay_execution_recipe(
             ],
             "safety_notes": [
                 "Do not use blind viewport coordinates; derive the click rectangle from the exact Object Tree item.",
+                "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
+                "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",
                 *(
@@ -3794,6 +4260,19 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     preflight = manifest.get("preflight") if isinstance(manifest.get("preflight"), dict) else {}
     next_pending_step = pending_steps[0] if pending_steps else None
     next_automation_step = automation_ready_steps[0] if automation_ready_steps else None
+    next_pending_recipe = (
+        next_pending_step.get("execution_recipe")
+        if next_pending_step is not None
+        and isinstance(next_pending_step.get("execution_recipe"), dict)
+        else {}
+    )
+    runtime_ui_preflight_required = bool(
+        next_pending_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS
+        and any(
+            str(reason).startswith("runtime_")
+            for reason in next_pending_recipe.get("block_reasons") or []
+        )
+    )
     if all_confirmed:
         continuation_status = "complete"
         recommended_executor = None
@@ -3804,6 +4283,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         recommended_executor = None
         recommended_action = "resolve_view_replay_preflight_blockers"
         recommended_mcp_tool = (manifest.get("next_action") or {}).get("recommended_tool")
+    elif runtime_ui_preflight_required:
+        continuation_status = "runtime_ui_preflight_required"
+        recommended_executor = "computer_use_or_manual_review"
+        recommended_action = (
+            "observe_current_window_miller_plane_controls_then_submit_bound_runtime_ui_evidence"
+        )
+        recommended_mcp_tool = "material_studio_gui_prepare_view_replay"
     elif next_automation_step is not None:
         continuation_status = "automatic_recipe_ready"
         recommended_executor = "computer_use"
@@ -3986,9 +4472,39 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         if selected_next_step is not None
         else {}
     )
+    continuation_payload_hint = record_payload_hint
+    continuation_high_level_payload_hint = high_level_payload_hint
+    payload_hint_is_directly_callable = True
+    if runtime_ui_preflight_required:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "views": [selected_next_step.get("view_name")] if selected_next_step else [],
+            "runtime_ui_evidence_required": True,
+            "runtime_ui_evidence_schema_ref": (
+                "material_studio_gui_prepare_view_replay.inputSchema.properties.runtime_ui_evidence"
+            ),
+            "observed_boolean_fields": list(MILLER_RUNTIME_UI_BOOLEAN_FIELDS),
+            "expected_window_binding": {
+                "expected_revision": manifest.get("revision"),
+                "expected_window_handle": preflight_target_window.get("handle"),
+                "expected_window_title": preflight_target_window.get("title"),
+            },
+            "fixed_keyboard_contract": {
+                "miller_planes_menu_key_sequence": list(
+                    MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE
+                ),
+                "selection_modifier_keys": [],
+            },
+            "observed_values_must_not_be_copied_from_record_payload_examples": True,
+        }
+        continuation_high_level_payload_hint = {}
+        payload_hint_is_directly_callable = False
     manifest["replay_continuation"] = {
         "status": continuation_status,
         "automatic_replay_ready": next_automation_step is not None,
+        "runtime_ui_preflight_required": runtime_ui_preflight_required,
+        "runtime_ui_preflight": selected_recipe.get("runtime_ui_preflight"),
         "recommended_executor": recommended_executor,
         "recommended_action": recommended_action,
         "recommended_mcp_tool": recommended_mcp_tool,
@@ -4009,8 +4525,9 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         }
         if selected_next_step is not None
         else None,
-        "payload_hint": record_payload_hint,
-        "high_level_payload_hint": high_level_payload_hint,
+        "payload_hint": continuation_payload_hint,
+        "payload_hint_is_directly_callable": payload_hint_is_directly_callable,
+        "high_level_payload_hint": continuation_high_level_payload_hint,
         "evidence_values_must_be_observed_not_assumed": bool(miller_plane_payload_hint),
     }
     if preflight.get("ready_for_external_replay") is not True:

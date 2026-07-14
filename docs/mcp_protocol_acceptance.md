@@ -98,10 +98,14 @@ automation for `front` and installed-help-backed unmodified arrow-key recipes
 for `back`, `right`, `left`, `top`, `bottom`, and staged `isometric`. The receipt
 must prove the exact key sequence or stages, Reset precondition, angle, no
 modifiers, setting restoration, and visual axis/projection match.
-`crystal_plane_*` recipes may also be automatic-ready when the installed
-Miller Plane/Object Tree/Properties/View Onto evidence is verified. The tool
-schema exposes strict `miller_plane_evidence`; protocol acceptance checks that
-field is discoverable, while runtime acceptance additionally requires exact
+`crystal_plane_*` recipes may also be automatic-ready only when installed
+Miller Plane/Object Tree/Properties/View Onto evidence and a current-window
+`runtime_ui_evidence` probe are both verified. Protocol acceptance checks that
+the prepare-tool field is discoverable and strict (`extra="forbid"`). Runtime
+evidence must bind the exact revision and wrapper handle/title, verify the
+required live controls, and use the `Alt+T`, then `M` dialog path. Static
+registry/help files alone never satisfy this gate. The record-tool schema also
+exposes strict `miller_plane_evidence`; runtime acceptance additionally requires exact
 plane selection, pre-cleanup screenshot, whitelisted cleanup, restored
 document/tree/view state, and an unchanged wrapper-source SHA-256. The camera
 scope is plane-normal plus native MS roll rather than exact analytic up/right.

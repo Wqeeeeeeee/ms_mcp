@@ -172,7 +172,12 @@ Left x3`, then `35.26438968 degrees: Down x1`; it must restore the Movement
 angle to 45 degrees, preserve Screen factor 2.0, close Movement, and verify A
 left-down, B right-down, C up. `crystal_plane_*` views can also become
 automatic-ready when the installed Miller Plane/Object Tree/Properties/View
-Onto evidence is complete. That recipe creates one temporary plane, selects
+Onto evidence is complete and a current-window `runtime_ui_evidence` probe is
+bound to the exact revision and wrapper handle/title. Static registry/help
+evidence alone is insufficient. The dialog must be opened with `Alt+T`, then
+`M`; pointer/accessibility menu clicks are prohibited because they can click
+through and create a default plane. Any unexpected plane must be removed with
+the exact named undo and the replay attempt must stop. The normal recipe creates one temporary plane, selects
 its exact Object Tree leaf, captures the View Onto result, and records strict
 `miller_plane_evidence` proving cleanup and an unchanged structure hash. The
 camera receipt verifies the reciprocal-plane normal plus MS native in-plane

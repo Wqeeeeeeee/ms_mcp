@@ -1911,6 +1911,8 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
     assert plane_recipe["schema_version"] == 6
+    assert prepared["recipe_contract"]["status"] == "current"
+    assert prepared["recipe_contract"]["pending_recipe_upgrade_required"] is False
     assert plane_recipe["dialog_index_entry_contract"] == {
         "control_id": "TxtHKL",
         "expected_value": "1 0 0",
@@ -2013,6 +2015,59 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert continuation["recommended_action"] == (
         "execute_documented_miller_plane_view_onto_recipe_cleanup_then_record_view"
     )
+
+    legacy_recipe = json.loads(json.dumps(plane_recipe))
+    legacy_recipe["schema_version"] = 5
+    legacy_correction = legacy_recipe["dialog_index_entry_contract"][
+        "keyboard_correction_contract"
+    ]
+    legacy_correction.pop("navigation_key_settle_delay_milliseconds")
+    legacy_correction.pop("repeated_key_interpress_delay_milliseconds")
+    legacy_correction.pop("post_mutation_readback_delay_milliseconds")
+    legacy_recipe["action_sequence"] = [
+        action
+        for action in legacy_recipe["action_sequence"]
+        if action not in gui_module.MILLER_DIALOG_REQUIRED_TIMING_ACTIONS
+    ]
+    legacy_contract = gui_module._view_replay_recipe_contract_status(legacy_recipe)
+    assert legacy_contract["status"] == "upgrade_required"
+    assert legacy_contract["recording_allowed"] is False
+    assert legacy_contract["actual_schema_version"] == 5
+    assert legacy_contract["expected_schema_version"] == 6
+    assert "execution_recipe_schema_outdated" in legacy_contract["reasons"]
+    assert "miller_dialog_keyboard_timing_contract_outdated" in legacy_contract["reasons"]
+    assert "miller_dialog_keyboard_timing_actions_missing" in legacy_contract["reasons"]
+
+    disguised_recipe = json.loads(json.dumps(plane_recipe))
+    disguised_recipe.pop("recipe_kind")
+    disguised_recipe["schema_version"] = 1
+    disguised_contract = gui_module._view_replay_recipe_contract_status(
+        disguised_recipe,
+        expected_recipe_kind="miller_plane_view_onto",
+    )
+    assert disguised_contract["recording_allowed"] is False
+    assert "execution_recipe_kind_does_not_match_view_definition" in disguised_contract[
+        "reasons"
+    ]
+
+    compact_prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["crystal_plane_100"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    compact_recipe = compact_prepared["replay_continuation"]["next_view"][
+        "execution_recipe"
+    ]
+    assert compact_recipe["schema_version"] == 6
+    compact_correction = compact_recipe["dialog_index_entry_contract"][
+        "keyboard_correction_contract"
+    ]
+    assert compact_correction["navigation_key_settle_delay_milliseconds"] == 200
+    assert compact_correction["repeated_key_interpress_delay_milliseconds"] == 200
+    assert compact_correction["post_mutation_readback_delay_milliseconds"] == 500
+    assert compact_prepared["recipe_contract"]["status"] == "current"
 
     missing = server.material_studio_gui_record_view_replay(
         view_name="crystal_plane_100",
@@ -2696,6 +2751,134 @@ def test_live_modeling_request_continues_view_replay_without_creating_revision(
     assert resumed["view_replay_prepared"] is False
     assert resumed["view_replay_continuation"]["next_automation_ready_view_name"] == "front"
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
+    assert len(history_after) == len(history_before)
+
+
+def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front", "right"],
+        working_dir=str(tmp_path),
+    )
+    assert prepared["ok"] is True
+    assert prepared["recipe_contract"]["status"] == "current"
+
+    front = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        source="computer_use",
+        native_command_id="cmdViewer3DResetView",
+        working_dir=str(tmp_path),
+    )
+    assert front["ok"] is True
+    assert front["accepted"] is True
+    accepted_event_id = front["event"]["event_id"]
+
+    manifest_path = Path(prepared["manifest_path"])
+    stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    right_view = next(
+        view for view in stale_manifest["views"] if view["view_name"] == "right"
+    )
+    right_view["execution_recipe"]["schema_version"] = 0
+    manifest_path.write_text(
+        json.dumps(stale_manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    replay = status["gui_view_replay"]
+    assert replay["recipe_contract"]["status"] == "pending_recipe_upgrade_required"
+    assert replay["recipe_contract"]["pending_upgrade_view_names"] == ["right"]
+    assert replay["replay_continuation"]["status"] == "recipe_upgrade_required"
+    assert replay["replay_continuation"]["automatic_replay_ready"] is False
+    assert replay["replay_continuation"]["recommended_mcp_tool"] == (
+        "material_studio_live_modeling_request"
+    )
+
+    rejected = server.material_studio_gui_record_view_replay(
+        view_name="right",
+        project_id=project_id,
+        revision=revision,
+        source="computer_use",
+        native_command_id="cmdViewer3DResetView",
+        key_sequence=["Up", "Up", "Left", "Left"],
+        reset_before_key_sequence=True,
+        rotation_increment_degrees=45,
+        modifier_keys=[],
+        working_dir=str(tmp_path),
+    )
+    assert rejected["ok"] is False
+    assert "view replay recipe is not current" in rejected["error"]
+    persisted_stale = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert [event["event_id"] for event in persisted_stale["replay_events"]] == [
+        accepted_event_id
+    ]
+
+    history_before = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+    continued = server.material_studio_live_modeling_request(
+        "Continue the next GUI view replay safely.",
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert continued["ok"] is True
+    assert continued["workflow"] == "continue_view_replay"
+    assert continued["revision"] == revision
+    assert continued["revision_created"] is False
+    assert continued["view_replay_prepared"] is True
+    assert continued["view_replay_prepare"]["recipe_migration"]["performed"] is True
+    assert continued["view_replay_prepare"]["recipe_migration"][
+        "preserved_replay_event_count"
+    ] == 1
+    assert continued["view_replay_continuation"]["status"] == (
+        "automatic_recipe_ready"
+    )
+    assert continued["view_replay_continuation"]["next_pending_view_name"] == "right"
+    assert continued["gui_view_replay"]["recipe_contract"]["status"] == "current"
+
+    migrated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    migrated_right = next(
+        view for view in migrated_manifest["views"] if view["view_name"] == "right"
+    )
+    assert migrated_right["execution_recipe"]["schema_version"] == 1
+    assert [event["event_id"] for event in migrated_manifest["replay_events"]] == [
+        accepted_event_id
+    ]
+    history_after = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
     assert len(history_after) == len(history_before)
 
 

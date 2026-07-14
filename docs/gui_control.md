@@ -184,6 +184,15 @@ deleting, wait `500 ms` before obtaining the next fresh child readback. Refresh
 and replan after every mutation and compare the trimmed accessibility value exactly with
 `dialog_miller_indices_text` before Create. A mismatch blocks Create and must be
 corrected and reverified; abort without Create after the final strategy fails.
+
+Persisted replay recipes are versioned safety contracts. Read
+`gui_view_replay.recipe_contract` before any pending replay. When it reports
+`pending_recipe_upgrade_required`, the continuation status is
+`recipe_upgrade_required` and new replay evidence is rejected. Call the
+high-level `continue_view_replay` workflow to regenerate the manifest with the
+current recipe schemas. The migration preserves accepted events and does not
+create a model revision or change the structure. Compact MCP responses include
+the Miller dialog correction timing contract required for execution.
 Persist the observed text, the
 `fresh_modeless_child_accessibility_value` source, and the verification result in
 `miller_plane_evidence`. If an unexpected

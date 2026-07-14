@@ -32,6 +32,9 @@ class GuiError(RuntimeError):
 
 
 VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 3
+VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 1
+VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 2
+MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 6
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -157,6 +160,11 @@ MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS = (
 MILLER_DIALOG_NAVIGATION_KEY_SETTLE_DELAY_MILLISECONDS = 200
 MILLER_DIALOG_REPEATED_KEY_INTERPRESS_DELAY_MILLISECONDS = 200
 MILLER_DIALOG_POST_MUTATION_READBACK_DELAY_MILLISECONDS = 500
+MILLER_DIALOG_REQUIRED_TIMING_ACTIONS = {
+    "wait_recipe_navigation_delay_after_home_or_end",
+    "pace_each_backspace_or_delete_with_recipe_interpress_delay",
+    "wait_recipe_post_mutation_delay_before_fresh_readback",
+}
 MILLER_PLANE_CAMERA_MATCH_SCOPE = "crystal_plane_normal_with_native_in_plane_roll"
 MILLER_DIRECTION_CAMERA_MATCH_SCOPE = (
     "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
@@ -2468,6 +2476,7 @@ class MaterialsStudioGuiController:
             "replay_events": [],
         }
         manifest_path = self._view_replay_manifest_path(project_id=safe_project, revision=revision)
+        prior_recipe_contract: dict[str, Any] | None = None
         if manifest_path.exists():
             try:
                 existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2483,6 +2492,9 @@ class MaterialsStudioGuiController:
             requested_identity = (safe_project, revision, audit.get("spec_fingerprint"))
             if existing_identity != requested_identity:
                 raise GuiError("existing view replay manifest identity differs from the requested immutable revision")
+            prior_recipe_contract = view_replay_manifest_recipe_contract_status(
+                existing_manifest
+            )
             current_view_names = set(manifest["view_names"])
             preserved_events = [
                 event
@@ -2493,6 +2505,33 @@ class MaterialsStudioGuiController:
             manifest["preserved_replay_event_count"] = len(preserved_events)
             manifest["prior_manifest_generated_at"] = existing_manifest.get("generated_at")
         _refresh_view_replay_summary(manifest)
+        current_recipe_contract = manifest.get("recipe_contract")
+        manifest["recipe_migration"] = {
+            "performed": bool(
+                prior_recipe_contract is not None
+                and prior_recipe_contract.get("current") is not True
+                and isinstance(current_recipe_contract, dict)
+                and current_recipe_contract.get("current") is True
+            ),
+            "prior_status": (
+                prior_recipe_contract.get("status")
+                if isinstance(prior_recipe_contract, dict)
+                else None
+            ),
+            "current_status": (
+                current_recipe_contract.get("status")
+                if isinstance(current_recipe_contract, dict)
+                else None
+            ),
+            "prior_outdated_view_names": (
+                list(prior_recipe_contract.get("outdated_view_names") or [])
+                if isinstance(prior_recipe_contract, dict)
+                else []
+            ),
+            "preserved_replay_event_count": len(manifest.get("replay_events") or []),
+            "revision_created": False,
+            "structure_modified": False,
+        }
         if manifest.get("replay_status") == "externally_confirmed":
             manifest["next_action"] = {
                 "recommended_tool": "material_studio_live_project_status",
@@ -2529,6 +2568,8 @@ class MaterialsStudioGuiController:
             "supported_view_count": len(supported_steps),
             "unsupported_view_count": len(unsupported_steps),
             "replay_continuation": manifest.get("replay_continuation"),
+            "recipe_contract": manifest.get("recipe_contract"),
+            "recipe_migration": manifest.get("recipe_migration"),
             "next_action": manifest["next_action"],
             "manifest": manifest,
         }
@@ -2754,6 +2795,34 @@ class MaterialsStudioGuiController:
             if isinstance(matching_view.get("execution_recipe"), dict)
             else {}
         )
+        manifest_recipe_contract = view_replay_manifest_recipe_contract_status(manifest)
+        matching_recipe_contract = _view_replay_recipe_contract_status(
+            execution_recipe,
+            expected_recipe_kind=_expected_view_replay_recipe_kind(matching_view),
+        )
+        if (
+            manifest_recipe_contract.get("manifest_schema_current") is not True
+            or matching_recipe_contract.get("recording_allowed") is not True
+        ):
+            reasons = _unique_strings(
+                [
+                    *(
+                        manifest_recipe_contract.get("reasons")
+                        if isinstance(manifest_recipe_contract.get("reasons"), list)
+                        else []
+                    ),
+                    *(
+                        matching_recipe_contract.get("reasons")
+                        if isinstance(matching_recipe_contract.get("reasons"), list)
+                        else []
+                    ),
+                ]
+            )
+            raise GuiError(
+                "view replay recipe is not current and cannot accept new evidence; "
+                "continue the GUI view replay to regenerate the manifest while preserving prior events"
+                + (f" ({', '.join(reasons)})" if reasons else "")
+            )
         if native_command_id is not None and execution_recipe:
             allowed_native_commands = {
                 str(item)
@@ -3214,6 +3283,7 @@ class MaterialsStudioGuiController:
             "expected_structure_artifact_path": expected_structure_artifact_path,
             "miller_plane_evidence": normalized_miller_plane_evidence,
             "execution_recipe": execution_recipe or None,
+            "execution_recipe_contract": matching_recipe_contract,
             "expected_camera": matching_view.get("camera"),
             "expected_projection": matching_view.get("verification"),
         }
@@ -3251,6 +3321,8 @@ class MaterialsStudioGuiController:
             "replay_status": manifest.get("replay_status"),
             "replay_summary": manifest["replay_summary"],
             "replay_continuation": manifest.get("replay_continuation"),
+            "recipe_contract": manifest.get("recipe_contract"),
+            "recipe_migration": manifest.get("recipe_migration"),
             "manifest_view_names": list(manifest.get("view_names") or []),
             "gui_status": status,
         }
@@ -3782,7 +3854,7 @@ def _view_replay_execution_recipe(
         and command_evidence.get("movement_options_command_registered") is True
     )
     base = {
-        "schema_version": 1,
+        "schema_version": VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION,
         "view_name": view_name,
         "executor": "computer_use_or_reviewed_external_gui",
         "structure_mutation_allowed": False,
@@ -3958,7 +4030,7 @@ def _view_replay_execution_recipe(
         ]
         common_recipe.update(
             {
-                "schema_version": 2,
+                "schema_version": VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION,
                 "keyboard_stages": normalized_stages,
                 "restore_rotation_increment_degrees": documented_key_recipe[
                     "restore_rotation_increment_degrees"
@@ -4180,7 +4252,7 @@ def _view_replay_execution_recipe(
         )
         return {
             **base,
-            "schema_version": 6,
+            "schema_version": MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION,
             "recipe_kind": recipe_kind,
             "status": (
                 "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
@@ -5016,6 +5088,240 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
     }
 
 
+def _expected_view_replay_recipe_kind(view: Any) -> str | None:
+    """Derive safety-sensitive recipe kind from the prepared view definition."""
+
+    if not isinstance(view, dict):
+        return None
+    crystallography = (
+        view.get("crystallography")
+        if isinstance(view.get("crystallography"), dict)
+        else {}
+    )
+    if crystallography.get("crystal_plane_indices") is not None:
+        return "miller_plane_view_onto"
+    direction_mapping = (
+        crystallography.get("crystal_direction_view_onto_plane_mapping")
+        if isinstance(
+            crystallography.get("crystal_direction_view_onto_plane_mapping"),
+            dict,
+        )
+        else {}
+    )
+    if (
+        crystallography.get("crystal_direction_indices") is not None
+        and direction_mapping.get("status") == "exact_integer_plane_collinear"
+        and direction_mapping.get("automation_eligible") is True
+        and direction_mapping.get("miller_plane_indices") is not None
+    ):
+        return "crystal_direction_via_collinear_miller_plane_view_onto"
+    return None
+
+
+def _view_replay_recipe_contract_status(
+    recipe: Any,
+    *,
+    expected_recipe_kind: str | None = None,
+) -> dict[str, Any]:
+    """Return whether one persisted recipe matches this runtime's safety contract."""
+
+    if not isinstance(recipe, dict):
+        expected_schema_version = (
+            MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION
+            if expected_recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS
+            else VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+        )
+        return {
+            "status": "missing",
+            "current": False,
+            "recording_allowed": False,
+            "recipe_kind": None,
+            "expected_recipe_kind": expected_recipe_kind,
+            "actual_schema_version": None,
+            "expected_schema_version": expected_schema_version,
+            "reasons": ["execution_recipe_missing"],
+        }
+
+    recipe_kind = str(recipe.get("recipe_kind") or "") or None
+    effective_recipe_kind = expected_recipe_kind or recipe_kind
+    if effective_recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS:
+        expected_schema_version = MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION
+    elif isinstance(recipe.get("keyboard_stages"), list):
+        expected_schema_version = VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION
+    else:
+        expected_schema_version = VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+
+    raw_schema_version = recipe.get("schema_version")
+    actual_schema_version = (
+        raw_schema_version
+        if isinstance(raw_schema_version, int) and not isinstance(raw_schema_version, bool)
+        else None
+    )
+    reasons: list[str] = []
+    if expected_recipe_kind is not None and recipe_kind != expected_recipe_kind:
+        reasons.append("execution_recipe_kind_does_not_match_view_definition")
+    if actual_schema_version is None:
+        reasons.append("execution_recipe_schema_missing_or_invalid")
+    elif actual_schema_version < expected_schema_version:
+        reasons.append("execution_recipe_schema_outdated")
+    elif actual_schema_version > expected_schema_version:
+        reasons.append("execution_recipe_schema_newer_than_runtime")
+
+    if effective_recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS:
+        dialog_contract = (
+            recipe.get("dialog_index_entry_contract")
+            if isinstance(recipe.get("dialog_index_entry_contract"), dict)
+            else {}
+        )
+        correction_contract = (
+            dialog_contract.get("keyboard_correction_contract")
+            if isinstance(dialog_contract.get("keyboard_correction_contract"), dict)
+            else {}
+        )
+        expected_timing = {
+            "navigation_key_settle_delay_milliseconds": (
+                MILLER_DIALOG_NAVIGATION_KEY_SETTLE_DELAY_MILLISECONDS
+            ),
+            "repeated_key_interpress_delay_milliseconds": (
+                MILLER_DIALOG_REPEATED_KEY_INTERPRESS_DELAY_MILLISECONDS
+            ),
+            "post_mutation_readback_delay_milliseconds": (
+                MILLER_DIALOG_POST_MUTATION_READBACK_DELAY_MILLISECONDS
+            ),
+            "first_destructive_key_must_wait_after_navigation": True,
+            "batch_repeated_backspace_or_delete_allowed": False,
+            "fresh_child_readback_required_after_each_mutation": True,
+        }
+        timing_mismatches = [
+            field_name
+            for field_name, expected_value in expected_timing.items()
+            if correction_contract.get(field_name) != expected_value
+        ]
+        if timing_mismatches:
+            reasons.append("miller_dialog_keyboard_timing_contract_outdated")
+        action_sequence = {
+            str(item) for item in recipe.get("action_sequence") or [] if item
+        }
+        missing_timing_actions = sorted(
+            MILLER_DIALOG_REQUIRED_TIMING_ACTIONS - action_sequence
+        )
+        if missing_timing_actions:
+            reasons.append("miller_dialog_keyboard_timing_actions_missing")
+    else:
+        timing_mismatches = []
+        missing_timing_actions = []
+
+    reasons = _unique_strings(reasons)
+    current = not reasons
+    return {
+        "status": "current" if current else "upgrade_required",
+        "current": current,
+        "recording_allowed": current,
+        "recipe_kind": recipe_kind,
+        "expected_recipe_kind": expected_recipe_kind,
+        "actual_schema_version": actual_schema_version,
+        "expected_schema_version": expected_schema_version,
+        "timing_mismatch_fields": timing_mismatches,
+        "missing_timing_actions": missing_timing_actions,
+        "reasons": reasons,
+    }
+
+
+def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]:
+    """Audit persisted recipe versions without mutating replay evidence."""
+
+    if not isinstance(manifest, dict):
+        return {
+            "status": "manifest_missing_or_invalid",
+            "current": False,
+            "pending_recipe_upgrade_required": False,
+            "manifest_schema_current": False,
+            "actual_manifest_schema_version": None,
+            "expected_manifest_schema_version": VIEW_REPLAY_MANIFEST_SCHEMA_VERSION,
+            "view_contracts": [],
+            "outdated_view_names": [],
+            "pending_upgrade_view_names": [],
+            "accepted_historical_view_names": [],
+            "reasons": ["view_replay_manifest_missing_or_invalid"],
+        }
+
+    raw_manifest_schema = manifest.get("schema_version")
+    actual_manifest_schema = (
+        raw_manifest_schema
+        if isinstance(raw_manifest_schema, int) and not isinstance(raw_manifest_schema, bool)
+        else None
+    )
+    manifest_schema_current = actual_manifest_schema == VIEW_REPLAY_MANIFEST_SCHEMA_VERSION
+    accepted_view_names = {
+        str(event.get("view_name"))
+        for event in manifest.get("replay_events") or []
+        if isinstance(event, dict)
+        and event.get("accepted") is True
+        and event.get("view_name") is not None
+    }
+    view_contracts: list[dict[str, Any]] = []
+    for view in manifest.get("views") or []:
+        if not isinstance(view, dict) or view.get("supported") is not True:
+            continue
+        view_name = str(view.get("view_name") or "")
+        recipe_contract = _view_replay_recipe_contract_status(
+            view.get("execution_recipe"),
+            expected_recipe_kind=_expected_view_replay_recipe_kind(view),
+        )
+        view_contracts.append(
+            {
+                "view_name": view_name,
+                "accepted": view_name in accepted_view_names,
+                **recipe_contract,
+            }
+        )
+
+    outdated_view_names = [
+        item["view_name"] for item in view_contracts if item.get("current") is not True
+    ]
+    pending_upgrade_view_names = [
+        item["view_name"]
+        for item in view_contracts
+        if item.get("current") is not True and item.get("accepted") is not True
+    ]
+    accepted_historical_view_names = [
+        item["view_name"]
+        for item in view_contracts
+        if item.get("current") is not True and item.get("accepted") is True
+    ]
+    pending_recipe_upgrade_required = bool(
+        pending_upgrade_view_names or not manifest_schema_current
+    )
+    current = bool(manifest_schema_current and not outdated_view_names)
+    reasons: list[str] = []
+    if not manifest_schema_current:
+        reasons.append("view_replay_manifest_schema_outdated_or_incompatible")
+    if pending_upgrade_view_names:
+        reasons.append("pending_execution_recipe_upgrade_required")
+    if accepted_historical_view_names:
+        reasons.append("accepted_historical_recipe_evidence_retained")
+    status = (
+        "current"
+        if current
+        else "pending_recipe_upgrade_required"
+        if pending_recipe_upgrade_required
+        else "historical_recipe_upgrade_available"
+    )
+    return {
+        "status": status,
+        "current": current,
+        "pending_recipe_upgrade_required": pending_recipe_upgrade_required,
+        "manifest_schema_current": manifest_schema_current,
+        "actual_manifest_schema_version": actual_manifest_schema,
+        "expected_manifest_schema_version": VIEW_REPLAY_MANIFEST_SCHEMA_VERSION,
+        "view_contracts": view_contracts,
+        "outdated_view_names": outdated_view_names,
+        "pending_upgrade_view_names": pending_upgrade_view_names,
+        "accepted_historical_view_names": accepted_historical_view_names,
+        "reasons": reasons,
+    }
+
+
 def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     """Refresh replay progress while preserving the current preflight state."""
 
@@ -5035,9 +5341,17 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     pending_steps = [
         item for item in supported_steps if str(item.get("view_name")) not in accepted_supported_views
     ]
+    recipe_contract = view_replay_manifest_recipe_contract_status(manifest)
+    manifest["recipe_contract"] = recipe_contract
+    current_recipe_view_names = {
+        str(item.get("view_name"))
+        for item in recipe_contract.get("view_contracts") or []
+        if isinstance(item, dict) and item.get("current") is True
+    }
     automation_ready_steps = [
         item
         for item in pending_steps
+        if str(item.get("view_name")) in current_recipe_view_names
         if isinstance(item.get("execution_recipe"), dict)
         and item["execution_recipe"].get("automation_ready") is True
     ]
@@ -5075,11 +5389,21 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
             for reason in next_pending_recipe.get("block_reasons") or []
         )
     )
+    pending_recipe_upgrade_required = bool(
+        recipe_contract.get("pending_recipe_upgrade_required") is True
+    )
     if all_confirmed:
         continuation_status = "complete"
         recommended_executor = None
         recommended_action = "review_current_revision_after_all_prepared_views_were_confirmed"
         recommended_mcp_tool = "material_studio_live_project_status"
+    elif pending_recipe_upgrade_required:
+        continuation_status = "recipe_upgrade_required"
+        recommended_executor = None
+        recommended_action = (
+            "regenerate_view_replay_manifest_with_current_safety_recipes_preserving_events"
+        )
+        recommended_mcp_tool = "material_studio_live_modeling_request"
     elif preflight.get("ready_for_external_replay") is not True:
         continuation_status = "preflight_blocked"
         recommended_executor = None
@@ -5299,7 +5623,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     continuation_payload_hint = record_payload_hint
     continuation_high_level_payload_hint = high_level_payload_hint
     payload_hint_is_directly_callable = True
-    if runtime_ui_preflight_required:
+    if pending_recipe_upgrade_required:
+        continuation_payload_hint = {
+            "user_request": "Continue GUI view replay using the current safety recipe.",
+            "project_id": manifest.get("project_id"),
+        }
+        continuation_high_level_payload_hint = dict(continuation_payload_hint)
+    elif runtime_ui_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
             "revision": manifest.get("revision"),
@@ -5327,6 +5657,8 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
     manifest["replay_continuation"] = {
         "status": continuation_status,
         "automatic_replay_ready": next_automation_step is not None,
+        "recipe_upgrade_required": pending_recipe_upgrade_required,
+        "recipe_contract": recipe_contract,
         "runtime_ui_preflight_required": runtime_ui_preflight_required,
         "runtime_ui_preflight": selected_recipe.get("runtime_ui_preflight"),
         "recommended_executor": recommended_executor,

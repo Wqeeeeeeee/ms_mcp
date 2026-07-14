@@ -248,6 +248,12 @@ from compact live status. Proceed automatically only when
 `automatic_replay_ready=true` and the selected view's
 `execution_recipe.automation_ready=true`; otherwise follow the returned review
 requirement without issuing trackball, spin, nudge, or align input.
+Also require `gui_view_replay.recipe_contract.pending_recipe_upgrade_required`
+to be false. When it is true, do not execute the persisted pending recipe and
+do not submit new replay evidence. Send a high-level `continue_view_replay`
+request; it regenerates current recipes, retains accepted replay events, and
+does not create a model revision or modify the structure. Compact responses
+carry the Miller dialog timing contract needed by the external GUI executor.
 
 Call `material_studio_live_session_preflight` when starting a live @mcp
 session or when runner/GUI/latest-project readiness is uncertain. It returns

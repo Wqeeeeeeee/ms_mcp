@@ -24,7 +24,12 @@ from .diagnostics import (
     write_view_audit_bundle,
     write_view_audit_report,
 )
-from .gui import GuiError, MaterialsStudioGuiController, _analyze_bmp_snapshot
+from .gui import (
+    GuiError,
+    MaterialsStudioGuiController,
+    _analyze_bmp_snapshot,
+    _refresh_view_replay_summary,
+)
 from .health import build_modeling_health
 from .natural_language import (
     infer_modeling_plan,
@@ -27157,6 +27162,7 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
     compact = _mapping_subset(
         value,
         (
+            "schema_version",
             "status",
             "source",
             "observation_available",
@@ -27210,6 +27216,7 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
     compact = _mapping_subset(
         value,
         (
+            "schema_version",
             "status",
             "recipe_kind",
             "automation_ready",
@@ -27235,6 +27242,8 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "selection_path_suffix",
             "viewport_selection_contract",
             "miller_plane_indices",
+            "dialog_miller_indices",
+            "dialog_miller_indices_text",
             "source_crystal_direction_indices",
             "direction_plane_mapping",
             "camera_match_contract",
@@ -27243,6 +27252,40 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "unexpected_plane_guard",
         ),
     )
+    dialog_contract = value.get("dialog_index_entry_contract")
+    if isinstance(dialog_contract, dict):
+        compact_dialog_contract = _mapping_subset(
+            dialog_contract,
+            (
+                "control_id",
+                "expected_value",
+                "value_source",
+                "control_a_replacement_assumption_allowed",
+                "shift_selection_allowed",
+                "fresh_child_state_required_after_entry",
+                "read_back_required_before_create",
+                "comparison",
+                "create_allowed_only_after_exact_match",
+                "mismatch_action",
+            ),
+        )
+        correction_contract = dialog_contract.get("keyboard_correction_contract")
+        if isinstance(correction_contract, dict):
+            compact_dialog_contract["keyboard_correction_contract"] = _mapping_subset(
+                correction_contract,
+                (
+                    "navigation_key_settle_delay_milliseconds",
+                    "repeated_key_interpress_delay_milliseconds",
+                    "post_mutation_readback_delay_milliseconds",
+                    "first_destructive_key_must_wait_after_navigation",
+                    "batch_repeated_backspace_or_delete_allowed",
+                    "fresh_child_readback_required_after_each_mutation",
+                    "maximum_full_replacement_attempts",
+                    "unrelated_post_full_readback_action",
+                    "mismatch_after_final_strategy",
+                ),
+            )
+        compact["dialog_index_entry_contract"] = compact_dialog_contract
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         compact["runtime_ui_preflight"] = runtime_ui_preflight
@@ -27304,6 +27347,7 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
             "miller_plane_evidence",
             "staged_keyboard_evidence_required",
             "keyboard_evidence_status",
+            "execution_recipe_contract",
         ),
     )
     recipe = _compact_view_replay_execution_recipe(value.get("execution_recipe"))
@@ -27336,6 +27380,50 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
     )
 
 
+def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "current",
+            "pending_recipe_upgrade_required",
+            "manifest_schema_current",
+            "actual_manifest_schema_version",
+            "expected_manifest_schema_version",
+            "outdated_view_names",
+            "pending_upgrade_view_names",
+            "accepted_historical_view_names",
+            "reasons",
+        ),
+    )
+    view_contracts = [
+        _mapping_subset(
+            item,
+            (
+                "view_name",
+                "accepted",
+                "status",
+                "current",
+                "recording_allowed",
+                "recipe_kind",
+                "expected_recipe_kind",
+                "actual_schema_version",
+                "expected_schema_version",
+                "timing_mismatch_fields",
+                "missing_timing_actions",
+                "reasons",
+            ),
+        )
+        for item in value.get("view_contracts") or []
+        if isinstance(item, dict) and item.get("current") is not True
+    ]
+    if view_contracts:
+        compact["view_contracts"] = view_contracts
+    return compact
+
+
 def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -27350,6 +27438,7 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "recommended_tool",
             "recommended_executor",
             "automatic_replay_ready",
+            "recipe_upgrade_required",
             "runtime_ui_preflight_required",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
@@ -27408,6 +27497,9 @@ def _compact_view_replay(value: Any) -> dict[str, Any]:
     continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
     if continuation:
         replay["replay_continuation"] = continuation
+    recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
+    if recipe_contract:
+        replay["recipe_contract"] = recipe_contract
     event = _compact_view_replay_event(value.get("event"))
     if event:
         replay["event"] = event
@@ -27442,6 +27534,9 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
     if continuation:
         replay["replay_continuation"] = continuation
+    recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
+    if recipe_contract:
+        replay["recipe_contract"] = recipe_contract
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         replay["runtime_ui_preflight"] = runtime_ui_preflight
@@ -27648,6 +27743,8 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "replay_status",
             "replay_summary",
             "replay_continuation",
+            "recipe_contract",
+            "recipe_migration",
             "manifest_path",
             "events_path",
             "runtime_ui_preflight_path",
@@ -28042,6 +28139,11 @@ def _compact_live_response(
     )
     if replay_continuation:
         compact["replay_continuation"] = replay_continuation
+    recipe_contract = _compact_view_replay_recipe_contract(
+        response.get("recipe_contract")
+    )
+    if recipe_contract:
+        compact["recipe_contract"] = recipe_contract
     runtime_ui_preflight = _compact_runtime_ui_preflight(
         response.get("runtime_ui_preflight")
     )
@@ -28810,6 +28912,8 @@ def material_studio_live_project_status(
         view_replay_runtime_preflight, view_replay_runtime_preflight_error = _read_json_file(
             view_replay_runtime_preflight_path
         )
+        if isinstance(view_replay_manifest, dict):
+            _refresh_view_replay_summary(view_replay_manifest)
         view_replay_summary = {
             "manifest_path": str(view_replay_manifest_path),
             "manifest_exists": view_replay_manifest_path.exists(),
@@ -28830,6 +28934,8 @@ def material_studio_live_project_status(
             "preflight": (view_replay_manifest or {}).get("preflight"),
             "replay_summary": (view_replay_manifest or {}).get("replay_summary"),
             "replay_continuation": (view_replay_manifest or {}).get("replay_continuation"),
+            "recipe_contract": (view_replay_manifest or {}).get("recipe_contract"),
+            "recipe_migration": (view_replay_manifest or {}).get("recipe_migration"),
             "last_replay_event": (view_replay_manifest or {}).get("last_replay_event"),
             "next_action": (view_replay_manifest or {}).get("next_action"),
         }
@@ -30924,6 +31030,13 @@ def material_studio_live_modeling_request(
                 prepare_required = bool(
                     replay_status.get("manifest_exists") is not True
                     or not isinstance(replay_status.get("replay_continuation"), dict)
+                    or (
+                        isinstance(replay_status.get("recipe_contract"), dict)
+                        and replay_status["recipe_contract"].get(
+                            "pending_recipe_upgrade_required"
+                        )
+                        is True
+                    )
                 )
                 prepare_receipt: dict[str, Any] | None = None
                 if prepare_required:
@@ -30957,6 +31070,8 @@ def material_studio_live_modeling_request(
                         "view_names": prepared.get("view_names"),
                         "replay_summary": prepared_manifest.get("replay_summary"),
                         "replay_continuation": prepared_manifest.get("replay_continuation"),
+                        "recipe_contract": prepared_manifest.get("recipe_contract"),
+                        "recipe_migration": prepared_manifest.get("recipe_migration"),
                     }
                 result = material_studio_live_project_status(
                     project_id=project_id,

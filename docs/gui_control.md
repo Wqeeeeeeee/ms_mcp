@@ -16,12 +16,13 @@ construction remains disabled until Copy Script output confirms the local API.
   latest MCP revision window from an arbitrary older selected Materials Studio
   window. The response also includes `window_management`, a compact receipt with
   process/window counts, selected-window versus target-window identity, wrapper
-  metadata counts, warnings for multi-window ambiguity, and the next GUI tool to
+  metadata counts, tri-state visibility/minimized/foreground evidence, warnings
+  for multi-window ambiguity, and the next GUI tool to
   call (`material_studio_gui_activate`, `material_studio_gui_open_structure`,
   `material_studio_gui_snapshot`, or `material_studio_gui_launch`).
 - `material_studio_gui_launch`: launches `MatStudio.exe` if no window is found, or activates the existing window; it can optionally capture a snapshot. If project context is omitted, it resolves the latest current structured project when available and activates that wrapper window.
 - `material_studio_gui_activate`: brings the existing Materials Studio window forward. If project context is omitted, it resolves the latest current structured project when available and activates that wrapper window. With `take_snapshot=true`, it captures the activated target window and, when project/revision context is available, refreshes the structured `report.json`, `view_audit.json`, view bundle, and `gui_current_revision` receipt.
-- `material_studio_gui_snapshot`: writes a BMP snapshot under `workspace/screenshots/`, returns lightweight visibility metrics, and when project/revision context is available refreshes the current revision's view-audit bundle and `modeling_report`. If `project_id` and `revision` are omitted, it resolves the latest current project when available and writes the screenshot plus GUI log under that resolved project/revision.
+- `material_studio_gui_snapshot`: writes a BMP snapshot under `workspace/screenshots/`, returns lightweight visibility metrics, and when project/revision context is available refreshes the current revision's view-audit bundle and `modeling_report`. If `project_id` and `revision` are omitted, it resolves the latest current project when available and writes the screenshot plus GUI log under that resolved project/revision. It refuses capture when Win32 evidence says the exact target is minimized, hidden, or not foreground; call `material_studio_gui_activate(take_snapshot=true)` instead.
 - `material_studio_gui_open_structure`: opens an existing structure file only when an existing Materials Studio window is available. On Windows, the fallback uses the already-running window's File/Open dialog to load the generated workspace `.stp` wrapper; it does not implicitly launch `MatStudio.exe`, and it refuses file-open methods that may spawn another Materials Studio window. When `project_id` and `revision` are provided, it also persists the GUI-open artifact into the structured revision's `view_audit.json`, view bundle, `modeling_health`, `modeling_report`, and `report.json` by default. If `project_id` is provided and `revision` is omitted, it resolves that project's current revision; if `project_id` is omitted, it only syncs diagnostics when `structure_path` matches the latest current revision's planned structure.
 - `material_studio_gui_apply_current_revision`: validates the saved revision script, exports the current revision's `view_audit.json`/`modeling_health` by default, previews by default, may omit `project_id` for the latest current project, and only executes when `execution_mode="execute"`.
 - `material_studio_gui_copy_script_assist`: returns a checklist for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied.
@@ -300,6 +301,10 @@ target revision window, capture a fresh snapshot, or continue with the next
 model edit. In multi-window sessions, `needs_activation=true` means the target
 revision has window evidence and should be activated with
 `material_studio_gui_activate(take_snapshot=true)` instead of re-hot-loading the structure.
+The same rule applies to a single loaded window that is minimized or explicitly
+observed outside the foreground. `window_management.activation_reasons` explains
+the gate, and no screenshot or File/Open input is issued until activation is
+re-enumerated against the same handle.
 For semiconductor workflows, `modeling_report.semiconductor_review` is the
 compact client-facing material receipt. It pulls formula, lattice, CASTEP task,
 k-point estimates, band-path preflight, charge balance, dopant/alloy/defect

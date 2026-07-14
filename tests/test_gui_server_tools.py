@@ -112,6 +112,38 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return [window for window in self.windows if window.pid == pid]
 
 
+class MinimizedGuiBackend(FakeGuiBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.window = WindowInfo(
+            handle=101,
+            title="minimized - Materials Studio",
+            pid=2222,
+            rect=(-32000, -32000, -31840, -31972),
+            is_visible=True,
+            is_minimized=True,
+            is_foreground=False,
+        )
+        self.captured_handles: list[int] = []
+
+    def activate_window(self, window: WindowInfo) -> bool:
+        self.activated_handles.append(window.handle)
+        self.window = WindowInfo(
+            handle=window.handle,
+            title=window.title,
+            pid=window.pid,
+            rect=(0, 0, 1024, 768),
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=True,
+        )
+        return True
+
+    def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
+        self.captured_handles.append(window.handle)
+        return super().capture_window(window, output_path)
+
+
 class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
     supported = True
     unavailable_reason = None
@@ -2325,6 +2357,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "target_window_handle" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "target_window_title" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "window_management_target_window_is_selected" in capabilities["session_preflight"]["latest_project_gui_fields"]
+    assert "window_management_target_window_is_minimized" in capabilities["session_preflight"]["latest_project_gui_fields"]
+    assert "window_management_target_window_is_foreground" in capabilities["session_preflight"]["latest_project_gui_fields"]
+    assert (
+        "window_management_activation_required_before_capture_or_input"
+        in capabilities["session_preflight"]["latest_project_gui_fields"]
+    )
     assert "window_management_recommended_tool" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "window_management_status" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "window_management_ready_for_next_live_edit" in capabilities["session_preflight"]["latest_project_gui_fields"]
@@ -2349,6 +2387,28 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "gui_target_window_handle" in capabilities["session_preflight"]["readiness_fields"]
     assert "gui_target_window_title" in capabilities["session_preflight"]["readiness_fields"]
     assert "gui_target_window_is_selected" in capabilities["session_preflight"]["readiness_fields"]
+    assert "gui_target_window_is_minimized" in capabilities["session_preflight"]["readiness_fields"]
+    assert "gui_target_window_is_foreground" in capabilities["session_preflight"]["readiness_fields"]
+    assert (
+        "gui_activation_required_before_capture_or_input"
+        in capabilities["session_preflight"]["readiness_fields"]
+    )
+    assert (
+        "gui_target_window_needs_activation"
+        in capabilities["session_preflight"]["mcp_client_readiness_fields"]
+    )
+    assert (
+        "gui_target_window_is_minimized"
+        in capabilities["session_preflight"]["visible_followup_contract_fields"]
+    )
+    for field_list_name in (
+        "latest_project_gui_fields",
+        "readiness_fields",
+        "mcp_client_readiness_fields",
+        "visible_followup_contract_fields",
+    ):
+        fields = capabilities["session_preflight"][field_list_name]
+        assert len(fields) == len(set(fields))
     assert "gui_must_reuse_existing_window" in capabilities["session_preflight"]["readiness_fields"]
     assert "gui_auto_launch_during_hotload_allowed" in capabilities["session_preflight"]["readiness_fields"]
     assert "gui_single_window_policy_ok" in capabilities["session_preflight"]["readiness_fields"]
@@ -4557,6 +4617,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["activate_policy"]["preflight_payload_sets_take_snapshot"] is True
     assert capabilities["gui"]["activate_policy"]["structured_sync_updates_modeling_report"] is True
     assert capabilities["gui"]["activate_policy"]["use_when_target_window_loaded_but_not_selected"] is True
+    assert capabilities["gui"]["activate_policy"]["use_when_target_window_minimized"] is True
+    assert capabilities["gui"]["activate_policy"]["use_when_target_window_not_foreground"] is True
+    assert capabilities["gui"]["activate_policy"]["snapshot_requires_restored_foreground_target"] is True
+    assert capabilities["gui"]["activate_policy"]["same_window_input_requires_verified_activation"] is True
     assert capabilities["gui"]["open_structure_policy"]["uses_existing_matstudio_window"] is True
     assert capabilities["gui"]["open_structure_policy"]["generated_structure_project_wrapper"] is True
     assert capabilities["gui"]["open_structure_policy"]["requires_existing_matstudio_window"] is True
@@ -5601,7 +5665,7 @@ def test_gui_current_revision_recommends_activate_for_loaded_target_window_not_s
     assert current["needs_reload"] is False
     assert current["recommended_tool"] == "material_studio_gui_activate"
     assert current["recommended_action"] == "activate_current_revision_window"
-    assert current["payload_hint"] == {"project_id": "active_proj", "revision": 2}
+    assert current["payload_hint"] == {"project_id": "active_proj", "revision": 2, "take_snapshot": True}
     assert current["window_management_warning_count"] == 1
     assert current["view_audit_report_path"] == "C:\\ms\\view_audit.json"
     assert current["view_audit_report_exists"] is False
@@ -5991,6 +6055,76 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["gui_current_revision"]["needs_single_window_resolution"] is True
     assert activated["gui_current_revision"]["recommended_tool"] == "material_studio_gui_status"
     assert activated["gui_current_revision"]["payload_hint"] == {}
+
+
+def test_minimized_current_window_routes_preflight_through_activate_then_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(server, "runner", FakeRunner())
+
+    created = server.material_studio_live_modeling_request("Build silicon crystal.", working_dir=str(tmp_path))
+    assert created["ok"] is True
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+
+    status = server.material_studio_gui_status(working_dir=str(tmp_path))
+    assert status["ok"] is True
+    assert status["status"] == "target_window_needs_activation"
+    assert status["recommended_tool"] == "material_studio_gui_activate"
+    assert status["target_window_is_minimized"] is True
+    assert status["target_window_is_foreground"] is False
+    assert status["activation_required_before_capture_or_input"] is True
+    assert status["window_management"]["payload_hint"]["take_snapshot"] is True
+
+    blocked_snapshot = server.material_studio_gui_snapshot(working_dir=str(tmp_path))
+    assert blocked_snapshot["ok"] is False
+    assert "before the verified target is restored and foreground" in blocked_snapshot["error"]
+    assert backend.captured_handles == []
+
+    preflight = server.material_studio_live_session_preflight(working_dir=str(tmp_path))
+    assert preflight["ok"] is True
+    assert preflight["state"] == "ready_for_live_edit_gui_activation"
+    assert preflight["recommended_tool"] == "material_studio_gui_activate"
+    assert "latest_project_target_window_minimized" in preflight["review_reasons"]
+    assert preflight["readiness"]["gui_target_window_is_minimized"] is True
+    assert preflight["readiness"]["gui_target_window_is_foreground"] is False
+    assert preflight["readiness"]["gui_activation_required_before_capture_or_input"] is True
+    assert preflight["latest_project_gui"]["window_management_target_window_is_minimized"] is True
+    assert preflight["latest_project_gui"]["window_management_needs_activation"] is True
+
+    activated = server.material_studio_gui_activate(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        take_snapshot=True,
+        working_dir=str(tmp_path),
+    )
+    assert activated["ok"] is True
+    assert activated["activated"] is True
+    assert activated["activation_verified"] is True
+    assert activated["snapshot_after_activate"] is True
+    assert activated["snapshot"]["window"]["is_minimized"] is False
+    assert activated["snapshot"]["window"]["is_foreground"] is True
+    assert Path(activated["snapshot"]["screenshot_path"]).exists()
+    assert backend.captured_handles == [101]
 
 
 def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(monkeypatch, tmp_path: Path) -> None:

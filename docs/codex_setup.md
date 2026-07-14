@@ -199,6 +199,9 @@ If the preflight state is `ready_for_live_edit_gui_activation`, call the
 returned `material_studio_gui_activate` payload with `take_snapshot=true` to
 bring the already-loaded target revision window forward and refresh the
 structured visual receipt instead of re-hot-loading the structure.
+This state also covers a minimized, hidden, or explicitly non-foreground target.
+Do not call `material_studio_gui_snapshot` directly while
+`activation_required_before_capture_or_input=true`.
 Keep the payload's `project_id` and `revision` when present. With those fields,
 or when an omitted `project_id` safely matches the opened `structure_path` to
 the latest current revision's planned structure, `material_studio_gui_open_structure`

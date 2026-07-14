@@ -259,6 +259,45 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return super().capture_window(window, output_path)
 
 
+class MinimizedGuiBackend(FakeGuiBackend):
+    def __init__(self, *, restore_on_activate: bool = True) -> None:
+        super().__init__()
+        self.restore_on_activate = restore_on_activate
+        self.window = WindowInfo(
+            handle=100,
+            title="minimized - Materials Studio",
+            pid=1234,
+            rect=(-32000, -32000, -31840, -31972),
+            is_visible=True,
+            is_minimized=True,
+            is_foreground=False,
+        )
+        self.captured_handles: list[int] = []
+
+    def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
+        if pid is not None and self.window.pid != pid:
+            return []
+        return [self.window]
+
+    def activate_window(self, window: WindowInfo) -> bool:
+        self.activated_handles.append(window.handle)
+        if self.restore_on_activate:
+            self.window = WindowInfo(
+                handle=window.handle,
+                title=window.title,
+                pid=window.pid,
+                rect=(0, 0, 1024, 768),
+                is_visible=True,
+                is_minimized=False,
+                is_foreground=True,
+            )
+        return True
+
+    def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
+        self.captured_handles.append(window.handle)
+        return super().capture_window(window, output_path)
+
+
 def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
@@ -308,6 +347,77 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     log_path = tmp_path / "gui_proj" / "gui_actions.jsonl"
     assert log_path.exists()
     assert "snapshot" in log_path.read_text(encoding="utf-8")
+
+
+def test_gui_status_requires_restore_and_activation_before_snapshot(tmp_path: Path) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    status = controller.status()
+
+    assert status["status"] == "target_window_needs_activation"
+    assert status["recommended_tool"] == "material_studio_gui_activate"
+    assert status["recommended_action"] == "restore_and_activate_target_project_window"
+    assert status["target_window_is_visible"] is True
+    assert status["target_window_is_minimized"] is True
+    assert status["target_window_foreground_observed"] is True
+    assert status["target_window_is_foreground"] is False
+    assert status["needs_activation"] is True
+    assert status["ready_for_snapshot"] is False
+    assert status["ready_for_next_live_edit"] is False
+    assert status["activation_required_before_capture_or_input"] is True
+    assert status["activation_reasons"] == ["target_window_minimized", "target_window_not_foreground"]
+    assert status["window_management"]["payload_hint"] == {"reuse_existing_window_only": True, "take_snapshot": True}
+    assert "target_window_minimized" in status["window_management"]["warnings"]
+
+    with pytest.raises(GuiError, match="before the verified target is restored and foreground"):
+        controller.snapshot(label="blocked")
+
+    assert backend.captured_handles == []
+    assert "snapshot_blocked" in (tmp_path / "gui_actions.jsonl").read_text(encoding="utf-8")
+
+    activated = controller.activate()
+    assert activated["activated"] is True
+    assert activated["activation_verified"] is True
+    assert activated["window_identity_stable_after_activation"] is True
+    assert activated["window"]["is_minimized"] is False
+    assert activated["window"]["is_foreground"] is True
+    assert activated["window_management"]["status"] == "ready_for_same_window_live_edit"
+
+    snapshot = controller.snapshot(label="restored")
+    assert Path(snapshot["screenshot_path"]).exists()
+    assert backend.captured_handles == [100]
+
+
+def test_gui_status_infers_win32_minimized_sentinel_when_is_iconic_is_unknown(tmp_path: Path) -> None:
+    backend = FakeGuiBackend()
+    backend.window = WindowInfo(
+        handle=100,
+        title="minimized - Materials Studio",
+        pid=1234,
+        rect=(-32000, -32000, -31840, -31972),
+    )
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    status = controller.status()
+
+    assert status["windows"][0]["is_minimized"] is True
+    assert status["windows"][0]["minimized_state_source"] == "window_rect_sentinel"
+    assert status["recommended_tool"] == "material_studio_gui_activate"
+    assert status["activation_required_before_capture_or_input"] is True
+
+
+def test_gui_open_structure_refuses_input_when_activation_is_not_verified(tmp_path: Path) -> None:
+    backend = MinimizedGuiBackend(restore_on_activate=False)
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+
+    with pytest.raises(GuiError, match="still minimized or is not the verified foreground"):
+        controller.open_structure(structure, project_id="gui_proj", revision=3, take_snapshot=False)
+
+    assert backend.opened == []
+    assert backend.activated_handles == [100]
 
 
 def test_bmp_snapshot_analysis_detects_blank_model_viewport(tmp_path: Path) -> None:

@@ -2422,6 +2422,12 @@ _TOP_LEVEL_GUI_BINDING_FIELDS = (
     "live_gui_window_binding_target_window_handle",
     "live_gui_window_binding_target_window_title",
     "live_gui_window_binding_target_window_is_selected",
+    "live_gui_window_binding_target_window_is_visible",
+    "live_gui_window_binding_target_window_is_minimized",
+    "live_gui_window_binding_target_window_foreground_observed",
+    "live_gui_window_binding_target_window_is_foreground",
+    "live_gui_window_binding_activation_required_before_capture_or_input",
+    "live_gui_window_binding_activation_reasons",
     "live_gui_window_binding_target_window_loaded",
     "live_gui_window_binding_target_window_matched",
     "live_gui_window_binding_target_window_fallback_used",
@@ -2459,6 +2465,12 @@ _TOP_LEVEL_GUI_BINDING_FIELDS = (
     "gui_current_revision_target_window_fallback_used",
     "gui_current_revision_target_window_loaded",
     "gui_current_revision_target_window_is_selected",
+    "gui_current_revision_target_window_is_visible",
+    "gui_current_revision_target_window_is_minimized",
+    "gui_current_revision_target_window_foreground_observed",
+    "gui_current_revision_target_window_is_foreground",
+    "gui_current_revision_activation_required_before_capture_or_input",
+    "gui_current_revision_activation_reasons",
     "gui_current_revision_window_management_warning_count",
     "gui_current_revision_recommended_tool",
 )
@@ -2525,6 +2537,12 @@ _TOP_LEVEL_MCP_CLIENT_READINESS_FIELDS = (
     "mcp_gui_target_window_handle",
     "mcp_gui_target_window_title",
     "mcp_gui_target_window_is_selected",
+    "mcp_gui_target_window_is_visible",
+    "mcp_gui_target_window_is_minimized",
+    "mcp_gui_target_window_foreground_observed",
+    "mcp_gui_target_window_is_foreground",
+    "mcp_gui_activation_required_before_capture_or_input",
+    "mcp_gui_target_window_needs_activation",
     "mcp_hotload_blocking_reasons",
     "mcp_post_open_single_window_policy_ok",
     "mcp_post_open_single_window_violation_reasons",
@@ -3014,6 +3032,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "window_management_recommended_tool",
                 "window_management_recommended_action",
                 "window_management_target_window_is_selected",
+                "window_management_target_window_is_visible",
+                "window_management_target_window_is_minimized",
+                "window_management_target_window_foreground_observed",
+                "window_management_target_window_is_foreground",
+                "window_management_activation_required_before_capture_or_input",
+                "window_management_activation_reasons",
                 "window_management_status",
                 "window_management_ready_for_next_live_edit",
                 "window_management_can_hotload_without_new_window",
@@ -3032,6 +3056,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "latest_project_selected_window_matches_current",
                 "latest_project_foreground_window_matches_current",
                 "latest_project_target_window_is_selected",
+                "latest_project_gui_needs_activation",
                 "gui_process_found",
                 "gui_process_count",
                 "gui_window_count",
@@ -3040,6 +3065,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_target_window_handle",
                 "gui_target_window_title",
                 "gui_target_window_is_selected",
+                "gui_target_window_is_visible",
+                "gui_target_window_is_minimized",
+                "gui_target_window_foreground_observed",
+                "gui_target_window_is_foreground",
+                "gui_activation_required_before_capture_or_input",
+                "gui_target_window_needs_activation",
                 "gui_must_reuse_existing_window",
                 "gui_auto_launch_during_hotload_allowed",
                 "gui_single_window_policy_ok",
@@ -3083,6 +3114,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_target_window_handle",
                 "gui_target_window_title",
                 "gui_target_window_is_selected",
+                "gui_target_window_is_visible",
+                "gui_target_window_is_minimized",
+                "gui_target_window_foreground_observed",
+                "gui_target_window_is_foreground",
+                "gui_activation_required_before_capture_or_input",
+                "gui_target_window_needs_activation",
                 "recommended_tool",
                 "next_action_id",
                 "needs_user_confirmation",
@@ -3103,6 +3140,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_window_count",
                 "gui_target_window_handle",
                 "gui_target_window_title",
+                "gui_target_window_is_visible",
+                "gui_target_window_is_minimized",
+                "gui_target_window_foreground_observed",
+                "gui_target_window_is_foreground",
+                "gui_activation_required_before_capture_or_input",
+                "gui_target_window_needs_activation",
             ],
         },
         "structured_source_of_truth": ["ModelSpec", "SemanticPatch", "generated MaterialsScript"],
@@ -4565,6 +4608,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "target_window_fallback_used",
                 "target_window_loaded",
                 "target_window_is_selected",
+                "target_window_is_visible",
+                "target_window_is_minimized",
+                "target_window_foreground_observed",
+                "target_window_is_foreground",
+                "activation_required_before_capture_or_input",
+                "activation_reasons",
                 "window_management_status",
                 "window_management_recommended_tool",
                 "window_management_recommended_action",
@@ -4724,6 +4773,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "mcp_gui_target_window_handle",
                 "mcp_gui_target_window_title",
                 "mcp_gui_target_window_is_selected",
+                "mcp_gui_target_window_is_visible",
+                "mcp_gui_target_window_is_minimized",
+                "mcp_gui_target_window_foreground_observed",
+                "mcp_gui_target_window_is_foreground",
+                "mcp_gui_activation_required_before_capture_or_input",
+                "mcp_gui_target_window_needs_activation",
                 "mcp_hotload_blocking_reasons",
                 "mcp_post_open_single_window_policy_ok",
                 "mcp_post_open_single_window_violation_reasons",
@@ -4873,6 +4928,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "live_gui_window_binding_target_window_handle",
                 "live_gui_window_binding_target_window_title",
                 "live_gui_window_binding_target_window_is_selected",
+                "live_gui_window_binding_target_window_is_visible",
+                "live_gui_window_binding_target_window_is_minimized",
+                "live_gui_window_binding_target_window_foreground_observed",
+                "live_gui_window_binding_target_window_is_foreground",
+                "live_gui_window_binding_activation_required_before_capture_or_input",
+                "live_gui_window_binding_activation_reasons",
                 "live_gui_window_binding_ready_for_next_live_edit",
                 "live_gui_window_binding_visible_followup_ready",
                 "live_gui_window_binding_visible_followup_status",
@@ -5004,6 +5065,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_current_revision_target_window_fallback_used",
                 "gui_current_revision_target_window_loaded",
                 "gui_current_revision_target_window_is_selected",
+                "gui_current_revision_target_window_is_visible",
+                "gui_current_revision_target_window_is_minimized",
+                "gui_current_revision_target_window_foreground_observed",
+                "gui_current_revision_target_window_is_foreground",
+                "gui_current_revision_activation_required_before_capture_or_input",
+                "gui_current_revision_activation_reasons",
                 "gui_current_revision_window_management_warning_count",
                 "gui_current_revision_recommended_tool",
                 "snapshot_path",
@@ -5471,6 +5538,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "structured_sync_when_project_revision_supplied": True,
                 "structured_sync_updates_modeling_report": True,
                 "use_when_target_window_loaded_but_not_selected": True,
+                "use_when_target_window_minimized": True,
+                "use_when_target_window_not_foreground": True,
+                "snapshot_requires_restored_foreground_target": True,
+                "same_window_input_requires_verified_activation": True,
             },
             "open_structure_policy": {
                 "uses_existing_matstudio_window": True,
@@ -5821,6 +5892,13 @@ def _live_session_preflight_payload(
         if isinstance(gui_window_management, dict)
         else None
     )
+    gui_target_window_is_visible = gui_window_management.get("target_window_is_visible")
+    gui_target_window_is_minimized = gui_window_management.get("target_window_is_minimized")
+    gui_target_window_foreground_observed = gui_window_management.get("target_window_foreground_observed")
+    gui_target_window_is_foreground = gui_window_management.get("target_window_is_foreground")
+    gui_activation_required_before_capture_or_input = gui_window_management.get(
+        "activation_required_before_capture_or_input"
+    )
     latest_available = bool(latest_project and latest_project.get("available"))
     preview_ready = True
     semiconductor_template_ready = bool(supported_semiconductor_template_ids())
@@ -5860,6 +5938,10 @@ def _live_session_preflight_payload(
             latest_project_gui.get("selected_window_matches_current") is False
             or latest_project_gui.get("foreground_window_matches_current") is False
             or latest_project_gui.get("window_management_target_window_is_selected") is False
+            or latest_project_gui.get("window_management_needs_activation") is True
+            or latest_project_gui.get(
+                "window_management_activation_required_before_capture_or_input"
+            ) is True
         )
     )
 
@@ -5886,6 +5968,10 @@ def _live_session_preflight_payload(
             review_reasons.append("latest_project_not_loaded_in_gui")
         if latest_gui_needs_activation:
             review_reasons.append("latest_project_target_window_not_active")
+            if latest_project_gui.get("window_management_target_window_is_minimized") is True:
+                review_reasons.append("latest_project_target_window_minimized")
+            if latest_project_gui.get("window_management_target_window_is_foreground") is False:
+                review_reasons.append("latest_project_target_window_not_foreground")
         elif latest_project_gui.get("selected_window_matches_current") is False:
             review_reasons.append("latest_project_selected_window_stale")
         if latest_project_gui.get("foreground_window_matches_current") is False and not latest_gui_needs_activation:
@@ -5959,6 +6045,13 @@ def _live_session_preflight_payload(
             "gui_target_window_handle": gui_target_window_handle,
             "gui_target_window_title": gui_target_window_title,
             "gui_target_window_is_selected": gui_target_window_is_selected,
+            "gui_target_window_is_visible": gui_target_window_is_visible,
+            "gui_target_window_is_minimized": gui_target_window_is_minimized,
+            "gui_target_window_foreground_observed": gui_target_window_foreground_observed,
+            "gui_target_window_is_foreground": gui_target_window_is_foreground,
+            "gui_activation_required_before_capture_or_input": (
+                gui_activation_required_before_capture_or_input
+            ),
             "gui_must_reuse_existing_window": True,
             "gui_auto_launch_during_hotload_allowed": False,
             "gui_single_window_policy_ok": gui_single_window_policy_ok,
@@ -6287,7 +6380,10 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     gui_target_window_title = gui.get("target_window_title")
     if gui_target_window_title is None:
         gui_target_window_title = gui.get("window_management_target_window_title")
-    gui_target_window_is_selected = gui.get("window_management_target_window_is_selected")
+    gui_target_window_is_selected = _first_not_none(
+        gui_current.get("target_window_is_selected"),
+        gui.get("window_management_target_window_is_selected"),
+    )
     gui_target_window_found = bool(gui_target_window_handle is not None or gui.get("target_window_matched_project_window"))
     gui_preflight_verified = hotload.get("gui_preflight_verified") is True
     gui_preflight_required = bool(hotload.get("gui_preflight_required"))
@@ -6337,6 +6433,37 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         gui.get("post_open_window_management")
         if isinstance(gui.get("post_open_window_management"), dict)
         else {}
+    )
+    gui_target_window_is_visible = _first_not_none(
+        gui_current.get("target_window_is_visible"),
+        gui_window_management.get("target_window_is_visible"),
+        gui.get("window_management_target_window_is_visible"),
+    )
+    gui_target_window_is_minimized = _first_not_none(
+        gui_current.get("target_window_is_minimized"),
+        gui_window_management.get("target_window_is_minimized"),
+        gui.get("window_management_target_window_is_minimized"),
+    )
+    gui_target_window_foreground_observed = _first_not_none(
+        gui_current.get("target_window_foreground_observed"),
+        gui_window_management.get("target_window_foreground_observed"),
+        gui.get("window_management_target_window_foreground_observed"),
+    )
+    gui_target_window_is_foreground = _first_not_none(
+        gui_current.get("target_window_is_foreground"),
+        gui_window_management.get("target_window_is_foreground"),
+        gui.get("window_management_target_window_is_foreground"),
+    )
+    gui_activation_required_before_capture_or_input = _first_not_none(
+        gui_current.get("activation_required_before_capture_or_input"),
+        gui_window_management.get("activation_required_before_capture_or_input"),
+        gui.get("window_management_activation_required_before_capture_or_input"),
+    )
+    gui_target_window_needs_activation = bool(
+        gui_current.get("needs_activation") is True
+        or gui_window_management.get("needs_activation") is True
+        or gui_activation_required_before_capture_or_input is True
+        or gui_target_window_is_selected is False
     )
     gui_current_can_apply_same_window = _first_not_none(
         gui_current.get("window_management_can_apply_current_revision_without_new_window"),
@@ -6432,12 +6559,12 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_blocking_reasons.extend(hotload_blocking_reasons)
     elif not current_loaded:
         visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
-    elif gui_target_window_is_selected is False:
+    elif gui_target_window_needs_activation:
         visible_followup_blocking_reasons.append("current_revision_window_not_active")
     visible_followup_ready = bool(
         ready_for_live_edit
         and current_loaded
-        and gui_target_window_is_selected is not False
+        and not gui_target_window_needs_activation
     )
     if visible_followup_ready:
         visible_followup_status = "ready"
@@ -6489,11 +6616,19 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             next_action.get("recommended_action") or "execute_or_open_current_revision_in_gui"
         )
         visible_followup_payload_hint = next_action.get("payload_hint") or {"project_id": project_id}
-    elif gui_target_window_is_selected is False:
+    elif gui_target_window_needs_activation:
         visible_followup_status = "needs_current_revision_activation"
         visible_followup_recommended_tool = "material_studio_gui_activate"
-        visible_followup_recommended_action = "activate_current_revision_window"
-        visible_followup_payload_hint = {"project_id": project_id, "revision": report.get("revision")}
+        visible_followup_recommended_action = (
+            "restore_and_activate_current_revision_window"
+            if gui_target_window_is_minimized is True
+            else "activate_current_revision_window"
+        )
+        visible_followup_payload_hint = {
+            "project_id": project_id,
+            "revision": report.get("revision"),
+            "take_snapshot": True,
+        }
     else:
         visible_followup_status = "review_required"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
@@ -6660,6 +6795,14 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "gui_target_window_handle": gui_target_window_handle,
             "gui_target_window_title": gui_target_window_title,
             "gui_target_window_is_selected": gui_target_window_is_selected,
+            "gui_target_window_is_visible": gui_target_window_is_visible,
+            "gui_target_window_is_minimized": gui_target_window_is_minimized,
+            "gui_target_window_foreground_observed": gui_target_window_foreground_observed,
+            "gui_target_window_is_foreground": gui_target_window_is_foreground,
+            "gui_activation_required_before_capture_or_input": (
+                gui_activation_required_before_capture_or_input
+            ),
+            "gui_target_window_needs_activation": gui_target_window_needs_activation,
             "recommended_tool": next_action.get("recommended_tool") or readiness.get("recommended_tool"),
             "recommended_action": next_action.get("recommended_action") or readiness.get("recommended_action"),
             "next_action_id": next_action.get("action_id"),
@@ -6849,6 +6992,16 @@ def _latest_project_gui_preflight_summary(
         "window_management_recommended_tool": window_management.get("recommended_tool"),
         "window_management_recommended_action": window_management.get("recommended_action"),
         "window_management_target_window_is_selected": window_management.get("target_window_is_selected"),
+        "window_management_target_window_is_visible": window_management.get("target_window_is_visible"),
+        "window_management_target_window_is_minimized": window_management.get("target_window_is_minimized"),
+        "window_management_target_window_foreground_observed": window_management.get(
+            "target_window_foreground_observed"
+        ),
+        "window_management_target_window_is_foreground": window_management.get("target_window_is_foreground"),
+        "window_management_activation_required_before_capture_or_input": window_management.get(
+            "activation_required_before_capture_or_input"
+        ),
+        "window_management_activation_reasons": window_management.get("activation_reasons") or [],
         "window_management_status": window_management.get("status"),
         "window_management_ready_for_next_live_edit": window_management.get("ready_for_next_live_edit"),
         "window_management_can_hotload_without_new_window": window_management.get("can_hotload_without_new_window"),
@@ -6870,7 +7023,21 @@ def _latest_project_gui_preflight_summary(
         "target_window_title": target_resolution.get("target_title"),
         "target_window_fallback_used": target_resolution.get("fallback_used"),
         "matching_windows": [
-            _select_keys(window, ["handle", "title", "project_id", "revision", "source_path", "is_selected", "is_foreground"])
+            _select_keys(
+                window,
+                [
+                    "handle",
+                    "title",
+                    "project_id",
+                    "revision",
+                    "source_path",
+                    "is_selected",
+                    "is_visible",
+                    "is_minimized",
+                    "is_foreground",
+                    "foreground_state_observed",
+                ],
+            )
             for window in matching_windows
         ],
         **selected,
@@ -12100,6 +12267,18 @@ def _promote_response_gui_binding(response: dict[str, Any]) -> None:
                 live_summary.get("live_gui_window_binding_target_window_is_selected"),
                 binding.get("target_window_is_selected"),
             ),
+            "live_gui_window_binding_target_window_is_visible": binding.get("target_window_is_visible"),
+            "live_gui_window_binding_target_window_is_minimized": binding.get("target_window_is_minimized"),
+            "live_gui_window_binding_target_window_foreground_observed": binding.get(
+                "target_window_foreground_observed"
+            ),
+            "live_gui_window_binding_target_window_is_foreground": binding.get(
+                "target_window_is_foreground"
+            ),
+            "live_gui_window_binding_activation_required_before_capture_or_input": binding.get(
+                "activation_required_before_capture_or_input"
+            ),
+            "live_gui_window_binding_activation_reasons": binding.get("activation_reasons") or [],
             "live_gui_window_binding_target_window_loaded": binding.get("target_window_loaded"),
             "live_gui_window_binding_target_window_matched": binding.get(
                 "target_window_matched_project_window"
@@ -12212,6 +12391,30 @@ def _promote_response_gui_binding(response: dict[str, Any]) -> None:
             "gui_current_revision_target_window_is_selected": _first_not_none(
                 live_summary.get("gui_current_revision_target_window_is_selected"),
                 gui_current.get("target_window_is_selected"),
+            ),
+            "gui_current_revision_target_window_is_visible": _first_not_none(
+                live_summary.get("gui_current_revision_target_window_is_visible"),
+                gui_current.get("target_window_is_visible"),
+            ),
+            "gui_current_revision_target_window_is_minimized": _first_not_none(
+                live_summary.get("gui_current_revision_target_window_is_minimized"),
+                gui_current.get("target_window_is_minimized"),
+            ),
+            "gui_current_revision_target_window_foreground_observed": _first_not_none(
+                live_summary.get("gui_current_revision_target_window_foreground_observed"),
+                gui_current.get("target_window_foreground_observed"),
+            ),
+            "gui_current_revision_target_window_is_foreground": _first_not_none(
+                live_summary.get("gui_current_revision_target_window_is_foreground"),
+                gui_current.get("target_window_is_foreground"),
+            ),
+            "gui_current_revision_activation_required_before_capture_or_input": _first_not_none(
+                live_summary.get("gui_current_revision_activation_required_before_capture_or_input"),
+                gui_current.get("activation_required_before_capture_or_input"),
+            ),
+            "gui_current_revision_activation_reasons": _first_not_none(
+                live_summary.get("gui_current_revision_activation_reasons"),
+                gui_current.get("activation_reasons"),
             ),
             "gui_current_revision_window_management_warning_count": _first_not_none(
                 live_summary.get("gui_current_revision_window_management_warning_count"),
@@ -13127,6 +13330,30 @@ def _promote_response_mcp_client_readiness(response: dict[str, Any]) -> None:
             "mcp_gui_target_window_is_selected": _first_not_none(
                 live_summary.get("mcp_gui_target_window_is_selected"),
                 readiness.get("gui_target_window_is_selected"),
+            ),
+            "mcp_gui_target_window_is_visible": _first_not_none(
+                live_summary.get("mcp_gui_target_window_is_visible"),
+                readiness.get("gui_target_window_is_visible"),
+            ),
+            "mcp_gui_target_window_is_minimized": _first_not_none(
+                live_summary.get("mcp_gui_target_window_is_minimized"),
+                readiness.get("gui_target_window_is_minimized"),
+            ),
+            "mcp_gui_target_window_foreground_observed": _first_not_none(
+                live_summary.get("mcp_gui_target_window_foreground_observed"),
+                readiness.get("gui_target_window_foreground_observed"),
+            ),
+            "mcp_gui_target_window_is_foreground": _first_not_none(
+                live_summary.get("mcp_gui_target_window_is_foreground"),
+                readiness.get("gui_target_window_is_foreground"),
+            ),
+            "mcp_gui_activation_required_before_capture_or_input": _first_not_none(
+                live_summary.get("mcp_gui_activation_required_before_capture_or_input"),
+                readiness.get("gui_activation_required_before_capture_or_input"),
+            ),
+            "mcp_gui_target_window_needs_activation": _first_not_none(
+                live_summary.get("mcp_gui_target_window_needs_activation"),
+                readiness.get("gui_target_window_needs_activation"),
             ),
             "mcp_hotload_blocking_reasons": _first_not_none(
                 live_summary.get("mcp_hotload_blocking_reasons"),
@@ -16425,6 +16652,16 @@ def _gui_report_summary(
         "window_management_target_window_handle": window_management.get("target_window_handle"),
         "window_management_target_window_title": window_management.get("target_window_title"),
         "window_management_target_window_is_selected": window_management.get("target_window_is_selected"),
+        "window_management_target_window_is_visible": window_management.get("target_window_is_visible"),
+        "window_management_target_window_is_minimized": window_management.get("target_window_is_minimized"),
+        "window_management_target_window_foreground_observed": window_management.get(
+            "target_window_foreground_observed"
+        ),
+        "window_management_target_window_is_foreground": window_management.get("target_window_is_foreground"),
+        "window_management_activation_required_before_capture_or_input": window_management.get(
+            "activation_required_before_capture_or_input"
+        ),
+        "window_management_activation_reasons": window_management.get("activation_reasons") or [],
         "window_management_status": window_management.get("status"),
         "window_management_ready_for_next_live_edit": window_management.get("ready_for_next_live_edit"),
         "window_management_can_hotload_without_new_window": window_management.get("can_hotload_without_new_window"),
@@ -16645,13 +16882,20 @@ def _selected_gui_status_window(gui_status: dict[str, Any]) -> dict[str, Any] | 
 
 
 def _foreground_gui_status_window(gui_status: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the foreground Materials Studio status entry, falling back to selected."""
+    """Return the foreground Materials Studio row, preserving explicit no-foreground evidence."""
 
     windows = gui_status.get("windows") if isinstance(gui_status, dict) else None
+    foreground_state_observed = False
     if isinstance(windows, list):
         for window in windows:
-            if isinstance(window, dict) and window.get("is_foreground"):
+            if not isinstance(window, dict):
+                continue
+            if window.get("is_foreground") is True:
                 return window
+            if window.get("is_foreground") is not None or window.get("foreground_state_observed") is True:
+                foreground_state_observed = True
+    if foreground_state_observed:
+        return None
     return _selected_gui_status_window(gui_status)
 
 
@@ -22462,6 +22706,20 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "mcp_gui_target_window_handle": mcp_client_readiness.get("gui_target_window_handle"),
             "mcp_gui_target_window_title": mcp_client_readiness.get("gui_target_window_title"),
             "mcp_gui_target_window_is_selected": mcp_client_readiness.get("gui_target_window_is_selected"),
+            "mcp_gui_target_window_is_visible": mcp_client_readiness.get("gui_target_window_is_visible"),
+            "mcp_gui_target_window_is_minimized": mcp_client_readiness.get("gui_target_window_is_minimized"),
+            "mcp_gui_target_window_foreground_observed": mcp_client_readiness.get(
+                "gui_target_window_foreground_observed"
+            ),
+            "mcp_gui_target_window_is_foreground": mcp_client_readiness.get(
+                "gui_target_window_is_foreground"
+            ),
+            "mcp_gui_activation_required_before_capture_or_input": mcp_client_readiness.get(
+                "gui_activation_required_before_capture_or_input"
+            ),
+            "mcp_gui_target_window_needs_activation": mcp_client_readiness.get(
+                "gui_target_window_needs_activation"
+            ),
             "mcp_hotload_blocking_reasons": mcp_client_readiness.get("hotload_blocking_reasons") or [],
             "mcp_post_open_single_window_policy_ok": gui.get("post_open_single_window_policy_ok"),
             "mcp_post_open_single_window_violation_reasons": gui.get("post_open_single_window_violation_reasons")
@@ -22725,6 +22983,25 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "live_gui_window_binding_target_window_is_selected": live_gui_window_binding.get(
                 "target_window_is_selected"
             ),
+            "live_gui_window_binding_target_window_is_visible": live_gui_window_binding.get(
+                "target_window_is_visible"
+            ),
+            "live_gui_window_binding_target_window_is_minimized": live_gui_window_binding.get(
+                "target_window_is_minimized"
+            ),
+            "live_gui_window_binding_target_window_foreground_observed": live_gui_window_binding.get(
+                "target_window_foreground_observed"
+            ),
+            "live_gui_window_binding_target_window_is_foreground": live_gui_window_binding.get(
+                "target_window_is_foreground"
+            ),
+            "live_gui_window_binding_activation_required_before_capture_or_input": live_gui_window_binding.get(
+                "activation_required_before_capture_or_input"
+            ),
+            "live_gui_window_binding_activation_reasons": live_gui_window_binding.get(
+                "activation_reasons"
+            )
+            or [],
             "live_gui_window_binding_ready_for_next_live_edit": live_gui_window_binding.get(
                 "ready_for_next_live_edit"
             ),
@@ -23288,6 +23565,13 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         or window_management.get("matched_project_window") is True
     )
     target_window_is_selected = window_management.get("target_window_is_selected")
+    target_window_is_visible = window_management.get("target_window_is_visible")
+    target_window_is_minimized = window_management.get("target_window_is_minimized")
+    target_window_foreground_observed = window_management.get("target_window_foreground_observed")
+    target_window_is_foreground = window_management.get("target_window_is_foreground")
+    activation_required_before_capture_or_input = window_management.get(
+        "activation_required_before_capture_or_input"
+    )
     target_window_identity_verified = bool(
         target_window_loaded
         and (
@@ -23309,6 +23593,8 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
             selected_matches is False
             or foreground_matches is False
             or target_window_is_selected is False
+            or window_management.get("needs_activation") is True
+            or activation_required_before_capture_or_input is True
         )
     )
     needs_reload = bool(
@@ -23346,7 +23632,11 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         recommended_action = "close_save_extra_matstudio_windows_then_reaudit_current_revision"
     elif needs_activation:
         recommended_tool = "material_studio_gui_activate"
-        recommended_action = "activate_current_revision_window"
+        recommended_action = (
+            "restore_and_activate_current_revision_window"
+            if target_window_is_minimized is True
+            else "activate_current_revision_window"
+        )
     elif needs_reload:
         recommended_tool = "material_studio_gui_open_structure" if structure.get("exists") else "material_studio_gui_apply_current_revision"
         recommended_action = "reload_current_revision_in_gui_and_snapshot"
@@ -23381,6 +23671,7 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         payload_hint = {
             "project_id": report.get("project_id"),
             "revision": report.get("revision"),
+            "take_snapshot": True,
         }
     elif recommended_tool == "material_studio_gui_apply_current_revision":
         payload_hint = {
@@ -23424,6 +23715,12 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         "target_window_fallback_used": gui.get("target_window_fallback_used"),
         "target_window_loaded": target_window_loaded,
         "target_window_is_selected": target_window_is_selected,
+        "target_window_is_visible": target_window_is_visible,
+        "target_window_is_minimized": target_window_is_minimized,
+        "target_window_foreground_observed": target_window_foreground_observed,
+        "target_window_is_foreground": target_window_is_foreground,
+        "activation_required_before_capture_or_input": activation_required_before_capture_or_input,
+        "activation_reasons": window_management.get("activation_reasons") or [],
         "target_window_identity_verified": target_window_identity_verified,
         "window_management": window_management or None,
         "window_management_status": window_management.get("status"),
@@ -23483,6 +23780,20 @@ def _gui_current_revision_live_summary(gui_current_revision: dict[str, Any]) -> 
             "gui_current_revision_target_window_fallback_used": gui_current_revision.get("target_window_fallback_used"),
             "gui_current_revision_target_window_loaded": gui_current_revision.get("target_window_loaded"),
             "gui_current_revision_target_window_is_selected": gui_current_revision.get("target_window_is_selected"),
+            "gui_current_revision_target_window_is_visible": gui_current_revision.get("target_window_is_visible"),
+            "gui_current_revision_target_window_is_minimized": gui_current_revision.get(
+                "target_window_is_minimized"
+            ),
+            "gui_current_revision_target_window_foreground_observed": gui_current_revision.get(
+                "target_window_foreground_observed"
+            ),
+            "gui_current_revision_target_window_is_foreground": gui_current_revision.get(
+                "target_window_is_foreground"
+            ),
+            "gui_current_revision_activation_required_before_capture_or_input": gui_current_revision.get(
+                "activation_required_before_capture_or_input"
+            ),
+            "gui_current_revision_activation_reasons": gui_current_revision.get("activation_reasons") or [],
             "gui_current_revision_window_management_warning_count": gui_current_revision.get("window_management_warning_count"),
             "gui_current_revision_window_management_status": gui_current_revision.get("window_management_status"),
             "gui_current_revision_window_management_ready_for_next_live_edit": gui_current_revision.get(
@@ -23537,6 +23848,9 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("live_hotload_preflight"), dict)
         else {}
     )
+    gui_window_management = (
+        gui.get("window_management") if isinstance(gui.get("window_management"), dict) else {}
+    )
     if not any((gui, gui_current, mcp_readiness, live_gui_acceptance, live_hotload_preflight)):
         return {}
 
@@ -23569,6 +23883,39 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
     target_window_is_selected = mcp_readiness.get("gui_target_window_is_selected")
     if target_window_is_selected is None:
         target_window_is_selected = gui_current.get("target_window_is_selected")
+    target_window_is_visible = _first_not_none(
+        mcp_readiness.get("gui_target_window_is_visible"),
+        gui_current.get("target_window_is_visible"),
+        gui.get("window_management_target_window_is_visible"),
+    )
+    target_window_is_minimized = _first_not_none(
+        mcp_readiness.get("gui_target_window_is_minimized"),
+        gui_current.get("target_window_is_minimized"),
+        gui.get("window_management_target_window_is_minimized"),
+    )
+    target_window_foreground_observed = _first_not_none(
+        mcp_readiness.get("gui_target_window_foreground_observed"),
+        gui_current.get("target_window_foreground_observed"),
+        gui.get("window_management_target_window_foreground_observed"),
+    )
+    target_window_is_foreground = _first_not_none(
+        mcp_readiness.get("gui_target_window_is_foreground"),
+        gui_current.get("target_window_is_foreground"),
+        gui.get("window_management_target_window_is_foreground"),
+    )
+    activation_required_before_capture_or_input = _first_not_none(
+        mcp_readiness.get("gui_activation_required_before_capture_or_input"),
+        gui_current.get("activation_required_before_capture_or_input"),
+        gui.get("window_management_activation_required_before_capture_or_input"),
+    )
+    activation_reasons = _dedupe_strings(
+        [
+            str(reason)
+            for source in (gui_current, gui_window_management)
+            for reason in (source.get("activation_reasons") or [])
+            if reason
+        ]
+    )
     target_window_found = mcp_readiness.get("gui_target_window_found")
     if target_window_found is None:
         target_window_found = bool(
@@ -23608,6 +23955,8 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
         visible_followup_ready,
         mcp_readiness.get("ready_for_live_edit"),
     )
+    if activation_required_before_capture_or_input is True:
+        ready_for_next_live_edit = False
 
     return _drop_none_values(
         {
@@ -23623,12 +23972,22 @@ def _live_gui_window_binding_summary(report: dict[str, Any]) -> dict[str, Any]:
             "target_window_handle": target_window_handle,
             "target_window_title": target_window_title,
             "target_window_is_selected": target_window_is_selected,
+            "target_window_is_visible": target_window_is_visible,
+            "target_window_is_minimized": target_window_is_minimized,
+            "target_window_foreground_observed": target_window_foreground_observed,
+            "target_window_is_foreground": target_window_is_foreground,
+            "activation_required_before_capture_or_input": activation_required_before_capture_or_input,
+            "activation_reasons": activation_reasons,
             "target_window_loaded": gui_current.get("target_window_loaded"),
             "target_window_matched_project_window": gui_current.get("target_window_matched_project_window"),
             "target_window_fallback_used": gui_current.get("target_window_fallback_used"),
             "current_revision_loaded": current_revision_loaded,
             "needs_reload": gui_current.get("needs_reload"),
-            "needs_activation": gui_current.get("needs_activation"),
+            "needs_activation": _first_not_none(
+                gui_current.get("needs_activation"),
+                mcp_readiness.get("gui_target_window_needs_activation"),
+                activation_required_before_capture_or_input,
+            ),
             "needs_snapshot": gui_current.get("needs_snapshot"),
             "needs_single_window_resolution": gui_current.get("needs_single_window_resolution"),
             "visual_validation": gui_current.get("visual_validation") or gui.get("visual_validation"),
@@ -23719,6 +24078,16 @@ def _change_receipt_gui_current_revision(gui_current_revision: dict[str, Any]) -
             "target_window_fallback_used": gui_current_revision.get("target_window_fallback_used"),
             "target_window_loaded": gui_current_revision.get("target_window_loaded"),
             "target_window_is_selected": gui_current_revision.get("target_window_is_selected"),
+            "target_window_is_visible": gui_current_revision.get("target_window_is_visible"),
+            "target_window_is_minimized": gui_current_revision.get("target_window_is_minimized"),
+            "target_window_foreground_observed": gui_current_revision.get(
+                "target_window_foreground_observed"
+            ),
+            "target_window_is_foreground": gui_current_revision.get("target_window_is_foreground"),
+            "activation_required_before_capture_or_input": gui_current_revision.get(
+                "activation_required_before_capture_or_input"
+            ),
+            "activation_reasons": gui_current_revision.get("activation_reasons") or [],
             "window_management_recommended_tool": gui_current_revision.get("window_management_recommended_tool"),
             "window_management_recommended_action": gui_current_revision.get("window_management_recommended_action"),
             "window_management_warning_count": gui_current_revision.get("window_management_warning_count"),

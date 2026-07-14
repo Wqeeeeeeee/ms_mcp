@@ -587,6 +587,9 @@ class WindowInfo:
     process_name: str = "MatStudio.exe"
     rect: tuple[int, int, int, int] | None = None
     class_name: str | None = None
+    is_visible: bool | None = None
+    is_minimized: bool | None = None
+    is_foreground: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """返回字典表示。"""
@@ -597,6 +600,9 @@ class WindowInfo:
             "process_name": self.process_name,
             "rect": list(self.rect) if self.rect else None,
             "class_name": self.class_name,
+            "is_visible": self.is_visible,
+            "is_minimized": self.is_minimized,
+            "is_foreground": self.is_foreground,
         }
 
 
@@ -720,6 +726,7 @@ class WindowsGuiBackend:
             return None
         user32 = ctypes.windll.user32
         candidates: list[WindowInfo] = []
+        foreground_handle = _foreground_window_handle()
         pids = {process.pid for process in self.list_processes()}
         if pid is not None:
             pids = {pid}
@@ -751,6 +758,11 @@ class WindowsGuiBackend:
                         pid=window_pid,
                         rect=rect,
                         class_name=_window_class(hwnd),
+                        is_visible=True,
+                        is_minimized=bool(user32.IsIconic(hwnd)),
+                        is_foreground=(
+                            int(hwnd) == foreground_handle if foreground_handle is not None else None
+                        ),
                     )
                 )
             return True
@@ -758,7 +770,6 @@ class WindowsGuiBackend:
         user32.EnumWindows(enum_proc_type(enum_proc), 0)
         if not candidates:
             return None
-        foreground_handle = _foreground_window_handle()
         return sorted(candidates, key=lambda window: _window_priority(window, foreground_handle=foreground_handle))[0]
 
     def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
@@ -768,6 +779,7 @@ class WindowsGuiBackend:
             return []
         user32 = ctypes.windll.user32
         candidates: list[WindowInfo] = []
+        foreground_handle = _foreground_window_handle()
         pids = {process.pid for process in self.list_processes()}
         if pid is not None:
             pids = {pid}
@@ -798,12 +810,16 @@ class WindowsGuiBackend:
                         pid=window_pid,
                         rect=_window_rect(hwnd),
                         class_name=_window_class(hwnd),
+                        is_visible=True,
+                        is_minimized=bool(user32.IsIconic(hwnd)),
+                        is_foreground=(
+                            int(hwnd) == foreground_handle if foreground_handle is not None else None
+                        ),
                     )
                 )
             return True
 
         user32.EnumWindows(enum_proc_type(enum_proc), 0)
-        foreground_handle = _foreground_window_handle()
         return sorted(candidates, key=lambda window: _window_priority(window, foreground_handle=foreground_handle))
 
     def activate_window(self, window: WindowInfo) -> bool:
@@ -1116,6 +1132,16 @@ class MaterialsStudioGuiController:
             "current_revision_loaded": bool(window_management.get("current_revision_loaded")),
             "needs_reload": bool(window_management.get("needs_reload")),
             "needs_activation": bool(window_management.get("needs_activation")),
+            "target_window_is_visible": window_management.get("target_window_is_visible"),
+            "target_window_is_minimized": window_management.get("target_window_is_minimized"),
+            "target_window_foreground_observed": bool(
+                window_management.get("target_window_foreground_observed")
+            ),
+            "target_window_is_foreground": window_management.get("target_window_is_foreground"),
+            "activation_reasons": list(window_management.get("activation_reasons") or []),
+            "activation_required_before_capture_or_input": bool(
+                window_management.get("activation_required_before_capture_or_input")
+            ),
             "needs_single_window_resolution": bool(window_management.get("needs_single_window_resolution")),
             "needs_dialog_resolution": bool(window_management.get("needs_dialog_resolution")),
             "ready_for_snapshot": bool(window_management.get("ready_for_snapshot")),
@@ -1160,13 +1186,19 @@ class MaterialsStudioGuiController:
     def _window_inventory(self, windows: list[WindowInfo], *, selected_window: WindowInfo | None) -> list[dict[str, Any]]:
         """Return window entries enriched with live wrapper metadata when available."""
 
-        foreground_handle = _foreground_window_handle()
         entries: list[dict[str, Any]] = []
         for index, window in enumerate(windows):
             entry = window.to_dict()
             entry["index"] = index
             entry["is_selected"] = bool(selected_window and window.handle == selected_window.handle)
-            entry["is_foreground"] = bool(foreground_handle is not None and window.handle == foreground_handle)
+            if entry.get("is_minimized") is None and _window_rect_looks_minimized(window.rect):
+                entry["is_minimized"] = True
+                entry["minimized_state_source"] = "window_rect_sentinel"
+            elif entry.get("is_minimized") is not None:
+                entry["minimized_state_source"] = "win32_is_iconic"
+            else:
+                entry["minimized_state_source"] = "unknown"
+            entry["foreground_state_observed"] = window.is_foreground is not None
             metadata = self._project_wrapper_metadata_for_window(window)
             if metadata is not None:
                 entry["project_wrapper_metadata"] = metadata
@@ -1315,15 +1347,11 @@ class MaterialsStudioGuiController:
                 payload["target_window_resolution"] = target_resolution
         if take_snapshot and payload.get("window") is not None:
             try:
-                window_info = WindowInfo(**payload["window"])
-                output_path = self._screenshot_path(label="launch_matstudio", project_id=project_id, revision=revision)
-                captured_path = self.backend.capture_window(window_info, output_path)
-                payload["snapshot"] = {
-                    "window": window_info.to_dict(),
-                    "screenshot_path": str(captured_path),
-                    "format": "bmp",
-                    "analysis": _analyze_bmp_snapshot(captured_path),
-                }
+                payload["snapshot"] = self.snapshot(
+                    label="launch_matstudio",
+                    project_id=project_id,
+                    revision=revision,
+                )
             except Exception as exc:
                 payload["snapshot_warning"] = str(exc)
         self._write_log("launch", project_id=project_id, revision=revision, payload=payload)
@@ -1331,18 +1359,30 @@ class MaterialsStudioGuiController:
 
     def activate(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
         """激活窗口。"""
-        window, target_resolution = self._require_window(project_id=project_id, revision=revision)
-        activated = self.backend.activate_window(window)
+        requested_window, target_resolution = self._require_window(project_id=project_id, revision=revision)
+        activated = self.backend.activate_window(requested_window)
+        refreshed_window, refreshed_resolution = self._require_window(project_id=project_id, revision=revision)
+        window_identity_stable = refreshed_window.handle == requested_window.handle
         window_management = self._window_management_for_hotload(
-            target_window=window,
-            target_resolution=target_resolution,
+            target_window=refreshed_window,
+            target_resolution=refreshed_resolution,
             project_id=project_id,
             revision=revision,
         )
+        activation_verified = bool(
+            activated
+            and window_identity_stable
+            and not window_management.get("activation_required_before_capture_or_input")
+        )
         payload = {
             "activated": activated,
-            "window": window.to_dict(),
-            "target_window_resolution": target_resolution,
+            "activation_verified": activation_verified,
+            "activation_verification_reasons": list(window_management.get("interaction_activation_reasons") or []),
+            "window_identity_stable_after_activation": window_identity_stable,
+            "requested_window": requested_window.to_dict(),
+            "window": refreshed_window.to_dict(),
+            "target_window_resolution": refreshed_resolution,
+            "pre_activation_target_window_resolution": target_resolution,
             "window_management": window_management,
             "single_window_policy_ok": bool(window_management.get("single_window_policy_ok")),
             "single_window_violation_reasons": list(window_management.get("single_window_violation_reasons") or []),
@@ -1365,6 +1405,21 @@ class MaterialsStudioGuiController:
             project_id=project_id,
             revision=revision,
         )
+        if window_management.get("activation_required_before_capture_or_input"):
+            blocked_payload = {
+                "captured": False,
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "window_management": window_management,
+                "block_reason": "target_window_activation_required",
+                "activation_reasons": list(window_management.get("interaction_activation_reasons") or []),
+            }
+            self._write_log("snapshot_blocked", project_id=project_id, revision=revision, payload=blocked_payload)
+            raise GuiError(
+                "Refusing to capture the Materials Studio window before the verified target is restored and "
+                "foreground. Call material_studio_gui_activate with the same project_id/revision and "
+                "take_snapshot=true."
+            )
         output_path = self._screenshot_path(label=label, project_id=project_id, revision=revision)
         captured_path = self.backend.capture_window(window, output_path)
         payload = {
@@ -1436,6 +1491,37 @@ class MaterialsStudioGuiController:
                 "then retry the same-window hot-load."
             )
         activated = self.backend.activate_window(window)
+        post_activation_window_management = window_management
+        startup_dialog_open_ready = bool(window_management.get("startup_dialog_open_ready"))
+        if not startup_dialog_open_ready:
+            if not activated:
+                raise GuiError(
+                    "Refusing same-window GUI input because the target Materials Studio window could not be "
+                    "restored and activated. Call material_studio_gui_activate, verify the returned target "
+                    "identity, and retry."
+                )
+            refreshed_window, refreshed_resolution = self._require_window(
+                project_id=project_id,
+                revision=revision,
+            )
+            if refreshed_window.handle != window.handle:
+                raise GuiError(
+                    "Refusing same-window GUI input because the target Materials Studio window identity changed "
+                    "during activation. Run material_studio_gui_status and retry with the returned project/revision."
+                )
+            window = refreshed_window
+            target_resolution = refreshed_resolution
+            post_activation_window_management = self._window_management_for_hotload(
+                target_window=window,
+                target_resolution=target_resolution,
+                project_id=project_id,
+                revision=revision,
+            )
+            if post_activation_window_management.get("activation_required_before_capture_or_input"):
+                raise GuiError(
+                    "Refusing same-window GUI input because the target Materials Studio window is still minimized "
+                    "or is not the verified foreground window after activation."
+                )
 
         same_window_opener = _backend_same_window_open_callable(self.backend)
         same_window_open_used = False
@@ -1537,6 +1623,7 @@ class MaterialsStudioGuiController:
             "same_window_open_supported": _backend_same_window_open_supported(self.backend),
             "same_window_open_used": same_window_open_used,
             "window_management": window_management,
+            "post_activation_window_management": post_activation_window_management,
             "post_open_target_window_resolution": post_open_target_resolution,
             "post_open_window_management": post_open_window_management,
             "post_open_single_window_policy_ok": not post_open_single_window_violation_reasons,
@@ -1548,14 +1635,11 @@ class MaterialsStudioGuiController:
             payload["project_wrapper"] = wrapper
         if take_snapshot and window is not None:
             try:
-                output_path = self._screenshot_path(label=f"open_{path.stem}", project_id=project_id, revision=revision)
-                captured_path = self.backend.capture_window(window, output_path)
-                payload["snapshot"] = {
-                    "window": window.to_dict(),
-                    "screenshot_path": str(captured_path),
-                    "format": "bmp",
-                    "analysis": _analyze_bmp_snapshot(captured_path),
-                }
+                payload["snapshot"] = self.snapshot(
+                    label=f"open_{path.stem}",
+                    project_id=project_id,
+                    revision=revision,
+                )
             except Exception as exc:  # 快照失败不应隐藏打开状态
                 payload["snapshot_warning"] = str(exc)
         self._write_log("open_structure", project_id=project_id, revision=revision, payload=payload)
@@ -4002,6 +4086,35 @@ def _window_management_receipt(
     target_window_is_selected = bool(
         selected_window is not None and target_window is not None and selected_window.handle == target_window.handle
     )
+    target_window_is_visible = target_entry.get("is_visible") if target_entry else None
+    target_window_is_minimized = target_entry.get("is_minimized") if target_entry else None
+    target_window_foreground_observed = bool(
+        target_entry
+        and (
+            target_entry.get("foreground_state_observed") is True
+            or target_entry.get("is_foreground") is not None
+        )
+    )
+    target_window_is_foreground = (
+        bool(target_entry.get("is_foreground"))
+        if target_entry and target_window_foreground_observed
+        else None
+    )
+    interaction_activation_reasons: list[str] = []
+    if target_window is not None:
+        if target_window_is_minimized is True:
+            interaction_activation_reasons.append("target_window_minimized")
+        if target_window_is_visible is False:
+            interaction_activation_reasons.append("target_window_not_visible")
+        if target_window_foreground_observed and target_window_is_foreground is False:
+            interaction_activation_reasons.append("target_window_not_foreground")
+    activation_reasons = list(interaction_activation_reasons)
+    if target_window is not None and not target_window_is_selected:
+        activation_reasons.insert(0, "target_window_not_selected")
+    needs_activation = bool(target_window is not None and activation_reasons)
+    activation_required_before_capture_or_input = bool(
+        target_window is not None and interaction_activation_reasons
+    )
     matched_project_window = bool(target_resolution and target_resolution.get("matched_project_window"))
     fallback_used = bool(target_resolution and target_resolution.get("fallback_used"))
     blocking_dialog_entries = [
@@ -4035,6 +4148,7 @@ def _window_management_receipt(
         warnings.append("target_project_window_not_verified")
     if target_window is not None and selected_window is not None and not target_window_is_selected:
         warnings.append("selected_window_is_not_target_window")
+    warnings.extend(interaction_activation_reasons)
     if target_window is not None and not same_window_open_supported:
         warnings.append("same_window_open_not_supported_by_local_backend")
 
@@ -4058,21 +4172,25 @@ def _window_management_receipt(
         recommended_action = "dismiss_startup_or_modal_dialog_then_retry_hotload"
         ready_for_snapshot = True
         ready_for_open = False
-    elif not same_window_open_supported:
-        recommended_tool = "material_studio_gui_copy_script_assist"
-        recommended_action = "open_structure_in_existing_window_with_computer_use_or_manual_file_open_then_snapshot"
-        ready_for_snapshot = True
-        ready_for_open = False
     elif requested_target and not matched_project_window:
         recommended_tool = "material_studio_gui_open_structure"
         recommended_action = "reload_requested_project_revision_in_gui"
         ready_for_snapshot = False
         ready_for_open = True
-    elif not target_window_is_selected:
+    elif needs_activation:
         recommended_tool = "material_studio_gui_activate"
-        recommended_action = "activate_target_project_window"
-        ready_for_snapshot = True
+        recommended_action = (
+            "restore_and_activate_target_project_window"
+            if target_window_is_minimized is True
+            else "activate_target_project_window"
+        )
+        ready_for_snapshot = False
         ready_for_open = True
+    elif not same_window_open_supported:
+        recommended_tool = "material_studio_gui_copy_script_assist"
+        recommended_action = "open_structure_in_existing_window_with_computer_use_or_manual_file_open_then_snapshot"
+        ready_for_snapshot = True
+        ready_for_open = False
     else:
         recommended_tool = "material_studio_gui_snapshot"
         recommended_action = "snapshot_target_project_window"
@@ -4085,7 +4203,7 @@ def _window_management_receipt(
         resolvable_startup_dialog_entries and not unresolved_blocking_dialog_entries
     )
     needs_reload = bool(requested_target and not matched_project_window)
-    needs_activation = bool(target_window is not None and not target_window_is_selected)
+    ready_for_snapshot = bool(ready_for_snapshot and not activation_required_before_capture_or_input)
     can_hotload_without_new_window = bool(
         target_window is not None
         and same_window_open_supported
@@ -4106,12 +4224,12 @@ def _window_management_receipt(
         status = "modal_dialog_blocking_hotload"
     elif startup_dialog_open_ready:
         status = "startup_dialog_ready_for_same_window_open"
-    elif not same_window_open_supported:
-        status = "same_window_open_unavailable"
     elif needs_reload:
         status = "requested_revision_not_loaded"
     elif needs_activation:
         status = "target_window_needs_activation"
+    elif not same_window_open_supported:
+        status = "same_window_open_unavailable"
     else:
         status = "ready_for_same_window_live_edit"
 
@@ -4124,6 +4242,8 @@ def _window_management_receipt(
         payload_hint["execution_mode"] = "execute"
         payload_hint["open_in_gui"] = True
     elif recommended_tool == "material_studio_gui_snapshot":
+        payload_hint["take_snapshot"] = True
+    elif recommended_tool == "material_studio_gui_activate":
         payload_hint["take_snapshot"] = True
 
     return {
@@ -4154,6 +4274,13 @@ def _window_management_receipt(
         "target_window_revision": target_entry.get("revision") if target_entry else None,
         "target_window_has_project_metadata": bool(target_entry and target_entry.get("project_wrapper_metadata")),
         "target_window_is_selected": target_window_is_selected,
+        "target_window_is_visible": target_window_is_visible,
+        "target_window_is_minimized": target_window_is_minimized,
+        "target_window_foreground_observed": target_window_foreground_observed,
+        "target_window_is_foreground": target_window_is_foreground,
+        "activation_reasons": activation_reasons,
+        "interaction_activation_reasons": interaction_activation_reasons,
+        "activation_required_before_capture_or_input": activation_required_before_capture_or_input,
         "matched_project_window": matched_project_window,
         "fallback_used": fallback_used,
         "same_window_open_supported": same_window_open_supported,
@@ -4387,6 +4514,15 @@ def _window_area(window: WindowInfo) -> int:
     return max(0, right - left) * max(0, bottom - top)
 
 
+def _window_rect_looks_minimized(rect: tuple[int, int, int, int] | None) -> bool:
+    """Recognize the Win32 minimized-window sentinel without rejecting valid negative monitors."""
+
+    if rect is None:
+        return False
+    left, top, _right, _bottom = rect
+    return left <= -30000 and top <= -30000
+
+
 def _window_priority(window: WindowInfo, *, foreground_handle: int | None = None) -> tuple[int, int, int, str]:
     """Prefer real Materials Studio frame windows over transient dialogs."""
 
@@ -4415,6 +4551,7 @@ def _find_windows(*, title: str | None = None, pid: int | None = None) -> list[W
         return []
     user32 = ctypes.windll.user32
     matches: list[WindowInfo] = []
+    foreground_handle = _foreground_window_handle()
     enum_proc_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
     def enum_proc(hwnd: int, _lparam: int) -> bool:
@@ -4440,12 +4577,16 @@ def _find_windows(*, title: str | None = None, pid: int | None = None) -> list[W
                 pid=window_pid,
                 rect=_window_rect(hwnd),
                 class_name=_window_class(hwnd),
+                is_visible=True,
+                is_minimized=bool(user32.IsIconic(hwnd)),
+                is_foreground=(
+                    int(hwnd) == foreground_handle if foreground_handle is not None else None
+                ),
             )
         )
         return True
 
     user32.EnumWindows(enum_proc_type(enum_proc), 0)
-    foreground_handle = _foreground_window_handle()
     return sorted(matches, key=lambda window: _window_priority(window, foreground_handle=foreground_handle))
 
 

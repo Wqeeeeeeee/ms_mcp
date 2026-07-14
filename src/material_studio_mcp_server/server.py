@@ -356,6 +356,16 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
 
     miller_plane_indices: list[int] = Field(..., min_length=3, max_length=4)
     dialog_miller_indices: list[int] = Field(..., min_length=3, max_length=3)
+    dialog_miller_indices_text_before_create: str = Field(
+        ...,
+        pattern=r"^-?\d{1,3} -?\d{1,3} -?\d{1,3}$",
+        max_length=23,
+    )
+    dialog_miller_indices_value_source: str = Field(
+        ...,
+        pattern=r"^fresh_modeless_child_accessibility_value$",
+    )
+    dialog_miller_indices_verified_before_create: bool
     created_plane_count: int = Field(..., ge=0)
     selected_plane_count: int = Field(..., ge=0)
     miller_plane_count_before: int = Field(..., ge=0)
@@ -3046,6 +3056,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ),
             "miller_planes_parent_window_coordinates_allowed": False,
             "miller_planes_out_of_bounds_accessibility_targets_allowed": False,
+            "miller_planes_dialog_value_readback_required": True,
+            "miller_planes_dialog_value_source": (
+                "fresh_modeless_child_accessibility_value"
+            ),
+            "miller_planes_ctrl_a_replacement_assumption_allowed": False,
+            "miller_planes_create_requires_exact_value_match": True,
             "unexpected_default_plane_requires_exact_undo_and_abort": True,
             "crystallographic_plane_view_native_command_id": "cmdViewer3DViewOnto",
             "crystallographic_plane_view_selection_method": (
@@ -5867,6 +5883,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     ),
                     "parent_window_coordinates_allowed": False,
                     "out_of_bounds_accessibility_targets_allowed": False,
+                    "dialog_value_readback_required": True,
+                    "dialog_value_source": (
+                        "fresh_modeless_child_accessibility_value"
+                    ),
+                    "ctrl_a_replacement_assumption_allowed": False,
+                    "create_requires_exact_value_match": True,
                     "temporary_plane_cleanup_required": True,
                     "required_undo_labels": [
                         "Undo View Onto Miller Plane",

@@ -1807,6 +1807,30 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
+    assert plane_recipe["schema_version"] == 4
+    assert plane_recipe["dialog_index_entry_contract"] == {
+        "control_id": "TxtHKL",
+        "expected_value": "1 0 0",
+        "value_source": "fresh_modeless_child_accessibility_value",
+        "replacement_strategy_order": [
+            "accessibility_set_value_exact",
+            "focus_end_backspace_observed_character_count_then_type_exact",
+        ],
+        "control_a_replacement_assumption_allowed": False,
+        "fresh_child_state_required_after_entry": True,
+        "read_back_required_before_create": True,
+        "comparison": "exact_trimmed_text",
+        "create_allowed_only_after_exact_match": True,
+        "mismatch_action": (
+            "do_not_invoke_create_correct_value_and_reverify_from_fresh_child_state"
+        ),
+    }
+    assert "read_back_txt_hkl_value_from_fresh_child_accessibility_state" in (
+        plane_recipe["action_sequence"]
+    )
+    assert "block_create_until_exact_dialog_value_match" in plane_recipe[
+        "action_sequence"
+    ]
     assert plane_recipe["properties_miller_label"] == "(100)"
     assert plane_recipe["camera_match_contract"] == {
         "scope": "crystal_plane_normal_with_native_in_plane_roll",
@@ -1847,6 +1871,11 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     complete_evidence = {
         "miller_plane_indices": [1, 0, 0],
         "dialog_miller_indices": [1, 0, 0],
+        "dialog_miller_indices_text_before_create": "1 0 0",
+        "dialog_miller_indices_value_source": (
+            "fresh_modeless_child_accessibility_value"
+        ),
+        "dialog_miller_indices_verified_before_create": True,
         "created_plane_count": 1,
         "selected_plane_count": 1,
         "miller_plane_count_before": 0,
@@ -1919,6 +1948,46 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert (
         "miller_plane_cleanup_or_camera_evidence_incomplete"
         in rejected_cleanup["rejection_reasons"]
+    )
+
+    wrong_dialog_text = dict(complete_evidence)
+    wrong_dialog_text["dialog_miller_indices_text_before_create"] = "1 0 1"
+    rejected_dialog_text = server.material_studio_gui_record_view_replay(
+        view_name="crystal_plane_100",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="local_gui_fallback",
+        native_command_id="cmdViewer3DViewOnto",
+        modifier_keys=[],
+        screenshot_path=str(screenshot),
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        miller_plane_evidence=wrong_dialog_text,
+        working_dir=str(tmp_path),
+    )
+    assert rejected_dialog_text["ok"] is False
+    assert "dialog_miller_indices_text_before_create" in rejected_dialog_text["error"]
+
+    unverified_dialog_value = dict(complete_evidence)
+    unverified_dialog_value["dialog_miller_indices_verified_before_create"] = False
+    rejected_unverified_dialog = server.material_studio_gui_record_view_replay(
+        view_name="crystal_plane_100",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="local_gui_fallback",
+        native_command_id="cmdViewer3DViewOnto",
+        modifier_keys=[],
+        screenshot_path=str(screenshot),
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        miller_plane_evidence=unverified_dialog_value,
+        working_dir=str(tmp_path),
+    )
+    assert rejected_unverified_dialog["ok"] is True
+    assert rejected_unverified_dialog["accepted"] is False
+    assert (
+        "miller_plane_cleanup_or_camera_evidence_incomplete"
+        in rejected_unverified_dialog["rejection_reasons"]
     )
 
     recorded = server.material_studio_gui_record_view_replay(
@@ -2042,6 +2111,11 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
     evidence = {
         "miller_plane_indices": [1, 0, 0],
         "dialog_miller_indices": [1, 0, 0],
+        "dialog_miller_indices_text_before_create": "1 0 0",
+        "dialog_miller_indices_value_source": (
+            "fresh_modeless_child_accessibility_value"
+        ),
+        "dialog_miller_indices_verified_before_create": True,
         "created_plane_count": 1,
         "selected_plane_count": 1,
         "miller_plane_count_before": 0,
@@ -2143,6 +2217,8 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
     assert normalized["selection_method"] == (
         "viewport_unique_transient_plane_properties_verified"
     )
+    assert normalized["dialog_miller_indices_text_before_create"] == "1 0 0"
+    assert normalized["dialog_miller_indices_verified_before_create"] is True
     assert normalized["undo_labels_match_contract"] is True
     assert "Undo Recenter" in normalized["undo_labels_applied"]
     assert normalized["analytic_in_plane_basis_matches_manifest"] is None
@@ -2247,6 +2323,11 @@ def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidenc
     evidence = {
         "miller_plane_indices": [1, 1, 0],
         "dialog_miller_indices": [1, 1, 0],
+        "dialog_miller_indices_text_before_create": "1 1 0",
+        "dialog_miller_indices_value_source": (
+            "fresh_modeless_child_accessibility_value"
+        ),
+        "dialog_miller_indices_verified_before_create": True,
         "created_plane_count": 1,
         "selected_plane_count": 1,
         "miller_plane_count_before": 0,
@@ -5249,6 +5330,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "modeless_dialog_targeting_surface": "fresh_modeless_child_window_state",
         "parent_window_coordinates_allowed": False,
         "out_of_bounds_accessibility_targets_allowed": False,
+        "dialog_value_readback_required": True,
+        "dialog_value_source": "fresh_modeless_child_accessibility_value",
+        "ctrl_a_replacement_assumption_allowed": False,
+        "create_requires_exact_value_match": True,
         "temporary_plane_cleanup_required": True,
         "required_undo_labels": [
             "Undo View Onto Miller Plane",

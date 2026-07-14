@@ -203,6 +203,15 @@ The nested viewport probe is accepted only after fresh before/after screenshots
 isolate one unique new plane, a no-modifier selection is semantically verified
 in Properties Explorer, the native View Onto popup is observed, and the source
 structure hash is unchanged.
+For every prepared Miller-plane replay, inspect
+`execution_recipe.dialog_index_entry_contract`. Read `TxtHKL` back from a fresh
+modeless child accessibility state after entry; never treat `Ctrl+A` as proof
+that replacement succeeded. Invoke Create only after the trimmed value exactly
+matches `dialog_miller_indices_text`, then record
+`dialog_miller_indices_text_before_create`,
+`dialog_miller_indices_value_source="fresh_modeless_child_accessibility_value"`,
+and `dialog_miller_indices_verified_before_create=true` in
+`miller_plane_evidence`.
 While this gate is blocked, the continuation receipt sets
 `payload_hint_is_directly_callable=false` and does not supply record-evidence
 examples. Fill the strict runtime evidence schema from the current observation.

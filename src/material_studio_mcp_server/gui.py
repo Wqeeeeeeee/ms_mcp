@@ -170,6 +170,9 @@ MILLER_PLANE_OBJECT_TREE_PATH_SUFFIX = [
 MILLER_PLANE_REPLAY_EVIDENCE_FIELDS = {
     "miller_plane_indices",
     "dialog_miller_indices",
+    "dialog_miller_indices_text_before_create",
+    "dialog_miller_indices_value_source",
+    "dialog_miller_indices_verified_before_create",
     "created_plane_count",
     "selected_plane_count",
     "miller_plane_count_before",
@@ -215,6 +218,7 @@ MILLER_PLANE_OPTIONAL_REPLAY_EVIDENCE_FIELDS = {
     "dialog_show_symmetry_images",
 }
 MILLER_PLANE_REQUIRED_TRUE_EVIDENCE_FIELDS = (
+    "dialog_miller_indices_verified_before_create",
     "plane_normal_matches_manifest",
     "native_in_plane_roll_policy_observed",
     "reset_view_before_alignment",
@@ -646,6 +650,12 @@ def _miller_plane_dialog_indices(indices: list[int]) -> list[int]:
     return [indices[0], indices[1], indices[3]]
 
 
+def _miller_plane_dialog_text(indices: list[int]) -> str:
+    """Return the canonical three-index text required before Create."""
+
+    return " ".join(str(value) for value in indices)
+
+
 def _miller_plane_label(indices: list[int]) -> str:
     """Return the compact Miller label used by the Properties Explorer."""
 
@@ -703,6 +713,22 @@ def _normalize_miller_plane_replay_evidence(
         raise GuiError(
             "miller_plane_evidence.dialog_miller_indices does not match the prepared recipe: "
             f"expected {expected_dialog_indices!r}, received {normalized_dialog_indices!r}"
+        )
+    expected_dialog_text = _miller_plane_dialog_text(expected_dialog_indices)
+    dialog_text_before_create = str(
+        evidence["dialog_miller_indices_text_before_create"]
+    ).strip()
+    if dialog_text_before_create != expected_dialog_text:
+        raise GuiError(
+            "miller_plane_evidence.dialog_miller_indices_text_before_create does not match "
+            f"the prepared recipe: expected {expected_dialog_text!r}, received "
+            f"{dialog_text_before_create!r}"
+        )
+    dialog_value_source = str(evidence["dialog_miller_indices_value_source"]).strip()
+    if dialog_value_source != "fresh_modeless_child_accessibility_value":
+        raise GuiError(
+            "miller_plane_evidence.dialog_miller_indices_value_source must equal "
+            "'fresh_modeless_child_accessibility_value'"
         )
 
     count_fields = (
@@ -859,6 +885,8 @@ def _normalize_miller_plane_replay_evidence(
     return {
         "miller_plane_indices": normalized_indices,
         "dialog_miller_indices": normalized_dialog_indices,
+        "dialog_miller_indices_text_before_create": dialog_text_before_create,
+        "dialog_miller_indices_value_source": dialog_value_source,
         **counts,
         "selection_method": selection_method,
         "object_tree_path_suffix": path_suffix,
@@ -3985,7 +4013,7 @@ def _view_replay_execution_recipe(
         )
         return {
             **base,
-            "schema_version": 3,
+            "schema_version": 4,
             "recipe_kind": recipe_kind,
             "status": (
                 "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
@@ -4019,8 +4047,27 @@ def _view_replay_execution_recipe(
             "miller_plane_indices": plane_indices or None,
             "dialog_miller_indices": dialog_indices or None,
             "dialog_miller_indices_text": (
-                " ".join(str(value) for value in dialog_indices) if dialog_indices else None
+                _miller_plane_dialog_text(dialog_indices) if dialog_indices else None
             ),
+            "dialog_index_entry_contract": {
+                "control_id": "TxtHKL",
+                "expected_value": (
+                    _miller_plane_dialog_text(dialog_indices) if dialog_indices else None
+                ),
+                "value_source": "fresh_modeless_child_accessibility_value",
+                "replacement_strategy_order": [
+                    "accessibility_set_value_exact",
+                    "focus_end_backspace_observed_character_count_then_type_exact",
+                ],
+                "control_a_replacement_assumption_allowed": False,
+                "fresh_child_state_required_after_entry": True,
+                "read_back_required_before_create": True,
+                "comparison": "exact_trimmed_text",
+                "create_allowed_only_after_exact_match": True,
+                "mismatch_action": (
+                    "do_not_invoke_create_correct_value_and_reverify_from_fresh_child_state"
+                ),
+            },
             "properties_miller_label": properties_label,
             "source_crystal_direction_indices": (
                 crystallography.get("crystal_direction_indices")
@@ -4176,6 +4223,9 @@ def _view_replay_execution_recipe(
                 "capture_fresh_modeless_dialog_child_window_state",
                 "abort_after_exact_undo_if_unexpected_default_plane_was_created",
                 "enter_exact_three_index_dialog_values",
+                "read_back_txt_hkl_value_from_fresh_child_accessibility_state",
+                "correct_dialog_value_and_reverify_if_not_exact",
+                "block_create_until_exact_dialog_value_match",
                 "invoke_create_only_from_verified_child_bounds_or_fresh_child_screenshot",
                 *(
                     [
@@ -4210,6 +4260,7 @@ def _view_replay_execution_recipe(
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
                 "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
+                "Do not assume Ctrl+A replaced TxtHKL. Read its value back from a fresh child accessibility state and invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",
@@ -4896,6 +4947,13 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         miller_plane_payload_hint = {
             "miller_plane_indices": selected_recipe.get("miller_plane_indices"),
             "dialog_miller_indices": selected_recipe.get("dialog_miller_indices"),
+            "dialog_miller_indices_text_before_create": selected_recipe.get(
+                "dialog_miller_indices_text"
+            ),
+            "dialog_miller_indices_value_source": (
+                "fresh_modeless_child_accessibility_value"
+            ),
+            "dialog_miller_indices_verified_before_create": True,
             "created_plane_count": 1,
             "selected_plane_count": 1,
             "miller_plane_count_before": 0,

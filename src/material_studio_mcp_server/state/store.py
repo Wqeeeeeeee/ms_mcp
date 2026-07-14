@@ -25,7 +25,7 @@ REVISION_FILE_RE = re.compile(r"^r(?P<revision>\d+)_model_spec\.json$")
 MAX_CURRENT_POINTER_ERROR_LENGTH = 1000
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
+def atomic_write_text(path: Path, content: str) -> None:
     """Atomically replace one UTF-8 text file in its destination directory."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -552,7 +552,7 @@ class ProjectStore:
             结果元数据文件路径
         """
         path = self.outputs_dir(project_id, revision) / "result_metadata.json"
-        _atomic_write_text(path, json.dumps(result, indent=2, ensure_ascii=False))
+        atomic_write_text(path, json.dumps(result, indent=2, ensure_ascii=False))
         return path
 
     def _revision_path(self, project_id: str, revision: int) -> Path:
@@ -596,13 +596,13 @@ class ProjectStore:
             raise ValueError(
                 f"修订脚本已存在，拒绝覆盖仅追加历史: r{spec.revision:03d}"
             )
-        _atomic_write_text(
+        atomic_write_text(
             spec_path,
             json.dumps(spec.model_dump(mode="json"), indent=2, ensure_ascii=False),
         )
         if script_path is not None:
             assert generated_script is not None
-            _atomic_write_text(script_path, generated_script)
+            atomic_write_text(script_path, generated_script)
 
         event = make_history_event(
             project_id=spec.project_id,
@@ -618,7 +618,7 @@ class ProjectStore:
             os.fsync(handle.fileno())
 
         current_path = project_dir / "current.json"
-        _atomic_write_text(
+        atomic_write_text(
             current_path,
             json.dumps(
                 {

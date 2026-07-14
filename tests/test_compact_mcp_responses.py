@@ -46,6 +46,11 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["visual_confirmation_entry"][
         "automatic_reaudit_does_not_imply_normality_request"
     ] is True
+    assert compact["visual_confirmation_entry"]["report_writes_serialized"] is True
+    assert compact["visual_confirmation_entry"]["report_write_lock_scope"] == (
+        "project_revision"
+    )
+    assert compact["visual_confirmation_entry"]["report_json_atomic_publish"] is True
     assert compact["view_replay_confirmation_entry"]["payload_field"] == "view_replay_confirmation"
     assert compact["view_replay_confirmation_entry"]["creates_revision"] is False
     assert compact["view_replay_confirmation_entry"]["evidence_reaudit_receipt_field"] == (

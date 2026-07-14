@@ -29,6 +29,7 @@ from .gui import (
     MaterialsStudioGuiController,
     _analyze_bmp_snapshot,
     _refresh_view_replay_summary,
+    _workspace_advisory_write_lock,
 )
 from .health import build_modeling_health
 from .natural_language import (
@@ -58,7 +59,7 @@ from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
 from .state.diff import summarize_spec_delta
-from .state.store import ProjectStore
+from .state.store import ProjectStore, atomic_write_text
 from .translators import crystal_cif_summary, render_model_to_perl, write_crystal_cif
 from .validators import validate_generated_script
 
@@ -84,6 +85,8 @@ class McpResponseMode(str, Enum):
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
+GUI_VISUAL_CONFIRMATION_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
+GUI_VISUAL_CONFIRMATION_REPORT_LOCK_POLL_SECONDS = 0.05
 
 
 class ForciteQuality(str, Enum):
@@ -3004,6 +3007,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "creates_revision": False,
             "evidence_reaudit_receipt_field": "gui_evidence_reaudit",
             "automatic_reaudit_does_not_imply_normality_request": True,
+            "report_writes_serialized": True,
+            "report_write_lock_scope": "project_revision",
+            "report_json_atomic_publish": True,
             "preserves_prior_explicit_diagnostic_intent": True,
             "requires_verified_current_wrapper_window": True,
             "required_payload_fields": [
@@ -5877,6 +5883,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "project_id_optional_for_latest_current": True,
                 "revision_optional_for_current_revision": True,
                 "artifact_type": "visual_confirmation",
+                "report_writes_serialized": True,
+                "report_write_lock_scope": "project_revision",
+                "report_json_atomic_publish": True,
                 "report_fields": [
                     "gui.external_visual_confirmation_ok",
                     "gui.external_visual_confirmation",
@@ -16554,7 +16563,7 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "errors": response.get("errors"),
         "error": response.get("error"),
     }
-    report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(report_path, json.dumps(payload, indent=2, ensure_ascii=False))
     return report_path
 
 
@@ -28157,6 +28166,8 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_bundle_manifest_path",
             "report_json_path",
             "view_audit_report_path",
+            "write_transaction",
+            "report_write_transaction",
             "gui_open_warning",
             "response_mode",
             "response_schema",
@@ -28240,6 +28251,8 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_bundle_manifest_path",
             "report_json_path",
             "view_audit_report_path",
+            "write_transaction",
+            "report_write_transaction",
             "response_mode",
             "response_schema",
             "planned_outputs",
@@ -28528,6 +28541,8 @@ def _compact_live_response(
             "view_bundle_row_counts",
             "report_json_path",
             "view_audit_report_path",
+            "write_transaction",
+            "report_write_transaction",
             "gui_open_warning",
             "gui_status_warning",
             "reconciliation_status",
@@ -32321,9 +32336,55 @@ def _persist_gui_visual_confirmation_report(
     project_resolution: dict[str, Any] | None = None,
     evidence_request: str | None = None,
 ) -> dict[str, Any]:
-    """Persist current-revision diagnostics after external visual confirmation."""
+    """Serialize one current-revision visual confirmation report update."""
 
     store = _structured_store(working_dir)
+    output_dir = store.outputs_dir(project_id, revision)
+    lock_path = output_dir / "gui_visual_confirmation_report.lock"
+    try:
+        with _workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=store.workspace_root,
+            timeout_seconds=GUI_VISUAL_CONFIRMATION_REPORT_LOCK_TIMEOUT_SECONDS,
+            poll_seconds=GUI_VISUAL_CONFIRMATION_REPORT_LOCK_POLL_SECONDS,
+        ) as transaction:
+            result = _persist_gui_visual_confirmation_report_unlocked(
+                project_id=project_id,
+                revision=revision,
+                confirmation=confirmation,
+                gui_status=gui_status,
+                views=views,
+                project_resolution=project_resolution,
+                evidence_request=evidence_request,
+                store=store,
+            )
+    except GuiError as exc:
+        if "workspace write transaction is busy" in str(exc):
+            raise GuiError(
+                "visual confirmation report write transaction is busy; retry after "
+                "the current confirmation finishes"
+            ) from exc
+        raise
+    result["report_write_transaction"] = transaction
+    structured_sync = result.get("structured_sync")
+    if isinstance(structured_sync, dict):
+        structured_sync["report_write_transaction"] = transaction
+    return result
+
+
+def _persist_gui_visual_confirmation_report_unlocked(
+    *,
+    project_id: str,
+    revision: int,
+    confirmation: dict[str, Any],
+    gui_status: dict[str, Any],
+    views: list[str] | None,
+    project_resolution: dict[str, Any] | None,
+    evidence_request: str | None,
+    store: ProjectStore,
+) -> dict[str, Any]:
+    """Persist one visual confirmation while the revision report lock is held."""
+
     spec = store.get_revision(project_id, revision)
     generated = _generate_structured_script(spec, store)
     output_dir = store.outputs_dir(project_id, revision)

@@ -213,6 +213,11 @@ Prepare and record calls for one project/revision are serialized by a bounded
 kernel lock. A `view replay write transaction is busy` error means another write
 is active; retry the same observed payload after it completes, without deleting
 the lock file or editing the manifest/journal.
+Visual-confirmation report persistence has its own revision-scoped lock and
+returns `report_write_transaction`. If that lock is busy, retry the exact bound
+confirmation after the current report update completes. `report.json` is
+atomically replaced, so do not reconstruct it from a temporary file after an
+interrupted write.
 
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and

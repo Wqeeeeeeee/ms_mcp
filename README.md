@@ -239,6 +239,10 @@ read-only and never repairs one copy from the other.
 Prepare and record writes for the same project/revision are serialized with an
 OS-managed advisory lock. Concurrent MCP calls therefore read the latest
 manifest in order, and a lock timeout fails before any event is appended.
+Visual-confirmation report updates use a separate project/revision lock so
+concurrent manual or replay-derived confirmations retain both GUI artifacts.
+The stable `report.json` entry point is flushed to a temporary file and
+atomically replaced; interrupted publication leaves the prior report intact.
 
 Conversation-style requests such as `continue the next GUI view replay` or
 `继续验证下一个 GUI 视角` route through the high-level live modeling tool. The

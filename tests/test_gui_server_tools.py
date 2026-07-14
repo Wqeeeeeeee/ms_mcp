@@ -4,6 +4,8 @@ import csv
 import hashlib
 import json
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from material_studio_mcp_server.gui import MaterialsStudioGuiController, Process
 from material_studio_mcp_server.health import build_modeling_health
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import ModelSpec
+from material_studio_mcp_server.state import store as store_module
 
 
 def _verified_view_command_evidence() -> dict:
@@ -24432,6 +24435,206 @@ def test_gui_record_visual_confirmation_persists_for_latest_current_project(monk
     assert status["live_gui_acceptance"]["external_visual_confirmation_ok"] is True
 
 
+def test_visual_confirmation_report_serializes_concurrent_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    management = created["gui_status"]["window_management"]
+    original_persist = server._persist_modeling_report
+    first_persist_started = threading.Event()
+    release_first_persist = threading.Event()
+    contention_observed = threading.Event()
+    persist_call_count = 0
+    persist_call_count_lock = threading.Lock()
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def delayed_first_persist(*args: object, **kwargs: object) -> Path:
+        nonlocal persist_call_count
+        with persist_call_count_lock:
+            persist_call_count += 1
+            current_call = persist_call_count
+        if current_call == 1:
+            first_persist_started.set()
+            assert release_first_persist.wait(timeout=10.0)
+        return original_persist(*args, **kwargs)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(server, "_persist_modeling_report", delayed_first_persist)
+    monkeypatch.setattr(
+        gui_module,
+        "_lock_file_descriptor_nonblocking",
+        observed_lock_attempt,
+    )
+
+    def record(note: str) -> dict:
+        return server.material_studio_gui_record_visual_confirmation(
+            project_id=project_id,
+            revision=revision,
+            source="computer_use",
+            note=note,
+            expected_window_handle=management["target_window_handle"],
+            expected_window_title=management["target_window_title"],
+            working_dir=str(tmp_path),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(record, "first concurrent visual confirmation")
+        assert first_persist_started.wait(timeout=10.0)
+        second = executor.submit(record, "second concurrent visual confirmation")
+        assert contention_observed.wait(timeout=10.0)
+        assert second.done() is False
+        release_first_persist.set()
+        first_result = first.result(timeout=30.0)
+        second_result = second.result(timeout=30.0)
+
+    assert first_result["ok"] is True
+    assert second_result["ok"] is True
+    first_transaction = first_result["report_write_transaction"]
+    second_transaction = second_result["report_write_transaction"]
+    assert first_transaction["path"] == second_transaction["path"]
+    assert first_transaction["scope"] == "project_revision"
+    assert second_transaction["waited_seconds"] > 0.0
+    report = json.loads(Path(created["report_json_path"]).read_text(encoding="utf-8"))
+    confirmation_notes = {
+        artifact.get("note")
+        for artifact in report["gui_artifacts"]
+        if isinstance(artifact, dict) and artifact.get("type") == "visual_confirmation"
+    }
+    assert confirmation_notes >= {
+        "first concurrent visual confirmation",
+        "second concurrent visual confirmation",
+    }
+
+
+def test_visual_confirmation_report_lock_timeout_preserves_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    report_path = Path(created["report_json_path"])
+    committed_report = report_path.read_bytes()
+    output_dir = report_path.parent
+    lock_path = output_dir / "gui_visual_confirmation_report.lock"
+    management = created["gui_status"]["window_management"]
+    monkeypatch.setattr(
+        server,
+        "GUI_VISUAL_CONFIRMATION_REPORT_LOCK_TIMEOUT_SECONDS",
+        0.05,
+    )
+    monkeypatch.setattr(
+        server,
+        "GUI_VISUAL_CONFIRMATION_REPORT_LOCK_POLL_SECONDS",
+        0.005,
+    )
+
+    with gui_module._workspace_advisory_write_lock(
+        lock_path,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        blocked = server.material_studio_gui_record_visual_confirmation(
+            project_id=created["project_id"],
+            revision=created["revision"],
+            source="computer_use",
+            note="must not be persisted while the report lock is held",
+            expected_window_handle=management["target_window_handle"],
+            expected_window_title=management["target_window_title"],
+            working_dir=str(tmp_path),
+        )
+
+    assert blocked["ok"] is False
+    assert "visual confirmation report write transaction is busy" in blocked["error"]
+    assert report_path.read_bytes() == committed_report
+    recorded = server.material_studio_gui_record_visual_confirmation(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="computer_use",
+        note="persisted after report lock release",
+        expected_window_handle=management["target_window_handle"],
+        expected_window_title=management["target_window_title"],
+        working_dir=str(tmp_path),
+    )
+    assert recorded["ok"] is True
+
+
+def test_atomic_report_publish_failure_preserves_committed_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    report_path = Path(created["report_json_path"])
+    committed_report = report_path.read_bytes()
+    management = created["gui_status"]["window_management"]
+    original_replace = store_module.os.replace
+
+    def fail_report_replace(source: str | Path, destination: str | Path) -> None:
+        if Path(destination).resolve() == report_path.resolve():
+            raise OSError("simulated report publish interruption")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(store_module.os, "replace", fail_report_replace)
+    failed = server.material_studio_gui_record_visual_confirmation(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        source="computer_use",
+        note="must not replace the committed report",
+        expected_window_handle=management["target_window_handle"],
+        expected_window_title=management["target_window_title"],
+        working_dir=str(tmp_path),
+    )
+
+    assert failed["ok"] is False
+    assert "simulated report publish interruption" in failed["error"]
+    assert report_path.read_bytes() == committed_report
+    assert not list(report_path.parent.glob(f".{report_path.name}.*.tmp"))
+
+
 def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, tmp_path: Path) -> None:
     backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
@@ -24500,6 +24703,10 @@ def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, t
     assert recorded["gui_evidence_reaudit"]["effective_normality_check_requested"] is False
     assert "evidence_request" not in recorded["gui_evidence_reaudit"]
     assert "modeling_report" not in recorded
+    assert recorded["report_write_transaction"]["scope"] == "project_revision"
+    assert recorded["report_write_transaction"]["path"].endswith(
+        "gui_visual_confirmation_report.lock"
+    )
     assert len(json.dumps(recorded, ensure_ascii=False).encode("utf-8")) < server.COMPACT_RESPONSE_MAX_BYTES
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
     assert len(history_after) == len(history_before)

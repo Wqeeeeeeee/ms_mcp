@@ -1939,13 +1939,14 @@ def _unlock_file_descriptor(file_descriptor: int) -> None:
 
 
 @contextmanager
-def _view_replay_write_lock(
+def _workspace_advisory_write_lock(
     path: Path,
     *,
     workspace_root: Path,
     timeout_seconds: float,
+    poll_seconds: float,
 ):
-    """Serialize manifest/journal writers across threads and MCP processes."""
+    """Serialize one workspace write domain across threads and processes."""
 
     resolved = path.expanduser().resolve()
     _ensure_inside(workspace_root, resolved)
@@ -1969,10 +1970,10 @@ def _view_replay_write_lock(
                     ) from exc
                 if time.monotonic() >= deadline:
                     raise GuiError(
-                        "view replay write transaction is busy; retry after the current "
-                        "prepare or record operation completes"
+                        "workspace write transaction is busy; retry after the current "
+                        "operation completes"
                     ) from exc
-                time.sleep(VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS)
+                time.sleep(max(float(poll_seconds), 0.001))
                 continue
             acquired = True
             break
@@ -1981,6 +1982,7 @@ def _view_replay_write_lock(
             "scope": "project_revision",
             "waited_seconds": round(time.monotonic() - started, 6),
             "timeout_seconds": float(timeout_seconds),
+            "poll_seconds": float(poll_seconds),
         }
     finally:
         if acquired:
@@ -1989,6 +1991,32 @@ def _view_replay_write_lock(
             except OSError:
                 pass
         os.close(file_descriptor)
+
+
+@contextmanager
+def _view_replay_write_lock(
+    path: Path,
+    *,
+    workspace_root: Path,
+    timeout_seconds: float,
+):
+    """Apply the shared advisory lock to one replay manifest write domain."""
+
+    try:
+        with _workspace_advisory_write_lock(
+            path,
+            workspace_root=workspace_root,
+            timeout_seconds=timeout_seconds,
+            poll_seconds=VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS,
+        ) as transaction:
+            yield transaction
+    except GuiError as exc:
+        if "workspace write transaction is busy" in str(exc):
+            raise GuiError(
+                "view replay write transaction is busy; retry after the current "
+                "prepare or record operation completes"
+            ) from exc
+        raise
 
 
 def _serialize_view_replay_write(method: Any) -> Any:

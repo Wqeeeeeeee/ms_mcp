@@ -123,6 +123,11 @@ Protocol acceptance also requires project/revision-scoped serialization for
 prepare and record writes. Two concurrent records must both survive in the
 manifest and JSONL journal, prepare must preserve an event committed ahead of
 it, and lock timeout must occur before a journal append.
+Accepted visual confirmations must also serialize their report read-modify-write
+transaction per project/revision. Protocol tests require two concurrent notes to
+remain in `gui_artifacts`, a lock timeout to preserve the committed report, and
+an injected atomic-replace failure to leave valid prior `report.json` bytes with
+no temporary file residue.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

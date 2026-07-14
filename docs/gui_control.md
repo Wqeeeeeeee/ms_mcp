@@ -175,8 +175,13 @@ or suffix before or after that operation. Repair only a verified affix
 relation: if the fresh value ends with the target, focus `Home` and delete the
 retained prefix character count; if the target ends with the nonempty fresh
 value, focus `Home` and type only the missing target prefix. After one full
-replacement, an unrelated value must abort. Never use Shift or a selection range. Refresh and replan after every
-mutation and compare the trimmed accessibility value exactly with
+replacement, an unrelated value must abort. Never use Shift or a selection range.
+MS 20.1's ActiveX field can drop a destructive key when `Home`/`End` and
+`Backspace`/`Delete` are injected too quickly. Obey the recipe timing contract:
+wait `200 ms` after `Home` or `End`, wait `200 ms` between every repeated
+`Backspace` or `Delete`, and never batch those key events. After typing or
+deleting, wait `500 ms` before obtaining the next fresh child readback. Refresh
+and replan after every mutation and compare the trimmed accessibility value exactly with
 `dialog_miller_indices_text` before Create. A mismatch blocks Create and must be
 corrected and reverified; abort without Create after the final strategy fails.
 Persist the observed text, the

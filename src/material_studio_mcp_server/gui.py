@@ -154,6 +154,9 @@ MILLER_PLANE_SELECTION_METHODS = {
 MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS = (
     "fresh_before_after_screenshot_unique_transient_plane_region"
 )
+MILLER_DIALOG_NAVIGATION_KEY_SETTLE_DELAY_MILLISECONDS = 200
+MILLER_DIALOG_REPEATED_KEY_INTERPRESS_DELAY_MILLISECONDS = 200
+MILLER_DIALOG_POST_MUTATION_READBACK_DELAY_MILLISECONDS = 500
 MILLER_PLANE_CAMERA_MATCH_SCOPE = "crystal_plane_normal_with_native_in_plane_roll"
 MILLER_DIRECTION_CAMERA_MATCH_SCOPE = (
     "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
@@ -4177,7 +4180,7 @@ def _view_replay_execution_recipe(
         )
         return {
             **base,
-            "schema_version": 5,
+            "schema_version": 6,
             "recipe_kind": recipe_kind,
             "status": (
                 "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
@@ -4258,6 +4261,17 @@ def _view_replay_execution_recipe(
                         "focus_end_replace_minimal_differing_suffix_from_fresh_value",
                         "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
                     ],
+                    "navigation_key_settle_delay_milliseconds": (
+                        MILLER_DIALOG_NAVIGATION_KEY_SETTLE_DELAY_MILLISECONDS
+                    ),
+                    "repeated_key_interpress_delay_milliseconds": (
+                        MILLER_DIALOG_REPEATED_KEY_INTERPRESS_DELAY_MILLISECONDS
+                    ),
+                    "post_mutation_readback_delay_milliseconds": (
+                        MILLER_DIALOG_POST_MUTATION_READBACK_DELAY_MILLISECONDS
+                    ),
+                    "first_destructive_key_must_wait_after_navigation": True,
+                    "batch_repeated_backspace_or_delete_allowed": False,
                     "fresh_child_readback_required_after_each_mutation": True,
                     "unrelated_post_full_readback_action": "abort_without_create",
                     "mismatch_after_final_strategy": "abort_without_create",
@@ -4428,10 +4442,13 @@ def _view_replay_execution_recipe(
                 "abort_after_exact_undo_if_unexpected_default_plane_was_created",
                 "enter_exact_three_index_dialog_values",
                 "try_accessibility_set_value_exact",
+                "wait_recipe_navigation_delay_after_home_or_end",
+                "pace_each_backspace_or_delete_with_recipe_interpress_delay",
                 "replace_only_minimal_differing_suffix_when_fresh_value_shares_prefix",
                 "fallback_full_backspace_and_exact_retype_from_fresh_observed_character_count",
                 "repair_post_full_replacement_retained_prefix_or_suffix_from_home",
                 "preserve_longest_common_substring_and_replan_from_each_fresh_readback",
+                "wait_recipe_post_mutation_delay_before_fresh_readback",
                 "read_back_txt_hkl_value_from_fresh_child_accessibility_state",
                 "read_back_txt_hkl_value_after_each_mutation",
                 "correct_dialog_value_and_reverify_if_not_exact",
@@ -4470,7 +4487,7 @@ def _view_replay_execution_recipe(
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
                 "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
-                "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value. From any fresh readback, first repair a verified affix relation, a differing suffix, or preserve the longest common contiguous substring while deleting only the prefix before it. Replan after every mutation. Use at most one observed-count full replacement; after it, only relation-based repairs remain allowed and an unrelated value must abort. Invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
+                "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value. From any fresh readback, first repair a verified affix relation, a differing suffix, or preserve the longest common contiguous substring while deleting only the prefix before it. Wait the recipe navigation delay after Home or End, never batch repeated Backspace/Delete events, and wait the recipe interpress delay between them. Wait the post-mutation delay before each fresh readback and replan after every mutation. Use at most one observed-count full replacement; after it, only relation-based repairs remain allowed and an unrelated value must abort. Invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
                 "Do not hold Shift or Ctrl while selecting or invoking View Onto.",
                 "Do not claim the analytic camera-up/right basis matched when MS used its native smallest-acute-angle roll.",

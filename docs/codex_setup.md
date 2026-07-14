@@ -214,7 +214,10 @@ apply one nonempty edge repair in observed-prefix, observed-suffix,
 expected-prefix, expected-suffix order and replan from a fresh readback. Delete a retained prefix only when the fresh value ends with
 the target, or type a missing prefix only when the target ends with the nonempty
 fresh value. After the single full replacement, allow only those relation-based
-repairs and abort on an unrelated value. Refresh the child state after each mutation and abort without
+repairs and abort on an unrelated value. Follow the recipe's ActiveX timing
+fields: wait `200 ms` after `Home`/`End`, wait `200 ms` between repeated
+`Backspace`/`Delete` events without batching them, and wait `500 ms` after the
+mutation before the next fresh child readback. Refresh the child state after each mutation and abort without
 Create if the final readback still differs. Invoke Create only after the trimmed value exactly
 matches `dialog_miller_indices_text`, then record
 `dialog_miller_indices_text_before_create`,

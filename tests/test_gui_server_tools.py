@@ -1910,7 +1910,7 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
-    assert plane_recipe["schema_version"] == 5
+    assert plane_recipe["schema_version"] == 6
     assert plane_recipe["dialog_index_entry_contract"] == {
         "control_id": "TxtHKL",
         "expected_value": "1 0 0",
@@ -1954,6 +1954,11 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
                 "focus_end_replace_minimal_differing_suffix_from_fresh_value",
                 "preserve_longest_common_substring_apply_one_edge_repair_then_replan",
             ],
+            "navigation_key_settle_delay_milliseconds": 200,
+            "repeated_key_interpress_delay_milliseconds": 200,
+            "post_mutation_readback_delay_milliseconds": 500,
+            "first_destructive_key_must_wait_after_navigation": True,
+            "batch_repeated_backspace_or_delete_allowed": False,
             "fresh_child_readback_required_after_each_mutation": True,
             "unrelated_post_full_readback_action": "abort_without_create",
             "mismatch_after_final_strategy": "abort_without_create",
@@ -1974,6 +1979,17 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert "read_back_txt_hkl_value_after_each_mutation" in plane_recipe[
         "action_sequence"
     ]
+    assert "wait_recipe_navigation_delay_after_home_or_end" in plane_recipe[
+        "action_sequence"
+    ]
+    assert (
+        "pace_each_backspace_or_delete_with_recipe_interpress_delay"
+        in plane_recipe["action_sequence"]
+    )
+    assert (
+        "wait_recipe_post_mutation_delay_before_fresh_readback"
+        in plane_recipe["action_sequence"]
+    )
     assert "block_create_until_exact_dialog_value_match" in plane_recipe[
         "action_sequence"
     ]

@@ -813,6 +813,13 @@ def test_gui_copy_script_assist_without_project_reports_latest_current_window(mo
     assert assist["status"]["target_window"]["handle"] == 303
     assert assist["status"]["target_window_resolution"]["matched_project_window"] is True
     assert assist["status"]["target_window_resolution"]["fallback_used"] is False
+    contract = assist["reviewed_copy_script_evidence_contract"]
+    assert contract["script_execution_allowed"] is False
+    assert contract["requires_exact_window_binding"] is True
+    assert contract["requires_workspace_screenshot"] is True
+    assert assist["payload_template_is_directly_callable"] is False
+    assert assist["record_payload_template"]["expected_window_handle"] == 303
+    assert "script_text" in contract["required_evidence_fields"]
 
 
 def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, tmp_path: Path) -> None:
@@ -934,6 +941,189 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
     assert recorded["view_replay"]["replay_status"] == "externally_confirmed"
     assert "modeling_report" not in recorded
     assert "view_replay_binding" in recorded
+
+
+def _reviewed_copy_script_payload() -> dict[str, object]:
+    return {
+        "script_text": (
+            "use MaterialsScript qw(:all);\n"
+            'my $doc = $Documents{"model.xsd"};\n'
+            "$doc->Views->ActiveView->Camera->ResetView();\n"
+        ),
+        "capture_method": "materials_studio_copy_script",
+        "reviewer": "computer_use",
+        "copy_script_command_observed": True,
+        "review_completed": True,
+        "view_action_matches_manifest": True,
+        "structure_unchanged_observed": True,
+        "note": "Reviewed against the prepared front view.",
+    }
+
+
+def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=405,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=3334,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+    screenshot = Path(prepared["manifest_path"]).with_name("copy_script_front.bmp")
+    screenshot.write_bytes(_tiny_bmp())
+
+    missing = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        source="reviewed_copy_script",
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        screenshot_path=str(screenshot),
+        working_dir=str(tmp_path),
+    )
+    assert missing["ok"] is True
+    assert missing["accepted"] is False
+    assert "reviewed_copy_script_evidence_missing" in missing["rejection_reasons"]
+
+    recorded = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        source="reviewed_copy_script",
+        expected_window_handle=target_window.handle,
+        expected_window_title=target_window.title,
+        screenshot_path=str(screenshot),
+        reviewed_copy_script_evidence=_reviewed_copy_script_payload(),
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert recorded["ok"] is True
+    assert recorded["accepted"] is True
+    evidence = recorded["view_replay_confirmation"][
+        "reviewed_copy_script_evidence"
+    ]
+    assert evidence["complete"] is True
+    assert evidence["execution_allowed"] is False
+    assert Path(evidence["script_path"]).is_file()
+    assert Path(evidence["script_path"]).read_text(encoding="utf-8") == (
+        _reviewed_copy_script_payload()["script_text"]
+    )
+    assert Path(evidence["metadata_path"]).is_file()
+    assert "script_text" not in evidence
+    assert _reviewed_copy_script_payload()["script_text"] not in json.dumps(
+        recorded,
+        ensure_ascii=False,
+    )
+
+
+def test_live_view_replay_confirmation_accepts_strict_copy_script_payload(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=406,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=3335,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+    screenshot = Path(prepared["manifest_path"]).with_name("live_copy_script.bmp")
+    screenshot.write_bytes(_tiny_bmp())
+
+    recorded = server.material_studio_live_modeling_request(
+        "Record the reviewed Copy Script evidence for the front view.",
+        project_id=created["project_id"],
+        view_replay_confirmation={
+            "view_name": "front",
+            "source": "reviewed_copy_script",
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "screenshot_path": str(screenshot),
+            "reviewed_copy_script_evidence": _reviewed_copy_script_payload(),
+            "expected_revision": created["revision"],
+            "expected_window_handle": target_window.handle,
+            "expected_window_title": target_window.title,
+        },
+        working_dir=str(tmp_path),
+    )
+
+    assert recorded["ok"] is True
+    assert recorded["workflow"] == "gui_view_replay_confirmation"
+    assert recorded["accepted"] is True
+    assert recorded["revision_created"] is False
+    assert recorded["view_replay_confirmation"][
+        "reviewed_copy_script_evidence_complete"
+    ] is True
+
+
+def test_live_view_replay_confirmation_forbids_extra_copy_script_fields(
+    tmp_path: Path,
+) -> None:
+    payload = _reviewed_copy_script_payload()
+    payload["unexpected"] = True
+
+    result = server.material_studio_live_modeling_request(
+        "Record reviewed Copy Script evidence.",
+        view_replay_confirmation={
+            "view_name": "front",
+            "source": "reviewed_copy_script",
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "reviewed_copy_script_evidence": payload,
+            "expected_revision": 0,
+            "expected_window_handle": 1,
+            "expected_window_title": "wrapper - Materials Studio",
+        },
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "invalid_view_replay_confirmation_payload"
+    assert result["errors"][0]["type"] == "extra_forbidden"
 
 
 def test_gui_view_replay_record_rejects_unverified_window_without_upgrading_report(
@@ -1554,6 +1744,14 @@ def test_gui_view_replay_runtime_accessibility_gate_blocks_unnamed_controls(
     assert blocked["replay_continuation"][
         "post_review_record_payload_template"
     ]["view_name"] == "front"
+    assert blocked["replay_continuation"][
+        "post_review_record_payload_template_is_directly_callable"
+    ] is False
+    post_review_template = blocked["replay_continuation"][
+        "post_review_record_payload_template"
+    ]
+    assert "reviewed_copy_script_evidence" in post_review_template
+    assert post_review_template["screenshot_path"].startswith("<observed")
     assert blocked["replay_continuation"][
         "evidence_values_must_be_observed_not_assumed"
     ] is True
@@ -5909,6 +6107,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["record_view_replay_tool"] == "material_studio_gui_record_view_replay"
     view_replay_policy = capabilities["gui"]["view_replay_policy"]
     assert view_replay_policy["preview_first"] is True
+    assert view_replay_policy["reviewed_copy_script_execution_allowed"] is False
+    assert view_replay_policy[
+        "reviewed_copy_script_requires_exact_window_and_screenshot"
+    ] is True
+    assert view_replay_policy["reviewed_copy_script_artifact_directory"] == (
+        "gui_copy_script_evidence"
+    )
     assert view_replay_policy["arbitrary_camera_materialscript_api_verified"] is False
     assert view_replay_policy["local_mcp_backend"] == "manifest_only"
     assert view_replay_policy["automatic_view_names"] == [

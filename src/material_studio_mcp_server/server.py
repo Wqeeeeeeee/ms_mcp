@@ -478,6 +478,32 @@ def _dump_miller_plane_replay_evidence(
     return payload
 
 
+class GuiReviewedCopyScriptEvidenceInput(BaseModel):
+    """Reviewed, inert Materials Studio Copy Script evidence for one view."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    script_text: str = Field(
+        ...,
+        description="Exact Copy Script text captured from Materials Studio; it is archived but never executed.",
+        min_length=1,
+        max_length=100_000,
+    )
+    capture_method: str = Field(
+        default="materials_studio_copy_script",
+        pattern=r"^materials_studio_copy_script$",
+    )
+    reviewer: str = Field(
+        ...,
+        pattern=r"^(computer_use|human_review)$",
+    )
+    copy_script_command_observed: bool
+    review_completed: bool
+    view_action_matches_manifest: bool
+    structure_unchanged_observed: bool
+    note: str | None = Field(default=None, max_length=1000)
+
+
 class GuiViewReplayConfirmationInput(BaseModel):
     """Externally replayed camera/view evidence bound to one structured revision window."""
 
@@ -493,6 +519,13 @@ class GuiViewReplayConfirmationInput(BaseModel):
     camera_matches_manifest: bool = Field(..., description="Whether the observed camera matches the prepared view manifest.")
     note: str | None = Field(default=None, description="Short replay observation note.", max_length=1000)
     screenshot_path: str | None = Field(default=None, description="Optional persisted screenshot evidence path.", max_length=500)
+    reviewed_copy_script_evidence: GuiReviewedCopyScriptEvidenceInput | None = Field(
+        default=None,
+        description=(
+            "Required inert Copy Script text and review attestations when source is "
+            "reviewed_copy_script."
+        ),
+    )
     expected_revision: int = Field(..., description="Revision observed in the GUI.", ge=0)
     expected_window_handle: int = Field(..., description="Observed Materials Studio top-level window handle.", gt=0)
     expected_window_title: str = Field(..., description="Observed Materials Studio wrapper window title.", min_length=1, max_length=500)
@@ -3002,6 +3035,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "expected_window_title",
             ],
             "optional_reviewed_command_field": "native_command_id",
+            "reviewed_copy_script_evidence_field": (
+                "reviewed_copy_script_evidence"
+            ),
+            "reviewed_copy_script_evidence_required_when_source_selected": True,
+            "reviewed_copy_script_requires_exact_window_binding": True,
+            "reviewed_copy_script_requires_workspace_screenshot": True,
+            "reviewed_copy_script_execution_allowed": False,
+            "reviewed_copy_script_artifact_directory": (
+                "gui_copy_script_evidence"
+            ),
             "optional_keyboard_evidence_fields": [
                 "key_sequence",
                 "reset_before_key_sequence",
@@ -5831,6 +5874,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "persists_revision_manifest": True,
                 "manifest_filename": "gui_view_replay_manifest.json",
                 "events_filename": "gui_view_replay_events.jsonl",
+                "reviewed_copy_script_artifact_directory": (
+                    "gui_copy_script_evidence"
+                ),
+                "reviewed_copy_script_execution_allowed": False,
+                "reviewed_copy_script_requires_exact_window_and_screenshot": True,
                 "runtime_ui_preflight_filename": "gui_view_replay_runtime_preflight.json",
                 "runtime_accessibility_preflight_filename": (
                     "gui_view_replay_accessibility_preflight.json"
@@ -27469,6 +27517,9 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
             "miller_plane_evidence",
             "staged_keyboard_evidence_required",
             "keyboard_evidence_status",
+            "reviewed_copy_script_evidence_required",
+            "reviewed_copy_script_evidence_complete",
+            "reviewed_copy_script_evidence",
             "execution_recipe_contract",
         ),
     )
@@ -27570,6 +27621,7 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "payload_hint_is_directly_callable",
             "high_level_payload_hint",
             "post_review_record_payload_template",
+            "post_review_record_payload_template_is_directly_callable",
             "post_review_high_level_payload_template",
             "evidence_values_must_be_observed_not_assumed",
         ),
@@ -30948,6 +31000,13 @@ def material_studio_live_modeling_request(
                 ),
                 movement_screen_factor=replay_evidence.movement_screen_factor,
                 movement_dialog_closed=replay_evidence.movement_dialog_closed,
+                reviewed_copy_script_evidence=(
+                    replay_evidence.reviewed_copy_script_evidence.model_dump(
+                        mode="json"
+                    )
+                    if replay_evidence.reviewed_copy_script_evidence is not None
+                    else None
+                ),
                 miller_plane_evidence=(
                     _dump_miller_plane_replay_evidence(
                         replay_evidence.miller_plane_evidence
@@ -32926,6 +32985,7 @@ def material_studio_gui_record_view_replay(
     camera_matches_manifest: Annotated[bool, Field(description="Whether the externally reviewed camera/view matches the prepared manifest.")] = True,
     note: Annotated[str | None, Field(description="Short replay verification note.", max_length=1000)] = None,
     screenshot_path: Annotated[str | None, Field(description="Optional screenshot evidence inside the configured MCP workspace.", max_length=500)] = None,
+    reviewed_copy_script_evidence: Annotated[GuiReviewedCopyScriptEvidenceInput | None, Field(description="Required inert script text and review attestations when source is reviewed_copy_script.")] = None,
     expected_window_handle: Annotated[int | None, Field(description="Optional observed Materials Studio window handle used to bind the replay evidence.", gt=0)] = None,
     expected_window_title: Annotated[str | None, Field(description="Optional observed wrapper window title used to bind the replay evidence.", min_length=1, max_length=500)] = None,
     native_command_id: Annotated[str | None, Field(description="Optional reviewed Materials Studio 2020 3D-view command used for replay.", pattern=r"^cmdViewer3D[A-Za-z0-9_]+$", max_length=120)] = None,
@@ -33000,6 +33060,13 @@ def material_studio_gui_record_view_replay(
             camera_matches_manifest=camera_matches_manifest,
             note=note,
             screenshot_path=screenshot_path,
+            reviewed_copy_script_evidence=(
+                GuiReviewedCopyScriptEvidenceInput.model_validate(
+                    reviewed_copy_script_evidence
+                ).model_dump(mode="json")
+                if reviewed_copy_script_evidence is not None
+                else None
+            ),
             expected_window_handle=expected_window_handle,
             expected_window_title=expected_window_title,
             native_command_id=native_command_id,
@@ -33037,6 +33104,12 @@ def material_studio_gui_record_view_replay(
             "camera_matches_manifest": bool(camera_matches_manifest),
             "note": note,
             "screenshot_path": event.get("screenshot_path"),
+            "reviewed_copy_script_evidence": event.get(
+                "reviewed_copy_script_evidence"
+            ),
+            "reviewed_copy_script_evidence_complete": event.get(
+                "reviewed_copy_script_evidence_complete"
+            ),
             "expected_revision": int(context["revision"]),
             "expected_window_handle": expected_window_handle,
             "expected_window_title": expected_window_title,
@@ -33109,6 +33182,12 @@ def material_studio_gui_record_view_replay(
                 "movement_screen_factor": event.get("movement_screen_factor"),
                 "movement_dialog_closed": event.get("movement_dialog_closed"),
                 "keyboard_evidence_status": event.get("keyboard_evidence_status"),
+                "reviewed_copy_script_evidence": event.get(
+                    "reviewed_copy_script_evidence"
+                ),
+                "reviewed_copy_script_evidence_complete": event.get(
+                    "reviewed_copy_script_evidence_complete"
+                ),
                 "miller_plane_evidence": event.get("miller_plane_evidence"),
                 "miller_plane_evidence_complete": event.get("miller_plane_evidence_complete"),
             }

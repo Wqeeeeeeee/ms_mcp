@@ -176,6 +176,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "source",
             "model_visible",
             "camera_matches_manifest",
+            "reviewed_copy_script_evidence",
             "expected_window_handle",
             "expected_window_title",
             "native_command_id",
@@ -202,6 +203,9 @@ _NESTED_FORBID_SCHEMA_EXPECTATIONS: dict[str, set[str]] = {
     "material_studio_gui_prepare_view_replay": {
         "runtime_ui_evidence",
         "runtime_accessibility_evidence",
+    },
+    "material_studio_gui_record_view_replay": {
+        "reviewed_copy_script_evidence",
     },
 }
 

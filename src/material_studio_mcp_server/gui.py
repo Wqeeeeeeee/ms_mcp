@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from xml.sax.saxutils import escape as xml_escape
 
+from .parsers.copy_script import analyze_reviewed_copy_script
 from .state.store import default_workspace_root, sanitize_project_id
 
 
@@ -179,6 +180,16 @@ VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS = {
     "unnamed_toolbar_children_observed",
     "controls",
     "screenshot_path",
+    "note",
+}
+REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS = {
+    "script_text",
+    "capture_method",
+    "reviewer",
+    "copy_script_command_observed",
+    "review_completed",
+    "view_action_matches_manifest",
+    "structure_unchanged_observed",
     "note",
 }
 MILLER_PLANE_SELECTION_METHODS = {
@@ -521,6 +532,68 @@ def _normalize_view_runtime_accessibility_evidence(
             raise GuiError(
                 f"runtime_accessibility_evidence.{field} must be a string or null"
             )
+    return normalized
+
+
+def _normalize_reviewed_copy_script_evidence(
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate inert Copy Script content and reviewer attestations."""
+
+    if not isinstance(value, dict):
+        raise GuiError("reviewed_copy_script_evidence must be a JSON object")
+    extra_fields = sorted(set(value) - REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS)
+    if extra_fields:
+        raise GuiError(
+            "reviewed_copy_script_evidence contains unsupported fields: "
+            + ", ".join(extra_fields)
+        )
+    missing_fields = sorted(
+        (REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS - {"note"}) - set(value)
+    )
+    if missing_fields:
+        raise GuiError(
+            "reviewed_copy_script_evidence is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    script_text = value.get("script_text")
+    if not isinstance(script_text, str):
+        raise GuiError("reviewed_copy_script_evidence.script_text must be a string")
+    try:
+        analysis = analyze_reviewed_copy_script(script_text)
+    except ValueError as exc:
+        raise GuiError(str(exc)) from exc
+
+    capture_method = str(value.get("capture_method") or "").strip()
+    if capture_method != "materials_studio_copy_script":
+        raise GuiError("unsupported reviewed Copy Script capture method")
+    reviewer = str(value.get("reviewer") or "").strip()
+    if reviewer not in {"computer_use", "human_review"}:
+        raise GuiError("unsupported reviewed Copy Script reviewer")
+    normalized: dict[str, Any] = {
+        "script_text": script_text,
+        "capture_method": capture_method,
+        "reviewer": reviewer,
+        "analysis": analysis,
+    }
+    for field in (
+        "copy_script_command_observed",
+        "review_completed",
+        "view_action_matches_manifest",
+        "structure_unchanged_observed",
+    ):
+        item = value.get(field)
+        if not isinstance(item, bool):
+            raise GuiError(f"reviewed_copy_script_evidence.{field} must be a boolean")
+        normalized[field] = item
+    note = value.get("note")
+    if note is not None:
+        if not isinstance(note, str):
+            raise GuiError("reviewed_copy_script_evidence.note must be a string or null")
+        if len(note) > 1000:
+            raise GuiError("reviewed_copy_script_evidence.note must be at most 1000 characters")
+    normalized["note"] = note
     return normalized
 
 
@@ -2472,6 +2545,77 @@ class MaterialsStudioGuiController:
                 "ModelSpec/SemanticPatch 工作流作为事实来源。"
             ),
         }
+        status = payload["status"]
+        target_window = (
+            status.get("target_window")
+            if isinstance(status.get("target_window"), dict)
+            else {}
+        )
+        payload["checklist"] = [
+            "Activate and reverify the exact current revision wrapper window.",
+            "Apply the prepared view without blind coordinates or unnamed controls.",
+            "Use Materials Studio Copy Script and capture the exact inert script text.",
+            "Capture a project-scoped screenshot after visually matching the manifest camera.",
+            "Submit the script and observed window evidence to material_studio_gui_record_view_replay.",
+        ]
+        payload["computer_use_note"] = (
+            "If Computer Use cannot capture the Copy Script output, use human review. "
+            "Keep ModelSpec/SemanticPatch as the structural source of truth."
+        )
+        payload.update(
+            {
+                "reviewed_copy_script_evidence_contract": {
+                    "record_tool": "material_studio_gui_record_view_replay",
+                    "source": "reviewed_copy_script",
+                    "script_is_evidence_only": True,
+                    "script_execution_allowed": False,
+                    "requires_exact_window_binding": True,
+                    "requires_workspace_screenshot": True,
+                    "raw_script_persisted_only_when_static_safety_passes": True,
+                    "unsafe_script_persistence": "hash_and_analysis_only",
+                    "artifact_directory": "gui_copy_script_evidence",
+                    "required_evidence_fields": [
+                        "script_text",
+                        "capture_method",
+                        "reviewer",
+                        "copy_script_command_observed",
+                        "review_completed",
+                        "view_action_matches_manifest",
+                        "structure_unchanged_observed",
+                    ],
+                    "static_block_categories": [
+                        "shell_or_external_process",
+                        "network_api",
+                        "filesystem_delete_or_import_export",
+                        "calculation_or_module_run",
+                        "structure_create_delete_or_coordinate_change",
+                    ],
+                },
+                "record_payload_template": {
+                    "project_id": project_id,
+                    "revision": revision,
+                    "view_name": "<prepared view name>",
+                    "source": "reviewed_copy_script",
+                    "model_visible": True,
+                    "camera_matches_manifest": True,
+                    "screenshot_path": "<observed workspace screenshot path>",
+                    "expected_window_handle": target_window.get("handle"),
+                    "expected_window_title": target_window.get("title"),
+                    "reviewed_copy_script_evidence": {
+                        "script_text": "<exact Materials Studio Copy Script text>",
+                        "capture_method": "materials_studio_copy_script",
+                        "reviewer": "<computer_use or human_review>",
+                        "copy_script_command_observed": True,
+                        "review_completed": True,
+                        "view_action_matches_manifest": True,
+                        "structure_unchanged_observed": True,
+                        "note": "<observed review note>",
+                    },
+                },
+                "payload_template_is_directly_callable": False,
+                "observed_values_must_not_be_assumed": True,
+            }
+        )
         self._write_log("copy_script_assist", project_id=project_id, revision=revision, payload=payload)
         return payload
 
@@ -3135,6 +3279,7 @@ class MaterialsStudioGuiController:
         movement_screen_factor_control_id: str | None = None,
         movement_screen_factor: float | None = None,
         movement_dialog_closed: bool | None = None,
+        reviewed_copy_script_evidence: dict[str, Any] | None = None,
         miller_plane_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Record externally executed view replay evidence without driving the GUI."""
@@ -3149,6 +3294,18 @@ class MaterialsStudioGuiController:
         }
         if source not in allowed_sources:
             raise GuiError(f"unsupported view replay source: {source!r}")
+        normalized_copy_script_evidence: dict[str, Any] | None = None
+        if reviewed_copy_script_evidence is not None:
+            if source != "reviewed_copy_script":
+                raise GuiError(
+                    "reviewed_copy_script_evidence is allowed only when source is "
+                    "reviewed_copy_script"
+                )
+            normalized_copy_script_evidence = (
+                _normalize_reviewed_copy_script_evidence(
+                    reviewed_copy_script_evidence
+                )
+            )
         native_command: dict[str, str] | None = None
         if native_command_id is not None:
             native_command_id = native_command_id.strip()
@@ -3493,6 +3650,9 @@ class MaterialsStudioGuiController:
         actual_window_title = target_window.get("title")
         window_handle_matches = expected_window_handle is None or actual_window_handle == expected_window_handle
         window_title_matches = expected_window_title is None or actual_window_title == expected_window_title
+        exact_window_binding_supplied = bool(
+            expected_window_handle is not None and expected_window_title is not None
+        )
         staged_keyboard_evidence_required = bool(staged_keyboard_recipe and source == "computer_use")
         target_wrapper_metadata = (
             target_resolution.get("target_project_wrapper_metadata")
@@ -3508,6 +3668,33 @@ class MaterialsStudioGuiController:
                 )
             except OSError:
                 expected_structure_artifact_path = None
+        structure_artifact_sha256_current: str | None = None
+        if expected_structure_artifact_path is not None:
+            structure_artifact = Path(expected_structure_artifact_path)
+            if structure_artifact.exists() and structure_artifact.is_file():
+                structure_artifact_sha256_current = hashlib.sha256(
+                    structure_artifact.read_bytes()
+                ).hexdigest()
+        reviewed_copy_script_evidence_required = source == "reviewed_copy_script"
+        copy_script_analysis = (
+            normalized_copy_script_evidence.get("analysis")
+            if isinstance(normalized_copy_script_evidence, dict)
+            and isinstance(normalized_copy_script_evidence.get("analysis"), dict)
+            else {}
+        )
+        reviewed_copy_script_evidence_complete = bool(
+            normalized_copy_script_evidence is not None
+            and normalized_copy_script_evidence.get("copy_script_command_observed")
+            is True
+            and normalized_copy_script_evidence.get("review_completed") is True
+            and normalized_copy_script_evidence.get("view_action_matches_manifest")
+            is True
+            and normalized_copy_script_evidence.get("structure_unchanged_observed")
+            is True
+            and copy_script_analysis.get("safe_for_view_evidence") is True
+            and exact_window_binding_supplied
+            and resolved_screenshot is not None
+        )
         miller_plane_evidence_required = bool(miller_plane_recipe)
         miller_plane_artifact_binding_matches = bool(
             normalized_miller_plane_evidence is not None
@@ -3541,6 +3728,10 @@ class MaterialsStudioGuiController:
                 or staged_keyboard_evidence_complete
             )
             and (
+                not reviewed_copy_script_evidence_required
+                or reviewed_copy_script_evidence_complete
+            )
+            and (
                 not miller_plane_evidence_required
                 or miller_plane_evidence_complete
             )
@@ -3562,6 +3753,47 @@ class MaterialsStudioGuiController:
             rejection_reasons.append("observed_window_title_mismatch")
         if staged_keyboard_evidence_required and not staged_keyboard_evidence_complete:
             rejection_reasons.append("staged_keyboard_evidence_incomplete")
+        if reviewed_copy_script_evidence_required:
+            if normalized_copy_script_evidence is None:
+                rejection_reasons.append("reviewed_copy_script_evidence_missing")
+            else:
+                if (
+                    normalized_copy_script_evidence.get(
+                        "copy_script_command_observed"
+                    )
+                    is not True
+                ):
+                    rejection_reasons.append(
+                        "reviewed_copy_script_command_not_observed"
+                    )
+                if normalized_copy_script_evidence.get("review_completed") is not True:
+                    rejection_reasons.append("reviewed_copy_script_review_incomplete")
+                if (
+                    normalized_copy_script_evidence.get(
+                        "view_action_matches_manifest"
+                    )
+                    is not True
+                ):
+                    rejection_reasons.append(
+                        "reviewed_copy_script_view_action_not_matched"
+                    )
+                if (
+                    normalized_copy_script_evidence.get(
+                        "structure_unchanged_observed"
+                    )
+                    is not True
+                ):
+                    rejection_reasons.append(
+                        "reviewed_copy_script_structure_unchanged_not_observed"
+                    )
+                if copy_script_analysis.get("safe_for_view_evidence") is not True:
+                    rejection_reasons.append("reviewed_copy_script_safety_blocked")
+            if not exact_window_binding_supplied:
+                rejection_reasons.append(
+                    "reviewed_copy_script_exact_window_binding_missing"
+                )
+            if resolved_screenshot is None:
+                rejection_reasons.append("reviewed_copy_script_screenshot_missing")
         if miller_plane_evidence_required:
             if normalized_miller_plane_evidence is None:
                 rejection_reasons.append("miller_plane_evidence_missing")
@@ -3636,8 +3868,75 @@ class MaterialsStudioGuiController:
         }
 
         recorded_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        event_id = uuid.uuid4().hex
+        copy_script_evidence_summary: dict[str, Any] | None = None
+        if normalized_copy_script_evidence is not None:
+            evidence_dir = (manifest_path.parent / "gui_copy_script_evidence").resolve()
+            _ensure_inside(self.workspace_root, evidence_dir)
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            script_path = (evidence_dir / f"{event_id}.copy-script.txt").resolve()
+            metadata_path = (evidence_dir / f"{event_id}.json").resolve()
+            _ensure_inside(self.workspace_root, script_path)
+            _ensure_inside(self.workspace_root, metadata_path)
+            raw_script_persisted = bool(
+                copy_script_analysis.get("safe_for_view_evidence") is True
+            )
+            if raw_script_persisted:
+                _write_text_atomic(
+                    script_path,
+                    str(normalized_copy_script_evidence["script_text"]),
+                )
+            copy_script_evidence_summary = {
+                "schema_version": 1,
+                "capture_method": normalized_copy_script_evidence.get(
+                    "capture_method"
+                ),
+                "reviewer": normalized_copy_script_evidence.get("reviewer"),
+                "copy_script_command_observed": normalized_copy_script_evidence.get(
+                    "copy_script_command_observed"
+                ),
+                "review_completed": normalized_copy_script_evidence.get(
+                    "review_completed"
+                ),
+                "view_action_matches_manifest": normalized_copy_script_evidence.get(
+                    "view_action_matches_manifest"
+                ),
+                "structure_unchanged_observed": normalized_copy_script_evidence.get(
+                    "structure_unchanged_observed"
+                ),
+                "note": normalized_copy_script_evidence.get("note"),
+                "analysis": copy_script_analysis,
+                "script_sha256": copy_script_analysis.get("script_sha256"),
+                "script_path": str(script_path) if raw_script_persisted else None,
+                "metadata_path": str(metadata_path),
+                "raw_script_persisted": raw_script_persisted,
+                "execution_allowed": False,
+                "script_language": "materials_script_perl",
+                "exact_window_binding_required": True,
+                "screenshot_required": True,
+                "complete": reviewed_copy_script_evidence_complete,
+                "structure_artifact_path": expected_structure_artifact_path,
+                "structure_artifact_sha256_current": (
+                    structure_artifact_sha256_current
+                ),
+            }
+            _write_json_atomic(
+                metadata_path,
+                {
+                    "kind": "materials_studio_reviewed_copy_script_evidence",
+                    "recorded_at": recorded_at,
+                    "project_id": safe_project,
+                    "revision": revision,
+                    "view_name": view_name,
+                    "event_id": event_id,
+                    "accepted": accepted,
+                    "window_binding": window_binding,
+                    "screenshot_path": resolved_screenshot,
+                    "evidence": copy_script_evidence_summary,
+                },
+            )
         event = {
-            "event_id": uuid.uuid4().hex,
+            "event_id": event_id,
             "recorded_at": recorded_at,
             "project_id": safe_project,
             "revision": revision,
@@ -3669,6 +3968,13 @@ class MaterialsStudioGuiController:
             "movement_dialog_closed": movement_dialog_closed,
             "staged_keyboard_evidence_required": staged_keyboard_evidence_required,
             "keyboard_evidence_status": keyboard_evidence_status,
+            "reviewed_copy_script_evidence_required": (
+                reviewed_copy_script_evidence_required
+            ),
+            "reviewed_copy_script_evidence_complete": (
+                reviewed_copy_script_evidence_complete
+            ),
+            "reviewed_copy_script_evidence": copy_script_evidence_summary,
             "miller_plane_evidence_required": miller_plane_evidence_required,
             "direction_via_miller_plane_recipe": direction_via_miller_plane_recipe,
             "miller_plane_evidence_complete": miller_plane_evidence_complete,
@@ -6174,6 +6480,22 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "movement_dialog_closed": selected_recipe.get("movement_dialog_closed_after_restore"),
         "miller_plane_evidence": miller_plane_payload_hint,
     }
+    if record_payload_hint["source"] == "reviewed_copy_script":
+        record_payload_hint.update(
+            {
+                "screenshot_path": "<observed workspace screenshot path>",
+                "reviewed_copy_script_evidence": {
+                    "script_text": "<exact Materials Studio Copy Script text>",
+                    "capture_method": "materials_studio_copy_script",
+                    "reviewer": "<computer_use or human_review>",
+                    "copy_script_command_observed": True,
+                    "review_completed": True,
+                    "view_action_matches_manifest": True,
+                    "structure_unchanged_observed": True,
+                    "note": "<observed review note>",
+                },
+            }
+        )
     high_level_payload_hint = (
         {
             "user_request": f"Record the verified {selected_next_step.get('view_name')} GUI view replay.",
@@ -6185,6 +6507,8 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
                     "source",
                     "model_visible",
                     "camera_matches_manifest",
+                    "screenshot_path",
+                    "reviewed_copy_script_evidence",
                     "expected_revision",
                     "expected_window_handle",
                     "expected_window_title",
@@ -6284,6 +6608,19 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         }
         continuation_high_level_payload_hint = {}
         payload_hint_is_directly_callable = False
+    elif next_automation_step is None and next_pending_step is not None:
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Obtain reviewed Copy Script and screenshot evidence for the "
+                f"prepared {selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view before recording it."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
     manifest["replay_continuation"] = {
         "status": continuation_status,
         "automatic_replay_ready": next_automation_step is not None,
@@ -6322,12 +6659,14 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         "payload_hint_is_directly_callable": payload_hint_is_directly_callable,
         "high_level_payload_hint": continuation_high_level_payload_hint,
         "post_review_record_payload_template": post_review_record_payload_template,
+        "post_review_record_payload_template_is_directly_callable": False,
         "post_review_high_level_payload_template": (
             post_review_high_level_payload_template
         ),
         "evidence_values_must_be_observed_not_assumed": bool(
             miller_plane_payload_hint
             or runtime_accessibility_observation_blocks_automation
+            or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
     if preflight.get("ready_for_external_replay") is not True:
@@ -6340,11 +6679,24 @@ def _refresh_view_replay_summary(manifest: dict[str, Any]) -> None:
         manifest["replay_status"] = "partially_confirmed"
 
 
+def _write_text_atomic(path: Path, content: str) -> None:
+    """Atomically replace an inert text artifact in the workspace."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a JSON artifact in its existing workspace directory."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary = path.with_name(f".{uuid.uuid4().hex}.tmp")
     try:
         temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(temporary, path)

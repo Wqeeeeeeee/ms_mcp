@@ -51,6 +51,12 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["view_replay_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
         "gui_evidence_reaudit"
     )
+    assert compact["view_replay_confirmation_entry"][
+        "reviewed_copy_script_evidence_required_when_source_selected"
+    ] is True
+    assert compact["view_replay_confirmation_entry"][
+        "reviewed_copy_script_execution_allowed"
+    ] is False
     assert compact["view_replay_automation_policy"]["automatic_native_view_names"] == [
         "front",
         "back",

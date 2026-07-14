@@ -170,6 +170,35 @@ it prevents automatic replay and routes continuation to reviewed manual or
 Copy Script handling. Never replace the missing name with an element index or
 coordinate.
 
+When the reviewed Copy Script fallback is used, submit it only as inert evidence:
+
+```json
+{
+  "view_name": "front",
+  "source": "reviewed_copy_script",
+  "model_visible": true,
+  "camera_matches_manifest": true,
+  "screenshot_path": "C:\\path\\inside\\workspace\\front.bmp",
+  "expected_window_handle": 12345,
+  "expected_window_title": "msmcp_r001_xxxxxxxxxx - Materials Studio",
+  "reviewed_copy_script_evidence": {
+    "script_text": "use MaterialsScript qw(:all);\n...exact Copy Script text...\n",
+    "capture_method": "materials_studio_copy_script",
+    "reviewer": "computer_use",
+    "copy_script_command_observed": true,
+    "review_completed": true,
+    "view_action_matches_manifest": true,
+    "structure_unchanged_observed": true,
+    "note": "Reviewed against the prepared front-view manifest."
+  }
+}
+```
+
+The nested object is strict (`extra="forbid"`). The server never executes this
+text. Safe evidence is archived with its SHA-256; shell, network, file
+import/export/delete, calculation, or structure-mutation signals block view
+acceptance and prevent raw script-text persistence.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

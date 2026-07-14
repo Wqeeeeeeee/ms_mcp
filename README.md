@@ -219,6 +219,14 @@ that `[uvw]` and `(hkl)` with the same indices are equivalent. Continuous
 Spin/Roll/Rock and object nudge/align commands are never accepted as camera
 replay.
 
+The reviewed Copy Script fallback is evidence-only. A replay recorded with
+`source="reviewed_copy_script"` must include the exact script in
+`reviewed_copy_script_evidence`, the exact current wrapper handle/title, and a
+workspace screenshot. The script is never executed. Safe inert text is archived
+under `gui_copy_script_evidence/` with its SHA-256 and JSON review metadata;
+scripts containing shell, network, file import/export/delete, calculation, or
+structure-mutation signals retain only their hash and static rejection analysis.
+
 Conversation-style requests such as `continue the next GUI view replay` or
 `继续验证下一个 GUI 视角` route through the high-level live modeling tool. The
 `continue_view_replay` workflow prepares or upgrades the current manifest when

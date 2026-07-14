@@ -103,6 +103,12 @@ acceptance verifies that this nested schema is discoverable and strict
 (`extra="forbid"`). Unnamed toolbar children must keep automation blocked. The
 receipt must also prove the exact key sequence or stages, Reset precondition,
 angle, no modifiers, setting restoration, and visual axis/projection match.
+The record tool's nested `reviewed_copy_script_evidence` schema is also
+discoverable and strict. Selecting `source="reviewed_copy_script"` requires the
+exact inert script, completed review attestations, exact current wrapper
+handle/title, and a workspace screenshot. The server must report
+`execution_allowed=false`; unsafe external-effect, calculation, or structural
+mutation findings block acceptance and raw script persistence.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
 profile, and a current-window `runtime_ui_evidence` probe are all verified.

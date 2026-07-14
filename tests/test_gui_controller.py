@@ -1621,6 +1621,156 @@ def test_record_view_replay_requires_manifest_view_and_persists_append_only_even
         )
 
 
+def _reviewed_copy_script_evidence(
+    script_text: str = (
+        "use MaterialsScript qw(:all);\n"
+        'my $doc = $Documents{"model.xsd"};\n'
+        "$doc->Views->ActiveView->Camera->ResetView();\n"
+    ),
+) -> dict[str, object]:
+    return {
+        "script_text": script_text,
+        "capture_method": "materials_studio_copy_script",
+        "reviewer": "human_review",
+        "copy_script_command_observed": True,
+        "review_completed": True,
+        "view_action_matches_manifest": True,
+        "structure_unchanged_observed": True,
+        "note": "Reviewed as an inert camera/view action.",
+    }
+
+
+def test_record_view_replay_requires_bound_reviewed_copy_script_evidence(
+    tmp_path: Path,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="reviewed_copy_script",
+        model_visible=True,
+        camera_matches_manifest=True,
+    )
+
+    assert recorded["accepted"] is False
+    assert "reviewed_copy_script_evidence_missing" in recorded["rejection_reasons"]
+    assert "reviewed_copy_script_exact_window_binding_missing" in recorded[
+        "rejection_reasons"
+    ]
+    assert "reviewed_copy_script_screenshot_missing" in recorded[
+        "rejection_reasons"
+    ]
+    assert backend.window.handle == 100
+
+
+def test_record_view_replay_persists_safe_reviewed_copy_script_artifacts(
+    tmp_path: Path,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+    screenshot = tmp_path / "view_proj" / "outputs" / "r002" / "copy_script.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    evidence = _reviewed_copy_script_evidence()
+
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="reviewed_copy_script",
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=screenshot,
+        expected_window_handle=backend.window.handle,
+        expected_window_title=backend.window.title,
+        reviewed_copy_script_evidence=evidence,
+    )
+
+    assert recorded["accepted"] is True
+    event = recorded["event"]
+    assert event["reviewed_copy_script_evidence_complete"] is True
+    persisted = event["reviewed_copy_script_evidence"]
+    assert persisted["execution_allowed"] is False
+    assert persisted["raw_script_persisted"] is True
+    script_path = Path(persisted["script_path"])
+    metadata_path = Path(persisted["metadata_path"])
+    assert script_path.read_text(encoding="utf-8") == evidence["script_text"]
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["accepted"] is True
+    assert metadata["event_id"] == event["event_id"]
+    assert metadata["evidence"]["script_sha256"] == persisted["script_sha256"]
+
+
+def test_record_view_replay_blocks_and_does_not_persist_unsafe_copy_script_text(
+    tmp_path: Path,
+) -> None:
+    controller, backend = _controller_with_verified_project_window(tmp_path)
+    controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+    screenshot = tmp_path / "view_proj" / "outputs" / "r002" / "unsafe.bmp"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    evidence = _reviewed_copy_script_evidence(
+        'system("cmd /c whoami");\n$doc->CreateAtom("Si", Point(X => 0));\n'
+    )
+
+    recorded = controller.record_view_replay(
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_100",
+        source="reviewed_copy_script",
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=screenshot,
+        expected_window_handle=backend.window.handle,
+        expected_window_title=backend.window.title,
+        reviewed_copy_script_evidence=evidence,
+    )
+
+    assert recorded["accepted"] is False
+    assert "reviewed_copy_script_safety_blocked" in recorded["rejection_reasons"]
+    persisted = recorded["event"]["reviewed_copy_script_evidence"]
+    assert persisted["raw_script_persisted"] is False
+    assert persisted["script_path"] is None
+    assert Path(persisted["metadata_path"]).is_file()
+
+
+def test_record_view_replay_rejects_copy_script_payload_for_other_sources(
+    tmp_path: Path,
+) -> None:
+    controller, _ = _controller_with_verified_project_window(tmp_path)
+    controller.prepare_view_replay(
+        _view_replay_audit("view_proj", 2),
+        project_id="view_proj",
+        revision=2,
+    )
+
+    with pytest.raises(GuiError, match="allowed only"):
+        controller.record_view_replay(
+            project_id="view_proj",
+            revision=2,
+            view_name="crystal_100",
+            source="computer_use",
+            model_visible=True,
+            camera_matches_manifest=True,
+            reviewed_copy_script_evidence=_reviewed_copy_script_evidence(),
+        )
+
+
 def test_record_view_replay_rejects_screenshot_outside_workspace(tmp_path: Path) -> None:
     controller, _ = _controller_with_verified_project_window(tmp_path)
     controller.prepare_view_replay(

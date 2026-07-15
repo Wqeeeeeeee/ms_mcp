@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from .specs.castep import CastepTask, normalize_castep_task
 from .specs.common import ELEMENTS
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
@@ -11892,9 +11893,10 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
         return None
 
     simulation = current_spec.simulation
+    current_task = getattr(simulation, "task", None) or CastepTask.ENERGY
     operation: dict[str, Any] = {
         "type": "set_castep_energy",
-        "task": task or str(getattr(simulation, "task", None) or "Energy"),
+        "task": task or normalize_castep_task(current_task).value,
         "functional": str(getattr(simulation, "functional", None) or "PBE"),
         "quality": str(getattr(simulation, "quality", None) or "Medium"),
     }
@@ -11925,9 +11927,12 @@ def _match_castep_task(text: str) -> str | None:
         token in text for token in ("\u5e26\u9699", "\u80fd\u5e26")
     ):
         return "BandStructure"
-    if re.search(r"\b(?:density\s+of\s+states|projected\s+density\s+of\s+states|dos|pdos)\b", lowered) or any(
-        token in text for token in ("\u6001\u5bc6\u5ea6", "\u6295\u5f71\u6001\u5bc6\u5ea6")
-    ):
+    if re.search(
+        r"\b(?:projected\s+density\s+of\s+states|projected\s+dos|pdos)\b",
+        lowered,
+    ) or "\u6295\u5f71\u6001\u5bc6\u5ea6" in text:
+        return "ProjectedDensityOfStates"
+    if re.search(r"\b(?:density\s+of\s+states|dos)\b", lowered) or "\u6001\u5bc6\u5ea6" in text:
         return "DensityOfStates"
     if re.search(r"\b(?:optical(?:\s+properties)?|optics)\b", lowered):
         return "Optics"
@@ -11938,9 +11943,9 @@ def _match_castep_task(text: str) -> str | None:
     if "\u58f0\u5b50" in text:
         return "Phonon"
     if re.search(r"\belastic(?:ity| constants?)?\b", lowered):
-        return "Elastic"
+        return "ElasticConstants"
     if any(token in text for token in ("\u5f39\u6027", "\u5f39\u6027\u5e38\u6570")):
-        return "Elastic"
+        return "ElasticConstants"
     if re.search(r"\b(?:geometry\s+optimi[sz]ation|geom\s*opt|relax(?:ation)?)\b", lowered):
         return "GeometryOptimization"
     if any(token in text for token in ("\u51e0\u4f55\u4f18\u5316", "\u7ed3\u6784\u4f18\u5316", "\u4f18\u5316\u7ed3\u6784", "\u5f1b\u8c6b")):

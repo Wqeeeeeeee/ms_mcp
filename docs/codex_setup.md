@@ -952,6 +952,13 @@ For semiconductor work, inspect
 before constructing a custom crystal. The built-in semiconductor templates are
 preview-first `ModelSpec` examples with CASTEP energy defaults and full
 view-bundle diagnostics.
+CASTEP preview generation is pinned to the Materials Studio 20.1 scripting
+contract. The compatibility tool `material_studio_castep_energy_script`
+normalizes reviewed aliases to a canonical task, reports the resolved API
+object in `castep_dispatch`, and never executes CASTEP itself. Custom cutoff and
+primary SCF k-point settings use the documented `EnergyCutoff` and
+`KPointDerivation` forms; separate property-grid sampling remains at the
+Materials Studio default until a dedicated reviewed schema field is supplied.
 For slab templates, read `modeling_report.inspection.surface` and
 `modeling_report.inspection.slab_vacuum` to verify the surface orientation,
 declared vacuum thickness, atom-center extent, inferred atom-center vacuum, and

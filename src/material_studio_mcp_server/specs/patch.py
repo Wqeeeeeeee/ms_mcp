@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .castep import CastepEnergySpec
+from .castep import CastepEnergySpec, CastepTaskValue
 from .common import ExecutionMode, FractionalVector3, StrictModel, Vector3
 from .crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .forcite import ForciteConvergence, ForciteOptimizationSpec, ForciteQuality
@@ -92,7 +92,7 @@ class SemanticPatchOperation(StrictModel):
     charge_assignment: str | None = None
     max_iterations: int | None = Field(default=None, ge=1, le=1_000_000)
     convergence: str | None = None
-    task: str | None = Field(default=None, min_length=1, max_length=100)
+    task: CastepTaskValue | None = None
     functional: str | None = None
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)

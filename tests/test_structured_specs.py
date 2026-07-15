@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from material_studio_mcp_server.specs import ForciteDynamicsSpec, ModelSpec
+from material_studio_mcp_server.specs import CastepEnergySpec, ForciteDynamicsSpec, ModelSpec
 from material_studio_mcp_server.specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from material_studio_mcp_server.specs.molecule import AtomSpec, BondSpec, MoleculeSpec
 from material_studio_mcp_server.specs.patch import SemanticPatchOperation
@@ -89,6 +89,35 @@ def test_forcite_dynamics_requires_temperature_for_nvt() -> None:
         ForciteDynamicsSpec(ensemble="NVT", timestep_fs=1.0, total_time_ps=1.0)
 
 
+def test_simulation_module_routes_minimal_castep_payload() -> None:
+    spec = ModelSpec.model_validate(
+        {
+            "project_id": "minimal_castep",
+            "model_type": "molecule",
+            "model": {
+                "name": "hydrogen",
+                "atoms": [{"id": "H1", "element": "H", "xyz_angstrom": [0, 0, 0]}],
+            },
+            "simulation": {"module": "CASTEP", "task": "Energy"},
+        }
+    )
+
+    assert isinstance(spec.simulation, CastepEnergySpec)
+    assert spec.simulation.task == "Energy"
+
+
+def test_simulation_specs_reject_mismatched_modules() -> None:
+    with pytest.raises(ValidationError):
+        CastepEnergySpec(module="Forcite")
+    with pytest.raises(ValidationError):
+        ForciteDynamicsSpec(
+            module="CASTEP",
+            ensemble="NVE",
+            timestep_fs=1.0,
+            total_time_ps=1.0,
+        )
+
+
 def test_semantic_patch_operation_type_is_enumerated() -> None:
     with pytest.raises(ValidationError):
         SemanticPatchOperation.model_validate({"type": "unsupported_operation"})
@@ -101,7 +130,8 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "set_metadata" in operation_type["enum"]
     assert "reconcile_dopant_metadata" in operation_type["enum"]
     assert "set_gate_stack_thickness" in operation_type["enum"]
-    assert "task" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    task_schema = schema["$defs"]["SemanticPatchOperation"]["properties"]["task"]
+    assert task_schema["anyOf"][0]["$ref"] == "#/$defs/CastepTask"
     assert "metadata_updates" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "unsupported_operation" not in operation_type["enum"]
 
@@ -123,3 +153,19 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
     assert forcite_schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert "ForciteOptimizationSpec" in forcite_schema["$defs"]
     assert "ForciteDynamicsSpec" in forcite_schema["$defs"]
+    assert forcite_schema["$defs"]["ForciteOptimizationSpec"]["properties"]["module"]["const"] == "Forcite"
+    assert forcite_schema["$defs"]["ForciteDynamicsSpec"]["properties"]["module"]["const"] == "Forcite"
+
+    castep_schema = json.loads((Path("src/material_studio_mcp_server/schemas/castep_spec.schema.json")).read_text(encoding="utf-8"))
+    assert castep_schema["properties"]["task"]["$ref"] == "#/$defs/CastepTask"
+    assert castep_schema["properties"]["module"]["const"] == "CASTEP"
+    assert castep_schema["$defs"]["CastepTask"]["enum"] == [
+        "Energy",
+        "GeometryOptimization",
+        "BandStructure",
+        "DensityOfStates",
+        "ProjectedDensityOfStates",
+        "Optics",
+        "Phonon",
+        "ElasticConstants",
+    ]

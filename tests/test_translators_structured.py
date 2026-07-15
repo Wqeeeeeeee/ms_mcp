@@ -29,7 +29,12 @@ def test_castep_translator_generates_energy_script(tmp_path: Path) -> None:
     generated = render_model_to_perl(spec, tmp_path)
 
     assert "Modules->CASTEP->Energy->Run" in generated.script
-    assert "CutoffEnergy => 520" in generated.script
+    assert "UseCustomEnergyCutoff => 'Yes'" in generated.script
+    assert "EnergyCutoff => 520" in generated.script
+    assert "KPointDerivation => 'CustomGrid'" in generated.script
+    assert "ParameterA => 3" in generated.script
+    assert "Task =>" not in generated.script
+    assert "KPoints =>" not in generated.script
     assert validate_generated_script(generated.script)["valid"] is True
 
 

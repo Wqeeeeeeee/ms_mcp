@@ -60,7 +60,7 @@ $env:MATERIAL_STUDIO_RUNNER = "<MS安装目录>\etc\Scripting\bin\RunMatScript.b
 - `material_studio_import_export`：导入结构并导出为另一格式
 - `material_studio_structure_summary`：读取结构基础信息
 - `material_studio_forcite_geometry_optimization`：Forcite 几何优化
-- `material_studio_castep_energy_script`：生成 CASTEP Energy 脚本
+- `material_studio_castep_energy_script`：按 Materials Studio 20.1 API 生成任务感知的 CASTEP 预览脚本（保留兼容工具名）
 - `material_studio_list_script_templates`：列出内置脚本模板
 
 ### 结构化建模工具

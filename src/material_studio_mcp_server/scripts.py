@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .castep_materialscript import render_castep_run_snippet
 from .runner import JSON_BEGIN, JSON_END, perl_string
+from .specs.castep import CastepEnergySpec
 
 
 # 脚本头部
@@ -292,8 +294,9 @@ def castep_energy_script(
     functional: str,
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
+    kpoints: tuple[int, int, int] | None = None,
 ) -> str:
-    """创建 CASTEP Energy 脚本模板。
+    """Create a task-aware CASTEP script using the MS 20.1 contract.
 
     参数:
         input_file: 输入文件路径
@@ -306,25 +309,22 @@ def castep_energy_script(
     返回:
         生成的 Perl 脚本
     """
-    settings = [
-        f"    Quality => {perl_string(quality)}",
-        f"    Task => {perl_string(task)}",
-        f"    XCFunctional => {perl_string(functional)}",
-    ]
-    if cutoff_energy_ev is not None:
-        settings.append(f"    CutoffEnergy => {cutoff_energy_ev}")
-    if kpoint_separation is not None:
-        settings.append(f"    KPointSeparation => {kpoint_separation}")
-    joined_settings = ",\n".join(settings)
+    spec = CastepEnergySpec(
+        task=task,
+        quality=quality,
+        functional=functional,
+        cutoff_energy_ev=cutoff_energy_ev,
+        kpoint_separation=kpoint_separation,
+        kpoints=kpoints,
+    )
+    run_snippet = render_castep_run_snippet(spec, results_variable="$results")
 
     return (
         SCRIPT_HEADER
         + f"""my $input = {perl_string(input_file)};
 my $doc = Documents->Import($input);
-my $results = Modules->CASTEP->Energy->Run($doc, Settings(
-{joined_settings}
-));
-print "CASTEP Energy finished for " . $doc->Name . "\\n";
+{run_snippet}
+print "CASTEP {spec.task.value} finished for " . $doc->Name . "\\n";
 """
     )
 
@@ -364,7 +364,7 @@ def template_catalog() -> list[dict[str, str]]:
         {
             "name": "castep_energy",
             "tool": "material_studio_castep_energy_script",
-            "description": "为已获许可的 CASTEP 安装生成 CASTEP Energy MaterialsScript 模板。",
+            "description": "Generate a task-aware CASTEP MaterialsScript preview for a licensed Materials Studio 20.1 installation.",
         },
     ]
 

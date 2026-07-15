@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -44,7 +45,7 @@ class ForciteOptimizationSpec(StrictModel):
         output_file: 输出文件路径
     """
 
-    module: SimulationModule = SimulationModule.FORCITE
+    module: Literal[SimulationModule.FORCITE] = SimulationModule.FORCITE
     task: str = "GeometryOptimization"
     forcefield: str = Field(default="COMPASS", min_length=1, max_length=100)
     quality: ForciteQuality = ForciteQuality.MEDIUM
@@ -80,7 +81,7 @@ class ForciteDynamicsSpec(StrictModel):
         output_file: 输出文件路径
     """
 
-    module: SimulationModule = SimulationModule.FORCITE
+    module: Literal[SimulationModule.FORCITE] = SimulationModule.FORCITE
     task: str = "Dynamics"
     ensemble: DynamicsEnsemble
     temperature_K: float | None = Field(default=None, gt=0)

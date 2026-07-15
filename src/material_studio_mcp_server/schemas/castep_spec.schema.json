@@ -1,28 +1,33 @@
 {
   "$defs": {
-    "SimulationModule": {
-      "description": "模拟模块枚举。",
+    "CastepTask": {
+      "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
       "enum": [
-        "Forcite",
-        "CASTEP",
-        "DMol3",
-        "DFTBPlus"
+        "Energy",
+        "GeometryOptimization",
+        "BandStructure",
+        "DensityOfStates",
+        "ProjectedDensityOfStates",
+        "Optics",
+        "Phonon",
+        "ElasticConstants"
       ],
-      "title": "SimulationModule",
+      "title": "CastepTask",
       "type": "string"
     }
   },
   "additionalProperties": false,
-  "description": "CASTEP 能量规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    functional: 交换关联泛函\n    quality: 计算质量\n    cutoff_energy_ev: 截断能量（eV）\n    kpoint_separation: k 点间距\n    kpoints: k 点网格\n    output_file: 输出文件路径",
+  "description": "CASTEP task settings rendered against the Materials Studio 20.1 API. The compatibility class dispatches property calculations through Energy and uses dedicated GeometryOptimization and ElasticConstants task APIs. kpoint_separation controls the primary SCF grid.",
   "properties": {
     "module": {
-      "$ref": "#/$defs/SimulationModule",
-      "default": "CASTEP"
+      "const": "CASTEP",
+      "default": "CASTEP",
+      "title": "Module",
+      "type": "string"
     },
     "task": {
-      "default": "Energy",
-      "title": "Task",
-      "type": "string"
+      "$ref": "#/$defs/CastepTask",
+      "default": "Energy"
     },
     "functional": {
       "default": "PBE",

@@ -26,8 +26,10 @@
       "description": "Forcite 动力学规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    ensemble: 系综类型\n    temperature_K: 温度（开尔文）\n    pressure_GPa: 压力（吉帕斯卡）\n    timestep_fs: 时间步长（飞秒）\n    total_time_ps: 总时间（皮秒）\n    trajectory_output_frequency: 轨迹输出频率\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    output_file: 输出文件路径",
       "properties": {
         "module": {
-          "$ref": "#/$defs/SimulationModule",
-          "default": "Forcite"
+          "const": "Forcite",
+          "default": "Forcite",
+          "title": "Module",
+          "type": "string"
         },
         "task": {
           "default": "Dynamics",
@@ -122,8 +124,10 @@
       "description": "Forcite 优化规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    max_iterations: 最大迭代次数\n    convergence: 收敛级别\n    output_file: 输出文件路径",
       "properties": {
         "module": {
-          "$ref": "#/$defs/SimulationModule",
-          "default": "Forcite"
+          "const": "Forcite",
+          "default": "Forcite",
+          "title": "Module",
+          "type": "string"
         },
         "task": {
           "default": "GeometryOptimization",
@@ -184,17 +188,6 @@
         "Ultra-fine"
       ],
       "title": "ForciteQuality",
-      "type": "string"
-    },
-    "SimulationModule": {
-      "description": "模拟模块枚举。",
-      "enum": [
-        "Forcite",
-        "CASTEP",
-        "DMol3",
-        "DFTBPlus"
-      ],
-      "title": "SimulationModule",
       "type": "string"
     }
   },

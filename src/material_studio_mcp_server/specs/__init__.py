@@ -17,7 +17,7 @@ from .common import (
 )
 from .crystal import BasisAtomSpec, CrystalOperation, CrystalSpec, LatticeSpec
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
-from .castep import CastepEnergySpec
+from .castep import CastepEnergySpec, CastepTask, normalize_castep_task
 from .molecule import AtomSpec, BondSpec, MoleculeSpec
 from .patch import SemanticPatch, SemanticPatchOperation, apply_semantic_patch
 from .project import ImportedStructureSpec, ModelSpec, SimulationSpec
@@ -28,6 +28,7 @@ __all__ = [
     "BasisAtomSpec",
     "BondSpec",
     "CastepEnergySpec",
+    "CastepTask",
     "CrystalOperation",
     "CrystalSpec",
     "EnergyValue",
@@ -52,4 +53,5 @@ __all__ = [
     "UnitSystem",
     "Vector3",
     "apply_semantic_patch",
+    "normalize_castep_task",
 ]

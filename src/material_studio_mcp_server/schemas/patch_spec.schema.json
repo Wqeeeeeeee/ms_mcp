@@ -1,5 +1,20 @@
 {
   "$defs": {
+    "CastepTask": {
+      "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
+      "enum": [
+        "Energy",
+        "GeometryOptimization",
+        "BandStructure",
+        "DensityOfStates",
+        "ProjectedDensityOfStates",
+        "Optics",
+        "Phonon",
+        "ElasticConstants"
+      ],
+      "title": "CastepTask",
+      "type": "string"
+    },
     "ExecutionMode": {
       "description": "执行模式枚举。",
       "enum": [
@@ -305,9 +320,7 @@
         "task": {
           "anyOf": [
             {
-              "maxLength": 100,
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/$defs/CastepTask"
             },
             {
               "type": "null"

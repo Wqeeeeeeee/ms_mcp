@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
+from .specs.castep import normalize_castep_task
 from .specs.crystal import CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
@@ -200,6 +201,9 @@ SURFACE_PASSIVANTS = {"H"}
 CASTEP_RECOMMENDED_MIN_CUTOFF_EV = 300
 CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION = 0.08
 CASTEP_PROPERTY_TASK_INTENTS = {
+    "projecteddensityofstates": "projected_density_of_states",
+    "projecteddos": "projected_density_of_states",
+    "pdos": "projected_density_of_states",
     "band": "band_structure",
     "bands": "band_structure",
     "bandstructure": "band_structure",
@@ -209,7 +213,7 @@ CASTEP_PROPERTY_TASK_INTENTS = {
     "optics": "optical_properties",
     "phonon": "phonon",
     "phonons": "phonon",
-    "elastic": "elastic",
+    "elastic": "elastic_constants",
 }
 SEMICONDUCTOR_BAND_PATH_LIBRARY = {
     "cubic_perovskite": {
@@ -8549,7 +8553,15 @@ def _host_reference_valence(host_elements: list[str]) -> float | None:
 
 
 def _castep_task_classification(task: Any) -> dict[str, Any]:
-    text = str(task).strip() if task is not None else ""
+    try:
+        canonical_task = normalize_castep_task(task) if task is not None else None
+    except ValueError:
+        canonical_task = None
+    text = (
+        canonical_task.value
+        if canonical_task is not None
+        else (str(task).strip() if task is not None else "")
+    )
     normalized = re.sub(r"[^a-z0-9]+", "", text.lower())
     if not normalized:
         return {

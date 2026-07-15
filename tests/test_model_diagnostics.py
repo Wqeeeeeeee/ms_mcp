@@ -16,6 +16,7 @@ from material_studio_mcp_server.diagnostics import (
 from material_studio_mcp_server.health import build_modeling_health
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import SemanticPatch, apply_semantic_patch
+from material_studio_mcp_server.specs.castep import CastepTask
 from material_studio_mcp_server.specs.project import ModelSpec
 
 
@@ -2727,7 +2728,7 @@ def test_model_view_audit_reports_semiconductor_calculation_preflight_warnings()
 def test_model_view_audit_classifies_semiconductor_castep_property_tasks() -> None:
     spec = load_example("silicon_diamond_spec.json")
     assert spec.simulation is not None
-    simulation = spec.simulation.model_copy(update={"task": "BandStructure"})
+    simulation = spec.simulation.model_copy(update={"task": CastepTask.BAND_STRUCTURE})
     band_spec = spec.model_copy(update={"simulation": simulation})
 
     audit = model_view_audit(band_spec)
@@ -2832,8 +2833,14 @@ def test_infer_modeling_plan_maps_semiconductor_property_aliases_to_castep_patch
     )
     assert pdos_plan.kind == "patch"
     pdos_operation = pdos_plan.payload["operations"][0]
-    assert pdos_operation["task"] == "DensityOfStates"
+    assert pdos_operation["task"] == "ProjectedDensityOfStates"
     assert pdos_operation["kpoints"] == [6, 6, 6]
+
+    chinese_pdos_plan = infer_modeling_plan(
+        "设置投影态密度，k点网格 4x4x2。",
+        current_spec=base,
+    )
+    assert chinese_pdos_plan.payload["operations"][0]["task"] == "ProjectedDensityOfStates"
 
     optical_plan = infer_modeling_plan(
         "Set up optical properties with cutoff 500 eV.",
@@ -2847,7 +2854,7 @@ def test_infer_modeling_plan_maps_semiconductor_property_aliases_to_castep_patch
     assert phonon_plan.payload["operations"][0]["task"] == "Phonon"
 
     elastic_plan = infer_modeling_plan("Set up elastic constants.", current_spec=base)
-    assert elastic_plan.payload["operations"][0]["task"] == "Elastic"
+    assert elastic_plan.payload["operations"][0]["task"] == "ElasticConstants"
 
 
 def test_infer_modeling_plan_applies_castep_property_settings_during_new_semiconductor_create() -> None:

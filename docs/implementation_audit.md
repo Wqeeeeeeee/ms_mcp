@@ -16,6 +16,10 @@ The existing public tools are preserved: status, custom script validation/execut
 
 `scripts.py` generates Perl MaterialsScript through deterministic string templates and `perl_string` escaping. Existing templates continue to use Materials Studio APIs rather than hand-written `.xsd` XML.
 
+## CASTEP 20.1 Contract
+
+CASTEP generation is task-aware and shared by structured translators and the compatibility `material_studio_castep_energy_script` tool. The local Materials Studio 20.1 scripting reference confirms dedicated `GeometryOptimization` and `ElasticConstants` task objects, property flags on the `Energy` task, `UseCustomEnergyCutoff` plus `EnergyCutoff`, and the `KPointDerivation` forms for separation or custom grids. Unsupported task strings are rejected instead of being emitted as guessed `Task` settings. CASTEP and Forcite specs also constrain their `module` values so a minimal CASTEP simulation cannot be misclassified by the `ModelSpec` union. Direct CASTEP script generation remains preview-only; crystal execute mode materializes a CIF and does not run CASTEP.
+
 ## Risks And Gaps
 
 `material_studio_run_script` remains intentionally powerful and risky because it executes arbitrary user-supplied Perl. Structured tools now default to preview and validate generated scripts before execution. Crystal lattice construction remains conservative because local Copy Script output should be trusted over guessed API calls.

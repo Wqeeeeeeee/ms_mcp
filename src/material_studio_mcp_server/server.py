@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .castep_materialscript import build_castep_materialscript_plan
 from .diagnostics import (
     CRYSTAL_DIRECTION_VIEW_INDICES,
     CRYSTAL_PLANE_VIEW_INDICES,
@@ -61,6 +62,7 @@ from .scripts import (
     validate_materialscript,
 )
 from .specs.common import ExecutionMode, ModelType
+from .specs.castep import CastepEnergySpec, CastepTask, CastepTaskValue
 from .specs.forcite import ForciteDynamicsSpec
 from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
@@ -295,16 +297,45 @@ class BuildMoleculeInput(BaseModel):
 
 
 class CastepEnergyInput(BaseModel):
-    """Input for CASTEP Energy script generation."""
+    """Input for task-aware CASTEP script generation."""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    input_file: str = Field(..., description="Structure file imported by the CASTEP Energy script.", min_length=1, max_length=500)
+    input_file: str = Field(
+        ...,
+        description="Structure file imported by the CASTEP task script.",
+        min_length=1,
+        max_length=500,
+    )
     quality: str = Field(default="Medium", description="CASTEP quality setting.", min_length=1, max_length=100)
-    task: str = Field(default="Energy", description="CASTEP task name.", min_length=1, max_length=100)
+    task: CastepTaskValue = Field(
+        default=CastepTask.ENERGY,
+        description="CASTEP task with a verified Materials Studio 20.1 API mapping.",
+    )
     functional: str = Field(default="PBE", description="Exchange-correlation functional setting.", min_length=1, max_length=100)
     cutoff_energy_ev: int | None = Field(default=None, description="Optional cutoff energy in eV.", ge=1, le=100_000)
-    kpoint_separation: float | None = Field(default=None, description="Optional k-point separation.", gt=0, le=10)
+    kpoint_separation: float | None = Field(
+        default=None,
+        description="Optional primary SCF k-point separation.",
+        gt=0,
+        le=10,
+    )
+    kpoints: tuple[int, int, int] | None = Field(
+        default=None,
+        description="Optional primary SCF custom k-point grid.",
+    )
+
+    @model_validator(mode="after")
+    def validate_kpoint_mode(self) -> "CastepEnergyInput":
+        CastepEnergySpec(
+            task=self.task,
+            quality=self.quality,
+            functional=self.functional,
+            cutoff_energy_ev=self.cutoff_energy_ev,
+            kpoint_separation=self.kpoint_separation,
+            kpoints=self.kpoints,
+        )
+        return self
 
 
 class GuiVisualConfirmationInput(BaseModel):
@@ -8659,7 +8690,7 @@ def material_studio_build_tnt(
 @mcp.tool(
     name="material_studio_castep_energy_script",
     annotations={
-        "title": "Generate a CASTEP Energy script",
+        "title": "Generate a CASTEP task script",
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -8669,16 +8700,16 @@ def material_studio_build_tnt(
 def material_studio_castep_energy_script(
     input_file: Annotated[
         str,
-        Field(description="Structure file imported by the CASTEP Energy script.", min_length=1, max_length=500),
+        Field(description="Structure file imported by the CASTEP task script.", min_length=1, max_length=500),
     ],
     quality: Annotated[
         str,
         Field(description="CASTEP quality setting.", min_length=1, max_length=100),
     ] = "Medium",
     task: Annotated[
-        str,
-        Field(description="CASTEP task name.", min_length=1, max_length=100),
-    ] = "Energy",
+        CastepTaskValue,
+        Field(description="CASTEP task with a verified Materials Studio 20.1 API mapping."),
+    ] = CastepTask.ENERGY,
     functional: Annotated[
         str,
         Field(description="Exchange-correlation functional setting.", min_length=1, max_length=100),
@@ -8689,22 +8720,27 @@ def material_studio_castep_energy_script(
     ] = None,
     kpoint_separation: Annotated[
         float | None,
-        Field(description="Optional k-point separation.", gt=0, le=10),
+        Field(description="Optional primary SCF k-point separation.", gt=0, le=10),
+    ] = None,
+    kpoints: Annotated[
+        tuple[int, int, int] | None,
+        Field(description="Optional primary SCF custom k-point grid."),
     ] = None,
 ) -> dict[str, Any]:
-    """Generate a CASTEP Energy MaterialsScript Perl template.
+    """Generate a task-aware CASTEP MaterialsScript Perl template.
 
     This tool does not execute CASTEP. Use material_studio_run_script after
     reviewing the generated script and confirming the local CASTEP license and
     server queue settings are ready.
 
     Args:
-        input_file (str): structure imported by the CASTEP Energy script.
+        input_file (str): structure imported by the CASTEP task script.
         quality (str): CASTEP quality setting.
         task (str): CASTEP task name.
         functional (str): exchange-correlation functional.
         cutoff_energy_ev (int | None): optional cutoff energy in eV.
-        kpoint_separation (float | None): optional k-point separation.
+        kpoint_separation (float | None): optional primary SCF k-point separation.
+        kpoints (tuple[int, int, int] | None): optional primary SCF custom grid.
 
     Returns:
         dict[str, Any]: generated MaterialsScript Perl source code.
@@ -8717,16 +8753,34 @@ def material_studio_castep_energy_script(
         functional=functional,
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
+        kpoints=kpoints,
     )
-    script = castep_energy_script(
-        params.input_file,
-        quality=params.quality,
+    spec = CastepEnergySpec(
         task=params.task,
+        quality=params.quality,
         functional=params.functional,
         cutoff_energy_ev=params.cutoff_energy_ev,
         kpoint_separation=params.kpoint_separation,
+        kpoints=params.kpoints,
     )
-    return _ok({"script": script})
+    plan = build_castep_materialscript_plan(spec)
+    script = castep_energy_script(
+        params.input_file,
+        quality=spec.quality,
+        task=spec.task.value,
+        functional=spec.functional,
+        cutoff_energy_ev=spec.cutoff_energy_ev,
+        kpoint_separation=spec.kpoint_separation,
+        kpoints=spec.kpoints,
+    )
+    return _ok(
+        {
+            "script": script,
+            "execution_mode": "preview",
+            "executes_castep": False,
+            "castep_dispatch": plan.summary(),
+        }
+    )
 
 
 def _structured_store(working_dir: str | None = None) -> ProjectStore:

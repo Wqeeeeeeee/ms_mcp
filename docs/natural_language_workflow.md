@@ -790,6 +790,18 @@ preview-only unless explicitly confirmed; property tasks such as band structure,
 band gap setup, DOS, or PDOS require reviewed settings and usually a prior
 relaxed structure. Chinese follow-ups such as `计算带隙，设置 k 点间距 0.04`
 should route through the same semantic patch path.
+
+The CASTEP renderer follows the locally installed Materials Studio 20.1
+MaterialsScript reference. Canonical tasks are `Energy`,
+`GeometryOptimization`, `BandStructure`, `DensityOfStates`,
+`ProjectedDensityOfStates`, `Optics`, `Phonon`, and `ElasticConstants`.
+Band structure, DOS, PDOS, optics, and phonons use the documented property
+flags on `Modules->CASTEP->Energy`; geometry optimization and elastic constants
+use their dedicated task objects. A custom cutoff emits
+`UseCustomEnergyCutoff` plus `EnergyCutoff`. The primary SCF k-point grid uses
+either `KPointDerivation=Separation` with `KPointSeparation` or
+`KPointDerivation=CustomGrid` with `ParameterA/B/C`. The renderer deliberately
+does not treat `kpoint_separation` as a property-grid override.
 Common Chinese CASTEP setting phrases are also supported, including
 `设置 CASTEP 截断能为 600 eV`,
 `计算带隙，平面波截断 520 eV，k点网格 6×6×6`, and

@@ -9517,6 +9517,29 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
 
     assert executed["ok"] is True
     assert executed["result"]["success"] is True
+    execution_transaction = executed["execution_transaction"]
+    assert execution_transaction["scope"] == "project_revision"
+    assert execution_transaction["domain"] == "revision_execution"
+    assert execution_transaction["project_id"] == "gui_execute_proj"
+    assert execution_transaction["revision"] == 0
+    assert execution_transaction["current_revision_at_start"] == 0
+    assert execution_transaction["current_revision_after_execution"] == 0
+    assert execution_transaction["current_revision_still_current"] is True
+    assert execution_transaction["execution_started"] is True
+    assert execution_transaction["execution_completed"] is True
+    assert execution_transaction["path"].endswith("revision_execution.lock")
+    assert {
+        "revision_execution",
+        "immutable_revision_binding",
+        "current_revision_revalidation",
+        "materials_script_execution",
+        "result_metadata_publish",
+    } <= set(execution_transaction["coverage"])
+    assert executed["result"]["execution_transaction"] == execution_transaction
+    persisted_result = json.loads(
+        Path(executed["result_metadata_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_result["execution_transaction"] == execution_transaction
     assert executed["modeling_health"]["verdict"] == "passed"
     assert executed["modeling_health"]["checks"]["gui_loaded_current_revision"] is True
     assert executed["modeling_health"]["checks"]["gui_stale_reasons"] == []
@@ -24880,6 +24903,203 @@ def test_structured_patch_rejects_orphan_revision_allocation_drift(
     assert not (project_dir / "scripts" / "r002_build.pl").exists()
 
 
+def test_concurrent_same_revision_execution_returns_busy_without_second_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    monkeypatch.setattr(server, "REVISION_EXECUTION_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(server, "REVISION_EXECUTION_LOCK_POLL_SECONDS", 0.005)
+    execution_started = threading.Event()
+    release_execution = threading.Event()
+    runner_calls: list[int] = []
+
+    def blocking_execute(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        execution_started.set()
+        assert release_execution.wait(timeout=10.0)
+        output = (
+            store.outputs_dir(spec.project_id, spec.revision)
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.write_text("serialized execution", encoding="utf-8")
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(server, "_execute_structured_script", blocking_execute)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("concurrent_revision_execution"),
+        working_dir=str(tmp_path),
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first_future = executor.submit(
+            server.material_studio_gui_apply_current_revision,
+            project_id=created["project_id"],
+            execution_mode="execute",
+            open_in_gui=False,
+            take_snapshot=False,
+            export_view_audit=False,
+            working_dir=str(tmp_path),
+        )
+        assert execution_started.wait(timeout=10.0)
+        blocked = server.material_studio_gui_apply_current_revision(
+            project_id=created["project_id"],
+            execution_mode="execute",
+            open_in_gui=False,
+            take_snapshot=False,
+            export_view_audit=False,
+            working_dir=str(tmp_path),
+            response_mode="compact",
+        )
+        try:
+            assert first_future.done() is False
+            blocked_status = server.material_studio_live_project_status(
+                project_id=created["project_id"],
+                include_gui_status=False,
+                working_dir=str(tmp_path),
+            )
+            assert blocked_status["execution_started"] is False
+            assert blocked_status["execution_deferred"] is True
+            assert (
+                blocked_status["execution_transaction_error"]
+                == blocked["execution_transaction_error"]
+            )
+            assert (
+                blocked_status["execution_retry_payload"]
+                == blocked["execution_retry_payload"]
+            )
+        finally:
+            release_execution.set()
+        committed = first_future.result(timeout=30.0)
+
+    assert runner_calls == [0]
+    assert blocked["ok"] is False
+    assert blocked["status"] == "revision_execution_busy"
+    assert blocked["execution_started"] is False
+    assert blocked["execution_deferred"] is True
+    assert blocked["execution_transaction_error"] == blocked["error"]
+    assert blocked["execution_retry_tool"] == "material_studio_live_project_status"
+    assert blocked["execution_retry_payload"] == {
+        "project_id": created["project_id"],
+        "include_gui_status": True,
+    }
+    assert "execution_transaction" not in blocked
+    assert committed["ok"] is True
+    transaction = committed["execution_transaction"]
+    assert transaction["domain"] == "revision_execution"
+    assert transaction["current_revision_still_current"] is True
+    persisted_result = json.loads(
+        Path(committed["result_metadata_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_result["execution_transaction"] == transaction
+
+
+def test_waiting_execution_revalidates_current_before_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    runner_calls: list[int] = []
+
+    def must_not_execute(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        raise AssertionError("superseded revision reached the runner")
+
+    monkeypatch.setattr(server, "_execute_structured_script", must_not_execute)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("execution_current_revalidation"),
+        working_dir=str(tmp_path),
+    )
+    store = store_module.ProjectStore(tmp_path)
+    output_dir = store.outputs_dir(created["project_id"], 0)
+    lock_path = output_dir / "revision_execution.lock"
+    contention_observed = threading.Event()
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with gui_module._workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=tmp_path,
+            timeout_seconds=1.0,
+            poll_seconds=0.01,
+        ):
+            def observed_lock_attempt(file_descriptor: int) -> None:
+                try:
+                    original_lock_attempt(file_descriptor)
+                except OSError:
+                    contention_observed.set()
+                    raise
+
+            monkeypatch.setattr(
+                gui_module,
+                "_lock_file_descriptor_nonblocking",
+                observed_lock_attempt,
+            )
+            execution_future = executor.submit(
+                server.material_studio_gui_apply_current_revision,
+                project_id=created["project_id"],
+                execution_mode="execute",
+                open_in_gui=False,
+                take_snapshot=False,
+                export_view_audit=False,
+                working_dir=str(tmp_path),
+                response_mode="compact",
+            )
+            assert contention_observed.wait(timeout=10.0)
+            superseding_patch = server.material_studio_model_modify_with_patch(
+                project_id=created["project_id"],
+                base_revision=0,
+                patch={
+                    "operations": [
+                        {"type": "delete_atom", "atom_id": "H1"},
+                    ]
+                },
+                working_dir=str(tmp_path),
+            )
+            assert superseding_patch["ok"] is True
+            assert superseding_patch["revision"] == 1
+        blocked = execution_future.result(timeout=30.0)
+
+    assert runner_calls == []
+    assert blocked["ok"] is False
+    assert blocked["status"] == "current_revision_execution_block"
+    assert blocked["execution_started"] is False
+    assert blocked["execution_deferred"] is True
+    assert blocked["target_revision"] == 0
+    assert blocked["current_revision"] == 1
+    transaction = blocked["execution_transaction"]
+    assert transaction["domain"] == "revision_execution"
+    assert transaction["execution_started"] is False
+    assert transaction["current_revision_at_start"] == 1
+    block = blocked["current_revision_execution_block"]
+    assert block["reason"] == "current_revision_advanced_before_execution"
+    assert block["target_revision"] == 0
+    assert block["current_revision"] == 1
+    assert blocked["execution_retry_payload"] == {
+        "project_id": created["project_id"],
+        "include_gui_status": True,
+    }
+    assert not (output_dir / "result_metadata.json").exists()
+
+
 def test_state_transaction_releases_before_execution_and_gui_report_lock(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -24899,8 +25119,9 @@ def test_state_transaction_releases_before_execution_and_gui_report_lock(
         take_snapshot=False,
     )
     assert created["ok"] is True
-    observed: list[tuple[str, object, object]] = []
+    observed: list[tuple[str, object, object, object]] = []
     original_execute = server._execute_or_materialize_structure
+    original_materialize = server._materialize_crystal_cif
     original_finalize = server._finalize_high_level_gui_hotload
 
     def tracked_execute(*args, **kwargs):
@@ -24908,22 +25129,36 @@ def test_state_transaction_releases_before_execution_and_gui_report_lock(
             (
                 "execute",
                 store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get(),
+                server._ACTIVE_REVISION_EXECUTION_TRANSACTION.get(),
                 server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get(),
             )
         )
         return original_execute(*args, **kwargs)
+
+    def tracked_materialize(*args, **kwargs):
+        observed.append(
+            (
+                "inside_execution",
+                store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get(),
+                server._ACTIVE_REVISION_EXECUTION_TRANSACTION.get(),
+                server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get(),
+            )
+        )
+        return original_materialize(*args, **kwargs)
 
     def tracked_finalize(*args, **kwargs):
         observed.append(
             (
                 "before_gui_transaction",
                 store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get(),
+                server._ACTIVE_REVISION_EXECUTION_TRANSACTION.get(),
                 server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get(),
             )
         )
         return original_finalize(*args, **kwargs)
 
     monkeypatch.setattr(server, "_execute_or_materialize_structure", tracked_execute)
+    monkeypatch.setattr(server, "_materialize_crystal_cif", tracked_materialize)
     monkeypatch.setattr(server, "_finalize_high_level_gui_hotload", tracked_finalize)
     patched = server.material_studio_live_modeling_request(
         "Make a 2x1x1 supercell and hot-load it in Materials Studio.",
@@ -24933,21 +25168,39 @@ def test_state_transaction_releases_before_execution_and_gui_report_lock(
     )
 
     assert patched["ok"] is True
-    assert [item[0] for item in observed] == ["execute", "before_gui_transaction"]
+    assert [item[0] for item in observed] == [
+        "execute",
+        "inside_execution",
+        "before_gui_transaction",
+    ]
     assert all(item[1] is None for item in observed)
-    assert all(item[2] is None for item in observed)
+    assert observed[0][2] is None
+    assert observed[0][3] is None
+    assert observed[1][2] is not None
+    assert observed[1][3] is None
+    assert observed[2][2] is None
+    assert observed[2][3] is None
     state_transaction = patched["state_write_transaction"]
+    execution_transaction = patched["execution_transaction"]
     gui_transaction = patched["gui_action_transaction"]
     assert state_transaction["domain"] == "project_state"
+    assert execution_transaction["domain"] == "revision_execution"
     assert gui_transaction["domain"] == "gui_artifact_report"
+    assert state_transaction["path"] != execution_transaction["path"]
+    assert execution_transaction["path"] != gui_transaction["path"]
     assert state_transaction["path"] != gui_transaction["path"]
     report_payload = json.loads(
         Path(patched["report_json_path"]).read_text(encoding="utf-8")
     )
     assert report_payload["state_write_transaction"] == state_transaction
+    assert report_payload["execution_transaction"] == execution_transaction
     assert (
         report_payload["modeling_report"]["state_write_transaction"]
         == state_transaction
+    )
+    assert (
+        report_payload["modeling_report"]["execution_transaction"]
+        == execution_transaction
     )
 
 
@@ -26008,6 +26261,16 @@ def test_high_level_patch_does_not_hotload_revision_superseded_during_execution(
     assert first_patch["ok"] is False
     assert first_patch["revision"] == 1
     assert first_patch["result"]["success"] is True
+    execution_transaction = first_patch["execution_transaction"]
+    assert execution_transaction["execution_started"] is True
+    assert execution_transaction["execution_completed"] is True
+    assert execution_transaction["current_revision_at_start"] == 1
+    assert execution_transaction["current_revision_after_execution"] == 2
+    assert execution_transaction["current_revision_still_current"] is False
+    persisted_result = json.loads(
+        Path(first_patch["result_metadata_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_result["execution_transaction"] == execution_transaction
     block = first_patch["current_revision_hotload_block"]
     assert block["reason"] == "current_revision_advanced_during_execution"
     assert block["target_revision"] == 1
@@ -26022,6 +26285,7 @@ def test_high_level_patch_does_not_hotload_revision_superseded_during_execution(
     )
     assert current["revision"] == 2
     persisted_report = json.loads(Path(first_patch["report_json_path"]).read_text(encoding="utf-8"))
+    assert persisted_report["execution_transaction"] == execution_transaction
     assert persisted_report["current_revision_hotload_block"]["current_revision"] == 2
     assert persisted_report["gui_open"] is None
 

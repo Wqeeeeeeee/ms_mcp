@@ -164,10 +164,27 @@ Each individual file is published with `fsync` and atomic replacement, but the
 spec, script, history, and current pointer are not one cross-file database
 transaction. A process interruption can leave an immutable orphan spec or
 script. Recovery skips occupied revision numbers and never overwrites or
-deletes those files. The lock order is strict: finish and release the project
-state transaction, run MaterialsScript or materialize CIF outside all state and
-GUI report locks, then acquire `gui_artifact_report.lock` for current-revision
-revalidation, hot-load, snapshot, and report publication.
+deletes those files.
+
+Persisted structured execution has its own
+`outputs/rNNN/revision_execution.lock`. The transaction binds the request to
+the immutable revision file, re-resolves `current.json` after acquiring the
+lock, runs MaterialsScript or materializes the crystal CIF, and atomically
+publishes one canonical `result_metadata.json` containing the same
+`execution_transaction` receipt returned to the caller. Two requests cannot
+run the same revision concurrently. A bounded wait that expires returns
+`revision_execution_busy`, `execution_started=false`, and an exact status retry
+payload. If the project advanced while the request waited, it returns
+`current_revision_execution_block` before invoking the runner. If the project
+advances during an execution that already started, the immutable result remains
+valid for its old revision, but the receipt records
+`current_revision_still_current=false` and the GUI phase refuses to open it.
+
+The lock order is strict: finish and release the project state transaction,
+acquire and release the revision execution transaction, then acquire
+`gui_artifact_report.lock` for current-revision revalidation, hot-load,
+snapshot, and report publication. No runner or GUI action occurs while the
+state lock is held, and no GUI report lock is held during execution.
 
 Persisting a GUI open, snapshot, or accepted manual or replay-derived visual
 confirmation uses a shared `gui_artifact_report.lock` for the same
@@ -189,9 +206,9 @@ as `report_write_transaction`. The internal report writer reuses an active
 same-revision transaction instead of attempting a second OS lock. If the lock
 wait times out, these direct tools do not begin their GUI action.
 
-High-level create, live-patch, and apply-current execute workflows use the same
-revision lock for their GUI phase, but not for MaterialsScript execution or
-crystal CIF materialization. After the structure exists, they acquire the lock,
+High-level create, live-patch, and apply-current execute workflows use the GUI
+artifact revision lock for their GUI phase, after releasing the distinct
+revision execution lock. After the structure exists, they acquire the GUI lock,
 verify that the target revision is still current, rerun the single-window
 preflight, open the structure, optionally capture a snapshot, and publish the
 final report before releasing it. A revision superseded during execution is

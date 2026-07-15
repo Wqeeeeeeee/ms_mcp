@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from material_studio_mcp_server import server
 from material_studio_mcp_server.server import (
     material_studio_model_create_from_spec,
     material_studio_model_get_current,
@@ -13,6 +16,7 @@ from material_studio_mcp_server.server import (
     material_studio_project_history,
     material_studio_project_rollback,
 )
+from material_studio_mcp_server.state.store import ProjectStore
 
 
 def load_benzene() -> dict:
@@ -210,9 +214,29 @@ def test_structured_rollback_recovers_pointer_without_overwriting_orphan_revisio
     assert [event["revision"] for event in history["history"]] == [0, 1, 3]
 
 
-def test_structured_crystal_execute_materializes_cif_without_runner(tmp_path: Path) -> None:
+def test_structured_crystal_execute_materializes_cif_without_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     spec = load_example("silicon_diamond_spec.json")
     spec["project_id"] = "structured_silicon_execute"
+    result_writes: list[tuple[str, int]] = []
+    original_write_result_metadata = ProjectStore.write_result_metadata
+
+    def tracked_write_result_metadata(
+        self: ProjectStore,
+        project_id: str,
+        revision: int,
+        result: dict,
+    ) -> Path:
+        result_writes.append((project_id, revision))
+        return original_write_result_metadata(self, project_id, revision, result)
+
+    monkeypatch.setattr(
+        ProjectStore,
+        "write_result_metadata",
+        tracked_write_result_metadata,
+    )
 
     result = material_studio_model_create_from_spec(spec, execution_mode="execute", working_dir=str(tmp_path))
 
@@ -225,3 +249,58 @@ def test_structured_crystal_execute_materializes_cif_without_runner(tmp_path: Pa
     assert result["result"]["structure_artifact_validation"]["ok"] is True
     assert Path(result["planned_outputs"]["structure"]).exists()
     assert Path(result["result_metadata_path"]).exists()
+    transaction = result["execution_transaction"]
+    assert transaction["domain"] == "revision_execution"
+    assert transaction["current_revision_still_current"] is True
+    assert "crystal_cif_materialization" in transaction["coverage"]
+    persisted_result = json.loads(
+        Path(result["result_metadata_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_result["execution_transaction"] == transaction
+    assert result_writes == [(spec["project_id"], 0)]
+    status = material_studio_live_project_status(
+        project_id=spec["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_transaction"] == transaction
+    assert status["execution_started"] is True
+
+
+def test_forcite_dynamics_execute_persists_unmanaged_result_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "input.xsd"
+    input_path.write_text("fake structure", encoding="utf-8")
+
+    class FakeRunResult:
+        def to_dict(self) -> dict:
+            return {
+                "success": True,
+                "return_code": 0,
+                "created_files": [],
+                "duration_seconds": 0.01,
+            }
+
+    monkeypatch.setattr(
+        server.runner,
+        "run_script",
+        lambda *args, **kwargs: FakeRunResult(),
+    )
+
+    result = server.material_studio_forcite_dynamics_from_spec(
+        input_file=str(input_path),
+        ensemble="NVT",
+        timestep_fs=1.0,
+        total_time_ps=1.0,
+        temperature_K=300.0,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["success"] is True
+    result_path = Path(result["result_metadata_path"])
+    assert result_path.exists()
+    assert json.loads(result_path.read_text(encoding="utf-8")) == result["result"]

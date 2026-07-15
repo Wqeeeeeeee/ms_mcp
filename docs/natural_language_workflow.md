@@ -342,6 +342,16 @@ When the user asks for a precise atom-level change, Codex should load the curren
 
 For conversation-style follow-ups such as "turn it into nitrobenzene", `material_studio_live_modeling_request` can infer the latest current project in the workspace when `project_id` is omitted. The response includes `project_resolution` so clients can show whether the project was explicit or resolved from the latest `current.json`.
 
+Explicit execution of a persisted revision is serialized. Inspect
+`execution_transaction` to confirm the immutable revision, backend, and whether
+that revision remained current through the run. A
+`status=revision_execution_busy` response means another request owns that exact
+revision's execution lock and this request did not start a runner. A
+`status=current_revision_execution_block` response means current advanced while
+the request waited; refresh through the returned status retry payload and apply
+the user's intent to the new current revision. Never bypass either response by
+launching an untracked second MaterialsScript job.
+
 Explicit GUI-view continuation phrases such as `continue the next GUI view
 replay`, `resume view replay`, `继续视角回放`, and `继续验证下一个 GUI 视角` route to
 `workflow=continue_view_replay`. This path reads or prepares the current

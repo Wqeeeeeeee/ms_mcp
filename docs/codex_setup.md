@@ -229,9 +229,29 @@ and output paths; do not rename or delete the orphan.
 
 The state lock serializes publication and each destination file is atomically
 replaced, but the complete spec/script/history/current set is not a database
-transaction. Use this lock order: project state lock, release it, execute
-MaterialsScript or materialize CIF, then acquire the GUI artifact report lock.
-Execution and GUI input must never occur while `project_state.lock` is held.
+transaction.
+
+Persisted structured execution uses a distinct
+`outputs/rNNN/revision_execution.lock`. Its `execution_transaction` receipt
+binds the immutable stored revision, the current revision observed immediately
+before execution, the backend, canonical result publication, and the current
+revision observed afterward. The transaction publishes
+`result_metadata.json` once, atomically, with that receipt included. A second
+same-revision request that exhausts the bounded wait returns
+`status=revision_execution_busy`, `execution_started=false`, and
+`execution_retry_tool`/`execution_retry_payload`; inspect status before retrying
+instead of starting another job. If current advanced before the lock holder can
+start, `status=current_revision_execution_block` proves that the runner was not
+called. If it advances during execution, inspect
+`execution_transaction.current_revision_still_current`; a false value blocks
+the subsequent GUI hot-load but does not erase the immutable old-revision
+result.
+
+Use this lock order: project state lock, release it, revision execution lock,
+release it, then GUI artifact report lock. Execution and GUI input must never
+occur while `project_state.lock` is held, and the GUI report lock must never be
+held while starting an execution. Persistent lock files are coordination
+artifacts and must not be deleted to force progress.
 
 GUI open, snapshot, and visual-confirmation report persistence share a separate
 revision-scoped lock and return `report_write_transaction`. If that lock is

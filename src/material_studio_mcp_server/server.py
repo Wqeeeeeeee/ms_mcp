@@ -61,6 +61,7 @@ from .specs.forcite import ForciteDynamicsSpec
 from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
+from .state import store as state_store_module
 from .state.diff import summarize_spec_delta
 from .state.store import (
     ProjectRevisionAllocationConflictError,
@@ -96,14 +97,55 @@ CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
 GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
 GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS = 0.05
+REVISION_EXECUTION_LOCK_TIMEOUT_SECONDS = 30.0
+REVISION_EXECUTION_LOCK_POLL_SECONDS = 0.05
 _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_gui_artifact_report_transaction",
+    default=None,
+)
+_ACTIVE_REVISION_EXECUTION_TRANSACTION: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_revision_execution_transaction",
     default=None,
 )
 _ACTIVE_LIVE_ORCHESTRATION_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_live_orchestration_context",
     default=None,
 )
+
+
+class RevisionExecutionBusyError(RuntimeError):
+    """Raised when the same immutable revision is already executing."""
+
+    def __init__(self, project_id: str, revision: int, lock_path: Path) -> None:
+        self.project_id = project_id
+        self.revision = revision
+        self.lock_path = lock_path
+        super().__init__(
+            "Revision execution transaction is busy; inspect the active result "
+            f"before retrying {project_id} r{revision:03d}"
+        )
+
+
+class RevisionExecutionSupersededError(RuntimeError):
+    """Raised when a prepared revision is no longer current before execution."""
+
+    def __init__(
+        self,
+        project_id: str,
+        target_revision: int,
+        current_revision: int,
+        current_pointer: dict[str, Any],
+        transaction: dict[str, Any],
+    ) -> None:
+        self.project_id = project_id
+        self.target_revision = target_revision
+        self.current_revision = current_revision
+        self.current_pointer = current_pointer
+        self.transaction = transaction
+        super().__init__(
+            f"Refusing to execute {project_id} r{target_revision:03d} because "
+            f"current advanced to r{current_revision:03d} before execution started"
+        )
 
 
 class ForciteQuality(str, Enum):
@@ -634,6 +676,60 @@ def _ok(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, RevisionExecutionBusyError):
+        return {
+            "ok": False,
+            "status": "revision_execution_busy",
+            "error": str(exc),
+            "project_id": exc.project_id,
+            "revision": exc.revision,
+            "target_revision": exc.revision,
+            "execution_started": False,
+            "execution_deferred": True,
+            "execution_transaction_error": str(exc),
+            "recommended_tool": "material_studio_live_project_status",
+            "required_next_step": (
+                "Wait for the active execution to finish, inspect its persisted "
+                "result, and retry only if the current revision still needs execution."
+            ),
+            "execution_retry_tool": "material_studio_live_project_status",
+            "execution_retry_payload": {
+                "project_id": exc.project_id,
+                "include_gui_status": True,
+            },
+        }
+    if isinstance(exc, RevisionExecutionSupersededError):
+        return {
+            "ok": False,
+            "status": "current_revision_execution_block",
+            "error": str(exc),
+            "project_id": exc.project_id,
+            "revision": exc.target_revision,
+            "target_revision": exc.target_revision,
+            "current_revision": exc.current_revision,
+            "execution_started": False,
+            "execution_deferred": True,
+            "execution_transaction": exc.transaction,
+            "current_revision_execution_block": {
+                "blocked": True,
+                "reason": "current_revision_advanced_before_execution",
+                "target_revision": exc.target_revision,
+                "current_revision": exc.current_revision,
+                "current_pointer": exc.current_pointer,
+                "recommended_tool": "material_studio_live_project_status",
+                "recommended_action": "inspect_current_revision_before_retrying_execution",
+            },
+            "recommended_tool": "material_studio_live_project_status",
+            "required_next_step": (
+                "Inspect the current revision and execute or hot-load that revision "
+                "instead of the superseded prepared revision."
+            ),
+            "execution_retry_tool": "material_studio_live_project_status",
+            "execution_retry_payload": {
+                "project_id": exc.project_id,
+                "include_gui_status": True,
+            },
+        }
     if isinstance(exc, ProjectRevisionAllocationConflictError):
         return {
             "ok": False,
@@ -11845,6 +11941,8 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "execution_mode_source": report.get("execution_mode_source"),
         "state_write_transaction": response.get("state_write_transaction")
         or report.get("state_write_transaction"),
+        "execution_transaction": response.get("execution_transaction")
+        or report.get("execution_transaction"),
         "normality": report.get("normality"),
         "health_verdict": report.get("health_verdict"),
         "structure_artifact_validation_status": structure_artifact_validation.get("status"),
@@ -16630,6 +16728,15 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "project_state_transaction_error": response.get(
             "project_state_transaction_error"
         ),
+        "execution_transaction": response.get("execution_transaction"),
+        "execution_started": response.get("execution_started"),
+        "execution_deferred": response.get("execution_deferred"),
+        "execution_transaction_error": response.get("execution_transaction_error"),
+        "execution_retry_tool": response.get("execution_retry_tool"),
+        "execution_retry_payload": response.get("execution_retry_payload"),
+        "current_revision_execution_block": response.get(
+            "current_revision_execution_block"
+        ),
         "structure_artifact_validation": response.get("structure_artifact_validation"),
         "modeling_report": response.get("modeling_report"),
         "modeling_health": response.get("modeling_health"),
@@ -16801,6 +16908,15 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "execution_mode": execution_mode,
         "execution_mode_source": response.get("execution_mode_source"),
         "state_write_transaction": response.get("state_write_transaction"),
+        "execution_transaction": response.get("execution_transaction"),
+        "execution_started": response.get("execution_started"),
+        "execution_deferred": response.get("execution_deferred"),
+        "execution_transaction_error": response.get("execution_transaction_error"),
+        "execution_retry_tool": response.get("execution_retry_tool"),
+        "execution_retry_payload": response.get("execution_retry_payload"),
+        "current_revision_execution_block": response.get(
+            "current_revision_execution_block"
+        ),
         "execution_backend": result.get("execution_backend"),
         "diagnostic_export_requested": bool(response.get("diagnostic_export_requested")),
         "normality_check_requested": normality_check_requested,
@@ -22544,6 +22660,8 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
         "revision": report.get("revision"),
         "execution_mode": report.get("execution_mode"),
         "execution_mode_source": report.get("execution_mode_source"),
+        "execution_transaction": response.get("execution_transaction")
+        or report.get("execution_transaction"),
         "diagnostic_export_requested": bool(
             response.get("diagnostic_export_requested") or report.get("diagnostic_export_requested")
         ),
@@ -28266,6 +28384,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "current_revision",
             "state_retry_tool",
             "state_retry_payload",
+            "execution_transaction",
+            "execution_started",
+            "execution_deferred",
+            "execution_transaction_error",
+            "execution_retry_tool",
+            "execution_retry_payload",
+            "current_revision_execution_block",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -28373,6 +28498,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "current_revision",
             "state_retry_tool",
             "state_retry_payload",
+            "execution_transaction",
+            "execution_started",
+            "execution_deferred",
+            "execution_transaction_error",
+            "execution_retry_tool",
+            "execution_retry_payload",
+            "current_revision_execution_block",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -28685,6 +28817,13 @@ def _compact_live_response(
             "current_revision",
             "state_retry_tool",
             "state_retry_payload",
+            "execution_transaction",
+            "execution_started",
+            "execution_deferred",
+            "execution_transaction_error",
+            "execution_retry_tool",
+            "execution_retry_payload",
+            "current_revision_execution_block",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -29208,6 +29347,8 @@ def _execute_structured_script(
     script: str,
     timeout_seconds: int | None,
 ) -> dict[str, Any]:
+    """Run one generated script and return metadata for the owning publisher."""
+
     result = runner.run_script(
         script,
         working_dir=store.outputs_dir(spec.project_id, spec.revision),
@@ -29216,8 +29357,111 @@ def _execute_structured_script(
         keep_script_name=f"r{spec.revision:03d}_build.pl",
     )
     result_dict = result.to_dict()
-    result_path = store.write_result_metadata(spec.project_id, spec.revision, result_dict)
-    return {"result": result_dict, "result_metadata_path": str(result_path)}
+    return {"result": result_dict}
+
+
+def _extend_revision_execution_coverage(
+    transaction: dict[str, Any],
+    coverage: str | list[str] | tuple[str, ...],
+) -> None:
+    """Add stable coverage labels to one revision execution receipt."""
+
+    requested = [coverage] if isinstance(coverage, str) else list(coverage)
+    current = [str(item) for item in transaction.get("coverage") or []]
+    for item in requested:
+        value = str(item).strip()
+        if value and value not in current:
+            current.append(value)
+    transaction["coverage"] = current
+
+
+@contextmanager
+def _revision_execution_transaction(
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+    coverage: str | list[str] | tuple[str, ...],
+):
+    """Serialize execution and canonical result publication for one revision."""
+
+    if state_store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get() is not None:
+        raise RuntimeError(
+            "Revision execution cannot start while a project state transaction is active"
+        )
+    if _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get() is not None:
+        raise RuntimeError(
+            "Revision execution cannot start while a GUI artifact report transaction is active"
+        )
+
+    project_id = str(spec.project_id)
+    revision = int(spec.revision)
+    stored_spec = store.get_revision(project_id, revision)
+    if stored_spec.model_dump(mode="json") != spec.model_dump(mode="json"):
+        raise ValueError(
+            "Revision execution spec does not match the immutable stored revision"
+        )
+    transaction_key = (str(store.workspace_root.resolve()), project_id, revision)
+    active = _ACTIVE_REVISION_EXECUTION_TRANSACTION.get()
+    if active is not None:
+        if active.get("key") != transaction_key:
+            raise RuntimeError(
+                "A revision execution transaction cannot acquire a different "
+                "project or revision while another execution is active"
+            )
+        transaction = active["transaction"]
+        transaction["nested_call_count"] = int(
+            transaction.get("nested_call_count") or 0
+        ) + 1
+        _extend_revision_execution_coverage(transaction, coverage)
+        yield transaction
+        return
+
+    lock_path = store.outputs_dir(project_id, revision) / "revision_execution.lock"
+    try:
+        with _workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=store.workspace_root,
+            timeout_seconds=REVISION_EXECUTION_LOCK_TIMEOUT_SECONDS,
+            poll_seconds=REVISION_EXECUTION_LOCK_POLL_SECONDS,
+        ) as transaction:
+            transaction.update(
+                {
+                    "domain": "revision_execution",
+                    "project_id": project_id,
+                    "revision": revision,
+                    "workspace_root": str(store.workspace_root),
+                    "nested_call_count": 0,
+                    "execution_started": False,
+                }
+            )
+            _extend_revision_execution_coverage(transaction, coverage)
+            token = _ACTIVE_REVISION_EXECUTION_TRANSACTION.set(
+                {"key": transaction_key, "transaction": transaction}
+            )
+            try:
+                current, current_pointer = store.resolve_current(project_id)
+                transaction.update(
+                    {
+                        "current_revision_at_start": current.revision,
+                        "current_pointer_status_at_start": current_pointer.get("status"),
+                    }
+                )
+                if current.revision != revision:
+                    raise RevisionExecutionSupersededError(
+                        project_id,
+                        revision,
+                        current.revision,
+                        current_pointer,
+                        dict(transaction),
+                    )
+                transaction["execution_started"] = True
+                yield transaction
+            finally:
+                _ACTIVE_REVISION_EXECUTION_TRANSACTION.reset(token)
+    except GuiError as exc:
+        if "workspace write transaction is busy" in str(exc):
+            raise RevisionExecutionBusyError(project_id, revision, lock_path) from exc
+        raise
 
 
 def _execute_or_materialize_structure(
@@ -29230,9 +29474,68 @@ def _execute_or_materialize_structure(
 ) -> dict[str, Any]:
     """Execute a script, or materialize preview-only crystal specs as CIF."""
 
-    if isinstance(spec.model, CrystalSpec):
-        return _materialize_crystal_cif(store=store, spec=spec, generated=generated)
-    return _execute_structured_script(store=store, spec=spec, script=script, timeout_seconds=timeout_seconds)
+    backend_coverage = (
+        "crystal_cif_materialization"
+        if isinstance(spec.model, CrystalSpec)
+        else "materials_script_execution"
+    )
+    try:
+        with _revision_execution_transaction(
+            store=store,
+            spec=spec,
+            coverage=(
+                "revision_execution",
+                "immutable_revision_binding",
+                "current_revision_revalidation",
+                backend_coverage,
+            ),
+        ) as transaction:
+            if isinstance(spec.model, CrystalSpec):
+                execution = _materialize_crystal_cif(
+                    store=store,
+                    spec=spec,
+                    generated=generated,
+                )
+            else:
+                execution = _execute_structured_script(
+                    store=store,
+                    spec=spec,
+                    script=script,
+                    timeout_seconds=timeout_seconds,
+                )
+            result = execution.get("result")
+            if not isinstance(result, dict):
+                raise ValueError("Structured execution did not return result metadata")
+            try:
+                current_after, _ = store.resolve_current(spec.project_id)
+                transaction["current_revision_after_execution"] = current_after.revision
+                transaction["current_revision_still_current"] = (
+                    current_after.revision == spec.revision
+                )
+            except Exception as exc:
+                transaction["current_revision_after_execution"] = None
+                transaction["current_revision_still_current"] = None
+                transaction["current_revision_after_execution_error"] = str(exc)[:1000]
+            transaction["execution_completed"] = True
+            _extend_revision_execution_coverage(
+                transaction,
+                "result_metadata_publish",
+            )
+            result = {**result, "execution_transaction": transaction}
+            result_path = store.write_result_metadata(
+                spec.project_id,
+                spec.revision,
+                result,
+            )
+            return {
+                **execution,
+                "execution_started": True,
+                "execution_transaction": transaction,
+                "result": result,
+                "result_metadata_path": str(result_path),
+            }
+    except (RevisionExecutionBusyError, RevisionExecutionSupersededError) as exc:
+        return _error(exc)
 
 
 def _materialize_crystal_cif(*, store: ProjectStore, spec: ModelSpec, generated: dict[str, Any]) -> dict[str, Any]:
@@ -29276,8 +29579,7 @@ def _materialize_crystal_cif(*, store: ProjectStore, spec: ModelSpec, generated:
             "structure_artifact_validation": artifact_validation,
         },
     }
-    result_path = store.write_result_metadata(spec.project_id, spec.revision, result)
-    return {"result": result, "result_metadata_path": str(result_path)}
+    return {"result": result}
 
 
 @mcp.tool(
@@ -29716,6 +30018,40 @@ def material_studio_live_project_status(
             "state_write_transaction": (report_json_payload or {}).get(
                 "state_write_transaction"
             ),
+            "execution_transaction": (report_json_payload or {}).get(
+                "execution_transaction"
+            )
+            or (
+                result_metadata.get("execution_transaction")
+                if isinstance(result_metadata, dict)
+                else None
+            ),
+            "execution_started": (
+                (report_json_payload or {}).get("execution_started")
+                if (report_json_payload or {}).get("execution_started") is not None
+                else (
+                    (result_metadata.get("execution_transaction") or {}).get(
+                        "execution_started"
+                    )
+                    if isinstance(result_metadata, dict)
+                    else None
+                )
+            ),
+            "execution_deferred": (report_json_payload or {}).get(
+                "execution_deferred"
+            ),
+            "execution_transaction_error": (report_json_payload or {}).get(
+                "execution_transaction_error"
+            ),
+            "execution_retry_tool": (report_json_payload or {}).get(
+                "execution_retry_tool"
+            ),
+            "execution_retry_payload": (report_json_payload or {}).get(
+                "execution_retry_payload"
+            ),
+            "current_revision_execution_block": (report_json_payload or {}).get(
+                "current_revision_execution_block"
+            ),
             "current": {
                 "path": str(current_path),
                 "exists": current_path.exists(),
@@ -29986,6 +30322,13 @@ def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> 
             "unrequested_recommended_diagnostic_focuses",
             "result_metadata_path",
             "state_write_transaction",
+            "execution_transaction",
+            "execution_started",
+            "execution_deferred",
+            "execution_transaction_error",
+            "execution_retry_tool",
+            "execution_retry_payload",
+            "current_revision_execution_block",
         ):
             if report_json_payload.get(key) is not None:
                 context[key] = report_json_payload[key]
@@ -29993,6 +30336,15 @@ def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> 
         context["result_metadata"] = result_metadata
         context["result"] = result_metadata
         context.setdefault("execution_mode", ExecutionMode.EXECUTE.value)
+        context.setdefault(
+            "execution_transaction",
+            result_metadata.get("execution_transaction"),
+        )
+        if isinstance(result_metadata.get("execution_transaction"), dict):
+            context.setdefault(
+                "execution_started",
+                result_metadata["execution_transaction"].get("execution_started"),
+            )
     elif isinstance(persisted_health, dict):
         checks = persisted_health.get("checks") if isinstance(persisted_health.get("checks"), dict) else {}
         if checks.get("runner_success") is not None:
@@ -30350,7 +30702,26 @@ def material_studio_forcite_dynamics_from_spec(
             "planned_outputs": generated["planned_outputs"],
         }
         if mode == ExecutionMode.EXECUTE:
-            response.update(_execute_structured_script(store=store, spec=spec, script=generated["script"], timeout_seconds=timeout_seconds))
+            execution = _execute_structured_script(
+                store=store,
+                spec=spec,
+                script=generated["script"],
+                timeout_seconds=timeout_seconds,
+            )
+            result = execution.get("result")
+            if not isinstance(result, dict):
+                raise ValueError("Forcite Dynamics did not return result metadata")
+            result_path = store.write_result_metadata(
+                spec.project_id,
+                spec.revision,
+                result,
+            )
+            response.update(
+                {
+                    **execution,
+                    "result_metadata_path": str(result_path),
+                }
+            )
         return response
     except ValidationError as exc:
         return _validation_error(exc)

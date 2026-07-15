@@ -6060,6 +6060,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_calculation_readiness_csv" in electronic_preflight["diagnostic_csvs"]
     assert "semiconductor_calculation_preflight_csv" in electronic_preflight["diagnostic_csvs"]
     assert "semiconductor_reciprocal_lattice_csv" in electronic_preflight["diagnostic_csvs"]
+    kpoint_remediation = electronic_preflight["remediation_actions"][0]
+    assert kpoint_remediation["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert kpoint_remediation["tool"] == "material_studio_live_update_with_patch"
+    assert kpoint_remediation["change_scope"] == "simulation_settings_only"
+    assert kpoint_remediation["requires_user_confirmation"] is True
+    assert kpoint_remediation["structure_unchanged"] is True
     spin_charge = use_cases["spin_charge_preflight"]
     assert "odd electron count" in spin_charge["request_terms"]
     assert "spin polarization" in spin_charge["request_terms"]
@@ -29372,11 +29378,16 @@ def test_live_modeling_request_combines_slab_centering_and_passivation(monkeypat
         == "semiconductor:kpoint_reciprocal_lattice_warnings"
     )
     calculation_readiness = result["modeling_report"]["semiconductor_calculation_readiness"]
-    assert calculation_readiness["action_id"] == "review_semiconductor_calculation_settings"
-    assert calculation_readiness["recommended_tool"] == "material_studio_live_modeling_request"
-    assert calculation_readiness["needs_user_confirmation"] is False
+    assert calculation_readiness["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert calculation_readiness["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert calculation_readiness["needs_user_confirmation"] is True
+    assert calculation_readiness["safe_to_call_without_confirmation"] is False
     assert calculation_readiness["payload_hint"]["execution_mode"] == "preview"
-    assert "k-point separation" in calculation_readiness["payload_hint"]["user_request"]
+    recommended_kpoints = calculation_readiness["recommended_kpoints"]
+    assert recommended_kpoints[-1] == 1
+    assert calculation_readiness["payload_hint"]["patch"]["operations"][0][
+        "kpoints"
+    ] == recommended_kpoints
     assert "semiconductor:kpoint_reciprocal_lattice_warnings" in calculation_readiness["action_context"][
         "blocking_reasons"
     ]
@@ -29387,7 +29398,7 @@ def test_live_modeling_request_combines_slab_centering_and_passivation(monkeypat
     assert diagnosis["primary_domain_category"] == "calculation_settings"
     assert diagnosis["surface_model_status"] == "ready"
     assert diagnosis["ready_for_calculation"] is False
-    assert diagnosis["recommended_tool"] == "material_studio_live_modeling_request"
+    assert diagnosis["recommended_tool"] == "material_studio_live_update_with_patch"
     assert diagnosis["hotload_available"] is False
     assert diagnosis["hotload_payload_hint"] == {}
     assert diagnosis["remediation_plan"]["preview_available"] is True
@@ -29396,15 +29407,19 @@ def test_live_modeling_request_combines_slab_centering_and_passivation(monkeypat
         "semiconductor:kpoint_reciprocal_lattice_warnings"
     )
     assert result["live_summary"]["semiconductor_normality_primary_category"] == "calculation_settings"
-    assert result["next_action_plan"]["action_id"] == "review_semiconductor_calculation_settings"
+    assert result["next_action_plan"]["action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
     assert result["next_action_plan"]["payload_hint"] == calculation_readiness["payload_hint"]
-    assert result["live_action_summary"]["phase"] == "review_semiconductor_calculation_settings"
+    assert result["live_action_summary"]["phase"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
     assert result["modeling_report"]["semiconductor_calculation_readiness"]["ready_for_calculation"] is False
     assert result["live_summary"]["semiconductor_calculation_readiness_status"] == "blocked"
     assert result["live_summary"]["semiconductor_calculation_readiness_ready"] is False
     assert (
         result["live_summary"]["semiconductor_calculation_readiness_action_id"]
-        == "review_semiconductor_calculation_settings"
+        == "apply_recommended_semiconductor_kpoint_grid"
     )
     assert "surface_model_not_ready" not in result["modeling_report"]["semiconductor_review"]["risk_flags"]
     assert not any("dangling bonds" in warning for warning in result["modeling_health"]["warnings"])
@@ -29493,12 +29508,16 @@ def test_live_modeling_request_combines_surface_preparation_and_castep_settings(
         == "semiconductor:kpoint_reciprocal_lattice_warnings"
     )
     calculation_readiness = result["modeling_report"]["semiconductor_calculation_readiness"]
-    assert calculation_readiness["action_id"] == "review_semiconductor_calculation_settings"
-    assert calculation_readiness["recommended_tool"] == "material_studio_live_modeling_request"
+    assert calculation_readiness["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert calculation_readiness["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert calculation_readiness["needs_user_confirmation"] is True
     assert calculation_readiness["payload_hint"]["execution_mode"] == "preview"
-    assert result["next_action_plan"]["action_id"] == "review_semiconductor_calculation_settings"
+    assert calculation_readiness["payload_hint"]["patch"]["operations"][0]["kpoints"][-1] == 1
+    assert result["next_action_plan"]["action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
     assert result["live_summary"]["semiconductor_calculation_readiness_action_id"] == (
-        "review_semiconductor_calculation_settings"
+        "apply_recommended_semiconductor_kpoint_grid"
     )
     assert result["live_summary"]["semiconductor_calculation_readiness_ready"] is False
     assert "surface_model_not_ready" not in result["modeling_report"]["semiconductor_review"]["risk_flags"]
@@ -30115,9 +30134,12 @@ def test_modeling_report_treats_calculation_only_warning_as_model_normal_with_ca
         "semiconductor:kpoint_reciprocal_lattice_warnings"
     )
     assert report["mcp_client_readiness"]["semiconductor_normality_next_tool"] == (
-        "material_studio_live_modeling_request"
+        "material_studio_live_update_with_patch"
     )
     assert report["mcp_client_readiness"]["semiconductor_normality_payload_hint"]["execution_mode"] == "preview"
+    assert report["mcp_client_readiness"]["semiconductor_normality_payload_hint"]["patch"][
+        "operations"
+    ][0]["kpoints"] == [29, 29, 1]
     assert report["mcp_client_readiness"]["semiconductor_normality_hotload_available"] is False
     assert report["mcp_client_readiness"]["semiconductor_normality_hotload_payload_hint"] == {}
     contract_semiconductor = report["live_modeling_contract"]["semiconductor"]
@@ -30176,6 +30198,90 @@ def test_modeling_report_treats_calculation_only_warning_as_model_normal_with_ca
     assert json.loads(summary_row["workflow_stages_calculation_only_review_reasons"]) == [
         "semiconductor:kpoint_reciprocal_lattice_warnings"
     ]
+
+
+def test_slab_kpoint_readiness_payload_creates_simulation_only_repair_revision(
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+
+    assert created["ok"] is True
+    before = server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )
+    readiness = created["modeling_report"]["semiconductor_calculation_readiness"]
+    assert readiness["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert readiness["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert readiness["recommended_kpoints"] == [29, 29, 1]
+    assert readiness["needs_user_confirmation"] is True
+    assert readiness["safe_to_call_without_confirmation"] is False
+    payload = readiness["payload_hint"]
+    assert payload["base_revision"] == 0
+    assert payload["patch"]["operations"] == [
+        {
+            "type": "set_castep_energy",
+            "task": "Energy",
+            "functional": "PBE",
+            "quality": "Medium",
+            "kpoints": [29, 29, 1],
+            "cutoff_energy_ev": 600,
+        }
+    ]
+
+    with Path(
+        created["view_bundle_files"]["semiconductor_reciprocal_lattice_csv"]
+    ).open(encoding="utf-8", newline="") as handle:
+        reciprocal_rows = list(csv.DictReader(handle))
+    assert [int(row["recommended_kpoint"]) for row in reciprocal_rows] == [29, 29, 1]
+    assert all(
+        "replace_slab_kpoint_separation_with_explicit_grid"
+        in row["recommendation_reason_codes"]
+        for row in reciprocal_rows
+    )
+
+    update_payload = {**payload, "working_dir": str(tmp_path), "response_mode": "full"}
+    updated = server.material_studio_live_update_with_patch(**update_payload)
+
+    assert updated["ok"] is True
+    assert updated["base_revision"] == 0
+    assert updated["new_revision"] == 1
+    assert updated["execution_mode"] == "preview"
+    assert updated["diff"] == ["set_castep_energy"]
+    after = server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )
+    assert after["revision"] == 1
+    assert after["spec"]["model"] == before["spec"]["model"]
+    assert after["spec"]["simulation"]["kpoints"] == [29, 29, 1]
+    assert after["spec"]["simulation"]["kpoint_separation"] is None
+
+    post_review = updated["modeling_report"]["semiconductor_review"]
+    assert post_review["calculation"]["kpoint_mode"] == "explicit_grid"
+    assert post_review["calculation"]["kpoints"] == [29, 29, 1]
+    assert post_review["kpoints"]["status"] == "ok"
+    assert post_review["kpoints"]["recommended_kpoints"] is None
+    assert "kpoint_reciprocal_lattice_warnings" not in post_review["risk_flags"]
+    post_readiness = updated["modeling_report"]["semiconductor_calculation_readiness"]
+    assert post_readiness["semiconductor_blocking_reasons"] == []
+    assert post_readiness["calculation_settings_blocked"] is False
+    assert post_readiness["reciprocal_status"] == "ok"
+    assert post_readiness["action_id"] != "apply_recommended_semiconductor_kpoint_grid"
+    assert updated["modeling_report"]["gui"]["hot_loaded"] is False
+
+    history = server.material_studio_project_history(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )["history"]
+    assert [entry["revision"] for entry in history] == [0, 1]
 
 
 def test_modeling_report_visual_summary_allows_model_normal_with_clean_view_notes(tmp_path: Path) -> None:

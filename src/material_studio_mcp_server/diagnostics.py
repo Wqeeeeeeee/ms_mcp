@@ -907,9 +907,12 @@ def write_view_audit_bundle(
                 "reciprocal_length_1_per_angstrom",
                 "configured_kpoint",
                 "estimated_kpoint_from_separation",
+                "recommended_kpoint",
                 "actual_separation_1_per_angstrom",
+                "recommended_separation_1_per_angstrom",
                 "surface_normal_axis",
                 "surface_normal_warning",
+                "recommendation_reason_codes",
             ],
             reciprocal_rows,
         )
@@ -2237,9 +2240,16 @@ def _semiconductor_reciprocal_lattice_csv_rows(summary: dict[str, Any]) -> list[
             "reciprocal_length_1_per_angstrom": row.get("reciprocal_length_1_per_angstrom"),
             "configured_kpoint": row.get("configured_kpoint"),
             "estimated_kpoint_from_separation": row.get("estimated_kpoint_from_separation"),
+            "recommended_kpoint": row.get("recommended_kpoint"),
             "actual_separation_1_per_angstrom": row.get("actual_separation_1_per_angstrom"),
+            "recommended_separation_1_per_angstrom": row.get(
+                "recommended_separation_1_per_angstrom"
+            ),
             "surface_normal_axis": row.get("surface_normal_axis"),
             "surface_normal_warning": row.get("surface_normal_warning"),
+            "recommendation_reason_codes": ";".join(
+                str(value) for value in summary.get("recommendation_reason_codes", []) or []
+            ),
         }
         for row in summary.get("axes", []) or []
     ]
@@ -8942,8 +8952,12 @@ def _reciprocal_lattice_summary(
         ]
         coarse_axes = [
             axis
-            for axis, separation in zip(("a", "b", "c"), actual_separations)
-            if separation is not None and separation > CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION
+            for index, (axis, separation) in enumerate(
+                zip(("a", "b", "c"), actual_separations)
+            )
+            if index != slab_axis_index
+            and separation is not None
+            and separation > CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION
         ]
         if coarse_axes:
             warnings.append(
@@ -8963,6 +8977,22 @@ def _reciprocal_lattice_summary(
     elif calculation_preflight_summary.get("module") == "CASTEP":
         warnings.append("No CASTEP k-point grid or separation is configured for reciprocal-space preflight.")
 
+    recommended_grid, recommendation_reason_codes = _recommended_explicit_kpoint_grid(
+        reciprocal_lengths,
+        configured_kpoints=kpoints,
+        kpoint_separation=kpoint_separation,
+        slab_axis_index=slab_axis_index,
+        is_castep=calculation_preflight_summary.get("module") == "CASTEP",
+    )
+    recommended_separations: list[float] | None = (
+        [
+            _round(reciprocal_lengths[index] / recommended_grid[index])
+            for index in range(3)
+        ]
+        if recommended_grid is not None
+        else None
+    )
+
     rows = []
     for index, axis in enumerate(("a", "b", "c")):
         surface_normal = slab_axis_index == index
@@ -8974,7 +9004,13 @@ def _reciprocal_lattice_summary(
                 "reciprocal_length_1_per_angstrom": _round(reciprocal_lengths[index]),
                 "configured_kpoint": kpoints[index] if kpoints is not None else None,
                 "estimated_kpoint_from_separation": estimated_grid[index] if estimated_grid is not None else None,
+                "recommended_kpoint": recommended_grid[index] if recommended_grid is not None else None,
                 "actual_separation_1_per_angstrom": actual_separations[index],
+                "recommended_separation_1_per_angstrom": (
+                    recommended_separations[index]
+                    if recommended_separations is not None
+                    else None
+                ),
                 "surface_normal_axis": surface_normal,
                 "surface_normal_warning": bool(surface_normal and kpoints is not None and kpoints[index] != 1),
             }
@@ -8991,12 +9027,72 @@ def _reciprocal_lattice_summary(
         "explicit_kpoints": list(kpoints) if kpoints is not None else None,
         "estimated_kpoints_from_separation": estimated_grid,
         "actual_separations_1_per_angstrom": actual_separations,
+        "recommended_kpoint_mode": "explicit_grid" if recommended_grid is not None else None,
+        "recommended_kpoints": recommended_grid,
+        "recommended_separations_1_per_angstrom": recommended_separations,
+        "recommendation_reason_codes": recommendation_reason_codes,
         "recommended_max_kpoint_separation": CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION,
         "slab_axis": slab_axis,
         "axes": rows,
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+def _recommended_explicit_kpoint_grid(
+    reciprocal_lengths: list[float],
+    *,
+    configured_kpoints: tuple[int, int, int] | None,
+    kpoint_separation: float | None,
+    slab_axis_index: int | None,
+    is_castep: bool,
+) -> tuple[list[int] | None, list[str]]:
+    """Return a conservative explicit grid that can resolve k-point warnings."""
+
+    if not is_castep:
+        return None, []
+
+    threshold_grid = [
+        max(1, int(math.ceil(length / CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION)))
+        for length in reciprocal_lengths
+    ]
+    reasons: list[str] = []
+    if configured_kpoints is not None:
+        recommended = [
+            max(configured_kpoints[index], threshold_grid[index])
+            for index in range(3)
+        ]
+        if any(
+            recommended[index] > configured_kpoints[index]
+            for index in range(3)
+            if index != slab_axis_index
+        ):
+            reasons.append("increase_coarse_explicit_grid_axes")
+    elif kpoint_separation is not None:
+        target_separation = min(
+            kpoint_separation,
+            CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION,
+        )
+        recommended = [
+            max(1, int(math.ceil(length / target_separation)))
+            for length in reciprocal_lengths
+        ]
+        if kpoint_separation > CASTEP_RECOMMENDED_MAX_KPOINT_SEPARATION:
+            reasons.append("replace_coarse_kpoint_separation_with_explicit_grid")
+        if slab_axis_index is not None:
+            reasons.append("replace_slab_kpoint_separation_with_explicit_grid")
+    else:
+        recommended = threshold_grid
+        reasons.append("configure_missing_explicit_grid")
+
+    if slab_axis_index is not None and recommended[slab_axis_index] != 1:
+        recommended[slab_axis_index] = 1
+        reasons.append("set_slab_surface_normal_kpoint_to_one")
+
+    current_grid = list(configured_kpoints) if configured_kpoints is not None else None
+    if current_grid == recommended or not reasons:
+        return None, []
+    return recommended, list(dict.fromkeys(reasons))
 
 
 def _reciprocal_lattice_vectors(

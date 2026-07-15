@@ -675,9 +675,19 @@ This is not a convergence or accuracy proof.
 Reciprocal-lattice preflight summaries are exported as
 `semiconductor_reciprocal_lattice.csv` and report real-space axis lengths,
 reciprocal-vector lengths, estimated k-point grids from `kpoint_separation`,
-actual separations for explicit grids, and slab surface-normal sampling
-warnings. This is a structural setup check, not a replacement for k-point
-convergence testing.
+actual separations for explicit grids, slab surface-normal sampling warnings,
+and a conservative explicit-grid recommendation when the warning is
+deterministically repairable. For slabs, the recommendation preserves or
+increases the in-plane sampling density and sets the surface-normal count to
+one. The corresponding
+`semiconductor_calculation_readiness.action_id=apply_recommended_semiconductor_kpoint_grid`
+returns a directly callable `material_studio_live_update_with_patch` payload.
+Because that payload creates an immutable simulation-only revision, it must be
+shown to the user and explicitly confirmed even though execution remains in
+preview. Applying it does not change geometry or automatically hot-load the
+unchanged structure; re-export the electronic diagnostics and require
+`reciprocal_status=ok` before clearing the blocker. This is a structural setup
+check, not a replacement for k-point convergence testing.
 Band-path preflight summaries are exported as `semiconductor_band_path.csv`
 for supported semiconductor families. Diamond-cubic and zinc-blende starts use
 a conservative fcc path, and wurtzite starts use a conservative hexagonal path.

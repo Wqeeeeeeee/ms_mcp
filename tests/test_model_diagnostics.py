@@ -2711,6 +2711,10 @@ def test_model_view_audit_reports_semiconductor_calculation_preflight_warnings()
     assert any("kpoint_separation=0.12" in warning for warning in calculation["warnings"])
     assert reciprocal["status"] == "warnings"
     assert reciprocal["estimated_kpoints_from_separation"] == [10, 10, 10]
+    assert reciprocal["recommended_kpoints"] == [15, 15, 15]
+    assert reciprocal["recommendation_reason_codes"] == [
+        "replace_coarse_kpoint_separation_with_explicit_grid"
+    ]
     assert reciprocal["warning_count"] == 1
     assert any("kpoint_separation=0.12" in warning for warning in reciprocal["warnings"])
 
@@ -2720,9 +2724,49 @@ def test_model_view_audit_reports_semiconductor_calculation_preflight_warnings()
     assert health["checks"]["semiconductor_calculation_warning_count"] == 2
     assert health["checks"]["semiconductor_reciprocal_status"] == "warnings"
     assert health["checks"]["semiconductor_reciprocal_estimated_kpoints"] == [10, 10, 10]
+    assert health["checks"]["semiconductor_reciprocal_recommended_kpoints"] == [15, 15, 15]
     assert health["checks"]["semiconductor_reciprocal_warning_count"] == 1
     assert any("calculation preflight" in warning for warning in health["warnings"])
     assert any("reciprocal-lattice" in warning for warning in health["warnings"])
+
+
+def test_slab_kpoint_recommendation_clamps_surface_normal_and_clears_warning() -> None:
+    spec = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    audit = model_view_audit(spec)
+    reciprocal = audit["health"]["semiconductor_health"]["reciprocal_lattice_summary"]
+
+    assert reciprocal["status"] == "warnings"
+    assert reciprocal["slab_axis"] == "c"
+    assert reciprocal["estimated_kpoints_from_separation"] == [29, 29, 8]
+    assert reciprocal["recommended_kpoint_mode"] == "explicit_grid"
+    assert reciprocal["recommended_kpoints"] == [29, 29, 1]
+    assert reciprocal["recommendation_reason_codes"] == [
+        "replace_slab_kpoint_separation_with_explicit_grid",
+        "set_slab_surface_normal_kpoint_to_one",
+    ]
+    assert [row["recommended_kpoint"] for row in reciprocal["axes"]] == [29, 29, 1]
+
+    assert spec.simulation is not None
+    fixed_simulation = spec.simulation.model_copy(
+        update={"kpoint_separation": None, "kpoints": (29, 29, 1)}
+    )
+    fixed_spec = ModelSpec.model_validate(
+        spec.model_copy(update={"simulation": fixed_simulation}).model_dump(mode="json")
+    )
+    fixed_reciprocal = model_view_audit(fixed_spec)["health"]["semiconductor_health"][
+        "reciprocal_lattice_summary"
+    ]
+
+    assert fixed_reciprocal["status"] == "ok"
+    assert fixed_reciprocal["explicit_kpoints"] == [29, 29, 1]
+    assert fixed_reciprocal["actual_separations_1_per_angstrom"] == [
+        0.039585,
+        0.039585,
+        0.285599,
+    ]
+    assert fixed_reciprocal["recommended_kpoints"] is None
+    assert fixed_reciprocal["recommendation_reason_codes"] == []
+    assert fixed_reciprocal["warning_count"] == 0
 
 
 def test_model_view_audit_classifies_semiconductor_castep_property_tasks() -> None:
@@ -3449,8 +3493,25 @@ def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path
     assert hetero_bundle["row_counts"]["semiconductor_reciprocal_lattice"] == 3
     reciprocal_csv = Path(hetero_bundle["files"]["semiconductor_reciprocal_lattice_csv"]).read_text(encoding="utf-8")
     assert "axis,real_length_angstrom,reciprocal_length_1_per_angstrom" in reciprocal_csv
-    assert "a,5.6572,1.110653,,28,0.039666,False,False" in reciprocal_csv
-    assert "c,11.3144,0.555326,,14,0.039666,False,False" in reciprocal_csv
+    reciprocal_rows = {
+        row["axis"]: row for row in csv.DictReader(reciprocal_csv.splitlines())
+    }
+    assert reciprocal_rows["a"] == {
+        "axis": "a",
+        "real_length_angstrom": "5.6572",
+        "reciprocal_length_1_per_angstrom": "1.110653",
+        "configured_kpoint": "",
+        "estimated_kpoint_from_separation": "28",
+        "recommended_kpoint": "",
+        "actual_separation_1_per_angstrom": "0.039666",
+        "recommended_separation_1_per_angstrom": "",
+        "surface_normal_axis": "False",
+        "surface_normal_warning": "False",
+        "recommendation_reason_codes": "",
+    }
+    assert reciprocal_rows["c"]["estimated_kpoint_from_separation"] == "14"
+    assert reciprocal_rows["c"]["actual_separation_1_per_angstrom"] == "0.039666"
+    assert reciprocal_rows["c"]["recommended_kpoint"] == ""
     assert Path(hetero_bundle["files"]["semiconductor_band_path_csv"]).exists()
     assert hetero_bundle["row_counts"]["semiconductor_band_path"] == 10
     band_path_csv = Path(hetero_bundle["files"]["semiconductor_band_path_csv"]).read_text(encoding="utf-8")

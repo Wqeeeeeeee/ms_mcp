@@ -483,6 +483,10 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_reciprocal_lengths_1_per_angstrom"] = reciprocal.get("reciprocal_lengths_1_per_angstrom")
         checks["semiconductor_reciprocal_estimated_kpoints"] = reciprocal.get("estimated_kpoints_from_separation")
         checks["semiconductor_reciprocal_actual_separations_1_per_angstrom"] = reciprocal.get("actual_separations_1_per_angstrom")
+        checks["semiconductor_reciprocal_recommended_kpoints"] = reciprocal.get("recommended_kpoints")
+        checks["semiconductor_reciprocal_recommendation_reason_codes"] = reciprocal.get(
+            "recommendation_reason_codes"
+        )
         checks["semiconductor_reciprocal_warning_count"] = reciprocal.get("warning_count", 0)
         if int(reciprocal.get("warning_count") or 0) > 0:
             warnings.append("Semiconductor reciprocal-lattice/k-point preflight has warnings; inspect reciprocal_lattice_summary.")

@@ -1715,6 +1715,19 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Build GaAs zinc blende for band gap with CASTEP cutoff 520 eV and export diagnostics.",
                 "Check whether GaAs is ready for DFT/CASTEP band-structure calculation before execution.",
                 "Set up PDOS with kpoint grid 6x6x6 and export the preflight bundle.",
+                "Apply the recommended slab-aware explicit k-point grid after reviewing the readiness payload.",
+            ],
+            "remediation_actions": [
+                {
+                    "condition": "slab_or_coarse_kpoint_reciprocal_lattice_warning",
+                    "action_id": "apply_recommended_semiconductor_kpoint_grid",
+                    "tool": "material_studio_live_update_with_patch",
+                    "change_scope": "simulation_settings_only",
+                    "requires_user_confirmation": True,
+                    "execution_mode": "preview",
+                    "structure_unchanged": True,
+                    "postcondition": "reexport_electronic_diagnostics_and_verify_reciprocal_status_ok",
+                }
             ],
             "diagnostic_summaries": [
                 "semiconductor_calculation_readiness",
@@ -18860,6 +18873,7 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
         calculation_settings_blocked=calculation_settings_blocked,
         calculation=calculation,
         charge_balance=charge_balance,
+        kpoints=kpoints,
         surface_model=surface_model,
         semiconductor_blocking_reasons=semiconductor_blocking_reasons,
     )
@@ -18898,6 +18912,11 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
             "calculation_kpoints": calculation.get("kpoints"),
             "calculation_settings_blocked": calculation_settings_blocked,
             "reciprocal_status": kpoints.get("status"),
+            "recommended_kpoint_mode": kpoints.get("recommended_kpoint_mode"),
+            "recommended_kpoints": kpoints.get("recommended_kpoints"),
+            "recommended_kpoint_reason_codes": kpoints.get(
+                "recommendation_reason_codes"
+            ),
             "band_path_task_relevant": band_path.get("task_relevant"),
             "band_path_requires_materials_studio_review": band_path.get(
                 "requires_materials_studio_review"
@@ -18916,6 +18935,7 @@ def _semiconductor_calculation_action_hint(
     calculation_settings_blocked: bool,
     calculation: dict[str, Any],
     charge_balance: dict[str, Any],
+    kpoints: dict[str, Any],
     surface_model: dict[str, Any],
     semiconductor_blocking_reasons: list[str],
 ) -> dict[str, Any]:
@@ -19102,6 +19122,91 @@ def _semiconductor_calculation_action_hint(
                     ),
                     "recommended_spin_treatment": charge_balance.get("recommended_spin_treatment"),
                     "calculation_readiness_impact": charge_balance.get("calculation_readiness_impact"),
+                    "blocking_reasons": semiconductor_blocking_reasons,
+                }
+            ),
+        }
+
+    recommended_kpoints = kpoints.get("recommended_kpoints")
+    if (
+        "semiconductor:kpoint_reciprocal_lattice_warnings"
+        in semiconductor_blocking_reasons
+        and isinstance(recommended_kpoints, list)
+        and len(recommended_kpoints) == 3
+        and all(isinstance(value, int) and value > 0 for value in recommended_kpoints)
+    ):
+        grid = [int(value) for value in recommended_kpoints]
+        operation = {
+            "type": "set_castep_energy",
+            "task": task or "Energy",
+            "functional": calculation.get("functional") or "PBE",
+            "quality": calculation.get("quality") or "Medium",
+            "kpoints": grid,
+        }
+        if calculation.get("cutoff_energy_ev") is not None:
+            operation["cutoff_energy_ev"] = calculation.get("cutoff_energy_ev")
+        grid_text = "x".join(str(value) for value in grid)
+        action = "apply_recommended_explicit_kpoint_grid_then_reaudit"
+        patch_payload = {
+            "project_id": project_id,
+            "base_revision": revision,
+            "operations": [operation],
+            "execution_mode": ExecutionMode.PREVIEW.value,
+        }
+        payload_hint = {
+            "project_id": project_id,
+            "base_revision": revision,
+            "patch": patch_payload,
+            "user_text": (
+                f"Set the CASTEP k-point grid to {grid_text} using the slab-aware reciprocal-lattice "
+                "recommendation, keep execution in preview, and export electronic diagnostics."
+            ),
+            "execution_mode": ExecutionMode.PREVIEW.value,
+            "open_in_gui": False,
+            "take_snapshot": False,
+            "export_view_audit": True,
+        }
+        return {
+            "action_id": "apply_recommended_semiconductor_kpoint_grid",
+            "next_action": action,
+            "recommended_tool": "material_studio_live_update_with_patch",
+            "recommended_action": action,
+            "payload_hint": _drop_none_values(payload_hint),
+            "needs_user_confirmation": True,
+            "safe_to_call_without_confirmation": False,
+            "action_reason": "semiconductor:kpoint_reciprocal_lattice_warnings",
+            "action_context": _drop_none_values(
+                {
+                    "task": task,
+                    "task_intent": task_intent,
+                    "configured_kpoint_mode": calculation.get("kpoint_mode"),
+                    "configured_kpoint_separation": calculation.get(
+                        "kpoint_separation"
+                    ),
+                    "configured_kpoints": calculation.get("kpoints"),
+                    "estimated_kpoints_from_separation": kpoints.get(
+                        "estimated_kpoints_from_separation"
+                    ),
+                    "recommended_kpoint_mode": kpoints.get(
+                        "recommended_kpoint_mode"
+                    ),
+                    "recommended_kpoints": grid,
+                    "recommended_kpoint_reason_codes": kpoints.get(
+                        "recommendation_reason_codes"
+                    )
+                    or [],
+                    "slab_axis": kpoints.get("slab_axis"),
+                    "structure_unchanged": True,
+                    "simulation_settings_changed": True,
+                    "resolves_blocking_reasons": [
+                        "semiconductor:kpoint_reciprocal_lattice_warnings"
+                    ],
+                    "remaining_blocking_reasons_after_apply": [
+                        reason
+                        for reason in semiconductor_blocking_reasons
+                        if reason
+                        != "semiconductor:kpoint_reciprocal_lattice_warnings"
+                    ],
                     "blocking_reasons": semiconductor_blocking_reasons,
                 }
             ),
@@ -20379,6 +20484,8 @@ def _live_action_summary(report: dict[str, Any]) -> dict[str, Any]:
         phase = "fix_semiconductor_surface_model"
     elif action_id == "review_semiconductor_calculation_settings":
         phase = "review_semiconductor_calculation_settings"
+    elif action_id == "apply_recommended_semiconductor_kpoint_grid":
+        phase = "apply_recommended_semiconductor_kpoint_grid"
     elif action_id == "ready_for_semiconductor_calculation_preflight":
         phase = "confirm_semiconductor_calculation"
     elif action_id == "review_semiconductor_calculation_readiness":
@@ -26259,7 +26366,20 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
             ],
         ),
         "kpoints": {
-            **_select_keys(reciprocal, ["status", "estimated_kpoints_from_separation", "actual_separations_1_per_angstrom", "explicit_kpoints", "slab_axis"]),
+            **_select_keys(
+                reciprocal,
+                [
+                    "status",
+                    "estimated_kpoints_from_separation",
+                    "actual_separations_1_per_angstrom",
+                    "explicit_kpoints",
+                    "recommended_kpoint_mode",
+                    "recommended_kpoints",
+                    "recommended_separations_1_per_angstrom",
+                    "recommendation_reason_codes",
+                    "slab_axis",
+                ],
+            ),
             "band_path": _select_keys(
                 band_path,
                 [

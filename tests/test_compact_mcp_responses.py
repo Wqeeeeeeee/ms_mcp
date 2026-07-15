@@ -446,6 +446,50 @@ def test_compact_live_status_uses_latest_current_project_resolution(tmp_path: Pa
     assert status["gui_current_revision_needs_snapshot"] is False
 
 
+def test_compact_slab_status_preserves_actionable_kpoint_repair(tmp_path: Path) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert created["ok"] is True
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert status["ok"] is True
+    action = status["next_action_plan"]
+    assert action["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert action["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert action["needs_user_confirmation"] is True
+    assert action["safe_to_call_without_confirmation"] is False
+    assert action["payload_hint"]["open_in_gui"] is False
+    assert action["payload_hint"]["execution_mode"] == "preview"
+    assert action["payload_hint"]["patch"] == {
+        "project_id": created["project_id"],
+        "base_revision": 0,
+        "operations": [
+            {
+                "type": "set_castep_energy",
+                "task": "Energy",
+                "functional": "PBE",
+                "quality": "Medium",
+                "kpoints": [29, 29, 1],
+                "cutoff_energy_ev": 600,
+            }
+        ],
+        "execution_mode": "preview",
+    }
+    assert _json_size(status) < server.COMPACT_RESPONSE_MAX_BYTES
+
+
 def test_compact_stale_semiconductor_status_keeps_repairable_edit_contract(tmp_path: Path) -> None:
     plan = infer_modeling_plan(
         "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."

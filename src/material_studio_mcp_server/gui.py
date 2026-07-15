@@ -1938,6 +1938,89 @@ def _unlock_file_descriptor(file_descriptor: int) -> None:
     fcntl.flock(file_descriptor, fcntl.LOCK_UN)
 
 
+def _workspace_advisory_lock_status(
+    path: Path,
+    *,
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Probe an existing advisory lock without creating or modifying it."""
+
+    observed_at = datetime.now(timezone.utc).isoformat()
+    try:
+        resolved = path.expanduser().resolve()
+        _ensure_inside(workspace_root, resolved)
+    except (GuiError, OSError, RuntimeError, ValueError) as exc:
+        return {
+            "status": "invalid_path",
+            "path": str(path),
+            "exists": False,
+            "active": None,
+            "observed_at": observed_at,
+            "error": str(exc),
+        }
+    if not resolved.exists():
+        return {
+            "status": "missing",
+            "path": str(resolved),
+            "exists": False,
+            "active": False,
+            "observed_at": observed_at,
+            "error": None,
+        }
+    file_descriptor: int | None = None
+    acquired = False
+    try:
+        file_descriptor = os.open(resolved, os.O_RDWR)
+        if os.fstat(file_descriptor).st_size < 1:
+            return {
+                "status": "uninitialized",
+                "path": str(resolved),
+                "exists": True,
+                "active": None,
+                "observed_at": observed_at,
+                "error": "advisory lock file has no lockable byte",
+            }
+        try:
+            _lock_file_descriptor_nonblocking(file_descriptor)
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                return {
+                    "status": "active",
+                    "path": str(resolved),
+                    "exists": True,
+                    "active": True,
+                    "observed_at": observed_at,
+                    "error": None,
+                }
+            raise
+        acquired = True
+        return {
+            "status": "inactive",
+            "path": str(resolved),
+            "exists": True,
+            "active": False,
+            "observed_at": observed_at,
+            "error": None,
+        }
+    except OSError as exc:
+        return {
+            "status": "unreadable",
+            "path": str(resolved),
+            "exists": True,
+            "active": None,
+            "observed_at": observed_at,
+            "error": str(exc),
+        }
+    finally:
+        if file_descriptor is not None:
+            if acquired:
+                try:
+                    _unlock_file_descriptor(file_descriptor)
+                except OSError:
+                    pass
+            os.close(file_descriptor)
+
+
 @contextmanager
 def _workspace_advisory_write_lock(
     path: Path,

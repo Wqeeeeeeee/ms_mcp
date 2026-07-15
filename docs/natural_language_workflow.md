@@ -352,6 +352,16 @@ the request waited; refresh through the returned status retry payload and apply
 the user's intent to the new current revision. Never bypass either response by
 launching an untracked second MaterialsScript job.
 
+For long-running execution monitoring, read
+`material_studio_live_project_status.execution_runtime`; do not infer activity
+from the presence of `revision_execution.lock`. Continue polling when status is
+`running`, `running_unrecorded`, or `transitioning`. Treat
+`running_identity_mismatch`, `failed`, `interrupted`, `history_invalid`,
+`identity_mismatch`, and `result_missing` as review gates. The returned
+continuation always keeps `automatic_retry_allowed=false`; a retry must preserve
+the journal and come from explicit execution intent after logs and artifacts
+have been reviewed.
+
 Explicit GUI-view continuation phrases such as `continue the next GUI view
 replay`, `resume view replay`, `继续视角回放`, and `继续验证下一个 GUI 视角` route to
 `workflow=continue_view_replay`. This path reads or prepares the current

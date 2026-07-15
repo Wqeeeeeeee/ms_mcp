@@ -247,6 +247,17 @@ called. If it advances during execution, inspect
 the subsequent GUI hot-load but does not erase the immutable old-revision
 result.
 
+Each execution writes `execution_attempts.jsonl` and
+`execution_attempt_state.json` beside `result_metadata.json`. Inspect
+`material_studio_live_project_status.execution_runtime` for the current attempt
+ID, sequence, PID, backend, spec/script SHA-256 bindings, recent event summaries,
+incomplete attempt IDs, two lock observations, consistency issues, and the
+continuation receipt. A persistent lock file is not evidence that work is
+active; only the read-only kernel lock probes establish that. Conversely, an
+inactive lock with a durable `running` attempt is `interrupted`, not completed.
+Do not delete attempt files or manufacture a terminal event. Follow
+`docs/execution_observability.md` when wiring a recurring monitor.
+
 Use this lock order: project state lock, release it, revision execution lock,
 release it, then GUI artifact report lock. Execution and GUI input must never
 occur while `project_state.lock` is held, and the GUI report lock must never be

@@ -32,6 +32,7 @@ from .gui import (
     MaterialsStudioGuiController,
     _analyze_bmp_snapshot,
     _refresh_view_replay_summary,
+    _workspace_advisory_lock_status,
     _workspace_advisory_write_lock,
 )
 from .health import build_modeling_health
@@ -63,6 +64,14 @@ from .specs.crystal import CrystalSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
 from .state import store as state_store_module
 from .state.diff import summarize_spec_delta
+from .state.execution import (
+    ExecutionAttemptHistoryError,
+    begin_execution_attempt,
+    finish_execution_attempt,
+    inspect_execution_runtime,
+    publish_terminal_execution_attempt,
+    text_sha256,
+)
 from .state.store import (
     ProjectRevisionAllocationConflictError,
     ProjectRevisionConflictError,
@@ -11943,6 +11952,11 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         or report.get("state_write_transaction"),
         "execution_transaction": response.get("execution_transaction")
         or report.get("execution_transaction"),
+        "execution_attempt": response.get("execution_attempt")
+        or report.get("execution_attempt"),
+        "execution_runtime_status": (
+            response.get("execution_runtime") or report.get("execution_runtime") or {}
+        ).get("status"),
         "normality": report.get("normality"),
         "health_verdict": report.get("health_verdict"),
         "structure_artifact_validation_status": structure_artifact_validation.get("status"),
@@ -16729,6 +16743,11 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
             "project_state_transaction_error"
         ),
         "execution_transaction": response.get("execution_transaction"),
+        "execution_attempt": response.get("execution_attempt"),
+        "execution_runtime": response.get("execution_runtime"),
+        "execution_continuation": response.get("execution_continuation"),
+        "execution_attempt_state_path": response.get("execution_attempt_state_path"),
+        "execution_attempt_events_path": response.get("execution_attempt_events_path"),
         "execution_started": response.get("execution_started"),
         "execution_deferred": response.get("execution_deferred"),
         "execution_transaction_error": response.get("execution_transaction_error"),
@@ -16909,6 +16928,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "execution_mode_source": response.get("execution_mode_source"),
         "state_write_transaction": response.get("state_write_transaction"),
         "execution_transaction": response.get("execution_transaction"),
+        "execution_attempt": response.get("execution_attempt"),
+        "execution_runtime": response.get("execution_runtime"),
+        "execution_continuation": response.get("execution_continuation"),
         "execution_started": response.get("execution_started"),
         "execution_deferred": response.get("execution_deferred"),
         "execution_transaction_error": response.get("execution_transaction_error"),
@@ -22662,6 +22684,8 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
         "execution_mode_source": report.get("execution_mode_source"),
         "execution_transaction": response.get("execution_transaction")
         or report.get("execution_transaction"),
+        "execution_attempt": response.get("execution_attempt")
+        or report.get("execution_attempt"),
         "diagnostic_export_requested": bool(
             response.get("diagnostic_export_requested") or report.get("diagnostic_export_requested")
         ),
@@ -27271,6 +27295,133 @@ def _compact_nl_plan(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_execution_attempt(value: Any) -> dict[str, Any] | None:
+    """Keep one execution identity without duplicating artifact paths."""
+
+    if not isinstance(value, dict):
+        return None
+    return _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "attempt_id",
+            "sequence",
+            "project_id",
+            "revision",
+            "backend",
+            "status",
+            "process_id",
+            "started_at",
+            "finished_at",
+            "spec_sha256",
+            "script_sha256",
+            "current_revision_at_start",
+            "current_revision_after_execution",
+            "current_revision_still_current",
+            "result_success",
+            "error_type",
+            "error",
+        ),
+    )
+
+
+def _compact_execution_continuation(value: Any) -> dict[str, Any] | None:
+    """Keep the no-auto-retry decision and exact next status action."""
+
+    if not isinstance(value, dict):
+        return None
+    return _mapping_subset(
+        value,
+        (
+            "automatic_retry_allowed",
+            "explicit_execute_confirmation_required",
+            "execution_may_still_be_running",
+            "recommended_tool",
+            "recommended_payload",
+            "recommended_action",
+            "explicit_retry_tool",
+            "explicit_retry_payload",
+        ),
+    )
+
+
+def _compact_execution_runtime(value: Any) -> dict[str, Any] | None:
+    """Bound execution monitoring while retaining identity and consistency gates."""
+
+    if not isinstance(value, dict):
+        return None
+    compact = _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "status",
+            "project_id",
+            "revision",
+            "active",
+            "lock_observation_stable",
+            "state_path",
+            "events_path",
+            "state_exists",
+            "events_exist",
+            "state_read_error",
+            "result_attempt_read_error",
+            "script_artifact",
+            "attempt_record_source",
+            "consistency",
+        ),
+    )
+    latest_attempt = _compact_execution_attempt(value.get("latest_attempt"))
+    if latest_attempt:
+        compact["latest_attempt"] = latest_attempt
+    for key in ("lock_probe_before", "lock_probe_after"):
+        probe = value.get(key)
+        if isinstance(probe, dict):
+            compact[key] = _mapping_subset(
+                probe,
+                ("status", "active", "observed_at", "error"),
+            )
+    journal = value.get("journal")
+    if isinstance(journal, dict):
+        compact_journal = _mapping_subset(
+            journal,
+            (
+                "status",
+                "event_count",
+                "attempt_count",
+                "incomplete_attempt_count",
+                "incomplete_attempt_ids",
+                "latest_event_id",
+                "latest_event_sha256",
+                "read_error",
+            ),
+        )
+        recent_events = journal.get("recent_events")
+        if isinstance(recent_events, list):
+            compact_journal["recent_events"] = [
+                _mapping_subset(
+                    event,
+                    (
+                        "event_id",
+                        "event_type",
+                        "recorded_at",
+                        "attempt_id",
+                        "sequence",
+                        "status",
+                        "backend",
+                        "result_success",
+                        "error_type",
+                    ),
+                )
+                for event in recent_events[-3:]
+                if isinstance(event, dict)
+            ]
+        compact["journal"] = compact_journal
+    continuation = _compact_execution_continuation(value.get("continuation"))
+    if continuation:
+        compact["continuation"] = continuation
+    return compact
+
+
 def _compact_requested_diagnostic_focus_status(value: Any) -> dict[str, Any] | None:
     """Keep requested-focus decisions while referring details to bundle artifacts."""
 
@@ -28344,6 +28495,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "recommended_tool",
             "accepted_payloads",
             "workflow",
+            "nl_plan",
             "project_id",
             "project_resolution",
             "revision",
@@ -28351,6 +28503,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "new_revision",
             "target_revision",
             "revision_created",
+            "view_replay_continuation_requested",
+            "view_replay_prepared",
+            "view_replay_continuation",
+            "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
             "diagnostic_export_requested",
@@ -28385,6 +28541,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "state_retry_tool",
             "state_retry_payload",
             "execution_transaction",
+            "execution_attempt",
+            "execution_runtime",
+            "execution_continuation",
+            "execution_attempt_state_path",
+            "execution_attempt_events_path",
             "execution_started",
             "execution_deferred",
             "execution_transaction_error",
@@ -28462,11 +28623,17 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "ok",
             "status",
             "workflow",
+            "nl_plan",
             "project_id",
             "revision",
             "base_revision",
             "new_revision",
             "target_revision",
+            "revision_created",
+            "view_replay_continuation_requested",
+            "view_replay_prepared",
+            "view_replay_continuation",
+            "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
             "diagnostic_export_requested",
@@ -28499,6 +28666,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "state_retry_tool",
             "state_retry_payload",
             "execution_transaction",
+            "execution_attempt",
+            "execution_runtime",
+            "execution_continuation",
+            "execution_attempt_state_path",
+            "execution_attempt_events_path",
             "execution_started",
             "execution_deferred",
             "execution_transaction_error",
@@ -28818,6 +28990,11 @@ def _compact_live_response(
             "state_retry_tool",
             "state_retry_payload",
             "execution_transaction",
+            "execution_attempt",
+            "execution_runtime",
+            "execution_continuation",
+            "execution_attempt_state_path",
+            "execution_attempt_events_path",
             "execution_started",
             "execution_deferred",
             "execution_transaction_error",
@@ -28873,6 +29050,17 @@ def _compact_live_response(
     )
     compact["response_mode"] = McpResponseMode.COMPACT.value
     compact["response_schema"] = LIVE_COMPACT_RESPONSE_SCHEMA
+    execution_attempt = _compact_execution_attempt(response.get("execution_attempt"))
+    if execution_attempt:
+        compact["execution_attempt"] = execution_attempt
+    execution_runtime = _compact_execution_runtime(response.get("execution_runtime"))
+    if execution_runtime:
+        compact["execution_runtime"] = execution_runtime
+    execution_continuation = _compact_execution_continuation(
+        response.get("execution_continuation")
+    )
+    if execution_continuation:
+        compact["execution_continuation"] = execution_continuation
     gui_evidence_reaudit = _compact_gui_evidence_reaudit(
         response.get("gui_evidence_reaudit") or report.get("gui_evidence_reaudit")
     )
@@ -29454,7 +29642,6 @@ def _revision_execution_transaction(
                         current_pointer,
                         dict(transaction),
                     )
-                transaction["execution_started"] = True
                 yield transaction
             finally:
                 _ACTIVE_REVISION_EXECUTION_TRANSACTION.reset(token)
@@ -29479,6 +29666,18 @@ def _execute_or_materialize_structure(
         if isinstance(spec.model, CrystalSpec)
         else "materials_script_execution"
     )
+    backend = (
+        "crystal_cif_materialize"
+        if isinstance(spec.model, CrystalSpec)
+        else "materials_script"
+    )
+    output_dir = store.outputs_dir(spec.project_id, spec.revision)
+    project_dir = store.project_dir(spec.project_id)
+    revision_label = f"r{spec.revision:03d}"
+    spec_path = project_dir / "revisions" / f"{revision_label}_model_spec.json"
+    stored_script_path = project_dir / "scripts" / f"{revision_label}_build.pl"
+    planned_structure = (generated.get("planned_outputs") or {}).get("structure")
+    result_path = output_dir / "result_metadata.json"
     try:
         with _revision_execution_transaction(
             store=store,
@@ -29490,22 +29689,150 @@ def _execute_or_materialize_structure(
                 backend_coverage,
             ),
         ) as transaction:
-            if isinstance(spec.model, CrystalSpec):
-                execution = _materialize_crystal_cif(
-                    store=store,
-                    spec=spec,
-                    generated=generated,
+            generated_script = generated.get("script")
+            expected_script = (
+                generated_script if isinstance(generated_script, str) else script
+            )
+            saved_script: str | None = None
+            saved_script_error: str | None = None
+            try:
+                saved_script = stored_script_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as exc:
+                saved_script_error = str(exc)[:2000]
+            if (
+                saved_script is None
+                or saved_script != expected_script
+                or script != expected_script
+            ):
+                transaction["execution_started"] = False
+                transaction["execution_script_identity_error"] = (
+                    saved_script_error
+                    or "Saved revision script does not match the generated execution script"
                 )
-            else:
-                execution = _execute_structured_script(
-                    store=store,
-                    spec=spec,
-                    script=script,
-                    timeout_seconds=timeout_seconds,
+                return {
+                    "ok": False,
+                    "status": "revision_execution_script_identity_block",
+                    "error": transaction["execution_script_identity_error"],
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "execution_started": False,
+                    "execution_deferred": True,
+                    "execution_transaction": transaction,
+                    "saved_script_path": str(stored_script_path),
+                    "saved_script_exists": stored_script_path.is_file(),
+                    "saved_script_sha256": (
+                        text_sha256(saved_script) if saved_script is not None else None
+                    ),
+                    "requested_script_sha256": text_sha256(script),
+                    "expected_script_sha256": text_sha256(expected_script),
+                    "execution_retry_tool": "material_studio_live_project_status",
+                    "execution_retry_payload": {
+                        "project_id": spec.project_id,
+                        "include_gui_status": False,
+                    },
+                    "required_next_step": (
+                        "Preserve the immutable revision artifacts and review the saved "
+                        "script mismatch before creating a new revision."
+                    ),
+                }
+            _extend_revision_execution_coverage(
+                transaction,
+                "immutable_script_binding",
+            )
+            try:
+                attempt_receipt = begin_execution_attempt(
+                    output_dir,
+                    project_id=spec.project_id,
+                    revision=spec.revision,
+                    backend=backend,
+                    lock_path=Path(str(transaction["path"])),
+                    spec_path=spec_path,
+                    spec_payload=spec.model_dump(mode="json"),
+                    script_path=stored_script_path,
+                    script=saved_script,
+                    planned_structure_path=(
+                        str(planned_structure) if planned_structure else None
+                    ),
+                    current_revision_at_start=int(
+                        transaction["current_revision_at_start"]
+                    ),
                 )
-            result = execution.get("result")
-            if not isinstance(result, dict):
-                raise ValueError("Structured execution did not return result metadata")
+            except ExecutionAttemptHistoryError as exc:
+                transaction["execution_started"] = False
+                transaction["execution_attempt_history_error"] = str(exc)[:2000]
+                return {
+                    "ok": False,
+                    "status": "execution_attempt_history_invalid",
+                    "error": str(exc),
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "execution_started": False,
+                    "execution_deferred": True,
+                    "execution_transaction": transaction,
+                    "execution_retry_tool": "material_studio_live_project_status",
+                    "execution_retry_payload": {
+                        "project_id": spec.project_id,
+                        "include_gui_status": False,
+                    },
+                    "required_next_step": (
+                        "Inspect and preserve the execution attempt journal before "
+                        "requesting another explicit execution."
+                    ),
+                }
+
+            running_attempt = attempt_receipt["attempt"]
+            transaction.update(
+                {
+                    "execution_started": True,
+                    "execution_attempt_id": running_attempt["attempt_id"],
+                    "execution_attempt_sequence": running_attempt["sequence"],
+                    "execution_attempt_state_path": attempt_receipt["state_path"],
+                    "execution_attempt_events_path": attempt_receipt["events_path"],
+                }
+            )
+            if attempt_receipt.get("state_publish_error"):
+                transaction["execution_attempt_state_publish_error"] = (
+                    attempt_receipt["state_publish_error"]
+                )
+            if attempt_receipt.get("recovered_interrupted_attempts"):
+                transaction["recovered_interrupted_execution_attempts"] = (
+                    attempt_receipt["recovered_interrupted_attempts"]
+                )
+                _extend_revision_execution_coverage(
+                    transaction,
+                    "prior_execution_attempt_interruption_recovery",
+                )
+            _extend_revision_execution_coverage(
+                transaction,
+                ("execution_attempt_started", "execution_attempt_journal_publish"),
+            )
+
+            execution: dict[str, Any] | None = None
+            execution_error: Exception | None = None
+            result: dict[str, Any] | None = None
+            try:
+                if isinstance(spec.model, CrystalSpec):
+                    execution = _materialize_crystal_cif(
+                        store=store,
+                        spec=spec,
+                        generated=generated,
+                    )
+                else:
+                    execution = _execute_structured_script(
+                        store=store,
+                        spec=spec,
+                        script=saved_script,
+                        timeout_seconds=timeout_seconds,
+                    )
+                raw_result = execution.get("result")
+                if not isinstance(raw_result, dict):
+                    raise ValueError(
+                        "Structured execution did not return result metadata"
+                    )
+                result = raw_result
+            except Exception as exc:
+                execution_error = exc
+
             try:
                 current_after, _ = store.resolve_current(spec.project_id)
                 transaction["current_revision_after_execution"] = current_after.revision
@@ -29516,21 +29843,199 @@ def _execute_or_materialize_structure(
                 transaction["current_revision_after_execution"] = None
                 transaction["current_revision_still_current"] = None
                 transaction["current_revision_after_execution_error"] = str(exc)[:1000]
+
+            if execution_error is not None:
+                transaction["execution_completed"] = False
+                transaction["execution_failed"] = True
+                transaction["execution_error_type"] = execution_error.__class__.__name__
+                transaction["execution_error"] = str(execution_error)[:2000]
+                failed_attempt = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=transaction.get(
+                        "current_revision_after_execution"
+                    ),
+                    current_revision_still_current=transaction.get(
+                        "current_revision_still_current"
+                    ),
+                    result_success=None,
+                    result_metadata_path=None,
+                    error=execution_error,
+                )
+                try:
+                    terminal_receipt = publish_terminal_execution_attempt(
+                        output_dir,
+                        failed_attempt.model_dump(mode="json"),
+                    )
+                    transaction["execution_attempt_state_path"] = terminal_receipt[
+                        "state_path"
+                    ]
+                    transaction["execution_attempt_events_path"] = terminal_receipt[
+                        "events_path"
+                    ]
+                    if terminal_receipt.get("state_publish_error"):
+                        transaction["execution_attempt_state_publish_error"] = (
+                            terminal_receipt["state_publish_error"]
+                        )
+                    _extend_revision_execution_coverage(
+                        transaction,
+                        "execution_attempt_terminal_publish",
+                    )
+                except Exception as exc:
+                    transaction["execution_attempt_terminal_publish_error"] = (
+                        str(exc)[:2000]
+                    )
+                return {
+                    "ok": False,
+                    "status": "revision_execution_failed",
+                    "error": str(execution_error),
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "execution_started": True,
+                    "execution_deferred": False,
+                    "execution_transaction": transaction,
+                    "execution_attempt": failed_attempt.model_dump(mode="json"),
+                    "execution_attempt_state_path": attempt_receipt["state_path"],
+                    "execution_attempt_events_path": attempt_receipt["events_path"],
+                    "recommended_tool": "material_studio_live_project_status",
+                    "execution_retry_tool": "material_studio_live_project_status",
+                    "execution_retry_payload": {
+                        "project_id": spec.project_id,
+                        "include_gui_status": False,
+                    },
+                    "required_next_step": (
+                        "Inspect the persisted execution attempt and runner logs before "
+                        "requesting an explicit retry."
+                    ),
+                }
+
+            assert execution is not None
+            assert result is not None
             transaction["execution_completed"] = True
+            completed_attempt = finish_execution_attempt(
+                running_attempt,
+                current_revision_after_execution=transaction.get(
+                    "current_revision_after_execution"
+                ),
+                current_revision_still_current=transaction.get(
+                    "current_revision_still_current"
+                ),
+                result_success=bool(result.get("success")),
+                result_metadata_path=result_path,
+            )
+            try:
+                terminal_receipt = publish_terminal_execution_attempt(
+                    output_dir,
+                    completed_attempt.model_dump(mode="json"),
+                )
+            except Exception as exc:
+                transaction["execution_completed"] = False
+                transaction["execution_failed"] = True
+                transaction["execution_attempt_terminal_publish_error"] = str(exc)[:2000]
+                return {
+                    "ok": False,
+                    "status": "execution_attempt_terminal_publish_failed",
+                    "error": str(exc),
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "execution_started": True,
+                    "execution_deferred": False,
+                    "execution_transaction": transaction,
+                    "execution_attempt": completed_attempt.model_dump(mode="json"),
+                    "execution_attempt_state_path": attempt_receipt["state_path"],
+                    "execution_attempt_events_path": attempt_receipt["events_path"],
+                    "recommended_tool": "material_studio_live_project_status",
+                    "execution_retry_tool": "material_studio_live_project_status",
+                    "execution_retry_payload": {
+                        "project_id": spec.project_id,
+                        "include_gui_status": False,
+                    },
+                    "required_next_step": (
+                        "Preserve the backend output and inspect attempt history before "
+                        "requesting another execution."
+                    ),
+                }
+            if terminal_receipt.get("state_publish_error"):
+                transaction["execution_attempt_state_publish_error"] = terminal_receipt[
+                    "state_publish_error"
+                ]
+            _extend_revision_execution_coverage(
+                transaction,
+                "execution_attempt_terminal_publish",
+            )
             _extend_revision_execution_coverage(
                 transaction,
                 "result_metadata_publish",
             )
-            result = {**result, "execution_transaction": transaction}
-            result_path = store.write_result_metadata(
-                spec.project_id,
-                spec.revision,
-                result,
-            )
+            result = {
+                **result,
+                "execution_transaction": transaction,
+                "execution_attempt": completed_attempt.model_dump(mode="json"),
+            }
+            try:
+                result_path = store.write_result_metadata(
+                    spec.project_id,
+                    spec.revision,
+                    result,
+                )
+            except Exception as exc:
+                transaction["coverage"] = [
+                    item
+                    for item in transaction.get("coverage") or []
+                    if item != "result_metadata_publish"
+                ]
+                transaction["execution_failed"] = True
+                transaction["result_metadata_publish_error"] = str(exc)[:2000]
+                failed_attempt = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=transaction.get(
+                        "current_revision_after_execution"
+                    ),
+                    current_revision_still_current=transaction.get(
+                        "current_revision_still_current"
+                    ),
+                    result_success=bool(result.get("success")),
+                    result_metadata_path=None,
+                    error=exc,
+                )
+                try:
+                    publish_terminal_execution_attempt(
+                        output_dir,
+                        failed_attempt.model_dump(mode="json"),
+                    )
+                except Exception as terminal_exc:
+                    transaction["execution_attempt_failure_publish_error"] = str(
+                        terminal_exc
+                    )[:2000]
+                return {
+                    "ok": False,
+                    "status": "result_metadata_publish_failed",
+                    "error": str(exc),
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "execution_started": True,
+                    "execution_deferred": False,
+                    "execution_transaction": transaction,
+                    "execution_attempt": failed_attempt.model_dump(mode="json"),
+                    "execution_attempt_state_path": attempt_receipt["state_path"],
+                    "execution_attempt_events_path": attempt_receipt["events_path"],
+                    "recommended_tool": "material_studio_live_project_status",
+                    "execution_retry_tool": "material_studio_live_project_status",
+                    "execution_retry_payload": {
+                        "project_id": spec.project_id,
+                        "include_gui_status": False,
+                    },
+                    "required_next_step": (
+                        "Preserve the generated output and inspect attempt history before "
+                        "requesting another execution."
+                    ),
+                }
             return {
                 **execution,
                 "execution_started": True,
                 "execution_transaction": transaction,
+                "execution_attempt": completed_attempt.model_dump(mode="json"),
+                "execution_attempt_state_path": terminal_receipt["state_path"],
+                "execution_attempt_events_path": terminal_receipt["events_path"],
                 "result": result,
                 "result_metadata_path": str(result_path),
             }
@@ -29847,6 +30352,23 @@ def material_studio_live_project_status(
         report_payload, report_error = _read_json_file(view_audit_path)
         report_json_payload, report_json_error = _read_json_file(report_json_path)
         result_metadata, result_error = _read_json_file(result_metadata_path)
+        execution_lock_path = output_dir / "revision_execution.lock"
+        expected_execution_script = generated["script"]
+        execution_runtime = inspect_execution_runtime(
+            output_dir,
+            project_id=project_id,
+            revision=revision,
+            result_metadata=result_metadata,
+            lock_probe=lambda: _workspace_advisory_lock_status(
+                execution_lock_path,
+                workspace_root=store.workspace_root,
+            ),
+            expected_spec_payload=spec.model_dump(mode="json"),
+            expected_script=expected_execution_script,
+            expected_script_path=script_path,
+            expected_lock_path=execution_lock_path,
+            expected_result_metadata_path=result_metadata_path,
+        )
         view_replay_manifest, view_replay_error = _read_json_file(view_replay_manifest_path)
         view_replay_runtime_preflight, view_replay_runtime_preflight_error = _read_json_file(
             view_replay_runtime_preflight_path
@@ -30026,6 +30548,17 @@ def material_studio_live_project_status(
                 if isinstance(result_metadata, dict)
                 else None
             ),
+            "execution_attempt": (
+                execution_runtime.get("latest_attempt")
+                or (
+                    result_metadata.get("execution_attempt")
+                    if isinstance(result_metadata, dict)
+                    and isinstance(result_metadata.get("execution_attempt"), dict)
+                    else None
+                )
+            ),
+            "execution_runtime": execution_runtime,
+            "execution_continuation": execution_runtime.get("continuation"),
             "execution_started": (
                 (report_json_payload or {}).get("execution_started")
                 if (report_json_payload or {}).get("execution_started") is not None
@@ -30100,6 +30633,15 @@ def material_studio_live_project_status(
                 "report_json_exists": report_json_path.exists(),
                 "result_metadata_path": str(result_metadata_path),
                 "result_metadata_exists": result_metadata_path.exists(),
+                "execution_attempt_state_path": execution_runtime.get("state_path"),
+                "execution_attempt_state_exists": execution_runtime.get(
+                    "state_exists"
+                ),
+                "execution_attempt_events_path": execution_runtime.get("events_path"),
+                "execution_attempt_events_exist": execution_runtime.get(
+                    "events_exist"
+                ),
+                "revision_execution_lock_path": str(execution_lock_path),
                 "gui_view_replay_manifest_path": str(view_replay_manifest_path),
                 "gui_view_replay_manifest_exists": view_replay_manifest_path.exists(),
                 "gui_view_replay_events_path": str(view_replay_events_path),
@@ -30323,6 +30865,11 @@ def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> 
             "result_metadata_path",
             "state_write_transaction",
             "execution_transaction",
+            "execution_attempt",
+            "execution_runtime",
+            "execution_continuation",
+            "execution_attempt_state_path",
+            "execution_attempt_events_path",
             "execution_started",
             "execution_deferred",
             "execution_transaction_error",

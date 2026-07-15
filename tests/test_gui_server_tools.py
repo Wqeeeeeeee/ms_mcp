@@ -18,6 +18,7 @@ from material_studio_mcp_server.health import build_modeling_health
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import ModelSpec
 from material_studio_mcp_server.state import store as store_module
+from material_studio_mcp_server.state.execution import begin_execution_attempt
 
 
 def _verified_view_command_evidence() -> dict:
@@ -9536,10 +9537,47 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
         "result_metadata_publish",
     } <= set(execution_transaction["coverage"])
     assert executed["result"]["execution_transaction"] == execution_transaction
+    execution_attempt = executed["execution_attempt"]
+    assert execution_attempt["sequence"] == 1
+    assert execution_attempt["backend"] == "materials_script"
+    assert execution_attempt["status"] == "completed"
+    assert execution_attempt["result_success"] is True
+    assert execution_attempt["current_revision_still_current"] is True
+    assert Path(executed["execution_attempt_state_path"]).exists()
+    assert Path(executed["execution_attempt_events_path"]).exists()
     persisted_result = json.loads(
         Path(executed["result_metadata_path"]).read_text(encoding="utf-8")
     )
     assert persisted_result["execution_transaction"] == execution_transaction
+    assert persisted_result["execution_attempt"] == execution_attempt
+    status = server.material_studio_live_project_status(
+        project_id=executed["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_runtime"]["status"] == "completed"
+    assert status["execution_runtime"]["active"] is False
+    assert status["execution_runtime"]["latest_attempt"] == execution_attempt
+    assert status["execution_runtime"]["journal"]["event_count"] == 2
+    compact_status = server.material_studio_live_project_status(
+        project_id=executed["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert compact_status["execution_attempt"]["attempt_id"] == execution_attempt[
+        "attempt_id"
+    ]
+    assert compact_status["execution_attempt"]["sequence"] == 1
+    assert compact_status["execution_attempt"]["status"] == "completed"
+    assert compact_status["execution_attempt"]["spec_sha256"] == execution_attempt[
+        "spec_sha256"
+    ]
+    assert compact_status["execution_runtime"]["status"] == "completed"
+    assert compact_status["execution_runtime"]["latest_attempt"]["attempt_id"] == (
+        execution_attempt["attempt_id"]
+    )
+    assert compact_status["execution_continuation"]["automatic_retry_allowed"] is False
     assert executed["modeling_health"]["verdict"] == "passed"
     assert executed["modeling_health"]["checks"]["gui_loaded_current_revision"] is True
     assert executed["modeling_health"]["checks"]["gui_stale_reasons"] == []
@@ -24978,6 +25016,10 @@ def test_concurrent_same_revision_execution_returns_busy_without_second_runner(
                 blocked_status["execution_retry_payload"]
                 == blocked["execution_retry_payload"]
             )
+            assert blocked_status["execution_runtime"]["status"] == "running"
+            assert blocked_status["execution_runtime"]["active"] is True
+            active_attempt = blocked_status["execution_runtime"]["latest_attempt"]
+            assert active_attempt["status"] == "running"
         finally:
             release_execution.set()
         committed = first_future.result(timeout=30.0)
@@ -25002,6 +25044,14 @@ def test_concurrent_same_revision_execution_returns_busy_without_second_runner(
         Path(committed["result_metadata_path"]).read_text(encoding="utf-8")
     )
     assert persisted_result["execution_transaction"] == transaction
+    assert committed["execution_attempt"]["attempt_id"] == active_attempt["attempt_id"]
+    completed_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert completed_status["execution_runtime"]["status"] == "completed"
+    assert completed_status["execution_runtime"]["active"] is False
 
 
 def test_waiting_execution_revalidates_current_before_runner(
@@ -25098,6 +25148,280 @@ def test_waiting_execution_revalidates_current_before_runner(
         "include_gui_status": True,
     }
     assert not (output_dir / "result_metadata.json").exists()
+    assert not (output_dir / "execution_attempt_state.json").exists()
+    assert not (output_dir / "execution_attempts.jsonl").exists()
+
+
+def test_execution_rejects_tampered_saved_script_before_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner_calls: list[int] = []
+
+    def must_not_execute(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        raise AssertionError("tampered saved script reached the runner")
+
+    monkeypatch.setattr(server, "_execute_structured_script", must_not_execute)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("execution_script_identity"),
+        working_dir=str(tmp_path),
+    )
+    store = store_module.ProjectStore(tmp_path)
+    project_dir = store.project_dir(created["project_id"])
+    output_dir = store.outputs_dir(created["project_id"], 0)
+    script_path = project_dir / "scripts" / "r000_build.pl"
+    script_path.write_text("use MaterialsScript qw(:all);\n# tampered\n", encoding="utf-8")
+
+    blocked = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert runner_calls == []
+    assert blocked["ok"] is False
+    assert blocked["status"] == "revision_execution_script_identity_block"
+    assert blocked["execution_started"] is False
+    assert blocked["execution_deferred"] is True
+    assert blocked["saved_script_exists"] is True
+    assert blocked["saved_script_sha256"] != blocked["expected_script_sha256"]
+    assert "immutable_script_binding" not in blocked["execution_transaction"][
+        "coverage"
+    ]
+    assert not (output_dir / "execution_attempt_state.json").exists()
+    assert not (output_dir / "execution_attempts.jsonl").exists()
+
+
+def test_execution_backend_exception_persists_failed_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+
+    def fail_execution(*, store, spec, script, timeout_seconds):
+        raise RuntimeError("runner failed before returning metadata")
+
+    monkeypatch.setattr(server, "_execute_structured_script", fail_execution)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("execution_attempt_failure"),
+        working_dir=str(tmp_path),
+    )
+    failed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert failed["ok"] is False
+    assert failed["status"] == "revision_execution_failed"
+    assert failed["execution_started"] is True
+    assert failed["execution_deferred"] is False
+    assert failed["execution_attempt"]["status"] == "failed"
+    assert failed["execution_attempt"]["error_type"] == "RuntimeError"
+    assert Path(failed["execution_attempt_state_path"]).exists()
+    events_path = Path(failed["execution_attempt_events_path"])
+    assert events_path.exists()
+    assert len(events_path.read_text(encoding="utf-8").splitlines()) == 2
+    assert not (events_path.parent / "result_metadata.json").exists()
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_runtime"]["status"] == "failed"
+    assert status["execution_runtime"]["active"] is False
+    assert (
+        status["execution_runtime"]["latest_attempt"]["attempt_id"]
+        == failed["execution_attempt"]["attempt_id"]
+    )
+    assert status["execution_continuation"]["automatic_retry_allowed"] is False
+
+
+def test_result_metadata_publish_failure_appends_terminal_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner_calls: list[int] = []
+
+    def execute_once(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        return {"result": {"success": True, "created_files": []}}
+
+    def fail_result_publish(self, project_id, revision, result):
+        raise OSError("result metadata publish failed")
+
+    monkeypatch.setattr(server, "_execute_structured_script", execute_once)
+    monkeypatch.setattr(
+        store_module.ProjectStore,
+        "write_result_metadata",
+        fail_result_publish,
+    )
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("execution_result_publish_failure"),
+        working_dir=str(tmp_path),
+    )
+
+    failed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert runner_calls == [0]
+    assert failed["ok"] is False
+    assert failed["status"] == "result_metadata_publish_failed"
+    assert failed["execution_attempt"]["status"] == "failed"
+    assert failed["execution_attempt"]["error_type"] == "OSError"
+    transaction = failed["execution_transaction"]
+    assert "execution_attempt_terminal_publish" in transaction["coverage"]
+    assert "result_metadata_publish" not in transaction["coverage"]
+    events_path = Path(failed["execution_attempt_events_path"])
+    events = [
+        json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["event_type"] for event in events] == [
+        "started",
+        "completed",
+        "failed",
+    ]
+    assert not (events_path.parent / "result_metadata.json").exists()
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_runtime"]["status"] == "failed"
+    assert status["execution_runtime"]["consistency"]["ok"] is True
+
+
+def test_explicit_execution_recovers_prior_interrupted_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner_calls: list[int] = []
+
+    def execute_once(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        output = (
+            store.outputs_dir(spec.project_id, spec.revision)
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.write_text("recovered execution", encoding="utf-8")
+        return {"result": {"success": True, "created_files": [str(output)]}}
+
+    monkeypatch.setattr(server, "_execute_structured_script", execute_once)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("execution_attempt_recovery"),
+        working_dir=str(tmp_path),
+    )
+    store = store_module.ProjectStore(tmp_path)
+    spec = store.get_revision(created["project_id"], 0)
+    project_dir = store.project_dir(created["project_id"])
+    output_dir = store.outputs_dir(created["project_id"], 0)
+    script_path = project_dir / "scripts" / "r000_build.pl"
+    first = begin_execution_attempt(
+        output_dir,
+        project_id=created["project_id"],
+        revision=0,
+        backend="materials_script",
+        lock_path=output_dir / "revision_execution.lock",
+        spec_path=project_dir / "revisions" / "r000_model_spec.json",
+        spec_payload=spec.model_dump(mode="json"),
+        script_path=script_path,
+        script=script_path.read_text(encoding="utf-8"),
+        planned_structure_path=created["planned_outputs"]["structure"],
+        current_revision_at_start=0,
+    )
+
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert executed["ok"] is True
+    assert runner_calls == [0]
+    transaction = executed["execution_transaction"]
+    assert "prior_execution_attempt_interruption_recovery" in transaction["coverage"]
+    recovered = transaction["recovered_interrupted_execution_attempts"]
+    assert len(recovered) == 1
+    assert recovered[0]["attempt_id"] == first["attempt"]["attempt_id"]
+    assert recovered[0]["status"] == "interrupted"
+    assert executed["execution_attempt"]["sequence"] == 2
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_runtime"]["status"] == "completed"
+    assert status["execution_runtime"]["journal"]["event_count"] == 4
+    assert status["execution_runtime"]["journal"]["attempt_count"] == 2
+    assert status["execution_runtime"]["journal"]["incomplete_attempt_count"] == 0
+
+
+def test_invalid_execution_attempt_history_blocks_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner_calls: list[int] = []
+
+    def must_not_execute(*, store, spec, script, timeout_seconds):
+        runner_calls.append(spec.revision)
+        raise AssertionError("invalid attempt history reached the runner")
+
+    monkeypatch.setattr(server, "_execute_structured_script", must_not_execute)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("invalid_execution_attempt_history"),
+        working_dir=str(tmp_path),
+    )
+    store = store_module.ProjectStore(tmp_path)
+    output_dir = store.outputs_dir(created["project_id"], 0)
+    events_path = output_dir / "execution_attempts.jsonl"
+    events_path.write_text('{"partial":true}', encoding="utf-8")
+
+    blocked = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert runner_calls == []
+    assert blocked["ok"] is False
+    assert blocked["status"] == "execution_attempt_history_invalid"
+    assert blocked["execution_started"] is False
+    assert blocked["execution_deferred"] is True
+    assert not (output_dir / "execution_attempt_state.json").exists()
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+    )
+    assert status["execution_runtime"]["status"] == "history_invalid"
+    assert status["execution_runtime"]["consistency"]["ok"] is False
 
 
 def test_state_transaction_releases_before_execution_and_gui_report_lock(

@@ -180,6 +180,28 @@ advances during an execution that already started, the immutable result remains
 valid for its old revision, but the receipt records
 `current_revision_still_current=false` and the GUI phase refuses to open it.
 
+Each execution also owns a unique durable attempt identity. The output directory
+contains `execution_attempts.jsonl`, a hash-linked lifecycle journal, and
+`execution_attempt_state.json`, an atomically replaced cache of its journal
+head. The `started` event is durable before the backend is invoked. Terminal
+events record completion or failure, while canonical `result_metadata.json`
+contains the same terminal `execution_attempt`. Attempt records bind the
+project/revision, process ID, backend, immutable spec digest, exact saved script
+digest, lock path, planned structure, current revision observations, result
+success, and bounded error metadata. Sequential re-executions receive new
+attempt IDs and monotonically increasing sequences without replacing history.
+
+`material_studio_live_project_status.execution_runtime` probes the execution
+lock before and after reading those files. Stable active probes report a
+`running` state, including explicit unrecorded or identity-mismatch variants; a
+changed probe reports `transitioning`; a durable running attempt with an
+inactive lock reports `interrupted`. Terminal records are reconciled against
+canonical result metadata and current spec/script identities. Invalid journal
+chains, hash or identity drift, and missing canonical results are reported
+explicitly and never converted into a successful or automatically retryable
+state. See `docs/execution_observability.md` for the status and continuation
+contract.
+
 The lock order is strict: finish and release the project state transaction,
 acquire and release the revision execution transaction, then acquire
 `gui_artifact_report.lock` for current-revision revalidation, hot-load,

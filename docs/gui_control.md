@@ -341,7 +341,9 @@ preparing only a dependent view cannot bypass the failed baseline.
 
 `crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
 Miller Plane, Properties Explorer, and View Onto registry/help evidence is
-necessary but not sufficient. Automatic replay also requires a current
+necessary but not sufficient. Automatic replay requires both a current bound
+`gui_view_replay_accessibility_preflight.json` proving an invocable Reset
+target and a current
 `gui_view_replay_runtime_preflight.json` observation whose revision, wrapper
 handle/title, and single-window binding still match. The observation must prove
 that Reset View, Tools > Miller Planes, the `Miller Planes` dialog,
@@ -352,6 +354,15 @@ incomplete, or stale evidence returns `runtime_ui_preflight_required` and keeps
 In that state, `replay_continuation.payload_hint_is_directly_callable=false`;
 the hint identifies the evidence schema and window binding but deliberately
 omits example `miller_plane_evidence` values.
+
+The Reset target may be the exact named control or the server-derived
+`verified_anonymous_toolbar_child`; anonymous use must be returned in
+`accessibility_command_uses`. For Miller recipes, Reset establishes only the
+native in-plane roll baseline and `cmdViewer3DViewOnto` establishes the final
+plane-normal camera. Consequently a verified generic front Reset orientation
+failure suppresses Reset-dependent standard views but does not suppress an
+otherwise-ready Miller recipe with
+`camera_result_depends_on_reset_baseline=false`.
 
 Open Tools > Miller Planes only through the verified keyboard menu path
 `Alt+T`, then `M`. Do not invoke that menu item with a pointer or accessibility

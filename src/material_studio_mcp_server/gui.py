@@ -37,9 +37,9 @@ class GuiError(RuntimeError):
 
 
 VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 5
-VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 3
-VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 3
-MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 6
+VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 4
+VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
+MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 7
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -5887,6 +5887,9 @@ def _view_replay_execution_recipe(
             "static_recipe_ready": static_recipe_ready,
             "allowed_native_command_ids": [command_id],
             "native_command_id": command_id,
+            "camera_result_depends_on_reset_baseline": True,
+            "camera_result_established_by": "native_reset_view",
+            "final_camera_established_by_native_command_id": command_id,
             "runtime_accessibility_preflight": runtime_accessibility_gate,
             "accessibility_target": _resolved_recipe_accessibility_target(
                 runtime_accessibility_gate,
@@ -5984,6 +5987,13 @@ def _view_replay_execution_recipe(
                 if isinstance(command_id, str)
             ],
             "native_command_id": reset_command_id,
+            "camera_result_depends_on_reset_baseline": True,
+            "camera_result_established_by": (
+                "reset_plus_staged_unmodified_keyboard_recipe"
+                if staged_keyboard_recipe
+                else "reset_plus_unmodified_keyboard_recipe"
+            ),
+            "final_camera_established_by_native_command_id": None,
             "reset_before_key_sequence": True,
             "prohibited_modifier_keys": ["Shift"],
             "rotation_increment_user_configurable": True,
@@ -6086,8 +6096,8 @@ def _view_replay_execution_recipe(
                 "action_sequence": [
                     "verify_exact_current_wrapper_window",
                     "activate_target_window",
-                    "refresh_accessibility_tree_and_locate_named_reset_control",
-                    "invoke_named_reset_view_control",
+                    "refresh_accessibility_tree_and_verify_recipe_reset_and_movement_targets",
+                    "invoke_recipe_reset_view_accessibility_target",
                     "focus_visually_verified_empty_3d_viewer_region",
                     "execute_each_unmodified_keyboard_stage_at_its_exact_angle",
                     "restore_rotation_increment_to_45_degrees",
@@ -6140,6 +6150,12 @@ def _view_replay_execution_recipe(
         view_onto_command_id = "cmdViewer3DViewOnto"
         reset_command_available = reset_command_id in command_ids
         view_onto_command_available = view_onto_command_id in command_ids
+        runtime_accessibility_gate = _view_runtime_accessibility_gate(
+            runtime_accessibility_preflight,
+            required_command_ids=[reset_command_id],
+            require_viewer_document=True,
+            require_empty_viewport_focus_target=False,
+        )
         runtime_preflight = runtime_ui_preflight if isinstance(runtime_ui_preflight, dict) else {}
         selection_profile = runtime_preflight.get("selection_profile")
         evidence_requirements = {
@@ -6227,6 +6243,7 @@ def _view_replay_execution_recipe(
             and all(evidence_requirements.values())
             and runtime_gate_satisfied
             and selection_profile_verified
+            and runtime_accessibility_gate["automation_gate_satisfied"]
         )
         block_reasons: list[str] = []
         if not registry_verified:
@@ -6235,6 +6252,7 @@ def _view_replay_execution_recipe(
             block_reasons.append("reset_view_command_not_registered")
         if not view_onto_command_available:
             block_reasons.append("view_onto_command_not_registered")
+        block_reasons.extend(runtime_accessibility_gate["block_reasons"])
         if index_error is not None:
             block_reasons.append("invalid_miller_plane_indices")
         if not selection_profile_verified:
@@ -6284,11 +6302,27 @@ def _view_replay_execution_recipe(
                 else "documented_miller_plane_view_onto_recipe_unverified"
             ),
             "automation_ready": automation_ready,
+            "camera_result_depends_on_reset_baseline": False,
+            "camera_result_established_by": "native_miller_plane_view_onto",
+            "reset_view_role": "native_in_plane_roll_baseline_only",
+            "final_camera_established_by_native_command_id": (
+                view_onto_command_id
+            ),
             "allowed_native_command_ids": [view_onto_command_id],
             "native_command_id": view_onto_command_id,
             "modifier_keys": [],
             "prohibited_modifier_keys": ["Shift", "Ctrl", "Alt", "Win"],
             "supporting_native_command_ids": supporting_native_command_ids,
+            "runtime_accessibility_preflight": runtime_accessibility_gate,
+            "accessibility_target": _resolved_recipe_accessibility_target(
+                runtime_accessibility_gate,
+                reset_command_id,
+                {
+                    "toolbar_name": "3D Viewer",
+                    "control_name": "3D Viewer Reset View",
+                    "command_id": reset_command_id,
+                },
+            ),
             "runtime_ui_preflight": {
                 "required": True,
                 "status": runtime_preflight.get("status") or "missing",
@@ -6527,7 +6561,8 @@ def _view_replay_execution_recipe(
                 "activate_target_window_and_verify_foreground",
                 "verify_current_bound_runtime_ui_preflight_gate",
                 "record_clean_document_state_and_structure_artifact_sha256",
-                "invoke_named_reset_view_control",
+                "refresh_accessibility_tree_and_verify_recipe_reset_target",
+                "invoke_recipe_reset_view_accessibility_target",
                 "invoke_tools_miller_planes_with_alt_t_then_m_keyboard_mnemonics",
                 "verify_miller_planes_dialog_and_exact_control_ids",
                 "capture_fresh_modeless_dialog_child_window_state",
@@ -7287,9 +7322,46 @@ def _view_replay_recipe_contract_status(
         )
         if missing_timing_actions:
             reasons.append("miller_dialog_keyboard_timing_actions_missing")
+        runtime_accessibility = (
+            recipe.get("runtime_accessibility_preflight")
+            if isinstance(recipe.get("runtime_accessibility_preflight"), dict)
+            else {}
+        )
+        reset_target = (
+            recipe.get("accessibility_target")
+            if isinstance(recipe.get("accessibility_target"), dict)
+            else {}
+        )
+        if recipe.get("camera_result_depends_on_reset_baseline") is not False:
+            reasons.append("miller_view_onto_reset_camera_dependency_contract_missing")
+        if recipe.get("camera_result_established_by") != (
+            "native_miller_plane_view_onto"
+        ):
+            reasons.append("miller_view_onto_camera_result_basis_mismatch")
+        if recipe.get("final_camera_established_by_native_command_id") != (
+            "cmdViewer3DViewOnto"
+        ):
+            reasons.append("miller_view_onto_final_camera_command_mismatch")
+        if runtime_accessibility.get("required") is not True:
+            reasons.append("miller_view_onto_reset_accessibility_preflight_missing")
+        if reset_target.get("command_id") != "cmdViewer3DResetView":
+            reasons.append("miller_view_onto_reset_accessibility_target_missing")
     else:
         timing_mismatches = []
         missing_timing_actions = []
+        view_name = str(recipe.get("view_name") or "")
+        if view_name == "front" or view_name in DOCUMENTED_VIEW_KEY_RECIPES:
+            if recipe.get("camera_result_depends_on_reset_baseline") is not True:
+                reasons.append("standard_view_reset_camera_dependency_contract_missing")
+            expected_basis = (
+                "native_reset_view"
+                if view_name == "front"
+                else "reset_plus_staged_unmodified_keyboard_recipe"
+                if isinstance(recipe.get("keyboard_stages"), list)
+                else "reset_plus_unmodified_keyboard_recipe"
+            )
+            if recipe.get("camera_result_established_by") != expected_basis:
+                reasons.append("standard_view_camera_result_basis_mismatch")
 
     reasons = _unique_strings(reasons)
     current = not reasons
@@ -8412,6 +8484,11 @@ def _refresh_view_replay_summary(
             if isinstance(step.get("execution_recipe"), dict)
             else {}
         )
+        if (
+            execution_recipe.get("camera_result_depends_on_reset_baseline")
+            is not True
+        ):
+            continue
         reset_target = next(
             (
                 target
@@ -8626,36 +8703,56 @@ def _refresh_view_replay_summary(
     preflight = manifest.get("preflight") if isinstance(manifest.get("preflight"), dict) else {}
     next_pending_step = pending_steps[0] if pending_steps else None
     next_automation_step = automation_ready_steps[0] if automation_ready_steps else None
+    next_actionable_pending_step = next(
+        (
+            item
+            for item in pending_steps
+            if str(item.get("view_name"))
+            not in automatic_postcheck_failed_view_names
+        ),
+        None,
+    )
     next_pending_view_name = (
         str(next_pending_step.get("view_name"))
         if next_pending_step is not None
         else None
     )
-    next_pending_integrity_blocked = bool(
-        next_pending_view_name in integrity_blocked_view_names
+    next_action_step = next_automation_step or next_actionable_pending_step
+    next_actionable_pending_view_name = (
+        str(next_actionable_pending_step.get("view_name"))
+        if next_actionable_pending_step is not None
+        else None
     )
-    next_pending_journal_blocked = bool(
-        next_pending_view_name in journal_blocked_view_names
+    next_action_view_name = (
+        str(next_action_step.get("view_name"))
+        if next_action_step is not None
+        else None
+    )
+    next_action_integrity_blocked = bool(
+        next_action_view_name in integrity_blocked_view_names
+    )
+    next_action_journal_blocked = bool(
+        next_action_view_name in journal_blocked_view_names
     )
     next_pending_automatic_postcheck_failed = bool(
         next_pending_view_name in automatic_postcheck_failed_view_names
     )
-    next_pending_recipe = (
-        next_pending_step.get("execution_recipe")
-        if next_pending_step is not None
-        and isinstance(next_pending_step.get("execution_recipe"), dict)
+    next_action_recipe = (
+        next_action_step.get("execution_recipe")
+        if next_action_step is not None
+        and isinstance(next_action_step.get("execution_recipe"), dict)
         else {}
     )
     runtime_ui_preflight_required = bool(
-        next_pending_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS
+        next_action_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS
         and any(
             str(reason).startswith("runtime_")
-            for reason in next_pending_recipe.get("block_reasons") or []
+            for reason in next_action_recipe.get("block_reasons") or []
         )
     )
     runtime_accessibility_recipe = (
-        next_pending_recipe.get("runtime_accessibility_preflight")
-        if isinstance(next_pending_recipe.get("runtime_accessibility_preflight"), dict)
+        next_action_recipe.get("runtime_accessibility_preflight")
+        if isinstance(next_action_recipe.get("runtime_accessibility_preflight"), dict)
         else {}
     )
     runtime_accessibility_preflight_required = bool(
@@ -8704,28 +8801,18 @@ def _refresh_view_replay_summary(
         recommended_executor = None
         recommended_action = "resolve_view_replay_preflight_blockers"
         recommended_mcp_tool = (manifest.get("next_action") or {}).get("recommended_tool")
-    elif next_pending_integrity_blocked and next_automation_step is None:
+    elif next_action_integrity_blocked and next_automation_step is None:
         continuation_status = "evidence_integrity_reverification_required"
         recommended_executor = "reviewed_copy_script_or_manual_gui_review"
         recommended_action = (
             "recapture_and_record_view_evidence_after_artifact_integrity_failure"
         )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
-    elif next_pending_journal_blocked and next_automation_step is None:
+    elif next_action_journal_blocked and next_automation_step is None:
         continuation_status = "event_journal_reverification_required"
         recommended_executor = "reviewed_copy_script_or_manual_gui_review"
         recommended_action = (
             "recapture_and_record_view_evidence_after_event_journal_divergence"
-        )
-        recommended_mcp_tool = "material_studio_gui_copy_script_assist"
-    elif (
-        next_pending_automatic_postcheck_failed
-        and next_automation_step is None
-    ):
-        continuation_status = "automatic_recipe_postcheck_failed"
-        recommended_executor = "reviewed_copy_script_or_manual_gui_review"
-        recommended_action = (
-            "use_reviewed_camera_backend_after_automatic_recipe_postcheck_failure"
         )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     elif runtime_accessibility_preflight_required:
@@ -8766,7 +8853,7 @@ def _refresh_view_replay_summary(
             else "execute_named_accessibility_recipe_then_record_view"
         )
         recommended_mcp_tool = "material_studio_gui_record_view_replay"
-    elif next_pending_step is not None:
+    elif next_actionable_pending_step is not None:
         continuation_status = (
             "runtime_accessibility_blocks_automatic_replay"
             if runtime_accessibility_observation_blocks_automation
@@ -8779,12 +8866,26 @@ def _refresh_view_replay_summary(
             else "obtain_reviewed_camera_backend_then_record_view"
         )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
+    elif (
+        next_pending_automatic_postcheck_failed
+        and next_actionable_pending_step is None
+    ):
+        continuation_status = "automatic_recipe_postcheck_failed"
+        recommended_executor = "reviewed_copy_script_or_manual_gui_review"
+        recommended_action = (
+            "use_reviewed_camera_backend_after_automatic_recipe_postcheck_failure"
+        )
+        recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     else:
         continuation_status = "no_supported_pending_view"
         recommended_executor = None
         recommended_action = "review_view_manifest"
         recommended_mcp_tool = "material_studio_live_project_status"
-    selected_next_step = next_automation_step or next_pending_step
+    selected_next_step = (
+        next_automation_step
+        or next_actionable_pending_step
+        or next_pending_step
+    )
     selected_recipe = (
         selected_next_step.get("execution_recipe")
         if selected_next_step is not None
@@ -9004,7 +9105,7 @@ def _refresh_view_replay_summary(
             "project_id": manifest.get("project_id"),
         }
         continuation_high_level_payload_hint = dict(continuation_payload_hint)
-    elif next_pending_integrity_blocked and next_automation_step is None:
+    elif next_action_integrity_blocked and next_automation_step is None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
             "revision": manifest.get("revision"),
@@ -9017,7 +9118,7 @@ def _refresh_view_replay_summary(
         continuation_high_level_payload_hint = {}
         post_review_record_payload_template = record_payload_hint
         post_review_high_level_payload_template = high_level_payload_hint
-    elif next_pending_journal_blocked and next_automation_step is None:
+    elif next_action_journal_blocked and next_automation_step is None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
             "revision": manifest.get("revision"),
@@ -9025,22 +9126,6 @@ def _refresh_view_replay_summary(
                 f"Recapture reviewed view evidence for the prepared "
                 f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
                 "view because its manifest and append-only journal records diverged."
-            ),
-        }
-        continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
-    elif (
-        next_pending_automatic_postcheck_failed
-        and next_automation_step is None
-    ):
-        continuation_payload_hint = {
-            "project_id": manifest.get("project_id"),
-            "revision": manifest.get("revision"),
-            "context": (
-                f"Obtain a reviewed camera or Copy Script path for the prepared "
-                f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
-                "view because the verified automatic recipe failed its visual postcheck."
             ),
         }
         continuation_high_level_payload_hint = {}
@@ -9111,7 +9196,23 @@ def _refresh_view_replay_summary(
         }
         continuation_high_level_payload_hint = {}
         payload_hint_is_directly_callable = False
-    elif next_automation_step is None and next_pending_step is not None:
+    elif (
+        next_pending_automatic_postcheck_failed
+        and next_actionable_pending_step is None
+    ):
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Obtain a reviewed camera or Copy Script path for the prepared "
+                f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view because the verified automatic recipe failed its visual postcheck."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
+    elif next_automation_step is None and next_actionable_pending_step is not None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
             "revision": manifest.get("revision"),
@@ -9167,6 +9268,7 @@ def _refresh_view_replay_summary(
         "next_pending_view_name": (
             str(next_pending_step.get("view_name")) if next_pending_step is not None else None
         ),
+        "next_actionable_pending_view_name": next_actionable_pending_view_name,
         "next_automation_ready_view_name": (
             str(next_automation_step.get("view_name"))
             if next_automation_step is not None
@@ -9192,8 +9294,8 @@ def _refresh_view_replay_summary(
         "evidence_values_must_be_observed_not_assumed": bool(
             miller_plane_payload_hint
             or runtime_accessibility_observation_blocks_automation
-            or next_pending_integrity_blocked
-            or next_pending_journal_blocked
+            or next_action_integrity_blocked
+            or next_action_journal_blocked
             or next_pending_automatic_postcheck_failed
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),

@@ -143,7 +143,10 @@ an injected atomic-replace failure to leave valid prior `report.json` bytes with
 no temporary file residue.
 `crystal_plane_*` recipes may also be automatic-ready only when installed
 Miller Plane/Properties/View Onto evidence, one supported semantic selection
-profile, and a current-window `runtime_ui_evidence` probe are all verified.
+profile, a bound Reset `runtime_accessibility_evidence` observation, and a
+current-window `runtime_ui_evidence` probe are all verified. Named Reset and
+server-derived anonymous Reset mappings are supported; anonymous invocation
+must round-trip through `accessibility_command_uses`.
 Protocol acceptance checks that the prepare-tool field and its nested viewport
 probe are discoverable and strict (`extra="forbid"`). Runtime evidence must bind
 the exact revision and wrapper handle/title, verify the required live controls,
@@ -157,6 +160,10 @@ is not accepted as Object Tree. The record-tool schema also exposes strict
 selection, pre-cleanup screenshot, whitelisted cleanup including Reset View,
 restored document/temporary-plane/view state, and an unchanged wrapper-source SHA-256. The camera
 scope is plane-normal plus native MS roll rather than exact analytic up/right.
+Protocol tests also require the Miller recipe to declare that Reset establishes
+only native roll, the final camera comes from `cmdViewer3DViewOnto`, and a
+failed generic front Reset orientation does not block the independent Miller
+final-camera path.
 The same schema supports crystallographic directions only when the prepared
 recipe reports an exact direct-direction/reciprocal-normal collinearity
 mapping; it additionally requires the direction-match boolean. Directions

@@ -3378,7 +3378,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
             "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
             "failed_reset_baseline_suppresses_dependent_recipes": True,
+            "failed_reset_baseline_only_blocks_final_camera_dependencies": True,
             "postcheck_failure_clear_requires_integrity_verified_success": True,
+            "miller_view_onto_requires_bound_reset_accessibility_preflight": True,
+            "miller_view_onto_accepts_verified_anonymous_reset_target": True,
+            "miller_view_onto_final_camera_depends_on_reset_orientation": False,
+            "miller_view_onto_final_camera_command_id": "cmdViewer3DViewOnto",
             "client_asserted_command_to_element_mapping_allowed": False,
             "arbitrary_unnamed_toolbar_index_or_coordinate_allowed": False,
             "standard_views_require_current_bound_runtime_accessibility_preflight": True,
@@ -6184,7 +6189,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
                 "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
                 "failed_reset_baseline_suppresses_dependent_recipes": True,
+                "failed_reset_baseline_only_blocks_final_camera_dependencies": True,
                 "postcheck_failure_clear_requires_integrity_verified_success": True,
+                "miller_view_onto_requires_bound_reset_accessibility_preflight": True,
+                "miller_view_onto_accepts_verified_anonymous_reset_target": True,
+                "miller_view_onto_final_camera_depends_on_reset_orientation": False,
+                "miller_view_onto_final_camera_command_id": (
+                    "cmdViewer3DViewOnto"
+                ),
                 "prepare_and_record_writes_serialized": True,
                 "write_transaction_lock_scope": "project_revision",
                 "write_transaction_lock_kernel_released_on_process_exit": True,
@@ -28179,7 +28191,12 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "native_command_id",
             "native_command",
             "allowed_native_command_ids",
+            "supporting_native_command_ids",
             "accessibility_target",
+            "camera_result_depends_on_reset_baseline",
+            "camera_result_established_by",
+            "reset_view_role",
+            "final_camera_established_by_native_command_id",
             "reset_before_key_sequence",
             "key_sequence",
             "rotation_increment_degrees",
@@ -28415,6 +28432,7 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
         (
             "status",
             "next_pending_view_name",
+            "next_actionable_pending_view_name",
             "next_automation_ready_view_name",
             "recommended_action",
             "recommended_mcp_tool",
@@ -28443,6 +28461,7 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
     )
     for nullable_key in (
         "next_pending_view_name",
+        "next_actionable_pending_view_name",
         "next_automation_ready_view_name",
     ):
         if nullable_key in value:

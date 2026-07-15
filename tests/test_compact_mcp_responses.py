@@ -143,8 +143,23 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         "failed_reset_baseline_suppresses_dependent_recipes"
     ] is True
     assert compact["view_replay_automation_policy"][
+        "failed_reset_baseline_only_blocks_final_camera_dependencies"
+    ] is True
+    assert compact["view_replay_automation_policy"][
         "postcheck_failure_clear_requires_integrity_verified_success"
     ] is True
+    assert compact["view_replay_automation_policy"][
+        "miller_view_onto_requires_bound_reset_accessibility_preflight"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "miller_view_onto_accepts_verified_anonymous_reset_target"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "miller_view_onto_final_camera_depends_on_reset_orientation"
+    ] is False
+    assert compact["view_replay_automation_policy"][
+        "miller_view_onto_final_camera_command_id"
+    ] == "cmdViewer3DViewOnto"
     assert compact["view_replay_automation_policy"][
         "client_asserted_command_to_element_mapping_allowed"
     ] is False
@@ -557,7 +572,31 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
             "replay_status": "externally_confirmed",
             "replay_continuation": {
                 "status": "automatic_recipe_ready",
+                "next_pending_view_name": "front",
+                "next_actionable_pending_view_name": "right",
                 "next_automation_ready_view_name": "right",
+                "next_view": {
+                    "view_name": "crystal_plane_100",
+                    "execution_recipe": {
+                        "schema_version": 7,
+                        "recipe_kind": "miller_plane_view_onto",
+                        "automation_ready": True,
+                        "supporting_native_command_ids": [
+                            "cmdViewer3DResetView",
+                            "cmdViewer3DViewOnto",
+                        ],
+                        "camera_result_depends_on_reset_baseline": False,
+                        "camera_result_established_by": (
+                            "native_miller_plane_view_onto"
+                        ),
+                        "reset_view_role": (
+                            "native_in_plane_roll_baseline_only"
+                        ),
+                        "final_camera_established_by_native_command_id": (
+                            "cmdViewer3DViewOnto"
+                        ),
+                    },
+                },
             },
         }
     }
@@ -566,7 +605,29 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
 
     assert compact["gui_view_replay_status"] == "externally_confirmed"
     assert compact["view_replay_continuation"]["status"] == "automatic_recipe_ready"
+    assert compact["view_replay_continuation"]["next_pending_view_name"] == "front"
+    assert (
+        compact["view_replay_continuation"][
+            "next_actionable_pending_view_name"
+        ]
+        == "right"
+    )
     assert compact["view_replay_continuation"]["next_automation_ready_view_name"] == "right"
+    recipe = compact["view_replay_continuation"]["next_view"][
+        "execution_recipe"
+    ]
+    assert recipe["supporting_native_command_ids"] == [
+        "cmdViewer3DResetView",
+        "cmdViewer3DViewOnto",
+    ]
+    assert recipe["camera_result_depends_on_reset_baseline"] is False
+    assert recipe["camera_result_established_by"] == (
+        "native_miller_plane_view_onto"
+    )
+    assert recipe["reset_view_role"] == "native_in_plane_roll_baseline_only"
+    assert recipe["final_camera_established_by_native_command_id"] == (
+        "cmdViewer3DViewOnto"
+    )
 
 
 def test_compact_hard_budget_fallback_bounds_oversized_error_payload() -> None:

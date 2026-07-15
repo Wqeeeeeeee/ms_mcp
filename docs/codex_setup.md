@@ -353,7 +353,10 @@ an inline spec that conflicts with a stored immutable revision is rejected.
 
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
-submit them back to the prepare tool. A complete payload has this shape:
+submit them back to the prepare tool. Submit both the
+`runtime_accessibility_evidence` Reset observation described above and the
+Miller-specific `runtime_ui_evidence`; neither substitutes for the other. A
+complete Miller UI payload has this shape:
 
 ```json
 {
@@ -424,6 +427,13 @@ The nested viewport probe is accepted only after fresh before/after screenshots
 isolate one unique new plane, a no-modifier selection is semantically verified
 in Properties Explorer, the native View Onto popup is observed, and the source
 structure hash is unchanged.
+The returned Miller recipe must expose an exact Reset `accessibility_target`,
+`camera_result_depends_on_reset_baseline=false`, and
+`final_camera_established_by_native_command_id=cmdViewer3DViewOnto`. When the
+Reset target is anonymous, include the returned Reset mapping in
+`accessibility_command_uses` after refreshing the tree and invoking it. A
+generic front Reset camera mismatch does not invalidate View Onto's final
+plane-normal camera.
 For every prepared Miller-plane replay, inspect
 `execution_recipe.dialog_index_entry_contract`. Read `TxtHKL` back from a fresh
 modeless child accessibility state after entry; never treat `Ctrl+A` as proof

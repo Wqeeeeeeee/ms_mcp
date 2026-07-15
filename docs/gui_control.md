@@ -184,6 +184,15 @@ report publication are deferred. The response sets
 `gui_open_retry_tool` with an exact `gui_open_retry_payload`; retry that open
 after the active transaction completes.
 
+The same transaction owns the final high-level orchestration metadata. Live
+`show_current`, natural-language patch, rollback, redo, and restore calls pass
+their workflow, request, revision, execution-source, and diagnostic intent into
+the nested apply or update operation before diagnostics are rebuilt. Their
+persisted `modeling_report` and `report.json` are therefore final when the GUI
+artifact lock is released. Callers and maintainers must not perform a second
+post-lock report write, because it could replace evidence appended by a
+concurrent snapshot or visual-confirmation call.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

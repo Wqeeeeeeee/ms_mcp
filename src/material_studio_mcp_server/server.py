@@ -94,6 +94,10 @@ _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION: ContextVar[dict[str, Any] | None] = Con
     "active_gui_artifact_report_transaction",
     default=None,
 )
+_ACTIVE_LIVE_ORCHESTRATION_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_live_orchestration_context",
+    default=None,
+)
 
 
 class ForciteQuality(str, Enum):
@@ -30689,6 +30693,8 @@ def material_studio_live_update_with_patch(
 ) -> dict[str, Any]:
     """Patch current state, persist a revision, and optionally execute/open it in the GUI."""
 
+    orchestration_context = dict(_ACTIVE_LIVE_ORCHESTRATION_CONTEXT.get() or {})
+
     try:
         mode, execution_mode_source = _resolve_live_execution_mode(execution_mode, user_text or "")
         requested_diagnostic_focuses = _requested_diagnostic_focuses_from_text(user_text)
@@ -30988,6 +30994,7 @@ def material_studio_live_update_with_patch(
             "current_pointer_after_write": current_resolution_after_write,
             "gui_status": gui_status,
         }
+        response.update(orchestration_context)
         if patch_workflow == "dopant_metadata_reconcile":
             response["confirmation_required"] = True
             response["confirmation_received"] = confirm_metadata_reconciliation
@@ -31052,7 +31059,10 @@ def material_studio_live_update_with_patch(
                         audit_artifacts=audit_artifacts,
                         execution_mode=mode,
                         working_dir=working_dir,
-                        workflow=patch_workflow,
+                        workflow=str(
+                            orchestration_context.get("workflow")
+                            or patch_workflow
+                        ),
                         record_gui_open_artifact=effective_export_view_audit,
                         refresh_view_audit_report=effective_export_view_audit,
                     ),
@@ -31720,6 +31730,7 @@ def material_studio_live_modeling_request(
                         "capabilities_hint": _live_capabilities_hint(),
                     }, status="missing_current_project", recommended_action="create_or_select_project", payload_hint={"spec": "ModelSpec", "project_id": "existing project id"})
                 export_requested = bool((plan.payload or {}).get("export_diagnostics")) or _diagnostic_export_requested_from_text(user_request)
+                normality_requested = _normality_check_requested_from_text(user_request)
                 if (
                     execution_mode is None
                     and mode == ExecutionMode.PREVIEW
@@ -31728,16 +31739,31 @@ def material_studio_live_modeling_request(
                 ):
                     mode = ExecutionMode.EXECUTE
                     execution_mode_source = "explicit_live_intent"
-                result = material_studio_gui_apply_current_revision(
-                    project_id=project_id,
-                    execution_mode=mode,
-                    open_in_gui=open_in_gui,
-                    take_snapshot=take_snapshot,
-                    export_view_audit=export_view_audit,
-                    views=views,
-                    working_dir=working_dir,
-                    timeout_seconds=timeout_seconds,
-                )
+                orchestration_context = {
+                    "workflow": "show_current",
+                    "user_request": user_request,
+                    "nl_plan": nl_plan,
+                    "project_resolution": project_resolution,
+                    "execution_mode_source": execution_mode_source,
+                    "diagnostic_export_requested": export_requested,
+                    "normality_check_requested": normality_requested,
+                    "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                }
+                with _live_orchestration_context(orchestration_context):
+                    result = material_studio_gui_apply_current_revision(
+                        project_id=project_id,
+                        execution_mode=mode,
+                        open_in_gui=open_in_gui,
+                        take_snapshot=take_snapshot,
+                        export_view_audit=(
+                            export_view_audit
+                            or export_requested
+                            or normality_requested
+                        ),
+                        views=views,
+                        working_dir=working_dir,
+                        timeout_seconds=timeout_seconds,
+                    )
                 diagnostic_export: dict[str, Any] | None = None
                 if export_requested and not result.get("view_bundle_manifest_path"):
                     diagnostic_export = material_studio_model_export_view_bundle(
@@ -31754,40 +31780,19 @@ def material_studio_live_modeling_request(
                             "nl_plan": nl_plan,
                             "project_resolution": project_resolution or diagnostic_export.get("project_resolution"),
                             "diagnostic_export_requested": export_requested,
-                            "normality_check_requested": _normality_check_requested_from_text(user_request),
+                            "normality_check_requested": normality_requested,
                         })
-                result = {
-                    **result,
-                    "workflow": "show_current",
-                    "user_request": user_request,
-                    "nl_plan": nl_plan,
-                    "project_resolution": project_resolution or result.get("project_resolution"),
-                    "execution_mode_source": execution_mode_source,
-                    "diagnostic_export_requested": export_requested,
-                    "normality_check_requested": _normality_check_requested_from_text(user_request),
-                    "requested_diagnostic_focuses": requested_diagnostic_focuses,
-                }
                 if diagnostic_export is not None:
                     result["diagnostic_export"] = diagnostic_export
                     result["view_bundle_manifest_path"] = diagnostic_export.get("manifest_path") or result.get("view_bundle_manifest_path")
                     result["view_bundle_files"] = diagnostic_export.get("files") or result.get("view_bundle_files")
                     result["view_bundle_row_counts"] = diagnostic_export.get("row_counts") or result.get("view_bundle_row_counts")
-                if isinstance(result.get("modeling_report"), dict):
-                    result["modeling_report"]["workflow"] = "show_current"
-                    result["modeling_report"]["user_request"] = user_request
-                    result["modeling_report"]["project_resolution"] = result.get("project_resolution")
-                    result["modeling_report"]["execution_mode_source"] = execution_mode_source
-                    result["modeling_report"]["diagnostic_export_requested"] = export_requested
-                    result["modeling_report"]["normality_check_requested"] = result.get("normality_check_requested")
-                    if result.get("view_bundle_manifest_path"):
-                        diagnostics = result["modeling_report"].setdefault("diagnostics", {})
-                        diagnostics["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
-                        diagnostics["view_bundle_row_counts"] = result.get("view_bundle_row_counts")
-                    _refresh_response_summaries(result)
-                try:
-                    _persist_modeling_report(store, store.load_current(project_id), result)
-                except Exception:
-                    pass
+                    if isinstance(result.get("modeling_report"), dict):
+                        if result.get("view_bundle_manifest_path"):
+                            diagnostics = result["modeling_report"].setdefault("diagnostics", {})
+                            diagnostics["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
+                            diagnostics["view_bundle_row_counts"] = result.get("view_bundle_row_counts")
+                        _refresh_response_summaries(result)
                 return finish(result)
             else:
                 return _attach_live_failure_contract({
@@ -31819,22 +31824,7 @@ def material_studio_live_modeling_request(
                     "project_resolution": project_resolution,
                     "capabilities_hint": _live_capabilities_hint(),
                 }, status="missing_project_context", recommended_action="provide_existing_project_id", payload_hint={"project_id": "existing project id", "base_revision": "current revision", "patch": "SemanticPatch"})
-            result = material_studio_live_update_with_patch(
-                project_id,
-                base_revision,
-                patch,
-                user_text=user_request,
-                confirm_metadata_reconciliation=confirm_metadata_reconciliation,
-                execution_mode=mode,
-                open_in_gui=open_in_gui,
-                take_snapshot=take_snapshot,
-                export_view_audit=export_view_audit,
-                views=views,
-                working_dir=working_dir,
-                timeout_seconds=timeout_seconds,
-            )
-            result = {
-                **result,
+            orchestration_context = {
                 "workflow": "patch",
                 "user_request": user_request,
                 "nl_plan": nl_plan,
@@ -31844,18 +31834,21 @@ def material_studio_live_modeling_request(
                 "normality_check_requested": _normality_check_requested_from_text(user_request),
                 "requested_diagnostic_focuses": requested_diagnostic_focuses,
             }
-            if isinstance(result.get("modeling_report"), dict):
-                result["modeling_report"]["workflow"] = "patch"
-                result["modeling_report"]["user_request"] = user_request
-                result["modeling_report"]["project_resolution"] = project_resolution
-                result["modeling_report"]["execution_mode_source"] = execution_mode_source
-                result["modeling_report"]["diagnostic_export_requested"] = result.get("diagnostic_export_requested")
-                result["modeling_report"]["normality_check_requested"] = result.get("normality_check_requested")
-                _refresh_response_summaries(result)
-            try:
-                _persist_modeling_report(store, store.load_current(project_id), result)
-            except Exception:
-                pass
+            with _live_orchestration_context(orchestration_context):
+                result = material_studio_live_update_with_patch(
+                    project_id,
+                    base_revision,
+                    patch,
+                    user_text=user_request,
+                    confirm_metadata_reconciliation=confirm_metadata_reconciliation,
+                    execution_mode=mode,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    export_view_audit=export_view_audit,
+                    views=views,
+                    working_dir=working_dir,
+                    timeout_seconds=timeout_seconds,
+                )
             return finish(result)
 
         assert spec is not None
@@ -32009,6 +32002,19 @@ def _resolve_redo_target_revision(store: ProjectStore, project_id: str, current_
     }
 
 
+@contextmanager
+def _live_orchestration_context(context: dict[str, Any]):
+    """Bind final workflow metadata to a nested live apply or patch call."""
+
+    active = _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.get()
+    merged = {**(active or {}), **context}
+    token = _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.set(merged)
+    try:
+        yield
+    finally:
+        _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.reset(token)
+
+
 def _handle_live_rollback_request(
     *,
     project_id: str,
@@ -32032,7 +32038,6 @@ def _handle_live_rollback_request(
     normality_check_requested = _normality_check_requested_from_text(user_request)
     requested_diagnostic_focuses = _requested_diagnostic_focuses_from_text(user_request)
     effective_export_view_audit = export_view_audit or diagnostic_export_requested
-    store = _structured_store(working_dir)
     rollback = material_studio_project_rollback(
         target_revision=target_revision,
         project_id=project_id,
@@ -32053,18 +32058,7 @@ def _handle_live_rollback_request(
             "requested_diagnostic_focuses": requested_diagnostic_focuses,
         }
 
-    applied = material_studio_gui_apply_current_revision(
-        project_id=project_id,
-        execution_mode=execution_mode,
-        open_in_gui=open_in_gui,
-        take_snapshot=take_snapshot,
-        export_view_audit=effective_export_view_audit,
-        views=views,
-        working_dir=working_dir,
-        timeout_seconds=timeout_seconds,
-    )
-    result = {
-        **applied,
+    orchestration_context = {
         "workflow": workflow,
         "user_request": user_request,
         "nl_plan": nl_plan,
@@ -32073,25 +32067,23 @@ def _handle_live_rollback_request(
         "rollback": rollback,
         "base_revision": rollback.get("project_resolution", {}).get("revision"),
         "new_revision": rollback.get("new_revision"),
-        "revision": rollback.get("revision", applied.get("revision")),
+        "revision": rollback.get("revision", rollback.get("new_revision")),
         "execution_mode_source": execution_mode_source,
         "diagnostic_export_requested": diagnostic_export_requested,
         "normality_check_requested": normality_check_requested,
         "requested_diagnostic_focuses": requested_diagnostic_focuses,
     }
-    if isinstance(result.get("modeling_report"), dict):
-        result["modeling_report"]["workflow"] = workflow
-        result["modeling_report"]["user_request"] = user_request
-        result["modeling_report"]["project_resolution"] = result.get("project_resolution")
-        result["modeling_report"]["execution_mode_source"] = execution_mode_source
-        result["modeling_report"]["diagnostic_export_requested"] = diagnostic_export_requested
-        result["modeling_report"]["normality_check_requested"] = normality_check_requested
-        _refresh_response_summaries(result)
-    try:
-        _persist_modeling_report(store, store.load_current(project_id), result)
-    except Exception:
-        pass
-    return result
+    with _live_orchestration_context(orchestration_context):
+        return material_studio_gui_apply_current_revision(
+            project_id=project_id,
+            execution_mode=execution_mode,
+            open_in_gui=open_in_gui,
+            take_snapshot=take_snapshot,
+            export_view_audit=effective_export_view_audit,
+            views=views,
+            working_dir=working_dir,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def _extend_gui_artifact_transaction_coverage(
@@ -33938,8 +33930,17 @@ def material_studio_gui_apply_current_revision(
 ) -> dict[str, Any]:
     """Preview or execute the current structured revision, then optionally open its output in the GUI."""
 
+    orchestration_context = dict(
+        _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.get() or {}
+    )
+
+    def enrich(result: dict[str, Any]) -> dict[str, Any]:
+        if orchestration_context:
+            result.update(orchestration_context)
+        return result
+
     def finish(result: dict[str, Any]) -> dict[str, Any]:
-        return _compact_live_response(result, response_mode)
+        return _compact_live_response(enrich(result), response_mode)
 
     try:
         mode = _execution_mode(execution_mode)
@@ -33947,7 +33948,13 @@ def material_studio_gui_apply_current_revision(
         if project_id is None:
             latest = _latest_live_project(store)
             if latest is None:
-                return _error(ValueError("No current structured project exists. Create a model before applying the current revision."))
+                return finish(
+                    _error(
+                        ValueError(
+                            "No current structured project exists. Create a model before applying the current revision."
+                        )
+                    )
+                )
             spec, project_resolution = latest
             project_id = spec.project_id
         else:
@@ -33957,7 +33964,7 @@ def material_studio_gui_apply_current_revision(
         gui = _gui_controller(working_dir)
         script_path = store.project_dir(project_id) / "scripts" / f"r{spec.revision:03d}_build.pl"
         if not script_path.exists():
-            response: dict[str, Any] = {
+            response: dict[str, Any] = enrich({
                 "ok": False,
                 "error": (
                     "当前修订版本没有保存的预览脚本。"
@@ -33967,7 +33974,7 @@ def material_studio_gui_apply_current_revision(
                 "project_resolution": project_resolution,
                 "revision": spec.revision,
                 "script_path": str(script_path),
-            }
+            })
             if export_view_audit:
                 response["view_audit"] = model_view_audit(spec, views)
             return finish(
@@ -33976,7 +33983,7 @@ def material_studio_gui_apply_current_revision(
         script = script_path.read_text(encoding="utf-8")
         script_validation = validate_generated_script(script)
         generated = _generate_structured_script(spec, store)
-        response: dict[str, Any] = {
+        response: dict[str, Any] = enrich({
             "ok": True,
             "project_id": project_id,
             "project_resolution": project_resolution,
@@ -33987,7 +33994,7 @@ def material_studio_gui_apply_current_revision(
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
             "gui_status": gui.status(project_id=project_id, revision=spec.revision),
-        }
+        })
         if export_view_audit:
             response["view_audit"] = model_view_audit(spec, views)
         if not script_validation.get("valid", False):
@@ -34043,7 +34050,10 @@ def material_studio_gui_apply_current_revision(
                         audit_artifacts=audit_artifacts,
                         execution_mode=mode,
                         working_dir=working_dir,
-                        workflow="gui_apply_current_revision",
+                        workflow=str(
+                            orchestration_context.get("workflow")
+                            or "gui_apply_current_revision"
+                        ),
                         record_gui_open_artifact=True,
                         refresh_view_audit_report=False,
                     )
@@ -34054,9 +34064,9 @@ def material_studio_gui_apply_current_revision(
             _attach_modeling_health(response, execution_mode=mode, store=store, spec=spec, gui_artifacts=audit_artifacts)
         )
     except ValidationError as exc:
-        return _validation_error(exc)
+        return finish(_validation_error(exc))
     except Exception as exc:
-        return _error(exc)
+        return finish(_error(exc))
 
 
 def main() -> None:

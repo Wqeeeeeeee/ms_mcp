@@ -245,6 +245,14 @@ report overwrite occurs; the compact response keeps
 `gui_open_retry_payload`. Retry the returned `material_studio_gui_open_structure`
 payload after the active transaction completes.
 
+For `show_current`, natural-language patch, rollback, redo, and restore, the
+workflow metadata visible in the compact response is also the metadata written
+inside that same GUI transaction. Verify that `report.json` and
+`modeling_report.workflow` match `gui_action_transaction.coverage`. Do not add
+or invoke a follow-up report persistence step after the nested apply/update call
+returns; the lock has already been released and a later write could discard a
+concurrent snapshot or visual-confirmation update.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

@@ -25427,6 +25427,118 @@ def test_high_level_hotload_lock_timeout_defers_gui_and_report_after_execution(
     assert report_path.read_bytes() == committed_report
 
 
+def test_live_orchestration_publishes_final_report_inside_gui_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal.",
+        views=["top", "front", "isometric"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    assert created["ok"] is True
+    assert created["execution_mode"] == "preview"
+
+    original_persist = server._persist_modeling_report
+    persist_calls: list[dict[str, object]] = []
+
+    def tracked_persist(store, spec, response):
+        active = server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get()
+        persist_calls.append(
+            {
+                "workflow": response.get("workflow"),
+                "revision": spec.revision,
+                "transaction_active": active is not None,
+                "transaction_revision": (
+                    (active or {}).get("transaction", {}).get("revision")
+                    if isinstance(active, dict)
+                    else None
+                ),
+            }
+        )
+        return original_persist(store, spec, response)
+
+    monkeypatch.setattr(server, "_persist_modeling_report", tracked_persist)
+
+    shown = server.material_studio_live_modeling_request(
+        "Show the current model in Materials Studio.",
+        project_id=created["project_id"],
+        views=["top", "front", "isometric"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    assert shown["ok"] is True
+    assert persist_calls == [
+        {
+            "workflow": "show_current",
+            "revision": 0,
+            "transaction_active": True,
+            "transaction_revision": 0,
+        }
+    ]
+    assert "workflow:show_current" in shown["gui_action_transaction"]["coverage"]
+    assert "workflow:gui_apply_current_revision" not in shown["gui_action_transaction"]["coverage"]
+    shown_report = json.loads(Path(shown["report_json_path"]).read_text(encoding="utf-8"))
+    assert shown_report["workflow"] == "show_current"
+    assert shown_report["modeling_report"]["workflow"] == "show_current"
+
+    persist_calls.clear()
+    patched = server.material_studio_live_modeling_request(
+        "Make a 2x1x1 supercell and hot-load it in Materials Studio.",
+        project_id=created["project_id"],
+        views=["top", "front", "isometric"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    assert patched["ok"] is True
+    assert persist_calls == [
+        {
+            "workflow": "patch",
+            "revision": 1,
+            "transaction_active": True,
+            "transaction_revision": 1,
+        }
+    ]
+    assert "workflow:patch" in patched["gui_action_transaction"]["coverage"]
+    patched_report = json.loads(Path(patched["report_json_path"]).read_text(encoding="utf-8"))
+    assert patched_report["workflow"] == "patch"
+    assert patched_report["modeling_report"]["workflow"] == "patch"
+
+    persist_calls.clear()
+    rolled_back = server.material_studio_live_modeling_request(
+        "Undo the last change and hot-load it in Materials Studio.",
+        project_id=created["project_id"],
+        views=["top", "front", "isometric"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    assert rolled_back["ok"] is True
+    assert persist_calls == [
+        {
+            "workflow": "rollback",
+            "revision": 2,
+            "transaction_active": True,
+            "transaction_revision": 2,
+        }
+    ]
+    assert "workflow:rollback" in rolled_back["gui_action_transaction"]["coverage"]
+    rollback_report = json.loads(
+        Path(rolled_back["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert rollback_report["workflow"] == "rollback"
+    assert rollback_report["modeling_report"]["workflow"] == "rollback"
+
+
 def test_atomic_report_publish_failure_preserves_committed_report(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

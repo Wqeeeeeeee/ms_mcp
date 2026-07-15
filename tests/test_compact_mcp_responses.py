@@ -574,9 +574,16 @@ def test_compact_semiconductor_stress_receipt_stays_within_budget(
 
     assert created["ok"] is True
     assert _json_size(created) < server.COMPACT_RESPONSE_MAX_BYTES
-    assert created["response_compaction"]["hard_budget_applied"] is True
-    assert created["response_compaction"]["omitted_fields"]
+    assert created["response_compaction"]["hard_budget_applied"] is False
+    assert created["response_compaction"]["omitted_fields"] == []
     assert created["response_compaction"]["details_persisted"] is True
+    assert created["live_summary"]["normality_check_requested"] is True
+    assert created["visual_normality_summary"]["available"] is True
+    assert created["view_parameter_summary"]["view_count"] == len(views)
+    assert created["normality_gate"]["available"] is True
+    assert created["mcp_client_readiness"]["can_accept_followup_request"] is True
+    assert created["semiconductor_normality_diagnosis"]["available"] is True
+    assert created["diagnostic_focus_plan"]["available"] is True
     assert len(created["view_parameter_summary"]["views"]) == len(views)
     assert Path(created["view_bundle_manifest_path"]).exists()
 
@@ -704,6 +711,188 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
     assert recipe["final_camera_established_by_native_command_id"] == (
         "cmdViewer3DViewOnto"
     )
+
+
+def test_compact_replay_rich_status_keeps_gates_without_hard_fallback() -> None:
+    persisted_path = "C:\\workspace\\project\\outputs\\r004\\gui_replay.json"
+    oversized_accessibility = {
+        "registry_path": "C:\\Materials Studio\\Commands\\viewer.xml",
+        "registry_sha256": "a" * 64,
+        "command_id": "cmdViewer3DResetView",
+        "element_index": 110,
+        "verified": True,
+        "invocation_ready": True,
+        "semantic_mapping": {"raw_registry": "x" * 30_000},
+    }
+    blocked_recipe = {
+        "schema_version": 5,
+        "status": "native_accessibility_command_runtime_unverified",
+        "recipe_kind": "native_reset_view",
+        "automation_ready": False,
+        "static_recipe_ready": True,
+        "block_reasons": ["runtime_view_accessibility_binding_not_verified"],
+        "native_command_id": "cmdViewer3DResetView",
+        "accessibility_target": oversized_accessibility,
+        "runtime_accessibility_preflight": {
+            "status": "verified_blocked",
+            "binding_verified": False,
+            "automation_gate_satisfied": False,
+            "artifact_path": persisted_path,
+            "command_gates": [
+                {
+                    "command_id": "cmdViewer3DResetView",
+                    "accessibility_target": oversized_accessibility,
+                }
+            ],
+        },
+    }
+    continuation = {
+        "status": "runtime_accessibility_preflight_required",
+        "next_pending_view_name": "front",
+        "next_actionable_pending_view_name": "front",
+        "next_automation_ready_view_name": None,
+        "recommended_action": "activate_current_wrapper_and_refresh_preflight",
+        "recommended_mcp_tool": "material_studio_gui_activate",
+        "automatic_replay_ready": False,
+        "runtime_accessibility_preflight_required": True,
+        "next_view": {
+            "view_name": "front",
+            "camera": {"direction": [0.0, 0.0, 1.0]},
+            "execution_recipe": blocked_recipe,
+        },
+    }
+    response = {
+        "ok": True,
+        "project_id": "semiconductor_project",
+        "revision": 4,
+        "normality": "review_warnings",
+        "health_verdict": "passed_with_warnings",
+        "ready_for_next_edit": True,
+        "ready_for_calculation": False,
+        "can_claim_model_normal": True,
+        "report_json_path": "C:\\workspace\\project\\outputs\\r004\\report.json",
+        "view_audit_report_path": "C:\\workspace\\project\\outputs\\r004\\view_audit.json",
+        "view_bundle_manifest_path": "C:\\workspace\\project\\outputs\\r004\\manifest.json",
+        "live_summary": {
+            "project_id": "semiconductor_project",
+            "revision": 4,
+            "normality": "review_warnings",
+            "health_verdict": "passed_with_warnings",
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+            "can_claim_model_normal": True,
+            "view_names": ["front", "top", "isometric"],
+        },
+        "calculation_preview": {
+            "available": True,
+            "task": "Energy",
+            "script_path": "C:\\workspace\\project\\scripts\\r004_castep_task.pl",
+            "artifact_status": "matched",
+            "persisted_artifact_trusted": True,
+            "execution_policy": "explicit_separate_execution_required",
+            "calculation_executed": False,
+            "validation": {"valid": True},
+        },
+        "visual_normality_summary": {
+            "available": True,
+            "status": "review_warnings",
+            "clean_view_available": True,
+            "recommended_view_name": "isometric",
+        },
+        "view_parameter_summary": {
+            "available": True,
+            "status": "exported",
+            "view_count": 3,
+            "view_names": ["front", "top", "isometric"],
+            "views": [
+                {
+                    "name": "front",
+                    "supported": True,
+                    "clean_for_visual_review": True,
+                    "camera_direction": [0.0, 0.0, 1.0],
+                }
+            ],
+        },
+        "normality_gate": {
+            "available": True,
+            "status": "model_claimable_with_visual_notes",
+            "can_claim_model_normal": True,
+            "ready_for_calculation": False,
+        },
+        "mcp_client_readiness": {
+            "status": "ready_for_live_edit",
+            "can_accept_followup_request": True,
+            "ready_for_calculation": False,
+        },
+        "semiconductor_normality_diagnosis": {
+            "available": True,
+            "status": "model_normal_calculation_review",
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+        },
+        "diagnostic_focus_plan": {
+            "available": True,
+            "ok": True,
+            "status": "requested_focuses_ready",
+            "requested_focuses": ["semiconductor_structure_health"],
+        },
+        "gui_view_replay": {
+            "manifest_path": persisted_path,
+            "manifest_exists": True,
+            "events_path": persisted_path.replace("gui_replay", "gui_replay_events"),
+            "events_exist": True,
+            "replay_status": "pending",
+            "view_names": ["front", "top", "isometric"],
+            "requested_view_count": 3,
+            "supported_view_count": 3,
+            "replay_summary": {
+                "event_count": 1,
+                "accepted_event_count": 1,
+                "trusted_accepted_event_count": 1,
+                "accepted_view_count": 1,
+                "accepted_view_names": ["front"],
+                "pending_view_count": 2,
+                "pending_view_names": ["top", "isometric"],
+                "all_requested_views_accepted": False,
+            },
+            "replay_continuation": continuation,
+            "last_replay_event": {
+                "event_id": "event-1",
+                "recorded_at": "2026-07-15T00:00:00Z",
+                "view_name": "front",
+                "accepted": True,
+                "native_command_id": "cmdViewer3DResetView",
+                "execution_recipe": blocked_recipe,
+                "evidence_integrity": {
+                    "status": "trusted",
+                    "trusted_for_replay": True,
+                    "artifacts": [{"raw": "y" * 30_000}],
+                },
+            },
+        },
+    }
+
+    assert _json_size(response) > 100_000
+    compact = server._compact_live_response(response, "compact")
+
+    assert _json_size(compact) < server.COMPACT_RESPONSE_MAX_BYTES
+    assert compact["response_compaction"]["hard_budget_applied"] is False
+    assert compact["response_compaction"]["omitted_fields"] == []
+    assert compact["calculation_preview"]["persisted_artifact_trusted"] is True
+    assert compact["visual_normality_summary"]["available"] is True
+    assert compact["semiconductor_normality_diagnosis"]["available"] is True
+    assert compact["diagnostic_focus_plan"]["available"] is True
+    assert "execution_recipe" not in compact["gui_view_replay"]["last_replay_event"]
+    assert "artifacts" not in compact["gui_view_replay"]["last_replay_event"][
+        "evidence_integrity"
+    ]
+    top_recipe = compact["view_replay_continuation"]["next_view"][
+        "execution_recipe"
+    ]
+    assert top_recipe["automation_ready"] is False
+    assert top_recipe["status"] == "native_accessibility_command_runtime_unverified"
+    assert "accessibility_target" not in top_recipe
+    assert "command_gates" not in top_recipe["runtime_accessibility_preflight"]
 
 
 def test_compact_hard_budget_fallback_bounds_oversized_error_payload() -> None:

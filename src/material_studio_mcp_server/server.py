@@ -27801,6 +27801,63 @@ def _mapping_subset(source: Any, keys: tuple[str, ...]) -> dict[str, Any]:
     return {key: source[key] for key in keys if key in source and source[key] is not None}
 
 
+def _compact_project_resolution(value: Any) -> dict[str, Any]:
+    """Keep project identity without duplicating the current-pointer receipt."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "source",
+            "project_id",
+            "revision",
+            "current_read_source",
+            "current_pointer_status",
+            "current_pointer_valid",
+            "current_pointer_recovery_used",
+        ),
+    )
+
+
+def _compact_diagnostic_row_counts(value: Any) -> dict[str, Any]:
+    """Keep summary row counts; the top-level receipt retains the complete map."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "view_summary",
+            "view_projections",
+            "view_quality",
+            "modeling_report_summary",
+            "modeling_issue_index",
+            "requested_diagnostic_focus_status",
+            "semiconductor_normality_diagnosis",
+            "semiconductor_calculation_readiness",
+            "semiconductor_calculation_preflight",
+        ),
+    )
+
+
+def _compact_view_bundle_files(value: Any) -> dict[str, Any]:
+    """Expose stable diagnostic entry points instead of every generated file."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "diagnostic_export_manifest_json",
+            "view_quality_csv",
+            "modeling_report_summary_csv",
+            "modeling_issue_index_json",
+            "requested_diagnostic_focus_status_json",
+        ),
+    )
+
+
 def _compact_nl_plan(value: Any) -> dict[str, Any] | None:
     """Return the decision part of an NL plan without duplicated catalogs."""
 
@@ -28041,20 +28098,15 @@ def _compact_view_parameter_summary(value: Any) -> dict[str, Any] | None:
                     "name",
                     "supported",
                     "clean_for_visual_review",
-                    "atom_projection_count",
-                    "projection_count_matches_model",
                     "overlap_candidate_count",
                     "warning_count",
                     "camera_direction",
-                    "camera_up",
-                    "camera_position",
-                    "camera_distance_angstrom",
-                    "orthographic_width_angstrom",
-                    "orthographic_height_angstrom",
                 ),
             )
         )
     compact["views"] = compact_views
+    if compact.get("supported_view_names") == compact.get("view_names"):
+        compact.pop("supported_view_names", None)
     view_selection = value.get("view_selection")
     if isinstance(view_selection, dict):
         compact["view_selection"] = _mapping_subset(
@@ -28070,9 +28122,6 @@ def _compact_view_parameter_summary(value: Any) -> dict[str, Any] | None:
                 "lattice_family",
                 "orientation_kind",
                 "orientation_axis",
-                "cartesian_context_views",
-                "domain_diagnostic_views",
-                "suggested_default_view_names",
                 "view_names",
                 "view_count",
                 "reason_codes",
@@ -28199,8 +28248,19 @@ def _compact_semiconductor_normality_diagnosis(value: Any) -> dict[str, Any] | N
         return None
     compact = _mapping_subset(
         value,
-        tuple(key for key in value if key != "remediation_plan"),
+        tuple(
+            key
+            for key in value
+            if key
+            not in {
+                "remediation_plan",
+                "preview_payload_hint",
+                "hotload_payload_hint",
+            }
+        ),
     )
+    if compact.get("legacy_primary_reason") == compact.get("primary_domain_reason"):
+        compact.pop("legacy_primary_reason", None)
     remediation = value.get("remediation_plan")
     if isinstance(remediation, dict):
         compact["remediation_plan"] = _mapping_subset(
@@ -28210,10 +28270,103 @@ def _compact_semiconductor_normality_diagnosis(value: Any) -> dict[str, Any] | N
                 "recommended_tool",
                 "recommended_action",
                 "preview_available",
-                "preview_payload_hint",
                 "hotload_available",
                 "hotload_requires_user_confirmation",
-                "hotload_payload_hint",
+            ),
+        )
+    return compact
+
+
+def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
+    """Keep requested/recommended focus decisions without duplicate catalogs."""
+
+    if not isinstance(value, dict):
+        return None
+    return _mapping_subset(
+        value,
+        (
+            "available",
+            "ok",
+            "status",
+            "export_needed",
+            "diagnostic_export_requested",
+            "normality_check_requested",
+            "requested_focuses",
+            "auto_completed_focuses",
+            "auto_completed_focus_count",
+            "recommended_focuses",
+            "unrequested_recommended_focuses",
+            "requested_focus_status_ok",
+            "requested_focus_count",
+            "recommended_focus_count",
+            "recommended_focus_status_ok",
+            "recommended_focuses_ready",
+            "recommended_focus_missing_csv_keys",
+            "recommended_focus_missing_summary_keys",
+            "missing_requested_focuses",
+            "missing_csv_keys",
+            "missing_summary_keys",
+            "action_id",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint",
+        ),
+    )
+
+
+def _compact_live_gui_acceptance(value: Any) -> dict[str, Any] | None:
+    """Keep same-window trust gates without repeating required/observed trees."""
+
+    if not isinstance(value, dict):
+        return None
+    compact = _mapping_subset(
+        value,
+        (
+            "available",
+            "ok",
+            "status",
+            "explicit_hotload_requested",
+            "snapshot_checked",
+            "single_window_policy_ok",
+            "single_window_violation_reasons",
+            "window_binding_ok",
+            "continuation_binding_ok",
+            "continuation_binding_failure_count",
+            "visual_review_required",
+            "visual_failure_count",
+            "visual_failures",
+            "binding_failure_count",
+            "can_continue_same_window_modeling",
+            "capture_limitation_possible",
+            "external_visual_confirmation_ok",
+            "external_visual_confirmation_source",
+            "can_trust_live_gui_current_revision",
+            "failure_count",
+            "failures",
+            "next_action",
+        ),
+    )
+    observed = value.get("observed")
+    if isinstance(observed, dict):
+        compact["observed"] = _mapping_subset(
+            observed,
+            (
+                "execution_mode",
+                "gui_hot_loaded",
+                "gui_loaded_current_revision",
+                "live_hotload_preflight_current_revision_loaded",
+                "gui_window_identity_verification",
+                "gui_single_window_policy_ok",
+                "gui_visual_validation",
+                "snapshot_path",
+                "snapshot_viewport_likely_visible_model",
+                "snapshot_viewport_capture_limitation_possible",
+                "external_visual_confirmation_ok",
+                "external_visual_confirmation_source",
+                "window_binding_ok",
+                "visual_review_required",
             ),
         )
     return compact
@@ -28224,7 +28377,15 @@ def _compact_normality_explanation(value: Any) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         return None
-    return _mapping_subset(value, tuple(key for key in value if key != "evidence"))
+    compact = _mapping_subset(
+        value,
+        tuple(key for key in value if key not in {"evidence", "ready_for_hotload"}),
+    )
+    if compact.get("blocking_reasons") == []:
+        compact.pop("blocking_reasons", None)
+    if compact.get("review_reasons") == compact.get("calculation_blocking_reasons"):
+        compact.pop("review_reasons", None)
+    return compact
 
 
 def _compact_next_action_plan(value: Any) -> dict[str, Any] | None:
@@ -28232,7 +28393,29 @@ def _compact_next_action_plan(value: Any) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         return None
-    return _mapping_subset(value, tuple(key for key in value if key != "artifacts"))
+    compact = _mapping_subset(
+        value,
+        (
+            "available",
+            "state",
+            "action_id",
+            "project_id",
+            "revision",
+            "normality",
+            "ready",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint",
+            "deferred_hotload_action",
+            "gui_preflight_verified",
+            "gui_preflight_required",
+            "blocking_reasons",
+            "review_reasons",
+        ),
+    )
+    return compact
 
 
 def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
@@ -28409,9 +28592,35 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
             "require_viewer_document",
             "require_empty_viewport_focus_target",
             "unnamed_toolbar_children_observed",
-            "command_gates",
         ),
     )
+    command_gates: list[dict[str, Any]] = []
+    for command_gate in value.get("command_gates") or []:
+        if not isinstance(command_gate, dict):
+            continue
+        compact_gate = _mapping_subset(
+            command_gate,
+            (
+                "command_id",
+                "expected_control_name",
+                "observed_control_name",
+                "named_control_observed",
+                "invoke_supported",
+                "named_control_ready",
+                "semantic_mapping_ready",
+                "resolved_invocation_ready",
+                "control_resolution",
+                "block_reasons",
+            ),
+        )
+        accessibility_target = _compact_accessibility_target(
+            command_gate.get("accessibility_target")
+        )
+        if accessibility_target:
+            compact_gate["accessibility_target"] = accessibility_target
+        command_gates.append(compact_gate)
+    if command_gates:
+        compact["command_gates"] = command_gates
     binding = value.get("binding")
     if isinstance(binding, dict):
         compact["binding"] = _mapping_subset(
@@ -28441,6 +28650,36 @@ def _compact_runtime_ui_preflight(value: Any) -> dict[str, Any]:
     return compact
 
 
+def _compact_accessibility_target(value: Any) -> dict[str, Any]:
+    """Keep the fresh-control invocation receipt without registry duplication."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "registry_sha256",
+            "registry_toolbar_name",
+            "toolbar_name",
+            "toolbar_automation_id",
+            "command_id",
+            "zero_based_child_index",
+            "element_index",
+            "role",
+            "semantic_mapping_sha256",
+            "mapping_status",
+            "verified",
+            "invocation_ready",
+            "target_kind",
+            "invocation_method",
+            "element_index_is_ephemeral",
+            "requires_fresh_tree_match_before_invoke",
+            "observed_control_name",
+            "block_reasons",
+        ),
+    )
+
+
 def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -28457,7 +28696,6 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "native_command",
             "allowed_native_command_ids",
             "supporting_native_command_ids",
-            "accessibility_target",
             "camera_result_depends_on_reset_baseline",
             "camera_result_established_by",
             "reset_view_role",
@@ -28489,6 +28727,11 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "unexpected_plane_guard",
         ),
     )
+    accessibility_target = _compact_accessibility_target(
+        value.get("accessibility_target")
+    )
+    if accessibility_target:
+        compact["accessibility_target"] = accessibility_target
     dialog_contract = value.get("dialog_index_entry_contract")
     if isinstance(dialog_contract, dict):
         compact_dialog_contract = _mapping_subset(
@@ -28544,6 +28787,258 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
                 "require_no_temporary_miller_nodes_after_cleanup",
                 "require_structure_artifact_sha256_unchanged",
                 "restore_initial_view_via_whitelisted_undo",
+            ),
+        )
+    return compact
+
+
+def _compact_view_replay_execution_gate(value: Any) -> dict[str, Any]:
+    """Return only the gate when a recipe is not currently safe to execute."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "status",
+            "recipe_kind",
+            "automation_ready",
+            "static_recipe_ready",
+            "block_reasons",
+            "native_command_id",
+        ),
+    )
+    for key in ("runtime_ui_preflight", "runtime_accessibility_preflight"):
+        preflight = value.get(key)
+        if not isinstance(preflight, dict):
+            continue
+        compact[key] = _mapping_subset(
+            preflight,
+            (
+                "status",
+                "binding_verified",
+                "automation_gate_satisfied",
+                "artifact_path",
+            ),
+        )
+    return compact
+
+
+def _compact_view_replay_event_summary(value: Any) -> dict[str, Any]:
+    """Summarize the last event; complete evidence remains in the event journal."""
+
+    if not isinstance(value, dict):
+        return {}
+    event = _mapping_subset(
+        value,
+        (
+            "event_id",
+            "recorded_at",
+            "view_name",
+            "source",
+            "model_visible",
+            "camera_matches_manifest",
+            "accepted",
+            "rejection_reasons",
+            "screenshot_path",
+            "native_command_id",
+            "key_sequence",
+            "reset_before_key_sequence",
+            "rotation_increment_degrees",
+            "modifier_keys",
+            "keyboard_stages",
+            "rotation_increment_restored_degrees",
+            "movement_options_command_id",
+            "movement_angle_control_id",
+            "movement_screen_factor_control_id",
+            "movement_screen_factor",
+            "movement_dialog_closed",
+            "event_record_schema_version",
+            "event_record_sha256",
+        ),
+    )
+    for required_key, related_keys in (
+        (
+            "crystal_camera_evidence_required",
+            ("crystal_camera_evidence_complete", "crystal_camera_screenshot_verified"),
+        ),
+        (
+            "miller_plane_evidence_required",
+            (
+                "direction_via_miller_plane_recipe",
+                "miller_plane_evidence_complete",
+                "miller_plane_artifact_binding_matches",
+            ),
+        ),
+        (
+            "staged_keyboard_evidence_required",
+            ("keyboard_evidence_status",),
+        ),
+        (
+            "reviewed_copy_script_evidence_required",
+            ("reviewed_copy_script_evidence_complete",),
+        ),
+    ):
+        if value.get(required_key) is not True:
+            continue
+        event[required_key] = True
+        for related_key in related_keys:
+            if related_key in value and value[related_key] is not None:
+                event[related_key] = value[related_key]
+    window_binding = value.get("window_binding")
+    if isinstance(window_binding, dict):
+        event["window_binding"] = _mapping_subset(
+            window_binding,
+            (
+                "ok",
+                "status",
+                "expected_window_handle",
+                "actual_window_handle",
+                "window_handle_matches",
+                "window_title_matches",
+                "matched_project_window",
+                "current_revision_loaded",
+                "single_window_policy_ok",
+            ),
+        )
+    evidence_integrity = value.get("evidence_integrity")
+    if isinstance(evidence_integrity, dict):
+        event["evidence_integrity"] = _mapping_subset(
+            evidence_integrity,
+            (
+                "schema_version",
+                "status",
+                "trusted_for_replay",
+                "strict",
+                "policy",
+                "required_artifact_kinds",
+                "issue_codes",
+            ),
+        )
+    journal_consistency = value.get("journal_consistency")
+    if isinstance(journal_consistency, dict):
+        event["journal_consistency"] = _mapping_subset(
+            journal_consistency,
+            (
+                "schema_version",
+                "status",
+                "trusted_for_replay",
+                "required",
+                "event_id",
+                "journal_match_count",
+                "issue_codes",
+            ),
+        )
+    recipe_contract = value.get("execution_recipe_contract")
+    if isinstance(recipe_contract, dict):
+        event["execution_recipe_contract"] = _mapping_subset(
+            recipe_contract,
+            (
+                "status",
+                "current",
+                "recording_allowed",
+                "recipe_kind",
+                "expected_recipe_kind",
+                "actual_schema_version",
+                "expected_schema_version",
+                "reasons",
+            ),
+        )
+    return event
+
+
+def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
+    """Keep replay progress inside GUI status without duplicating its recipe."""
+
+    if not isinstance(value, dict):
+        return {}
+    continuation = _mapping_subset(
+        value,
+        (
+            "status",
+            "next_pending_view_name",
+            "next_actionable_pending_view_name",
+            "next_automation_ready_view_name",
+            "recommended_action",
+            "recommended_mcp_tool",
+            "recommended_executor",
+            "automatic_replay_ready",
+            "recipe_upgrade_required",
+            "current_camera_evidence_reverification_required",
+            "evidence_integrity_reverification_required",
+            "event_journal_reverification_required",
+            "journal_consistency_status",
+            "runtime_ui_preflight_required",
+            "runtime_accessibility_preflight_required",
+            "runtime_accessibility_observation_blocks_automation",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+        ),
+    )
+    for nullable_key in (
+        "next_pending_view_name",
+        "next_actionable_pending_view_name",
+        "next_automation_ready_view_name",
+    ):
+        if nullable_key in value:
+            continuation[nullable_key] = value[nullable_key]
+    next_view = value.get("next_view")
+    if isinstance(next_view, dict):
+        compact_next_view = _mapping_subset(next_view, ("view_name", "supported"))
+        recipe = _mapping_subset(
+            next_view.get("execution_recipe"),
+            (
+                "status",
+                "recipe_kind",
+                "automation_ready",
+            ),
+        )
+        if recipe:
+            compact_next_view["execution_recipe"] = recipe
+        continuation["next_view"] = compact_next_view
+    return continuation
+
+
+def _compact_runtime_preflight_summary(value: Any) -> dict[str, Any]:
+    """Keep persisted preflight status while referring control evidence to disk."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "status",
+            "source",
+            "observation_available",
+            "observed_at",
+            "binding_verified",
+            "base_preflight_satisfied",
+            "base_gate_satisfied",
+            "automation_gate_satisfied",
+            "artifact_exists",
+            "block_reasons",
+            "required",
+            "required_control_evidence_complete",
+            "observed_required_control_blocks_automation",
+            "unnamed_toolbar_children_observed",
+        ),
+    )
+    binding = value.get("binding")
+    if isinstance(binding, dict):
+        compact["binding"] = _mapping_subset(
+            binding,
+            (
+                "ok",
+                "status",
+                "expected_window_handle",
+                "actual_window_handle",
+                "current_revision_loaded",
+                "target_window_is_foreground",
+                "needs_dialog_resolution",
+                "single_window_policy_ok",
+                "rejection_reasons",
             ),
         )
     return compact
@@ -28612,30 +29107,16 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
 def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    return _mapping_subset(
+    compact = _mapping_subset(
         value,
         (
             "event_count",
-            "raw_accepted_event_count",
             "accepted_event_count",
             "trusted_accepted_event_count",
-            "rejected_event_count",
             "accepted_view_count",
             "accepted_view_names",
-            "raw_accepted_view_count",
-            "integrity_blocked_accepted_event_count",
-            "integrity_blocked_view_count",
-            "integrity_blocked_view_names",
             "evidence_integrity_status",
             "journal_consistency_status",
-            "journal_required_event_count",
-            "journal_matched_event_count",
-            "journal_divergent_event_count",
-            "journal_blocked_accepted_event_count",
-            "journal_blocked_view_count",
-            "journal_blocked_view_names",
-            "trust_blocked_view_count",
-            "trust_blocked_view_names",
             "pending_view_count",
             "pending_view_names",
             "current_camera_evidence_reverification_view_count",
@@ -28649,6 +29130,29 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
             "all_requested_views_accepted",
         ),
     )
+    for key in (
+        "raw_accepted_event_count",
+        "rejected_event_count",
+        "raw_accepted_view_count",
+        "integrity_blocked_accepted_event_count",
+        "integrity_blocked_view_count",
+        "journal_required_event_count",
+        "journal_matched_event_count",
+        "journal_divergent_event_count",
+        "journal_blocked_accepted_event_count",
+        "journal_blocked_view_count",
+        "trust_blocked_view_count",
+    ):
+        if value.get(key):
+            compact[key] = value[key]
+    for key in (
+        "integrity_blocked_view_names",
+        "journal_blocked_view_names",
+        "trust_blocked_view_names",
+    ):
+        if value.get(key):
+            compact[key] = value[key]
+    return compact
 
 
 def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
@@ -28670,8 +29174,19 @@ def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
             "reasons",
         ),
     )
-    view_contracts = [
-        _mapping_subset(
+    view_contracts: list[dict[str, Any]] = []
+    for item in value.get("view_contracts") or []:
+        if not isinstance(item, dict) or (
+            item.get("current") is True
+            and item.get("current_evidence_reverification_required") is not True
+        ):
+            continue
+        if (
+            item.get("status") == "upgrade_required"
+            and item.get("current_evidence_reverification_required") is not True
+        ):
+            continue
+        compact_contract = _mapping_subset(
             item,
             (
                 "view_name",
@@ -28687,22 +29202,25 @@ def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
                 "expected_schema_version",
                 "timing_mismatch_fields",
                 "missing_timing_actions",
-                "reasons",
             ),
         )
-        for item in value.get("view_contracts") or []
-        if isinstance(item, dict)
-        and (
-            item.get("current") is not True
-            or item.get("current_evidence_reverification_required") is True
-        )
-    ]
+        reasons = item.get("reasons")
+        if isinstance(reasons, list):
+            compact_contract["reason_count"] = len(reasons)
+            compact_contract["reasons"] = reasons[:3]
+            if len(reasons) > 3:
+                compact_contract["reasons_truncated"] = True
+        view_contracts.append(compact_contract)
     if view_contracts:
         compact["view_contracts"] = view_contracts
     return compact
 
 
-def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
+def _compact_view_replay_continuation(
+    value: Any,
+    *,
+    include_execution_recipe: bool = True,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     continuation = _mapping_subset(
@@ -28748,29 +29266,45 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             continuation[nullable_key] = value[nullable_key]
     next_view = value.get("next_view")
     if isinstance(next_view, dict):
+        recipe_value = next_view.get("execution_recipe")
+        recipe_automation_ready = bool(
+            isinstance(recipe_value, dict)
+            and recipe_value.get("automation_ready") is True
+        )
+        next_view_keys = ("view_name", "supported")
+        if include_execution_recipe and recipe_automation_ready:
+            next_view_keys += ("camera", "crystallography")
         compact_next_view = _mapping_subset(
             next_view,
-            (
-                "view_name",
-                "supported",
-                "camera",
-                "crystallography",
-            ),
+            next_view_keys,
         )
-        recipe = _compact_view_replay_execution_recipe(next_view.get("execution_recipe"))
+        recipe = (
+            _compact_view_replay_execution_recipe(recipe_value)
+            if include_execution_recipe and recipe_automation_ready
+            else _compact_view_replay_execution_gate(recipe_value)
+        )
         if recipe:
             compact_next_view["execution_recipe"] = recipe
         continuation["next_view"] = compact_next_view
     runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
     if runtime_ui_preflight:
         continuation["runtime_ui_preflight"] = runtime_ui_preflight
+    if continuation.get("high_level_payload_hint") == continuation.get("payload_hint"):
+        continuation.pop("high_level_payload_hint", None)
+    for key in (
+        "current_camera_evidence_reverification_view_names",
+        "integrity_blocked_view_names",
+        "journal_blocked_view_names",
+    ):
+        if continuation.get(key) == []:
+            continuation.pop(key, None)
     return continuation
 
 
 def _compact_view_replay_event_journal(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
-    return _mapping_subset(
+    compact = _mapping_subset(
         value,
         (
             "status",
@@ -28781,25 +29315,34 @@ def _compact_view_replay_event_journal(value: Any) -> dict[str, Any]:
             "event_count",
             "physical_line_count",
             "invalid_line_count",
-            "invalid_line_numbers",
-            "invalid_line_numbers_truncated",
             "duplicate_event_id_count",
-            "duplicate_event_ids",
             "read_error",
             "manifest_event_count",
             "journal_required_event_count",
             "journal_matched_event_count",
             "journal_divergent_event_count",
-            "journal_divergent_event_ids",
-            "journal_divergent_event_ids_truncated",
             "journal_only_event_count",
-            "journal_only_event_ids",
-            "journal_only_event_ids_truncated",
             "trusted_accepted_event_count",
             "journal_blocked_accepted_event_count",
-            "journal_blocked_view_names",
         ),
     )
+    for key in (
+        "invalid_line_numbers",
+        "duplicate_event_ids",
+        "journal_divergent_event_ids",
+        "journal_only_event_ids",
+        "journal_blocked_view_names",
+    ):
+        if value.get(key):
+            compact[key] = value[key]
+    for key in (
+        "invalid_line_numbers_truncated",
+        "journal_divergent_event_ids_truncated",
+        "journal_only_event_ids_truncated",
+    ):
+        if value.get(key) is True:
+            compact[key] = True
+    return compact
 
 
 def _compact_view_replay(value: Any) -> dict[str, Any]:
@@ -28904,19 +29447,19 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "runtime_accessibility_preflight_path",
             "runtime_accessibility_preflight_exists",
             "runtime_accessibility_preflight_read_error",
-            "runtime_accessibility_preflight_observed_at",
             "replay_status",
             "view_selection",
             "view_names",
             "requested_view_count",
             "supported_view_count",
-            "next_action",
         ),
     )
     summary = _compact_view_replay_summary(value.get("replay_summary"))
     if summary:
         replay["replay_summary"] = summary
-    continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
+    continuation = _compact_view_replay_continuation_summary(
+        value.get("replay_continuation")
+    )
     if continuation:
         replay["replay_continuation"] = continuation
     event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
@@ -28925,17 +29468,19 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
     if recipe_contract:
         replay["recipe_contract"] = recipe_contract
-    runtime_ui_preflight = _compact_runtime_ui_preflight(value.get("runtime_ui_preflight"))
+    runtime_ui_preflight = _compact_runtime_preflight_summary(
+        value.get("runtime_ui_preflight")
+    )
     if runtime_ui_preflight:
         replay["runtime_ui_preflight"] = runtime_ui_preflight
-    runtime_accessibility_preflight = _compact_runtime_ui_preflight(
+    runtime_accessibility_preflight = _compact_runtime_preflight_summary(
         value.get("runtime_accessibility_preflight")
     )
     if runtime_accessibility_preflight:
         replay["runtime_accessibility_preflight"] = (
             runtime_accessibility_preflight
         )
-    last_event = _compact_view_replay_event(value.get("last_replay_event"))
+    last_event = _compact_view_replay_event_summary(value.get("last_replay_event"))
     if last_event:
         replay["last_replay_event"] = last_event
     return replay
@@ -29066,21 +29611,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
 
     bundle_files = bounded.get("view_bundle_files")
     if isinstance(bundle_files, dict):
-        retained_bundle_files = _mapping_subset(
-            bundle_files,
-            (
-                "diagnostic_export_manifest_json",
-                "view_audit_json",
-                "view_summary_csv",
-                "view_projections_csv",
-                "view_quality_csv",
-                "modeling_report_summary_csv",
-                "requested_diagnostic_focus_status_json",
-            ),
-        )
+        retained_bundle_files = _compact_view_bundle_files(bundle_files)
         bounded["view_bundle_files"] = retained_bundle_files
         bounded["view_bundle_files_complete"] = False
-        bounded["view_bundle_files_total_count"] = len(bundle_files)
+        bounded.setdefault("view_bundle_files_total_count", len(bundle_files))
         omitted_fields.append("view_bundle_files.nonessential_paths")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
             return bounded
@@ -29569,9 +30103,6 @@ def _compact_artifacts(response: dict[str, Any], report: dict[str, Any]) -> dict
             "gui_snapshot_path",
             "snapshot_path",
             "report_json_path",
-            "view_audit_report_path",
-            "view_bundle_manifest_path",
-            "diagnostic_export_manifest_json",
             "view_summary_csv",
             "view_projections_csv",
         ),
@@ -29733,6 +30264,14 @@ def _compact_live_response(
             "structure_modified",
         ),
     )
+    project_resolution = response.get("project_resolution")
+    if (
+        isinstance(project_resolution, dict)
+        and project_resolution.get("current_pointer_recovery_used") is not True
+    ):
+        compact["project_resolution"] = _compact_project_resolution(
+            project_resolution
+        )
     compact["response_mode"] = McpResponseMode.COMPACT.value
     compact["response_schema"] = LIVE_COMPACT_RESPONSE_SCHEMA
     execution_attempt = _compact_execution_attempt(response.get("execution_attempt"))
@@ -29848,7 +30387,6 @@ def _compact_live_response(
             "status",
             "state",
             "project_id",
-            "project_resolution",
             "revision",
             "workflow",
             "execution_mode",
@@ -29860,26 +30398,8 @@ def _compact_live_response(
             "normality_primary_reason",
             "can_claim_model_normal",
             "can_claim_live_gui_normal",
-            "visual_can_report_model_normal",
-            "visual_clean_view_available",
-            "visual_clean_view_count",
-            "visual_recommended_view_name",
-            "visual_note_reasons",
-            "visual_blocking_reasons",
             "ready_for_next_edit",
-            "next_edit_status",
-            "next_edit_requires_reaudit",
-            "next_edit_blocking_reasons",
-            "next_edit_review_reasons",
             "ready_for_hotload",
-            "live_hotload_preflight_status",
-            "live_hotload_preflight_safe_to_attempt",
-            "live_hotload_preflight_gui_verified",
-            "live_hotload_preflight_gui_required",
-            "live_hotload_preflight_gui_reasons",
-            "live_hotload_preflight_model_ready",
-            "live_hotload_preflight_single_window_execution_verified",
-            "live_hotload_preflight_recommended_tool",
             "ready_for_calculation",
             "formula",
             "reduced_formula",
@@ -29901,21 +30421,13 @@ def _compact_live_response(
             "view_ok",
             "view_count",
             "view_names",
-            "view_supported_names",
             "view_projection_row_count",
             "view_bundle_manifest_path",
-            "view_bundle_row_counts",
-            "view_audit_report_path",
             "gui_current_revision_view_audit_report_exists",
-            "gui_current_revision_view_audit_report_path_source",
             "gui_current_revision_report_json_exists",
-            "gui_current_revision_report_json_path_source",
             "gui_current_revision_view_bundle_manifest_exists",
-            "gui_current_revision_view_bundle_manifest_path_source",
             "view_request_requested",
-            "view_request_exported_names",
             "view_request_matches_export",
-            "view_request_missing_exports",
             "view_recommended_view_name",
             "requested_diagnostic_focus_ok",
             "diagnostic_export_manifest_status",
@@ -29924,11 +30436,18 @@ def _compact_live_response(
             "next_action_id",
             "next_action_tool",
             "next_action",
-            "next_action_needs_user_confirmation",
-            "next_action_safe_to_call_without_confirmation",
-            "next_action_payload_hint",
         ),
     )
+    compact_project_resolution = _compact_project_resolution(
+        live.get("project_resolution")
+    )
+    if compact_project_resolution:
+        compact_live["project_resolution"] = compact_project_resolution
+    compact_row_counts = _compact_diagnostic_row_counts(
+        live.get("view_bundle_row_counts")
+    )
+    if compact_row_counts:
+        compact_live["view_bundle_row_counts"] = compact_row_counts
     if compact_live:
         compact["live_summary"] = compact_live
     gui_current = response.get("gui_current_revision")
@@ -29969,8 +30488,10 @@ def _compact_live_response(
         "normality_gate": _compact_normality_gate,
         "semiconductor_normality_diagnosis": _compact_semiconductor_normality_diagnosis,
         "gui_current_revision": _compact_gui_current_revision,
+        "live_gui_acceptance": _compact_live_gui_acceptance,
         "visual_normality_summary": _compact_visual_normality_summary,
         "view_parameter_summary": _compact_view_parameter_summary,
+        "diagnostic_focus_plan": _compact_diagnostic_focus_plan,
         "requested_diagnostic_focus_status": _compact_requested_diagnostic_focus_status,
         "normality_explanation": _compact_normality_explanation,
         "gui_view_replay": _compact_gui_view_replay,
@@ -30000,8 +30521,15 @@ def _compact_live_response(
     if isinstance(gui_view_replay, dict) and compact.get("gui_view_replay_status") is None:
         compact["gui_view_replay_status"] = gui_view_replay.get("replay_status")
     if isinstance(gui_view_replay, dict) and compact.get("view_replay_continuation") is None:
-        continuation = gui_view_replay.get("replay_continuation")
-        if isinstance(continuation, dict):
+        raw_gui_view_replay = response.get("gui_view_replay")
+        if not isinstance(raw_gui_view_replay, dict):
+            raw_gui_view_replay = report.get("gui_view_replay")
+        continuation = _compact_view_replay_continuation(
+            raw_gui_view_replay.get("replay_continuation")
+            if isinstance(raw_gui_view_replay, dict)
+            else None
+        )
+        if continuation:
             compact["view_replay_continuation"] = continuation
     compact_readiness = _mapping_subset(
         readiness,
@@ -30081,12 +30609,19 @@ def _compact_live_response(
         compact["view_bundle_row_counts"] = row_counts
         compact_live_summary = compact.get("live_summary")
         if isinstance(compact_live_summary, dict):
-            compact_live_summary["view_bundle_row_counts"] = row_counts
+            compact_live_summary["view_bundle_row_counts"] = (
+                _compact_diagnostic_row_counts(row_counts)
+            )
     bundle_files = response.get("view_bundle_files")
     if not isinstance(bundle_files, dict):
         bundle_files = report.get("view_bundle_files")
     if isinstance(bundle_files, dict):
-        compact["view_bundle_files"] = bundle_files
+        compact_bundle_files = _compact_view_bundle_files(bundle_files)
+        compact["view_bundle_files"] = compact_bundle_files
+        compact["view_bundle_files_complete"] = len(compact_bundle_files) == len(
+            bundle_files
+        )
+        compact["view_bundle_files_total_count"] = len(bundle_files)
         diagnostic_manifest = bundle_files.get("diagnostic_export_manifest_json")
         if diagnostic_manifest and compact.get("diagnostic_export_requested") is True:
             compact["view_bundle_manifest_path"] = diagnostic_manifest

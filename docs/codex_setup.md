@@ -213,6 +213,26 @@ Prepare and record calls for one project/revision are serialized by a bounded
 kernel lock. A `view replay write transaction is busy` error means another write
 is active; retry the same observed payload after it completes, without deleting
 the lock file or editing the manifest/journal.
+
+Structured revision writes have an independent project-scoped
+`project_state.lock`. Successful create, patch, rollback, redo, restore, and
+metadata-repair responses expose `state_write_transaction`; its `coverage`
+lists revision, history, and current-pointer publication. Patch and rollback
+commits validate both `expected_revision` and the prepared
+`expected_new_revision` while holding this lock. A stale current pointer returns
+`project_revision_conflict`. If an interrupted earlier write left an occupied
+revision filename and the next safe allocation differs from the prepared
+revision, the response returns `project_revision_allocation_conflict` with
+`expected_new_revision`, `allocated_revision`, and `current_revision`. Refresh
+with `state_retry_tool`/`state_retry_payload` and regenerate the patch, script,
+and output paths; do not rename or delete the orphan.
+
+The state lock serializes publication and each destination file is atomically
+replaced, but the complete spec/script/history/current set is not a database
+transaction. Use this lock order: project state lock, release it, execute
+MaterialsScript or materialize CIF, then acquire the GUI artifact report lock.
+Execution and GUI input must never occur while `project_state.lock` is held.
+
 GUI open, snapshot, and visual-confirmation report persistence share a separate
 revision-scoped lock and return `report_write_transaction`. If that lock is
 busy, retry the same GUI evidence operation after the current report update

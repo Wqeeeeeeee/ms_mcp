@@ -62,7 +62,13 @@ from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
 from .state.diff import summarize_spec_delta
-from .state.store import ProjectStore, atomic_write_text
+from .state.store import (
+    ProjectRevisionAllocationConflictError,
+    ProjectRevisionConflictError,
+    ProjectStateBusyError,
+    ProjectStore,
+    atomic_write_text,
+)
 from .translators import crystal_cif_summary, render_model_to_perl, write_crystal_cif
 from .validators import validate_generated_script
 
@@ -628,6 +634,66 @@ def _ok(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, ProjectRevisionAllocationConflictError):
+        return {
+            "ok": False,
+            "status": "project_revision_allocation_conflict",
+            "error": str(exc),
+            "project_id": exc.project_id,
+            "expected_new_revision": exc.expected_new_revision,
+            "allocated_revision": exc.allocated_revision,
+            "current_revision": exc.current_revision,
+            "state_write_deferred": True,
+            "recommended_tool": "material_studio_live_project_status",
+            "required_next_step": (
+                "Refresh project state and regenerate the revision-scoped script, "
+                "planned outputs, and patch for the orphan-safe next revision."
+            ),
+            "state_retry_tool": "material_studio_live_project_status",
+            "state_retry_payload": {
+                "project_id": exc.project_id,
+                "include_gui_status": True,
+            },
+        }
+    if isinstance(exc, ProjectRevisionConflictError):
+        return {
+            "ok": False,
+            "status": "project_revision_conflict",
+            "error": str(exc),
+            "project_id": exc.project_id,
+            "expected_revision": exc.expected_revision,
+            "current_revision": exc.current_revision,
+            "state_write_deferred": True,
+            "recommended_tool": "material_studio_live_project_status",
+            "required_next_step": (
+                "Refresh current project state and rebuild the patch or rollback "
+                "against the returned current revision."
+            ),
+            "state_retry_tool": "material_studio_live_project_status",
+            "state_retry_payload": {
+                "project_id": exc.project_id,
+                "include_gui_status": True,
+            },
+        }
+    if isinstance(exc, ProjectStateBusyError):
+        return {
+            "ok": False,
+            "status": "project_state_busy",
+            "error": str(exc),
+            "project_id": exc.project_id,
+            "state_write_deferred": True,
+            "project_state_transaction_error": str(exc),
+            "recommended_tool": "material_studio_live_project_status",
+            "required_next_step": (
+                "Wait for the active project revision write to finish, refresh "
+                "current state, and retry the original request."
+            ),
+            "state_retry_tool": "material_studio_live_project_status",
+            "state_retry_payload": {
+                "project_id": exc.project_id,
+                "include_gui_status": False,
+            },
+        }
     if isinstance(exc, MaterialStudioError):
         return {"ok": False, "error": str(exc)}
     if isinstance(exc, (ValueError, GuiError)):
@@ -11777,6 +11843,8 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "workflow": report.get("workflow"),
         "execution_mode": report.get("execution_mode"),
         "execution_mode_source": report.get("execution_mode_source"),
+        "state_write_transaction": response.get("state_write_transaction")
+        or report.get("state_write_transaction"),
         "normality": report.get("normality"),
         "health_verdict": report.get("health_verdict"),
         "structure_artifact_validation_status": structure_artifact_validation.get("status"),
@@ -16557,6 +16625,11 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "next_action_plan": response.get("next_action_plan"),
         "acceptance": response.get("acceptance"),
         "metadata_reconciliation": response.get("metadata_reconciliation"),
+        "state_write_transaction": response.get("state_write_transaction"),
+        "state_write_deferred": response.get("state_write_deferred"),
+        "project_state_transaction_error": response.get(
+            "project_state_transaction_error"
+        ),
         "structure_artifact_validation": response.get("structure_artifact_validation"),
         "modeling_report": response.get("modeling_report"),
         "modeling_health": response.get("modeling_health"),
@@ -16727,6 +16800,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "base_revision": response.get("base_revision"),
         "execution_mode": execution_mode,
         "execution_mode_source": response.get("execution_mode_source"),
+        "state_write_transaction": response.get("state_write_transaction"),
         "execution_backend": result.get("execution_backend"),
         "diagnostic_export_requested": bool(response.get("diagnostic_export_requested")),
         "normality_check_requested": normality_check_requested,
@@ -28183,6 +28257,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_bundle_manifest_path",
             "report_json_path",
             "view_audit_report_path",
+            "state_write_transaction",
+            "state_write_deferred",
+            "project_state_transaction_error",
+            "expected_revision",
+            "expected_new_revision",
+            "allocated_revision",
+            "current_revision",
+            "state_retry_tool",
+            "state_retry_payload",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -28281,6 +28364,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_bundle_manifest_path",
             "report_json_path",
             "view_audit_report_path",
+            "state_write_transaction",
+            "state_write_deferred",
+            "project_state_transaction_error",
+            "expected_revision",
+            "expected_new_revision",
+            "allocated_revision",
+            "current_revision",
+            "state_retry_tool",
+            "state_retry_payload",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -28584,6 +28676,15 @@ def _compact_live_response(
             "view_bundle_row_counts",
             "report_json_path",
             "view_audit_report_path",
+            "state_write_transaction",
+            "state_write_deferred",
+            "project_state_transaction_error",
+            "expected_revision",
+            "expected_new_revision",
+            "allocated_revision",
+            "current_revision",
+            "state_retry_tool",
+            "state_retry_payload",
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
@@ -29222,6 +29323,7 @@ def material_studio_model_create_from_spec(
             "acceptance": model_spec.acceptance.model_dump(mode="json"),
             "planned_outputs": generated["planned_outputs"],
             "state": info.to_dict(),
+            "state_write_transaction": info.state_write_transaction,
         }
         if mode == ExecutionMode.EXECUTE:
             if not generated["executable"] and not isinstance(model_spec.model, CrystalSpec):
@@ -29310,6 +29412,8 @@ def material_studio_model_modify_with_patch(
             action="patch",
             generated_script=generated["script"],
             diff=patch_diff,
+            expected_revision=current.revision,
+            expected_new_revision=new_spec.revision,
         )
         _, current_resolution_after_write = store.resolve_current(project_id)
         response = {
@@ -29329,6 +29433,7 @@ def material_studio_model_modify_with_patch(
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
             "state": info.to_dict(),
+            "state_write_transaction": info.state_write_transaction,
             "current_pointer_recovery": current_resolution,
             "current_pointer_repaired": bool(current_resolution.get("recovery_used")),
             "current_pointer_after_write": current_resolution_after_write,
@@ -29608,6 +29713,9 @@ def material_studio_live_project_status(
             "warnings": generated["warnings"],
             "report_json_path": str(report_json_path),
             "view_audit_report_path": str(view_audit_path),
+            "state_write_transaction": (report_json_payload or {}).get(
+                "state_write_transaction"
+            ),
             "current": {
                 "path": str(current_path),
                 "exists": current_path.exists(),
@@ -29877,6 +29985,7 @@ def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> 
             "recommended_diagnostic_focuses",
             "unrequested_recommended_diagnostic_focuses",
             "result_metadata_path",
+            "state_write_transaction",
         ):
             if report_json_payload.get(key) is not None:
                 context[key] = report_json_payload[key]
@@ -30031,7 +30140,14 @@ def material_studio_project_rollback(
             update={"revision": store.next_revision_number(project_id)}
         )
         generated = _generate_structured_script(new_spec, store)
-        info = store.rollback(project_id, target_revision, user_text=user_text, generated_script=generated["script"])
+        info = store.rollback(
+            project_id,
+            target_revision,
+            user_text=user_text,
+            generated_script=generated["script"],
+            expected_revision=current.revision,
+            expected_new_revision=new_spec.revision,
+        )
         _, current_resolution_after_write = store.resolve_current(project_id)
         current_pointer_before_write = (
             project_resolution.get("current_pointer")
@@ -30050,6 +30166,7 @@ def material_studio_project_rollback(
                 "validation": generated["script_validation"],
                 "warnings": generated["warnings"],
                 "state": info.to_dict(),
+                "state_write_transaction": info.state_write_transaction,
                 "current_pointer_recovery": current_pointer_before_write,
                 "current_pointer_repaired": bool(
                     current_pointer_before_write.get("recovery_used")
@@ -31261,6 +31378,8 @@ def material_studio_live_update_with_patch(
             action=patch_workflow,
             generated_script=generated["script"],
             diff=patch_diff,
+            expected_revision=current.revision,
+            expected_new_revision=new_spec.revision,
         )
         _, current_resolution_after_write = store.resolve_current(project_id)
         current_pointer_before_write = (
@@ -31292,6 +31411,7 @@ def material_studio_live_update_with_patch(
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
             "state": info.to_dict(),
+            "state_write_transaction": info.state_write_transaction,
             "current_pointer_recovery": current_pointer_before_write,
             "current_pointer_repaired": bool(
                 current_pointer_before_write.get("recovery_used")
@@ -32274,6 +32394,7 @@ def material_studio_live_modeling_request(
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
             "state": info.to_dict(),
+            "state_write_transaction": info.state_write_transaction,
             "gui_status": gui_status,
         }
         audit_artifacts: list[dict[str, Any]] = []

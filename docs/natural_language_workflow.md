@@ -395,6 +395,13 @@ back read-only to the newest valid immutable revision. Inspect
 revision was created. A later explicitly requested successful revision write
 uses an unused revision number above every existing revision file and
 atomically replaces the pointer; it never overwrites an orphan revision.
+Patch and rollback writes also recheck the current revision and the exact
+prepared new revision under the project state lock. If another request advanced
+the project, `project_revision_conflict` requires rebuilding against current
+state. If an orphan file changes the next safe revision number,
+`project_revision_allocation_conflict` requires regenerating the revision-bound
+script and outputs. Neither conflict executes Materials Studio or mutates the
+current pointer/history.
 
 When resuming a session, `material_studio_live_project_status` preserves the
 latest `persisted_change_receipt` and `latest_change` summary from history and

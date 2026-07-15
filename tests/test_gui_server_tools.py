@@ -24703,6 +24703,254 @@ def test_model_diagnostic_exports_publish_in_gui_artifact_transaction(
     } <= set(transaction["coverage"])
 
 
+def test_concurrent_structured_patches_return_one_revision_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    spec = load_benzene("concurrent_mcp_patch")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    original_save_revision = store_module.ProjectStore.save_revision
+    save_barrier = threading.Barrier(2)
+
+    def synchronized_save_revision(self, *args, **kwargs):
+        save_barrier.wait(timeout=10.0)
+        return original_save_revision(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        store_module.ProjectStore,
+        "save_revision",
+        synchronized_save_revision,
+    )
+
+    def remove(atom_id: str) -> dict:
+        return server.material_studio_model_modify_with_patch(
+            project_id=created["project_id"],
+            base_revision=0,
+            patch={"operations": [{"type": "delete_atom", "atom_id": atom_id}]},
+            working_dir=str(tmp_path),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(remove, ("H1", "H2")))
+
+    committed = [result for result in results if result.get("ok") is True]
+    conflicts = [
+        result
+        for result in results
+        if result.get("status") == "project_revision_conflict"
+    ]
+    assert len(committed) == 1
+    assert len(conflicts) == 1
+    assert committed[0]["revision"] == 1
+    assert committed[0]["state_write_transaction"]["domain"] == "project_state"
+    assert conflicts[0]["expected_revision"] == 0
+    assert conflicts[0]["current_revision"] == 1
+    assert conflicts[0]["state_write_deferred"] is True
+    assert conflicts[0]["state_retry_tool"] == "material_studio_live_project_status"
+    store = store_module.ProjectStore(tmp_path)
+    assert store.load_current(created["project_id"]).revision == 1
+    assert [
+        event["revision"] for event in store.list_history(created["project_id"])
+    ] == [0, 1]
+    assert not (
+        store.project_dir(created["project_id"])
+        / "revisions"
+        / "r002_model_spec.json"
+    ).exists()
+
+
+def test_structured_patch_state_lock_timeout_returns_retry_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    spec = load_benzene("mcp_state_lock_timeout")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    store = store_module.ProjectStore(tmp_path)
+    project_dir = store.project_dir(created["project_id"])
+    current_path = project_dir / "current.json"
+    history_path = project_dir / "history.jsonl"
+    committed_current = current_path.read_bytes()
+    committed_history = history_path.read_bytes()
+    monkeypatch.setattr(
+        store_module,
+        "PROJECT_STATE_LOCK_TIMEOUT_SECONDS",
+        0.05,
+    )
+    monkeypatch.setattr(
+        store_module,
+        "PROJECT_STATE_LOCK_POLL_SECONDS",
+        0.005,
+    )
+    lock_path = project_dir / "project_state.lock"
+
+    with store_module._project_state_advisory_write_lock(
+        lock_path,
+        project_id=created["project_id"],
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        blocked = server.material_studio_model_modify_with_patch(
+            project_id=created["project_id"],
+            base_revision=0,
+            patch={"operations": [{"type": "delete_atom", "atom_id": "H1"}]},
+            working_dir=str(tmp_path),
+        )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "project_state_busy"
+    assert blocked["state_write_deferred"] is True
+    assert blocked["project_state_transaction_error"] == blocked["error"]
+    assert blocked["state_retry_payload"] == {
+        "project_id": created["project_id"],
+        "include_gui_status": False,
+    }
+    assert current_path.read_bytes() == committed_current
+    assert history_path.read_bytes() == committed_history
+    assert not (project_dir / "revisions" / "r001_model_spec.json").exists()
+
+
+def test_structured_patch_rejects_orphan_revision_allocation_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    spec = load_benzene("mcp_orphan_allocation")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    store = store_module.ProjectStore(tmp_path)
+    project_dir = store.project_dir(created["project_id"])
+    current_path = project_dir / "current.json"
+    history_path = project_dir / "history.jsonl"
+    current_before = current_path.read_bytes()
+    history_before = history_path.read_bytes()
+    original_save_revision = store_module.ProjectStore.save_revision
+
+    def inject_orphan_before_commit(self, project_id, *args, **kwargs):
+        orphan_path = (
+            self.project_dir(project_id)
+            / "revisions"
+            / "r001_model_spec.json"
+        )
+        orphan_path.write_bytes(b'{"incomplete":')
+        return original_save_revision(self, project_id, *args, **kwargs)
+
+    monkeypatch.setattr(
+        store_module.ProjectStore,
+        "save_revision",
+        inject_orphan_before_commit,
+    )
+    rejected = server.material_studio_model_modify_with_patch(
+        project_id=created["project_id"],
+        base_revision=0,
+        patch={"operations": [{"type": "delete_atom", "atom_id": "H1"}]},
+        working_dir=str(tmp_path),
+    )
+
+    assert rejected["ok"] is False
+    assert rejected["status"] == "project_revision_allocation_conflict"
+    assert rejected["expected_new_revision"] == 1
+    assert rejected["allocated_revision"] == 2
+    assert rejected["current_revision"] == 0
+    assert rejected["state_write_deferred"] is True
+    assert rejected["state_retry_tool"] == "material_studio_live_project_status"
+    assert rejected["state_retry_payload"] == {
+        "project_id": created["project_id"],
+        "include_gui_status": True,
+    }
+    compact = server._compact_live_response(
+        rejected,
+        server.McpResponseMode.COMPACT,
+    )
+    assert compact["expected_new_revision"] == 1
+    assert compact["allocated_revision"] == 2
+    assert compact["current_revision"] == 0
+    assert current_path.read_bytes() == current_before
+    assert history_path.read_bytes() == history_before
+    assert not (project_dir / "revisions" / "r002_model_spec.json").exists()
+    assert not (project_dir / "scripts" / "r002_build.pl").exists()
+
+
+def test_state_transaction_releases_before_execution_and_gui_report_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    assert created["ok"] is True
+    observed: list[tuple[str, object, object]] = []
+    original_execute = server._execute_or_materialize_structure
+    original_finalize = server._finalize_high_level_gui_hotload
+
+    def tracked_execute(*args, **kwargs):
+        observed.append(
+            (
+                "execute",
+                store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get(),
+                server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get(),
+            )
+        )
+        return original_execute(*args, **kwargs)
+
+    def tracked_finalize(*args, **kwargs):
+        observed.append(
+            (
+                "before_gui_transaction",
+                store_module._ACTIVE_PROJECT_STATE_TRANSACTION.get(),
+                server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get(),
+            )
+        )
+        return original_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(server, "_execute_or_materialize_structure", tracked_execute)
+    monkeypatch.setattr(server, "_finalize_high_level_gui_hotload", tracked_finalize)
+    patched = server.material_studio_live_modeling_request(
+        "Make a 2x1x1 supercell and hot-load it in Materials Studio.",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+
+    assert patched["ok"] is True
+    assert [item[0] for item in observed] == ["execute", "before_gui_transaction"]
+    assert all(item[1] is None for item in observed)
+    assert all(item[2] is None for item in observed)
+    state_transaction = patched["state_write_transaction"]
+    gui_transaction = patched["gui_action_transaction"]
+    assert state_transaction["domain"] == "project_state"
+    assert gui_transaction["domain"] == "gui_artifact_report"
+    assert state_transaction["path"] != gui_transaction["path"]
+    report_payload = json.loads(
+        Path(patched["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert report_payload["state_write_transaction"] == state_transaction
+    assert (
+        report_payload["modeling_report"]["state_write_transaction"]
+        == state_transaction
+    )
+
+
 def test_inline_diagnostic_export_is_serialized_and_cannot_replace_stored_revision(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

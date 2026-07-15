@@ -5,10 +5,14 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
 import tempfile
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +27,151 @@ from .history import make_history_event
 PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 REVISION_FILE_RE = re.compile(r"^r(?P<revision>\d+)_model_spec\.json$")
 MAX_CURRENT_POINTER_ERROR_LENGTH = 1000
+PROJECT_STATE_LOCK_TIMEOUT_SECONDS = 30.0
+PROJECT_STATE_LOCK_POLL_SECONDS = 0.05
+_ACTIVE_PROJECT_STATE_TRANSACTION: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_project_state_transaction",
+    default=None,
+)
+
+
+class ProjectStateBusyError(RuntimeError):
+    """Raised when a project state writer cannot acquire its bounded lock."""
+
+    def __init__(self, project_id: str, lock_path: Path) -> None:
+        self.project_id = project_id
+        self.lock_path = lock_path
+        super().__init__(
+            "Project state write transaction is busy; retry after the current "
+            f"revision write completes: {project_id}"
+        )
+
+
+class ProjectRevisionConflictError(RuntimeError):
+    """Raised when optimistic revision state changed before commit."""
+
+    def __init__(
+        self,
+        project_id: str,
+        expected_revision: int,
+        current_revision: int,
+    ) -> None:
+        self.project_id = project_id
+        self.expected_revision = expected_revision
+        self.current_revision = current_revision
+        super().__init__(
+            f"Expected current revision {expected_revision}, but project {project_id} "
+            f"advanced to revision {current_revision} before commit"
+        )
+
+
+class ProjectRevisionAllocationConflictError(RuntimeError):
+    """Raised when orphan-safe revision allocation differs from prepared artifacts."""
+
+    def __init__(
+        self,
+        project_id: str,
+        expected_new_revision: int,
+        allocated_revision: int,
+        current_revision: int,
+    ) -> None:
+        self.project_id = project_id
+        self.expected_new_revision = expected_new_revision
+        self.allocated_revision = allocated_revision
+        self.current_revision = current_revision
+        super().__init__(
+            f"Prepared revision {expected_new_revision}, but project {project_id} "
+            f"must allocate revision {allocated_revision} while current remains "
+            f"revision {current_revision}; regenerate revision-scoped artifacts"
+        )
+
+
+def _lock_file_descriptor_nonblocking(file_descriptor: int) -> None:
+    """Acquire one platform advisory byte lock without blocking."""
+
+    os.lseek(file_descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file_descriptor, msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file_descriptor(file_descriptor: int) -> None:
+    """Release one platform advisory byte lock."""
+
+    os.lseek(file_descriptor, 0, os.SEEK_SET)
+    if os.name == "nt":
+        import msvcrt
+
+        msvcrt.locking(file_descriptor, msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(file_descriptor, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _project_state_advisory_write_lock(
+    path: Path,
+    *,
+    project_id: str,
+    workspace_root: Path,
+    timeout_seconds: float,
+    poll_seconds: float,
+):
+    """Serialize current pointer, revision, script, and history publication."""
+
+    resolved = path.expanduser().resolve()
+    if workspace_root not in resolved.parents:
+        raise ValueError("Project state lock path escapes the workspace root")
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor = os.open(resolved, os.O_CREAT | os.O_RDWR, 0o600)
+    acquired = False
+    started = time.monotonic()
+    try:
+        if os.fstat(file_descriptor).st_size == 0:
+            os.write(file_descriptor, b"\0")
+            os.fsync(file_descriptor)
+        deadline = started + max(float(timeout_seconds), 0.0)
+        while True:
+            try:
+                _lock_file_descriptor_nonblocking(file_descriptor)
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise RuntimeError(
+                        f"Project state lock could not be acquired: {resolved}"
+                    ) from exc
+                if time.monotonic() >= deadline:
+                    raise ProjectStateBusyError(project_id, resolved) from exc
+                time.sleep(max(float(poll_seconds), 0.001))
+                continue
+            acquired = True
+            break
+        yield {
+            "path": str(resolved),
+            "scope": "project",
+            "domain": "project_state",
+            "project_id": project_id,
+            "workspace_root": str(workspace_root),
+            "waited_seconds": round(time.monotonic() - started, 6),
+            "timeout_seconds": float(timeout_seconds),
+            "poll_seconds": float(poll_seconds),
+            "nested_call_count": 0,
+            "coverage": [],
+        }
+    finally:
+        if acquired:
+            try:
+                _unlock_file_descriptor(file_descriptor)
+            except OSError:
+                pass
+        os.close(file_descriptor)
 
 
 def atomic_write_text(path: Path, content: str) -> None:
@@ -77,6 +226,7 @@ class RevisionInfo:
     spec_path: Path
     current_path: Path
     script_path: Path | None = None
+    state_write_transaction: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """返回字典表示。"""
@@ -87,6 +237,7 @@ class RevisionInfo:
             "spec_path": str(self.spec_path),
             "current_path": str(self.current_path),
             "script_path": str(self.script_path) if self.script_path else None,
+            "state_write_transaction": self.state_write_transaction,
         }
 
 
@@ -151,6 +302,74 @@ class ProjectStore:
         if self.workspace_root not in path.parents and path != self.workspace_root:
             raise ValueError("项目路径逃逸工作区根目录")
         return path
+
+    @contextmanager
+    def project_state_transaction(
+        self,
+        project_id: str,
+        *,
+        coverage: str | list[str] | tuple[str, ...],
+    ):
+        """Acquire or reuse the write transaction for one project."""
+
+        safe_project_id = sanitize_project_id(project_id)
+        transaction_key = (str(self.workspace_root), safe_project_id)
+        requested = [coverage] if isinstance(coverage, str) else list(coverage)
+        active = _ACTIVE_PROJECT_STATE_TRANSACTION.get()
+        if active is not None:
+            if active.get("key") != transaction_key:
+                raise RuntimeError(
+                    "A project state transaction cannot acquire a different project "
+                    "while another project write is active"
+                )
+            transaction = active["transaction"]
+            transaction["nested_call_count"] = int(
+                transaction.get("nested_call_count") or 0
+            ) + 1
+            self._extend_transaction_coverage(transaction, requested)
+            yield transaction
+            return
+
+        lock_path = self.project_dir(safe_project_id) / "project_state.lock"
+        with _project_state_advisory_write_lock(
+            lock_path,
+            project_id=safe_project_id,
+            workspace_root=self.workspace_root,
+            timeout_seconds=PROJECT_STATE_LOCK_TIMEOUT_SECONDS,
+            poll_seconds=PROJECT_STATE_LOCK_POLL_SECONDS,
+        ) as transaction:
+            self._extend_transaction_coverage(transaction, requested)
+            token = _ACTIVE_PROJECT_STATE_TRANSACTION.set(
+                {"key": transaction_key, "transaction": transaction}
+            )
+            try:
+                yield transaction
+            finally:
+                _ACTIVE_PROJECT_STATE_TRANSACTION.reset(token)
+
+    @staticmethod
+    def _extend_transaction_coverage(
+        transaction: dict[str, Any],
+        requested: list[str],
+    ) -> None:
+        current = [str(item) for item in transaction.get("coverage") or []]
+        for item in requested:
+            value = str(item).strip()
+            if value and value not in current:
+                current.append(value)
+        transaction["coverage"] = current
+
+    def _require_project_state_transaction(
+        self,
+        project_id: str,
+    ) -> dict[str, Any]:
+        key = (str(self.workspace_root), sanitize_project_id(project_id))
+        active = _ACTIVE_PROJECT_STATE_TRANSACTION.get()
+        if active is None or active.get("key") != key:
+            raise RuntimeError(
+                "Revision persistence requires an active project state transaction"
+            )
+        return active["transaction"]
 
     def _revision_candidates(self, project_id: str) -> list[tuple[int, Path]]:
         """Return revision files ordered from newest revision to oldest."""
@@ -356,17 +575,27 @@ class ProjectStore:
         异常:
             ValueError: 如果项目已存在
         """
-        project_dir = self.project_dir(spec.project_id)
-        if (project_dir / "current.json").exists() or self._revision_candidates(spec.project_id):
-            raise ValueError(f"项目已存在: {spec.project_id}")
-        spec = spec.model_copy(update={"revision": 0})
-        return self._write_revision(
-            spec,
-            user_text=user_text,
-            action="create",
-            generated_script=generated_script,
-            diff=diff or [],
-        )
+        with self.project_state_transaction(
+            spec.project_id,
+            coverage=(
+                "create_project",
+                "revision_write",
+                "history_publish",
+                "current_pointer_publish",
+            ),
+        ) as transaction:
+            project_dir = self.project_dir(spec.project_id)
+            if (project_dir / "current.json").exists() or self._revision_candidates(spec.project_id):
+                raise ValueError(f"项目已存在: {spec.project_id}")
+            spec = spec.model_copy(update={"revision": 0})
+            return self._write_revision(
+                spec,
+                user_text=user_text,
+                action="create",
+                generated_script=generated_script,
+                diff=diff or [],
+                state_write_transaction=transaction,
+            )
 
     def load_current(self, project_id: str) -> ModelSpec:
         """加载当前项目。
@@ -392,6 +621,8 @@ class ProjectStore:
         action: str,
         generated_script: str | None = None,
         diff: list[str] | None = None,
+        expected_revision: int | None = None,
+        expected_new_revision: int | None = None,
     ) -> RevisionInfo:
         """保存修订版本。
 
@@ -406,16 +637,50 @@ class ProjectStore:
         返回:
             RevisionInfo 实例
         """
-        current = self.load_current(project_id)
-        revision = self.next_revision_number(project_id)
-        spec = spec.model_copy(update={"project_id": project_id, "revision": revision})
-        return self._write_revision(
-            spec,
-            user_text=user_text,
-            action=action,
-            generated_script=generated_script,
-            diff=diff if diff is not None else diff_specs(current, spec),
-        )
+        with self.project_state_transaction(
+            project_id,
+            coverage=(
+                "save_revision",
+                "revision_write",
+                "history_publish",
+                "current_pointer_publish",
+            ),
+        ) as transaction:
+            current = self.load_current(project_id)
+            if (
+                expected_revision is not None
+                and current.revision != expected_revision
+            ):
+                raise ProjectRevisionConflictError(
+                    project_id,
+                    expected_revision,
+                    current.revision,
+                )
+            revision = max(
+                current.revision + 1,
+                self._next_revision_number(project_id),
+            )
+            if (
+                expected_new_revision is not None
+                and revision != expected_new_revision
+            ):
+                raise ProjectRevisionAllocationConflictError(
+                    project_id,
+                    expected_new_revision,
+                    revision,
+                    current.revision,
+                )
+            spec = spec.model_copy(
+                update={"project_id": project_id, "revision": revision}
+            )
+            return self._write_revision(
+                spec,
+                user_text=user_text,
+                action=action,
+                generated_script=generated_script,
+                diff=diff if diff is not None else diff_specs(current, spec),
+                state_write_transaction=transaction,
+            )
 
     def list_history(self, project_id: str) -> list[dict[str, Any]]:
         """列出项目历史。
@@ -498,6 +763,8 @@ class ProjectStore:
         *,
         user_text: str | None = None,
         generated_script: str | None = None,
+        expected_revision: int | None = None,
+        expected_new_revision: int | None = None,
     ) -> RevisionInfo:
         """回滚到指定修订版本。
 
@@ -510,21 +777,50 @@ class ProjectStore:
         返回:
             RevisionInfo 实例
         """
-        target = self.get_revision(project_id, target_revision)
-        current = self.load_current(project_id)
-        new_spec = target.model_copy(
-            update={
-                "revision": self.next_revision_number(project_id)
-            }
-        )
-        return self._write_revision(
-            new_spec,
-            user_text=user_text,
-            action=f"rollback:r{target_revision:03d}",
-            generated_script=generated_script,
-            diff=diff_specs(current, new_spec),
-            extra={"target_revision": target_revision},
-        )
+        with self.project_state_transaction(
+            project_id,
+            coverage=(
+                "rollback",
+                "revision_write",
+                "history_publish",
+                "current_pointer_publish",
+            ),
+        ) as transaction:
+            target = self.get_revision(project_id, target_revision)
+            current = self.load_current(project_id)
+            if (
+                expected_revision is not None
+                and current.revision != expected_revision
+            ):
+                raise ProjectRevisionConflictError(
+                    project_id,
+                    expected_revision,
+                    current.revision,
+                )
+            allocated_revision = max(
+                current.revision + 1,
+                self._next_revision_number(project_id),
+            )
+            if (
+                expected_new_revision is not None
+                and allocated_revision != expected_new_revision
+            ):
+                raise ProjectRevisionAllocationConflictError(
+                    project_id,
+                    expected_new_revision,
+                    allocated_revision,
+                    current.revision,
+                )
+            new_spec = target.model_copy(update={"revision": allocated_revision})
+            return self._write_revision(
+                new_spec,
+                user_text=user_text,
+                action=f"rollback:r{target_revision:03d}",
+                generated_script=generated_script,
+                diff=diff_specs(current, new_spec),
+                extra={"target_revision": target_revision},
+                state_write_transaction=transaction,
+            )
 
     def outputs_dir(self, project_id: str, revision: int) -> Path:
         """获取输出目录。
@@ -572,8 +868,12 @@ class ProjectStore:
         generated_script: str | None,
         diff: list[str],
         extra: dict[str, Any] | None = None,
+        state_write_transaction: dict[str, Any],
     ) -> RevisionInfo:
         """写入修订版本。"""
+        active_transaction = self._require_project_state_transaction(spec.project_id)
+        if active_transaction is not state_write_transaction:
+            raise RuntimeError("Revision write transaction receipt does not match the active lock")
         project_dir = self.project_dir(spec.project_id)
         revisions_dir = project_dir / "revisions"
         scripts_dir = project_dir / "scripts"
@@ -612,10 +912,21 @@ class ProjectStore:
             diff=diff,
             extra=extra,
         )
-        with (project_dir / "history.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        history_path = project_dir / "history.jsonl"
+        history_content = (
+            history_path.read_text(encoding="utf-8")
+            if history_path.exists()
+            else ""
+        )
+        if history_content and not history_content.endswith("\n"):
+            raise ValueError(
+                "history.jsonl is not newline-terminated; refusing to append to a "
+                "possibly partial history event"
+            )
+        atomic_write_text(
+            history_path,
+            history_content + json.dumps(event, ensure_ascii=False) + "\n",
+        )
 
         current_path = project_dir / "current.json"
         atomic_write_text(
@@ -640,4 +951,5 @@ class ProjectStore:
             spec_path=spec_path,
             current_path=current_path,
             script_path=script_path,
+            state_write_transaction=state_write_transaction,
         )

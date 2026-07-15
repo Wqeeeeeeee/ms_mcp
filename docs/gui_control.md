@@ -148,6 +148,27 @@ if the bounded wait expires, the operation fails before writing a partial event.
 The lock is released by the operating system when a process exits, and callers
 must not delete the persistent lock file to force progress.
 
+Structured model revisions use a separate project-scoped
+`project_state.lock`. Creation, patch, rollback, redo, restore, and metadata
+repair serialize revision allocation, immutable spec/script writes,
+`history.jsonl` publication, and `current.json` publication through that lock.
+Patch and rollback commits compare the current revision under the lock with the
+revision used to prepare the change. They also compare the allocated revision
+with the exact revision embedded in the prepared script and output paths. A
+concurrent advance returns `project_revision_conflict`; an orphan file that
+forces a different safe allocation returns
+`project_revision_allocation_conflict`. Both leave the prepared write deferred
+and require a fresh status read and regenerated revision-scoped artifacts.
+
+Each individual file is published with `fsync` and atomic replacement, but the
+spec, script, history, and current pointer are not one cross-file database
+transaction. A process interruption can leave an immutable orphan spec or
+script. Recovery skips occupied revision numbers and never overwrites or
+deletes those files. The lock order is strict: finish and release the project
+state transaction, run MaterialsScript or materialize CIF outside all state and
+GUI report locks, then acquire `gui_artifact_report.lock` for current-revision
+revalidation, hot-load, snapshot, and report publication.
+
 Persisting a GUI open, snapshot, or accepted manual or replay-derived visual
 confirmation uses a shared `gui_artifact_report.lock` for the same
 project/revision. That transaction reads prior GUI artifacts, applies the

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from material_studio_mcp_server.state import store as store_module
 from material_studio_mcp_server.specs.project import ModelSpec
-from material_studio_mcp_server.state import ProjectStore
+from material_studio_mcp_server.state import (
+    ProjectRevisionAllocationConflictError,
+    ProjectRevisionConflictError,
+    ProjectStateBusyError,
+    ProjectStore,
+    RevisionInfo,
+)
 
 
 def load_benzene() -> ModelSpec:
@@ -29,7 +36,13 @@ def test_create_save_history_and_rollback(tmp_path: Path) -> None:
     second = store.save_revision(spec.project_id, updated, user_text="change", action="metadata")
     assert second.revision == 1
 
-    rollback = store.rollback(spec.project_id, 0, user_text="rollback")
+    rollback = store.rollback(
+        spec.project_id,
+        0,
+        user_text="rollback",
+        expected_revision=1,
+        expected_new_revision=2,
+    )
     assert rollback.revision == 2
     assert store.load_current(spec.project_id).revision == 2
     assert len(store.list_history(spec.project_id)) == 3
@@ -189,6 +202,207 @@ def test_atomic_current_replace_failure_preserves_previous_committed_pointer(
     assert resolution["status"] == "valid"
     assert (created.project_dir / "revisions" / "r001_model_spec.json").exists()
     assert not list(created.project_dir.rglob("*.tmp"))
+
+
+def test_concurrent_expected_revision_writes_allow_exactly_one_commit(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path)
+    spec = load_benzene().model_copy(update={"project_id": "concurrent_revision"})
+    store.create_project(spec, user_text="create")
+    base = store.load_current(spec.project_id)
+
+    def write(label: str) -> RevisionInfo | ProjectRevisionConflictError:
+        worker_store = ProjectStore(tmp_path)
+        candidate = base.model_copy(update={"metadata": {"writer": label}})
+        try:
+            return worker_store.save_revision(
+                spec.project_id,
+                candidate,
+                user_text=label,
+                action="concurrent_test",
+                expected_revision=0,
+            )
+        except ProjectRevisionConflictError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(write, ("first", "second")))
+
+    committed = [item for item in results if not isinstance(item, Exception)]
+    conflicts = [
+        item for item in results if isinstance(item, ProjectRevisionConflictError)
+    ]
+    assert len(committed) == 1
+    assert len(conflicts) == 1
+    assert committed[0].revision == 1
+    assert conflicts[0].expected_revision == 0
+    assert conflicts[0].current_revision == 1
+    transaction = committed[0].state_write_transaction
+    assert transaction is not None
+    assert transaction["scope"] == "project"
+    assert transaction["domain"] == "project_state"
+    assert {
+        "save_revision",
+        "revision_write",
+        "history_publish",
+        "current_pointer_publish",
+    } <= set(transaction["coverage"])
+    assert store.load_current(spec.project_id).revision == 1
+    assert [event["revision"] for event in store.list_history(spec.project_id)] == [
+        0,
+        1,
+    ]
+    assert not (store.project_dir(spec.project_id) / "revisions" / "r002_model_spec.json").exists()
+
+
+def test_expected_new_revision_rejects_orphan_allocation_drift(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path)
+    spec = load_benzene().model_copy(update={"project_id": "orphan_allocation"})
+    created = store.create_project(spec, user_text="create")
+    current_before = created.current_path.read_bytes()
+    history_path = created.project_dir / "history.jsonl"
+    history_before = history_path.read_bytes()
+    orphan_path = created.project_dir / "revisions" / "r001_model_spec.json"
+    orphan_bytes = b'{"incomplete":'
+    orphan_path.write_bytes(orphan_bytes)
+    candidate = store.load_current(spec.project_id).model_copy(
+        update={"metadata": {"prepared_for": 1}}
+    )
+
+    with pytest.raises(ProjectRevisionAllocationConflictError) as raised:
+        store.save_revision(
+            spec.project_id,
+            candidate,
+            user_text="prepared for r1",
+            action="metadata",
+            generated_script="# prepared r1",
+            expected_revision=0,
+            expected_new_revision=1,
+        )
+
+    assert raised.value.project_id == spec.project_id
+    assert raised.value.expected_new_revision == 1
+    assert raised.value.allocated_revision == 2
+    assert raised.value.current_revision == 0
+    assert orphan_path.read_bytes() == orphan_bytes
+    assert created.current_path.read_bytes() == current_before
+    assert history_path.read_bytes() == history_before
+    assert not (
+        created.project_dir / "revisions" / "r002_model_spec.json"
+    ).exists()
+    assert not (created.project_dir / "scripts" / "r002_build.pl").exists()
+
+
+def test_project_state_lock_timeout_preserves_current_history_and_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path)
+    spec = load_benzene().model_copy(update={"project_id": "state_lock_timeout"})
+    created = store.create_project(spec, user_text="create")
+    committed_current = created.current_path.read_bytes()
+    history_path = created.project_dir / "history.jsonl"
+    committed_history = history_path.read_bytes()
+    candidate = store.load_current(spec.project_id).model_copy(
+        update={"metadata": {"blocked": True}}
+    )
+    monkeypatch.setattr(store_module, "PROJECT_STATE_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(store_module, "PROJECT_STATE_LOCK_POLL_SECONDS", 0.005)
+    lock_path = created.project_dir / "project_state.lock"
+
+    with store_module._project_state_advisory_write_lock(
+        lock_path,
+        project_id=spec.project_id,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        with pytest.raises(ProjectStateBusyError):
+            store.save_revision(
+                spec.project_id,
+                candidate,
+                user_text="blocked",
+                action="metadata",
+                expected_revision=0,
+            )
+
+    assert created.current_path.read_bytes() == committed_current
+    assert history_path.read_bytes() == committed_history
+    assert not (created.project_dir / "revisions" / "r001_model_spec.json").exists()
+
+
+def test_atomic_history_replace_failure_preserves_committed_history_and_current(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path)
+    spec = load_benzene().model_copy(update={"project_id": "atomic_history"})
+    created = store.create_project(spec, user_text="create")
+    history_path = created.project_dir / "history.jsonl"
+    committed_history = history_path.read_bytes()
+    committed_current = created.current_path.read_bytes()
+    candidate = store.load_current(spec.project_id).model_copy(
+        update={"metadata": {"attempted": True}}
+    )
+    real_replace = store_module.os.replace
+
+    def fail_history_replace(source: str | Path, destination: str | Path) -> None:
+        if Path(destination).resolve() == history_path.resolve():
+            raise OSError("simulated history commit interruption")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(store_module.os, "replace", fail_history_replace)
+    with pytest.raises(OSError, match="simulated history commit interruption"):
+        store.save_revision(
+            spec.project_id,
+            candidate,
+            user_text="interrupted",
+            action="metadata",
+            expected_revision=0,
+        )
+
+    assert history_path.read_bytes() == committed_history
+    assert created.current_path.read_bytes() == committed_current
+    assert store.load_current(spec.project_id).revision == 0
+    assert (created.project_dir / "revisions" / "r001_model_spec.json").exists()
+    assert not list(created.project_dir.rglob("*.tmp"))
+
+
+def test_project_state_transaction_reuses_same_project_and_rejects_nested_other(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path)
+    spec = load_benzene().model_copy(update={"project_id": "state_reentrant"})
+    store.create_project(spec, user_text="create")
+    candidate = store.load_current(spec.project_id).model_copy(
+        update={"metadata": {"nested": True}}
+    )
+
+    with store.project_state_transaction(
+        spec.project_id,
+        coverage="outer_test",
+    ) as transaction:
+        committed = store.save_revision(
+            spec.project_id,
+            candidate,
+            user_text="nested",
+            action="metadata",
+            expected_revision=0,
+        )
+        with pytest.raises(RuntimeError, match="different project"):
+            with store.project_state_transaction(
+                "other_project",
+                coverage="must_fail",
+            ):
+                pass
+
+    assert committed.state_write_transaction is transaction
+    assert transaction["nested_call_count"] == 1
+    assert "outer_test" in transaction["coverage"]
+    assert "save_revision" in transaction["coverage"]
 
 
 def test_project_id_path_traversal_rejected(tmp_path: Path) -> None:

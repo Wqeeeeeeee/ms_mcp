@@ -2,6 +2,9 @@
 
 from .diff import diff_specs, summarize_spec_delta
 from .store import (
+    ProjectRevisionAllocationConflictError,
+    ProjectRevisionConflictError,
+    ProjectStateBusyError,
     ProjectStore,
     RevisionInfo,
     atomic_write_text,
@@ -11,6 +14,9 @@ from .store import (
 
 __all__ = [
     "ProjectStore",
+    "ProjectRevisionAllocationConflictError",
+    "ProjectRevisionConflictError",
+    "ProjectStateBusyError",
     "RevisionInfo",
     "atomic_write_text",
     "default_workspace_root",

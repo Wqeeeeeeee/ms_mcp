@@ -111,6 +111,12 @@ separate snippet path supplied above and refuses to overwrite the active
 preserving unrelated config, then restart Codex before calling
 `material_studio_live_session_preflight`.
 
+For resumed projects, the preflight keeps the legacy `next_action_plan` as the
+immediate session-control action and also returns a revision-bound
+`modeling_next_action_plan`. Follow
+`coordinated_next_action_plan.recommended_sequence`; activating or reloading the
+GUI does not satisfy a later modeling action's explicit confirmation gate.
+
 Use the real MCP stdio client to verify initialization, tool discovery, input
 schemas, safety annotations, and preview-only live modeling calls:
 

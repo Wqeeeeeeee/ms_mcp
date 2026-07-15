@@ -520,6 +520,13 @@ Call `material_studio_live_session_preflight` when starting a live @mcp
 session or when runner/GUI/latest-project readiness is uncertain. It returns
 runner status, GUI status, latest current project metadata, readiness flags,
 safe smoke-test prompts, and the next recommended tool.
+For resumed projects, `next_action_plan` is retained as the immediate
+session-control compatibility plan. Read
+`coordinated_next_action_plan.recommended_sequence` for the full order and
+require `latest_project_modeling.binding_verified=true` before using
+`modeling_next_action_plan`. If activation, reload, or GUI preflight is step 1,
+perform it and rerun preflight; that session action does not clear or confirm a
+deferred revision-bound modeling action.
 If `latest_project.current_pointer_recovery_used=true`, continue read-only
 inspection from the returned immutable revision and report the recovery. Do
 not rewrite `current.json` merely to hide the warning; only an explicit

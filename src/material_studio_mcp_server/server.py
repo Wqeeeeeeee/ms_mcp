@@ -6632,6 +6632,12 @@ def _live_session_preflight_payload(
     if include_latest_project:
         latest_project = _latest_project_preflight_summary(store)
     latest_project_target = latest_project if isinstance(latest_project, dict) and latest_project.get("available") else {}
+    latest_project_modeling: dict[str, Any] | None = None
+    if latest_project_target:
+        latest_project_modeling = _latest_project_modeling_preflight_summary(
+            latest_project_target,
+            working_dir=working_dir,
+        )
     gui_status: dict[str, Any] | None = None
     if include_gui_status:
         try:
@@ -6851,6 +6857,7 @@ def _live_session_preflight_payload(
         "runner_status": runner_status,
         "gui_status": gui_status,
         "latest_project": latest_project,
+        "latest_project_modeling": latest_project_modeling,
         "latest_project_gui": latest_project_gui,
         "workspace_context": gui_workspace_context or None,
         "workspace_context_mismatch": gui_workspace_context_mismatch,
@@ -6924,6 +6931,8 @@ def _live_session_preflight_payload(
         ],
     }
     payload["next_action_plan"] = _session_preflight_next_action_plan(payload)
+    payload["session_next_action_plan"] = dict(payload["next_action_plan"])
+    _attach_session_preflight_action_coordination(payload)
     payload["mcp_client_readiness"] = _session_preflight_mcp_client_readiness(payload)
     _promote_session_preflight_visible_followup(payload)
     return payload
@@ -6999,6 +7008,21 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         else {}
     )
     next_action = payload.get("next_action_plan") if isinstance(payload.get("next_action_plan"), dict) else {}
+    coordinated_action = (
+        payload.get("coordinated_next_action_plan")
+        if isinstance(payload.get("coordinated_next_action_plan"), dict)
+        else {}
+    )
+    modeling_action = (
+        payload.get("modeling_next_action_plan")
+        if isinstance(payload.get("modeling_next_action_plan"), dict)
+        else {}
+    )
+    action_tracks = (
+        payload.get("next_action_tracks")
+        if isinstance(payload.get("next_action_tracks"), dict)
+        else {}
+    )
 
     preview_ready = bool(readiness.get("preview_ready") and readiness.get("semiconductor_templates_ready"))
     live_hotload_ready = bool(readiness.get("live_hotload_ready"))
@@ -7169,6 +7193,40 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "needs_user_confirmation": next_action.get("needs_user_confirmation"),
             "safe_to_call_without_confirmation": next_action.get("safe_to_call_without_confirmation"),
             "payload_hint": next_action.get("payload_hint") or {},
+            "coordinated_next_action_status": coordinated_action.get("status"),
+            "coordinated_primary_track": coordinated_action.get("primary_track"),
+            "coordinated_recommended_tool": coordinated_action.get(
+                "recommended_tool"
+            ),
+            "coordinated_recommended_action": coordinated_action.get(
+                "recommended_action"
+            ),
+            "coordinated_needs_user_confirmation": coordinated_action.get(
+                "needs_user_confirmation"
+            ),
+            "coordinated_safe_to_call_without_confirmation": coordinated_action.get(
+                "safe_to_call_without_confirmation"
+            ),
+            "session_control_required_before_modeling": coordinated_action.get(
+                "session_control_required_before_modeling"
+            ),
+            "modeling_action_available": coordinated_action.get(
+                "modeling_action_available"
+            ),
+            "modeling_action_pending": payload.get("modeling_action_pending"),
+            "modeling_action_deferred_until_session_control": coordinated_action.get(
+                "modeling_action_deferred_until_session_control"
+            ),
+            "modeling_next_action_id": modeling_action.get("action_id"),
+            "modeling_next_action_tool": modeling_action.get("recommended_tool"),
+            "modeling_next_action": modeling_action.get("recommended_action"),
+            "modeling_next_action_needs_user_confirmation": modeling_action.get(
+                "needs_user_confirmation"
+            ),
+            "modeling_next_action_safe_to_call_without_confirmation": modeling_action.get(
+                "safe_to_call_without_confirmation"
+            ),
+            "next_action_sequence": action_tracks.get("recommended_sequence") or [],
             "hotload_blocking_reasons": _dedupe_strings(hotload_blocking_reasons),
         }
     )
@@ -7743,6 +7801,434 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
         "blocking_reasons": payload.get("blocking_reasons") or [],
         "review_reasons": payload.get("review_reasons") or [],
     }
+
+
+def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
+    """Return one bounded action plan for session/modeling coordination."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "available",
+            "state",
+            "action_id",
+            "project_id",
+            "revision",
+            "normality",
+            "ready",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint",
+            "blocking_reasons",
+            "review_reasons",
+        ),
+    )
+
+
+def _preflight_action_contract_complete(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(value.get(key), str) and bool(str(value.get(key)).strip())
+        for key in ("action_id", "recommended_tool", "recommended_action")
+    )
+
+
+def _session_preflight_action_track(value: Any) -> str:
+    if not isinstance(value, dict):
+        return "unavailable"
+    recommended_tool = str(value.get("recommended_tool") or "").strip()
+    if not recommended_tool:
+        return "unavailable"
+    if recommended_tool.startswith("material_studio_gui_") or recommended_tool in {
+        "material_studio_live_session_preflight",
+        "material_studio_get_status",
+    }:
+        return "session_control"
+    return "modeling"
+
+
+def _modeling_action_binding_reasons(
+    action_plan: Any,
+    *,
+    project_id: str,
+    revision: int,
+) -> list[str]:
+    if not isinstance(action_plan, dict):
+        return ["action_plan_unavailable"]
+    reasons: list[str] = []
+
+    def check_project(value: Any, source: str) -> None:
+        if value is not None and str(value) != project_id:
+            reasons.append(f"{source}_project_id_mismatch")
+
+    def check_revision(value: Any, source: str) -> None:
+        if value is None:
+            return
+        try:
+            action_revision = int(value)
+        except (TypeError, ValueError):
+            reasons.append(f"{source}_revision_invalid")
+            return
+        if action_revision != revision:
+            reasons.append(f"{source}_revision_mismatch")
+
+    check_project(action_plan.get("project_id"), "action")
+    check_revision(action_plan.get("revision"), "action")
+    payload_hint = (
+        action_plan.get("payload_hint")
+        if isinstance(action_plan.get("payload_hint"), dict)
+        else {}
+    )
+    check_project(payload_hint.get("project_id"), "payload")
+    check_revision(
+        _first_not_none(
+            payload_hint.get("base_revision"),
+            payload_hint.get("revision"),
+        ),
+        "payload",
+    )
+    patch = payload_hint.get("patch") if isinstance(payload_hint.get("patch"), dict) else {}
+    check_project(patch.get("project_id"), "patch")
+    check_revision(patch.get("base_revision"), "patch")
+    return _dedupe_strings(reasons)
+
+
+def _semiconductor_modeling_action_plan(
+    diagnosis: Any,
+    *,
+    project_id: str,
+    revision: int,
+    normality: Any,
+) -> dict[str, Any]:
+    plan = _session_preflight_action_plan_summary(diagnosis)
+    if not _preflight_action_contract_complete(plan):
+        return {}
+    plan["project_id"] = project_id
+    plan["revision"] = revision
+    if "state" not in plan and isinstance(diagnosis, dict):
+        plan["state"] = diagnosis.get("status")
+    if "normality" not in plan:
+        plan["normality"] = normality
+    if "ready" not in plan and isinstance(diagnosis, dict):
+        plan["ready"] = {
+            "next_edit": diagnosis.get("ready_for_next_edit"),
+            "calculation": diagnosis.get("ready_for_calculation"),
+        }
+    return _drop_none_values(plan)
+
+
+def _latest_project_modeling_preflight_summary(
+    latest_project: dict[str, Any],
+    *,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Read the current revision's authoritative modeling action without GUI input."""
+
+    project_id = latest_project.get("project_id")
+    revision = latest_project.get("revision")
+    if not project_id or not isinstance(revision, int):
+        return {
+            "available": False,
+            "status": "latest_project_identity_unavailable",
+            "binding_verified": False,
+        }
+    try:
+        current_status = material_studio_live_project_status(
+            project_id=str(project_id),
+            include_gui_status=False,
+            working_dir=working_dir,
+            response_mode=McpResponseMode.COMPACT,
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "status": "current_project_status_failed",
+            "binding_verified": False,
+            "project_id": project_id,
+            "revision": revision,
+            "error": str(exc),
+        }
+    if not isinstance(current_status, dict) or current_status.get("ok") is not True:
+        return {
+            "available": False,
+            "status": "current_project_status_unavailable",
+            "binding_verified": False,
+            "project_id": project_id,
+            "revision": revision,
+            "error": str((current_status or {}).get("error") or "status_not_ok"),
+        }
+
+    binding_reasons: list[str] = []
+    if current_status.get("project_id") != project_id:
+        binding_reasons.append("project_id_mismatch")
+    if current_status.get("revision") != revision:
+        binding_reasons.append("revision_mismatch")
+    binding_verified = not binding_reasons
+    status_next_action_plan = _session_preflight_action_plan_summary(
+        current_status.get("next_action_plan")
+    )
+    semiconductor_diagnosis = current_status.get(
+        "semiconductor_normality_diagnosis"
+    )
+    if not isinstance(semiconductor_diagnosis, dict):
+        semiconductor_diagnosis = {}
+    semantic_action_plan = _semiconductor_modeling_action_plan(
+        semiconductor_diagnosis,
+        project_id=str(project_id),
+        revision=revision,
+        normality=current_status.get("normality"),
+    )
+    action_candidates: list[tuple[str, dict[str, Any]]] = []
+    if (
+        _preflight_action_contract_complete(status_next_action_plan)
+        and _session_preflight_action_track(status_next_action_plan) == "modeling"
+    ):
+        action_candidates.append(
+            ("material_studio_live_project_status.next_action_plan", status_next_action_plan)
+        )
+    if _preflight_action_contract_complete(semantic_action_plan):
+        action_candidates.append(
+            (
+                "material_studio_live_project_status.semiconductor_normality_diagnosis",
+                semantic_action_plan,
+            )
+        )
+
+    modeling_action_plan: dict[str, Any] = {}
+    modeling_action_source: str | None = None
+    action_binding_reasons: list[str] = []
+    for candidate_source, candidate_plan in action_candidates:
+        candidate_binding_reasons = _modeling_action_binding_reasons(
+            candidate_plan,
+            project_id=str(project_id),
+            revision=revision,
+        )
+        if candidate_binding_reasons:
+            action_binding_reasons.extend(candidate_binding_reasons)
+            continue
+        modeling_action_plan = candidate_plan
+        modeling_action_source = candidate_source
+        break
+    action_binding_reasons = _dedupe_strings(action_binding_reasons)
+    action_available = bool(binding_verified and modeling_action_plan)
+    response_compaction = (
+        current_status.get("response_compaction")
+        if isinstance(current_status.get("response_compaction"), dict)
+        else {}
+    )
+    normality_explanation = current_status.get("normality_explanation")
+    if not isinstance(normality_explanation, dict):
+        normality_explanation = {}
+    normality_context = _drop_none_values(
+        {
+            "status": normality_explanation.get("status"),
+            "summary": normality_explanation.get("summary"),
+            "primary_reason": normality_explanation.get("primary_reason"),
+            "trust_level": normality_explanation.get("trust_level"),
+            "semiconductor_status": semiconductor_diagnosis.get("status"),
+            "semiconductor_summary": semiconductor_diagnosis.get("summary"),
+            "semiconductor_primary_reason": semiconductor_diagnosis.get(
+                "primary_domain_reason"
+            ),
+            "semiconductor_primary_category": semiconductor_diagnosis.get(
+                "primary_domain_category"
+            ),
+            "semiconductor_risk_flags": semiconductor_diagnosis.get("risk_flags")
+            or [],
+        }
+    )
+    status_next_action_summary = _mapping_subset(
+        status_next_action_plan,
+        (
+            "action_id",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+        ),
+    )
+    return _drop_none_values(
+        {
+            "available": binding_verified,
+            "status": (
+                "current_modeling_action_ready"
+                if action_available
+                else "current_modeling_action_binding_mismatch"
+                if binding_verified and action_candidates and action_binding_reasons
+                else "current_project_status_without_complete_action"
+                if binding_verified
+                else "current_project_status_binding_mismatch"
+            ),
+            "read_only": True,
+            "source": "material_studio_live_project_status_compact",
+            "binding_verified": binding_verified,
+            "binding_reasons": binding_reasons,
+            "project_id": project_id,
+            "revision": revision,
+            "normality": current_status.get("normality"),
+            "health_verdict": current_status.get("health_verdict"),
+            "ready_for_next_edit": current_status.get("ready_for_next_edit"),
+            "ready_for_calculation": current_status.get("ready_for_calculation"),
+            "can_claim_model_normal": current_status.get("can_claim_model_normal"),
+            "can_claim_live_gui_normal": current_status.get(
+                "can_claim_live_gui_normal"
+            ),
+            "action_available": action_available,
+            "action_source": modeling_action_source,
+            "action_binding_reasons": action_binding_reasons,
+            "status_next_action_track": _session_preflight_action_track(
+                status_next_action_plan
+            ),
+            "status_next_action": status_next_action_summary if binding_verified else {},
+            "next_action_plan": modeling_action_plan if binding_verified else {},
+            "normality_context": normality_context,
+            "report_json_path": current_status.get("report_json_path"),
+            "view_audit_report_path": current_status.get(
+                "view_audit_report_path"
+            ),
+            "view_bundle_manifest_path": current_status.get(
+                "view_bundle_manifest_path"
+            ),
+            "status_response_bytes": response_compaction.get("response_bytes"),
+            "status_semantic_core_preserved": response_compaction.get(
+                "semantic_core_preserved"
+            ),
+        }
+    )
+
+
+def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> None:
+    """Coordinate immediate session control with the current model's pending action."""
+
+    session_plan = _session_preflight_action_plan_summary(
+        payload.get("session_next_action_plan") or payload.get("next_action_plan")
+    )
+    modeling = (
+        payload.get("latest_project_modeling")
+        if isinstance(payload.get("latest_project_modeling"), dict)
+        else {}
+    )
+    modeling_plan = _session_preflight_action_plan_summary(
+        modeling.get("next_action_plan")
+    )
+    modeling_action_available = bool(
+        modeling.get("action_available") is True
+        and _preflight_action_contract_complete(modeling_plan)
+    )
+    state = str(payload.get("state") or "")
+    session_control_required = state not in {
+        "ready_for_live_edit",
+        "ready_for_new_model",
+    }
+    same_action = bool(
+        modeling_action_available
+        and session_plan.get("action_id") == modeling_plan.get("action_id")
+        and session_plan.get("recommended_tool")
+        == modeling_plan.get("recommended_tool")
+    )
+
+    sequence: list[dict[str, Any]] = []
+
+    def append_step(track: str, plan: dict[str, Any], plan_ref: str) -> None:
+        sequence.append(
+            _drop_none_values(
+                {
+                    "step": len(sequence) + 1,
+                    "track": track,
+                    "plan_ref": plan_ref,
+                    "action_id": plan.get("action_id"),
+                    "recommended_tool": plan.get("recommended_tool"),
+                    "recommended_action": plan.get("recommended_action"),
+                    "needs_user_confirmation": plan.get(
+                        "needs_user_confirmation"
+                    ),
+                    "safe_to_call_without_confirmation": plan.get(
+                        "safe_to_call_without_confirmation"
+                    ),
+                }
+            )
+        )
+
+    if session_control_required or not modeling_action_available:
+        append_step("session_control", session_plan, "session_next_action_plan")
+    if modeling_action_available and not same_action:
+        append_step("modeling", modeling_plan, "modeling_next_action_plan")
+    if not sequence:
+        append_step("modeling", modeling_plan, "modeling_next_action_plan")
+
+    primary_track = str(sequence[0]["track"])
+    primary_plan = session_plan if primary_track == "session_control" else modeling_plan
+    modeling_deferred = bool(
+        session_control_required and modeling_action_available and not same_action
+    )
+    if modeling_deferred:
+        coordination_status = "session_control_then_modeling"
+    elif modeling_action_available:
+        coordination_status = "modeling_action_ready"
+    else:
+        coordination_status = "session_action_only"
+
+    payload["modeling_next_action_plan"] = modeling_plan
+    payload["next_action_tracks"] = {
+        "status": coordination_status,
+        "primary_track": primary_track,
+        "session_control": {
+            "available": _preflight_action_contract_complete(session_plan),
+            "required_before_modeling": session_control_required,
+            "plan_ref": "session_next_action_plan",
+            "action_id": session_plan.get("action_id"),
+            "recommended_tool": session_plan.get("recommended_tool"),
+        },
+        "modeling": {
+            "available": modeling_action_available,
+            "deferred_until_session_control": modeling_deferred,
+            "plan_ref": "modeling_next_action_plan",
+            "action_id": modeling_plan.get("action_id"),
+            "recommended_tool": modeling_plan.get("recommended_tool"),
+            "needs_user_confirmation": modeling_plan.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": modeling_plan.get(
+                "safe_to_call_without_confirmation"
+            ),
+        },
+        "session_action_does_not_clear_modeling_action": modeling_deferred,
+        "recommended_sequence": sequence,
+    }
+    payload["coordinated_next_action_plan"] = _drop_none_values(
+        {
+            "status": coordination_status,
+            "primary_track": primary_track,
+            "action_id": primary_plan.get("action_id"),
+            "recommended_tool": primary_plan.get("recommended_tool"),
+            "recommended_action": primary_plan.get("recommended_action"),
+            "needs_user_confirmation": primary_plan.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": primary_plan.get(
+                "safe_to_call_without_confirmation"
+            ),
+            "payload_hint": primary_plan.get("payload_hint") or {},
+            "session_control_required_before_modeling": session_control_required,
+            "modeling_action_available": modeling_action_available,
+            "modeling_action_deferred_until_session_control": modeling_deferred,
+            "deferred_modeling_action_ref": (
+                "modeling_next_action_plan" if modeling_deferred else None
+            ),
+            "recommended_sequence": sequence,
+        }
+    )
+    payload["modeling_action_pending"] = modeling_action_available
+    payload["modeling_action_deferred_until_session_control"] = modeling_deferred
+    if modeling:
+        modeling.pop("next_action_plan", None)
+        modeling["next_action_plan_ref"] = "modeling_next_action_plan"
+        modeling["next_action_id"] = modeling_plan.get("action_id")
 
 
 def _latest_project_preflight_summary(store: ProjectStore) -> dict[str, Any]:

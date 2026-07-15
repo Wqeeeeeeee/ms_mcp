@@ -397,6 +397,14 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return [window for window in self.windows if window.pid == pid]
 
 
+def _content_sha256_by_relative_path(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
 @pytest.fixture
 def isolated_fake_gui(monkeypatch) -> FakeGuiBackend:
     """Keep preview-only planner tests independent of a real local MS window."""
@@ -9550,6 +9558,224 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     assert activated["snapshot"]["window"]["is_foreground"] is True
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert backend.captured_handles == [101]
+
+
+def test_live_session_preflight_surfaces_current_modeling_action_when_gui_ready(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    monkeypatch.setattr(server, "runner", FakeRunner())
+
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert created["ok"] is True
+    store = store_module.ProjectStore(tmp_path)
+    project_dir = store.project_dir(created["project_id"])
+    files_before = _content_sha256_by_relative_path(project_dir)
+
+    preflight = server.material_studio_live_session_preflight(
+        working_dir=str(tmp_path)
+    )
+
+    assert preflight["ok"] is True
+    assert preflight["state"] == "ready_for_live_edit"
+    assert preflight["next_action_plan"]["action_id"] == (
+        "send_follow_up_live_modeling_request"
+    )
+    assert preflight["session_next_action_plan"] == preflight["next_action_plan"]
+    latest_modeling = preflight["latest_project_modeling"]
+    assert latest_modeling["binding_verified"] is True
+    assert latest_modeling["project_id"] == created["project_id"]
+    assert latest_modeling["revision"] == created["revision"]
+    assert latest_modeling["action_available"] is True
+    assert latest_modeling["next_action_plan_ref"] == "modeling_next_action_plan"
+    assert latest_modeling["next_action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    modeling = preflight["modeling_next_action_plan"]
+    assert modeling["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert modeling["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert modeling["needs_user_confirmation"] is True
+    assert modeling["safe_to_call_without_confirmation"] is False
+    assert modeling["payload_hint"]["base_revision"] == created["revision"]
+    assert modeling["payload_hint"]["patch"]["operations"][0]["kpoints"] == [
+        29,
+        29,
+        1,
+    ]
+    coordinated = preflight["coordinated_next_action_plan"]
+    assert coordinated["status"] == "modeling_action_ready"
+    assert coordinated["primary_track"] == "modeling"
+    assert coordinated["recommended_tool"] == (
+        "material_studio_live_update_with_patch"
+    )
+    assert coordinated["needs_user_confirmation"] is True
+    assert coordinated["session_control_required_before_modeling"] is False
+    assert coordinated["modeling_action_deferred_until_session_control"] is False
+    assert [
+        step["track"] for step in coordinated["recommended_sequence"]
+    ] == ["modeling"]
+    client = preflight["mcp_client_readiness"]
+    assert client["coordinated_primary_track"] == "modeling"
+    assert client["modeling_action_pending"] is True
+    assert client["modeling_action_deferred_until_session_control"] is False
+    assert client["modeling_next_action_needs_user_confirmation"] is True
+    assert server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )["revision"] == created["revision"]
+    assert _content_sha256_by_relative_path(project_dir) == files_before
+
+
+def test_live_session_preflight_sequences_activation_before_pending_modeling_action(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(server, "runner", FakeRunner())
+
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_mos2_preflight\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+    store = store_module.ProjectStore(tmp_path)
+    project_dir = store.project_dir(created["project_id"])
+    files_before = _content_sha256_by_relative_path(project_dir)
+
+    preflight = server.material_studio_live_session_preflight(
+        working_dir=str(tmp_path)
+    )
+
+    assert preflight["state"] == "ready_for_live_edit_gui_activation"
+    session = preflight["session_next_action_plan"]
+    assert session == preflight["next_action_plan"]
+    assert session["action_id"] == "activate_latest_project_window"
+    assert session["recommended_tool"] == "material_studio_gui_activate"
+    assert session["needs_user_confirmation"] is False
+    latest_modeling = preflight["latest_project_modeling"]
+    assert latest_modeling["binding_verified"] is True
+    assert latest_modeling["status_next_action_track"] == "session_control"
+    assert latest_modeling["status_next_action"]["action_id"] == (
+        "verify_single_window_gui_preflight"
+    )
+    assert latest_modeling["action_source"] == (
+        "material_studio_live_project_status.semiconductor_normality_diagnosis"
+    )
+    modeling = preflight["modeling_next_action_plan"]
+    assert modeling["action_id"] == "apply_recommended_semiconductor_kpoint_grid"
+    assert modeling["recommended_tool"] == "material_studio_live_update_with_patch"
+    assert modeling["needs_user_confirmation"] is True
+    assert modeling["payload_hint"]["base_revision"] == created["revision"]
+    coordinated = preflight["coordinated_next_action_plan"]
+    assert coordinated["status"] == "session_control_then_modeling"
+    assert coordinated["primary_track"] == "session_control"
+    assert coordinated["recommended_tool"] == "material_studio_gui_activate"
+    assert coordinated["needs_user_confirmation"] is False
+    assert coordinated["session_control_required_before_modeling"] is True
+    assert coordinated["modeling_action_deferred_until_session_control"] is True
+    assert coordinated["deferred_modeling_action_ref"] == (
+        "modeling_next_action_plan"
+    )
+    sequence = coordinated["recommended_sequence"]
+    assert [step["track"] for step in sequence] == ["session_control", "modeling"]
+    assert sequence[0]["action_id"] == "activate_latest_project_window"
+    assert sequence[0]["needs_user_confirmation"] is False
+    assert sequence[1]["action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert sequence[1]["needs_user_confirmation"] is True
+    tracks = preflight["next_action_tracks"]
+    assert tracks["session_action_does_not_clear_modeling_action"] is True
+    assert tracks["modeling"]["deferred_until_session_control"] is True
+    client = preflight["mcp_client_readiness"]
+    assert client["coordinated_primary_track"] == "session_control"
+    assert client["modeling_action_pending"] is True
+    assert client["modeling_action_deferred_until_session_control"] is True
+    assert client["modeling_next_action_needs_user_confirmation"] is True
+    assert len(
+        json.dumps(
+            preflight,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ) < server.COMPACT_RESPONSE_MAX_BYTES
+    assert server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )["revision"] == created["revision"]
+    assert _content_sha256_by_relative_path(project_dir) == files_before
+    assert backend.activated_handles == []
+
+
+def test_latest_project_modeling_preflight_rejects_revision_binding_mismatch(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "material_studio_live_project_status",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "binding_project",
+            "revision": 3,
+            "next_action_plan": {
+                "action_id": "unsafe_stale_action",
+                "recommended_tool": "material_studio_live_update_with_patch",
+                "recommended_action": "do_not_expose_this_action",
+                "needs_user_confirmation": False,
+                "safe_to_call_without_confirmation": True,
+            },
+        },
+    )
+
+    summary = server._latest_project_modeling_preflight_summary(
+        {"project_id": "binding_project", "revision": 4},
+        working_dir=None,
+    )
+
+    assert summary["available"] is False
+    assert summary["status"] == "current_project_status_binding_mismatch"
+    assert summary["binding_verified"] is False
+    assert summary["binding_reasons"] == ["revision_mismatch"]
+    assert summary["action_available"] is False
+    assert summary["next_action_plan"] == {}
 
 
 def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(monkeypatch, tmp_path: Path) -> None:

@@ -6,6 +6,14 @@ Before a live GUI session, `material_studio_live_session_preflight` can be used
 as the safe first call. It reports runner readiness, GUI window availability,
 latest-project context for follow-up edits, and the recommended next tool
 without executing scripts or changing the open GUI.
+For a resumed project, `next_action_plan` remains the backward-compatible
+immediate session action. Read `coordinated_next_action_plan.recommended_sequence`
+to preserve both tracks: `session_next_action_plan` handles activation, reload,
+or GUI preflight, while `modeling_next_action_plan` carries the current
+revision's structural or calculation remediation. Only use the modeling plan
+when `latest_project_modeling.binding_verified=true`. A completed GUI action
+does not clear a deferred modeling action and does not satisfy its explicit
+confirmation gate; rerun preflight after session control before applying it.
 When it recommends `material_studio_gui_launch`, use that tool only when
 starting a new GUI session is intentional; otherwise activate an already-open
 Materials Studio window first. Explicit hot-load/open paths do not implicitly

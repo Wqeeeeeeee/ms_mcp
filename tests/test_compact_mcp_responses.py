@@ -31,6 +31,12 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         compact["recommended_calculation_settings_requires_explicit_confirmation"]
         is True
     )
+    assert compact[
+        "recommended_calculation_settings_receipt_recovery_field"
+    ] == "recommended_calculation_settings_receipt_recovery"
+    assert compact[
+        "recommended_calculation_settings_receipt_recovery_policy"
+    ]["invalid_receipts_are_not_restored"] is True
     assert compact["domain_focus"]["primary"] == "semiconductor materials"
     assert compact["domain_focus"]["semiconductor_template_count"] >= 50
     assert "silicon_diamond" in compact["domain_focus"]["semiconductor_template_ids"]

@@ -3319,6 +3319,17 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
         ),
         "recommended_calculation_settings_requires_explicit_confirmation": True,
+        "recommended_calculation_settings_receipt_recovery_field": (
+            "recommended_calculation_settings_receipt_recovery"
+        ),
+        "recommended_calculation_settings_receipt_recovery_policy": {
+            "read_only": True,
+            "requires_current_report_binding": True,
+            "requires_current_history_binding": True,
+            "requires_base_current_spec_delta": True,
+            "requires_recomputed_reciprocal_status_ok": True,
+            "invalid_receipts_are_not_restored": True,
+        },
         "live_update_project_id_optional": True,
         "live_update_base_revision_optional": True,
         "live_update_context_resolution_order": ["project_id argument", "patch.project_id", "latest current project"],
@@ -7997,6 +8008,277 @@ def _persisted_view_audit_binding(
     ):
         reasons.append("persisted_views_invalid")
     return not reasons, reasons
+
+
+def _recommended_kpoint_remediation_receipt_recovery(
+    *,
+    report_json_payload: dict[str, Any] | None,
+    persisted_modeling_report: dict[str, Any] | None,
+    latest_history: dict[str, Any] | None,
+    store: ProjectStore,
+    spec: ModelSpec,
+    effective_audit: dict[str, Any],
+    persisted_view_audit_matches_current: bool,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Validate and recover a persisted k-point remediation receipt."""
+
+    report = report_json_payload if isinstance(report_json_payload, dict) else {}
+    modeling_report = (
+        persisted_modeling_report
+        if isinstance(persisted_modeling_report, dict)
+        else {}
+    )
+    sources = [source for source in (report, modeling_report) if source]
+    history_action = (
+        latest_history.get("action") if isinstance(latest_history, dict) else None
+    )
+    history_revision = (
+        latest_history.get("revision") if isinstance(latest_history, dict) else None
+    )
+    history_diff = (
+        latest_history.get("diff") if isinstance(latest_history, dict) else None
+    )
+    allowed_workflows = {
+        "recommended_kpoint_remediation",
+        "apply_recommended_kpoint_grid",
+    }
+    workflow_values = [source.get("workflow") for source in sources]
+    receipt_candidates = [
+        source.get("recommended_calculation_settings_remediation")
+        for source in sources
+        if isinstance(
+            source.get("recommended_calculation_settings_remediation"),
+            dict,
+        )
+    ]
+    intent_candidates = [
+        source.get("remediation_intent")
+        for source in sources
+        if source.get("remediation_intent") is not None
+    ]
+    has_candidate = bool(
+        receipt_candidates
+        or RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID in intent_candidates
+        or history_action == "recommended_kpoint_remediation"
+        or any(value in allowed_workflows for value in workflow_values)
+    )
+    if not has_candidate:
+        return None, {}
+
+    reasons: list[str] = []
+    if report.get("project_id") != spec.project_id:
+        reasons.append("report_project_id_mismatch")
+    if report.get("revision") != spec.revision:
+        reasons.append("report_revision_mismatch")
+    if modeling_report.get("project_id") != spec.project_id:
+        reasons.append("modeling_report_project_id_mismatch")
+    if modeling_report.get("revision") != spec.revision:
+        reasons.append("modeling_report_revision_mismatch")
+    if len(intent_candidates) != len(sources):
+        reasons.append("remediation_intent_missing")
+    if intent_candidates and any(
+        value != RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+        for value in intent_candidates
+    ):
+        reasons.append("remediation_intent_mismatch")
+    if len(receipt_candidates) != len(sources):
+        reasons.append("remediation_receipt_missing_from_report_layer")
+    elif any(candidate != receipt_candidates[0] for candidate in receipt_candidates[1:]):
+        reasons.append("remediation_receipt_layers_mismatch")
+
+    confirmation_required_values = [
+        source.get("confirmation_required")
+        for source in sources
+        if source.get("confirmation_required") is not None
+    ]
+    confirmation_received_values = [
+        source.get("confirmation_received")
+        for source in sources
+        if source.get("confirmation_received") is not None
+    ]
+    if len(confirmation_required_values) != len(sources) or any(
+        value is not True for value in confirmation_required_values
+    ):
+        reasons.append("confirmation_required_not_proven")
+    if len(confirmation_received_values) != len(sources) or any(
+        value is not True for value in confirmation_received_values
+    ):
+        reasons.append("confirmation_received_not_proven")
+
+    if any(value not in allowed_workflows for value in workflow_values):
+        reasons.append("remediation_workflow_mismatch")
+    expected_layer_values = {
+        "structure_unchanged": True,
+        "simulation_settings_changed": True,
+        "diagnostic_reaudit_forced": True,
+        "reciprocal_status": "ok",
+        "remediation_postcondition_met": True,
+    }
+    for key, expected in expected_layer_values.items():
+        values = [source.get(key) for source in sources]
+        if any(value != expected for value in values):
+            reasons.append(f"{key}_report_layers_mismatch")
+
+    receipt = dict(receipt_candidates[0]) if receipt_candidates else {}
+    base_revision = receipt.get("base_revision")
+    if receipt.get("action_id") != RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID:
+        reasons.append("remediation_receipt_action_id_mismatch")
+    if not isinstance(base_revision, int) or isinstance(base_revision, bool):
+        reasons.append("remediation_receipt_base_revision_invalid")
+    elif base_revision < 0 or base_revision >= spec.revision:
+        reasons.append("remediation_receipt_base_revision_out_of_range")
+    if receipt.get("new_revision") != spec.revision:
+        reasons.append("remediation_receipt_new_revision_mismatch")
+    for key in (
+        "revision_created",
+        "structure_unchanged",
+        "simulation_settings_changed",
+        "diagnostic_reaudit_forced",
+        "kpoint_blocker_cleared",
+        "postcondition_met",
+    ):
+        if receipt.get(key) is not True:
+            reasons.append(f"remediation_receipt_{key}_not_proven")
+    if receipt.get("reciprocal_status_after") != "ok":
+        reasons.append("remediation_receipt_reciprocal_status_not_ok")
+    if receipt.get("semiconductor_blocking_reasons_after") not in ([], ()):
+        reasons.append("remediation_receipt_blocking_reasons_not_empty")
+
+    if history_action != "recommended_kpoint_remediation":
+        reasons.append("history_action_mismatch")
+    if history_revision != spec.revision:
+        reasons.append("history_revision_mismatch")
+    if history_diff != ["set_castep_energy"]:
+        reasons.append("history_diff_mismatch")
+
+    base_spec: ModelSpec | None = None
+    base_spec_error: str | None = None
+    if (
+        isinstance(base_revision, int)
+        and not isinstance(base_revision, bool)
+        and 0 <= base_revision < spec.revision
+    ):
+        try:
+            base_spec = store.get_revision(spec.project_id, base_revision)
+        except Exception as exc:
+            base_spec_error = str(exc)
+            reasons.append("base_revision_unavailable")
+    structure_unchanged = bool(
+        base_spec is not None
+        and base_spec.model.model_dump(mode="json")
+        == spec.model.model_dump(mode="json")
+    )
+    simulation_before = (
+        base_spec.simulation.model_dump(mode="json")
+        if base_spec is not None and base_spec.simulation is not None
+        else None
+    )
+    simulation_after = (
+        spec.simulation.model_dump(mode="json")
+        if spec.simulation is not None
+        else None
+    )
+    simulation_settings_changed = bool(
+        base_spec is not None and simulation_before != simulation_after
+    )
+    if not structure_unchanged:
+        reasons.append("structure_delta_not_invariant")
+    if not simulation_settings_changed:
+        reasons.append("simulation_delta_not_proven")
+
+    semiconductor_review = _semiconductor_review_from_audit(effective_audit)
+    kpoint_review = (
+        semiconductor_review.get("kpoints")
+        if isinstance(semiconductor_review.get("kpoints"), dict)
+        else {}
+    )
+    reciprocal_status = kpoint_review.get("status")
+    risk_flags = {
+        str(item)
+        for item in semiconductor_review.get("risk_flags", []) or []
+        if item
+    }
+    kpoint_blocker_cleared = (
+        "kpoint_reciprocal_lattice_warnings" not in risk_flags
+    )
+    postcondition_met = bool(
+        reciprocal_status == "ok" and kpoint_blocker_cleared
+    )
+    if not persisted_view_audit_matches_current:
+        reasons.append("diagnostic_view_audit_binding_invalid")
+    if reciprocal_status != "ok":
+        reasons.append("current_reciprocal_status_not_ok")
+    if not kpoint_blocker_cleared:
+        reasons.append("current_kpoint_blocker_not_cleared")
+
+    reasons = _dedupe_strings(reasons)
+    valid = not reasons
+    recovery = {
+        "status": (
+            "validated_and_restored"
+            if valid
+            else "invalid_persisted_remediation_receipt"
+        ),
+        "valid": valid,
+        "restored": valid,
+        "read_only": True,
+        "source": "current_revision_report_json",
+        "action_id": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+        "project_id": spec.project_id,
+        "revision": spec.revision,
+        "base_revision": base_revision,
+        "report_binding": {
+            "project_id": report.get("project_id"),
+            "revision": report.get("revision"),
+            "modeling_report_project_id": modeling_report.get("project_id"),
+            "modeling_report_revision": modeling_report.get("revision"),
+        },
+        "history_binding": {
+            "action": history_action,
+            "revision": history_revision,
+            "diff": history_diff,
+        },
+        "spec_delta": {
+            "base_revision_available": base_spec is not None,
+            "base_revision_error": base_spec_error,
+            "structure_unchanged": structure_unchanged,
+            "simulation_settings_changed": simulation_settings_changed,
+        },
+        "diagnostic_postcondition": {
+            "persisted_view_audit_matches_current": (
+                persisted_view_audit_matches_current
+            ),
+            "reciprocal_status": reciprocal_status,
+            "kpoint_blocker_cleared": kpoint_blocker_cleared,
+            "postcondition_met": postcondition_met,
+        },
+        "validation_errors": reasons,
+    }
+    if not valid:
+        return recovery, {}
+
+    restored_receipt = {
+        **receipt,
+        "structure_unchanged": structure_unchanged,
+        "simulation_settings_changed": simulation_settings_changed,
+        "reciprocal_status_after": reciprocal_status,
+        "semiconductor_blocking_reasons_after": [],
+        "kpoint_blocker_cleared": kpoint_blocker_cleared,
+        "postcondition_met": postcondition_met,
+        "recovered_from_persisted_report": True,
+    }
+    restored = {
+        "remediation_intent": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+        "confirmation_required": True,
+        "confirmation_received": True,
+        "recommended_calculation_settings_remediation": restored_receipt,
+        "reciprocal_status": reciprocal_status,
+        "remediation_postcondition_met": postcondition_met,
+        "structure_unchanged": structure_unchanged,
+        "simulation_settings_changed": simulation_settings_changed,
+        "diagnostic_reaudit_forced": True,
+    }
+    return recovery, restored
 
 
 def _resolve_gui_reaudit_view_selection(
@@ -17205,6 +17487,9 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "recommended_calculation_settings_remediation": response.get(
             "recommended_calculation_settings_remediation"
         ),
+        "recommended_calculation_settings_receipt_recovery": response.get(
+            "recommended_calculation_settings_receipt_recovery"
+        ),
         "reciprocal_status": response.get("reciprocal_status"),
         "remediation_postcondition_met": response.get(
             "remediation_postcondition_met"
@@ -17456,6 +17741,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "confirmation_received": response.get("confirmation_received"),
         "recommended_calculation_settings_remediation": response.get(
             "recommended_calculation_settings_remediation"
+        ),
+        "recommended_calculation_settings_receipt_recovery": response.get(
+            "recommended_calculation_settings_receipt_recovery"
         ),
         "reciprocal_status": response.get("reciprocal_status"),
         "remediation_postcondition_met": response.get(
@@ -29989,6 +30277,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "reciprocal_status",
             "remediation_postcondition_met",
             "recommended_calculation_settings_remediation",
+            "recommended_calculation_settings_receipt_recovery",
             "view_replay_continuation_requested",
             "view_replay_prepared",
             "view_replay_continuation",
@@ -30134,6 +30423,8 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
             "recommended_calculation_settings_requires_explicit_confirmation",
+            "recommended_calculation_settings_receipt_recovery_field",
+            "recommended_calculation_settings_receipt_recovery_policy",
             "default_execution_mode",
             "response_modes",
             "response_mode",
@@ -30352,6 +30643,7 @@ def _compact_live_response(
             "reciprocal_status",
             "remediation_postcondition_met",
             "recommended_calculation_settings_remediation",
+            "recommended_calculation_settings_receipt_recovery",
             "view_replay_continuation_requested",
             "view_replay_prepared",
             "view_replay_continuation",
@@ -30877,6 +31169,8 @@ def _compact_capabilities_response(
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
             "recommended_calculation_settings_requires_explicit_confirmation",
+            "recommended_calculation_settings_receipt_recovery_field",
+            "recommended_calculation_settings_receipt_recovery_policy",
             "default_execution_mode",
             "response_modes",
             "visual_confirmation_entry",
@@ -32256,6 +32550,24 @@ def material_studio_live_project_status(
             ),
         }
         response["project_resolution"] = project_resolution or response.get("project_resolution")
+        remediation_recovery, restored_remediation = (
+            _recommended_kpoint_remediation_receipt_recovery(
+                report_json_payload=report_json_payload,
+                persisted_modeling_report=persisted_modeling_report,
+                latest_history=latest_history,
+                store=store,
+                spec=spec,
+                effective_audit=effective_audit,
+                persisted_view_audit_matches_current=(
+                    persisted_view_audit_matches_current
+                ),
+            )
+        )
+        if remediation_recovery is not None:
+            response["recommended_calculation_settings_receipt_recovery"] = (
+                remediation_recovery
+            )
+            response.update(restored_remediation)
         _attach_structure_artifact_validation(
             response,
             spec=spec,

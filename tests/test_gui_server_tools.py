@@ -5535,6 +5535,18 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         ]
         is True
     )
+    assert capabilities[
+        "recommended_calculation_settings_receipt_recovery_field"
+    ] == "recommended_calculation_settings_receipt_recovery"
+    recovery_policy = capabilities[
+        "recommended_calculation_settings_receipt_recovery_policy"
+    ]
+    assert recovery_policy["read_only"] is True
+    assert recovery_policy["requires_current_report_binding"] is True
+    assert recovery_policy["requires_current_history_binding"] is True
+    assert recovery_policy["requires_base_current_spec_delta"] is True
+    assert recovery_policy["requires_recomputed_reciprocal_status_ok"] is True
+    assert recovery_policy["invalid_receipts_are_not_restored"] is True
     assert capabilities["live_update_project_id_optional"] is True
     assert capabilities["live_update_base_revision_optional"] is True
     assert capabilities["live_update_context_resolution_order"] == [
@@ -30544,6 +30556,252 @@ def test_recommended_kpoint_confirmation_rejects_stale_or_modified_payload(
         created["project_id"],
         working_dir=str(tmp_path),
     )["revision"] == 0
+
+
+def test_live_status_restores_validated_kpoint_remediation_receipt(
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    project_id = created["project_id"]
+    initial_status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert "recommended_calculation_settings_receipt_recovery" not in initial_status
+    initial_report_path = Path(created["report_json_path"])
+    initial_report_text = initial_report_path.read_text(encoding="utf-8")
+    future_remediation_report = json.loads(initial_report_text)
+    future_remediation_report["remediation_intent"] = "future_non_kpoint_remediation"
+    future_remediation_report["modeling_report"]["remediation_intent"] = (
+        "future_non_kpoint_remediation"
+    )
+    initial_report_path.write_text(
+        json.dumps(future_remediation_report, indent=2),
+        encoding="utf-8",
+    )
+    future_remediation_status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert (
+        "recommended_calculation_settings_receipt_recovery"
+        not in future_remediation_status
+    )
+    initial_report_path.write_text(initial_report_text, encoding="utf-8")
+
+    action = created["modeling_report"]["semiconductor_calculation_readiness"]
+    confirmation = server.material_studio_live_update_with_patch(
+        **action["payload_hint"],
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    applied = server.material_studio_live_update_with_patch(
+        **confirmation["confirmation_payload_hint"],
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    report_path = Path(applied["report_json_path"])
+    report_text_before = report_path.read_text(encoding="utf-8")
+    history_before = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+
+    resumed_full = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    resumed_compact = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    for resumed in (resumed_full, resumed_compact):
+        assert resumed["revision"] == 1
+        assert resumed["remediation_intent"] == (
+            "apply_recommended_semiconductor_kpoint_grid"
+        )
+        assert resumed["confirmation_required"] is True
+        assert resumed["confirmation_received"] is True
+        assert resumed["structure_unchanged"] is True
+        assert resumed["simulation_settings_changed"] is True
+        assert resumed["diagnostic_reaudit_forced"] is True
+        assert resumed["reciprocal_status"] == "ok"
+        assert resumed["remediation_postcondition_met"] is True
+        recovery = resumed[
+            "recommended_calculation_settings_receipt_recovery"
+        ]
+        assert recovery["status"] == "validated_and_restored"
+        assert recovery["valid"] is True
+        assert recovery["restored"] is True
+        assert recovery["read_only"] is True
+        assert recovery["base_revision"] == 0
+        assert recovery["history_binding"] == {
+            "action": "recommended_kpoint_remediation",
+            "revision": 1,
+            "diff": ["set_castep_energy"],
+        }
+        assert recovery["spec_delta"]["structure_unchanged"] is True
+        assert recovery["spec_delta"]["simulation_settings_changed"] is True
+        assert recovery["diagnostic_postcondition"]["reciprocal_status"] == "ok"
+        assert recovery["diagnostic_postcondition"]["postcondition_met"] is True
+        assert recovery["validation_errors"] == []
+        receipt = resumed["recommended_calculation_settings_remediation"]
+        assert receipt["recovered_from_persisted_report"] is True
+        assert receipt["postcondition_met"] is True
+
+    full_report = resumed_full["modeling_report"]
+    assert full_report["confirmation_received"] is True
+    assert full_report[
+        "recommended_calculation_settings_receipt_recovery"
+    ]["status"] == "validated_and_restored"
+    assert len(json.dumps(resumed_compact).encode("utf-8")) < (
+        server.COMPACT_RESPONSE_MAX_BYTES
+    )
+    assert report_path.read_text(encoding="utf-8") == report_text_before
+    history_after = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+    assert history_after == history_before
+    assert [entry["revision"] for entry in history_after] == [0, 1]
+
+
+def test_live_status_rejects_corrupt_kpoint_remediation_receipt(
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    action = created["modeling_report"]["semiconductor_calculation_readiness"]
+    confirmation = server.material_studio_live_update_with_patch(
+        **action["payload_hint"],
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    applied = server.material_studio_live_update_with_patch(
+        **confirmation["confirmation_payload_hint"],
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    project_id = created["project_id"]
+    report_path = Path(applied["report_json_path"])
+    original_report = json.loads(report_path.read_text(encoding="utf-8"))
+
+    layer_mismatch = json.loads(json.dumps(original_report))
+    layer_mismatch["confirmation_received"] = False
+    report_path.write_text(
+        json.dumps(layer_mismatch, indent=2),
+        encoding="utf-8",
+    )
+    layer_mismatch_text = report_path.read_text(encoding="utf-8")
+    rejected_layer = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    layer_recovery = rejected_layer[
+        "recommended_calculation_settings_receipt_recovery"
+    ]
+    assert layer_recovery["status"] == "invalid_persisted_remediation_receipt"
+    assert layer_recovery["valid"] is False
+    assert layer_recovery["restored"] is False
+    assert "confirmation_received_not_proven" in layer_recovery["validation_errors"]
+    assert rejected_layer.get("confirmation_received") is None
+    assert rejected_layer.get("remediation_postcondition_met") is None
+    assert rejected_layer.get("recommended_calculation_settings_remediation") is None
+    assert report_path.read_text(encoding="utf-8") == layer_mismatch_text
+
+    revision_mismatch = json.loads(json.dumps(original_report))
+    revision_mismatch["revision"] = 0
+    revision_mismatch["modeling_report"]["revision"] = 0
+    report_path.write_text(
+        json.dumps(revision_mismatch, indent=2),
+        encoding="utf-8",
+    )
+    revision_mismatch_text = report_path.read_text(encoding="utf-8")
+    rejected_revision = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    revision_recovery = rejected_revision[
+        "recommended_calculation_settings_receipt_recovery"
+    ]
+    assert revision_recovery["status"] == "invalid_persisted_remediation_receipt"
+    assert revision_recovery["valid"] is False
+    assert revision_recovery["restored"] is False
+    assert "report_revision_mismatch" in revision_recovery["validation_errors"]
+    assert "modeling_report_revision_mismatch" in revision_recovery[
+        "validation_errors"
+    ]
+    assert rejected_revision.get("confirmation_received") is None
+    assert rejected_revision.get("remediation_postcondition_met") is None
+    assert report_path.read_text(encoding="utf-8") == revision_mismatch_text
+
+    report_path.write_text(
+        json.dumps(original_report, indent=2),
+        encoding="utf-8",
+    )
+    view_audit_path = Path(applied["view_audit_report_path"])
+    corrupt_view_audit = json.loads(view_audit_path.read_text(encoding="utf-8"))
+    corrupt_view_audit["spec_fingerprint"] = "corrupt-current-revision-binding"
+    view_audit_path.write_text(
+        json.dumps(corrupt_view_audit, indent=2),
+        encoding="utf-8",
+    )
+    corrupt_view_audit_text = view_audit_path.read_text(encoding="utf-8")
+    rejected_audit = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    audit_recovery = rejected_audit[
+        "recommended_calculation_settings_receipt_recovery"
+    ]
+    assert audit_recovery["status"] == "invalid_persisted_remediation_receipt"
+    assert audit_recovery["valid"] is False
+    assert audit_recovery["restored"] is False
+    assert "diagnostic_view_audit_binding_invalid" in audit_recovery[
+        "validation_errors"
+    ]
+    assert rejected_audit.get("confirmation_received") is None
+    assert rejected_audit.get("remediation_postcondition_met") is None
+    assert view_audit_path.read_text(encoding="utf-8") == corrupt_view_audit_text
+    assert server.material_studio_model_get_current(
+        project_id,
+        working_dir=str(tmp_path),
+    )["revision"] == 1
+    assert [
+        entry["revision"]
+        for entry in server.material_studio_project_history(
+            project_id,
+            working_dir=str(tmp_path),
+        )["history"]
+    ] == [0, 1]
 
 
 def test_modeling_report_visual_summary_allows_model_normal_with_clean_view_notes(tmp_path: Path) -> None:

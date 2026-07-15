@@ -702,6 +702,17 @@ rejected and refreshed. Repeating the request after `reciprocal_status=ok`
 returns an idempotent no-op and creates no empty revision. The persisted
 `report.json` records the confirmation receipt, geometry invariant,
 simulation-setting change, diagnostic re-audit, and postcondition result.
+
+After a Codex or MCP restart, `material_studio_live_project_status` recovers
+that receipt only after validating it against the current report envelope and
+embedded modeling report, latest history event, base/current immutable specs,
+current-revision view-audit fingerprint, and freshly recomputed reciprocal
+diagnostics. A successful recovery returns
+`recommended_calculation_settings_receipt_recovery.status=validated_and_restored`
+and restores the historical confirmation plus current `reciprocal_status` and
+postcondition. Corrupt, stale, cross-revision, or diagnostically inconsistent
+receipts return `invalid_persisted_remediation_receipt`; they do not restore
+confirmation claims, create a revision, or rewrite any persisted artifact.
 Band-path preflight summaries are exported as `semiconductor_band_path.csv`
 for supported semiconductor families. Diamond-cubic and zinc-blende starts use
 a conservative fcc path, and wurtzite starts use a conservative hexagonal path.

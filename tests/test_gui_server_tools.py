@@ -276,6 +276,29 @@ def _verified_named_runtime_accessibility_preflight() -> dict:
     }
 
 
+def _complete_crystal_camera_evidence(
+    *,
+    direction_matches: bool = True,
+    native_roll_observed: bool = True,
+    analytic_basis_matches: bool | None = False,
+) -> dict:
+    return {
+        "camera_match_scope": (
+            "crystal_view_direction_with_observed_native_in_plane_roll"
+        ),
+        "view_direction_matches_manifest": direction_matches,
+        "analytic_in_plane_basis_matches_manifest": analytic_basis_matches,
+        "native_in_plane_roll_observed": native_roll_observed,
+    }
+
+
+def _crystal_view_screenshot(workspace: Path, name: str = "crystal_view.bmp") -> str:
+    screenshot = workspace / "screenshots" / name
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(_tiny_bmp())
+    return str(screenshot)
+
+
 def _complete_miller_plane_replay_evidence(structure_path: Path) -> dict:
     artifact_hash = hashlib.sha256(structure_path.read_bytes()).hexdigest()
     return {
@@ -1332,6 +1355,8 @@ def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, 
         view_name="front",
         source="computer_use",
         note="Verified the loaded wrapper and front camera orientation.",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_latest.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
 
@@ -1401,6 +1426,8 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
         view_name="front",
         source="computer_use",
         note="Confirmed compact receipt path.",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_compact.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -1477,6 +1504,7 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
         expected_window_handle=target_window.handle,
         expected_window_title=target_window.title,
         screenshot_path=str(screenshot),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
     assert missing["ok"] is True
@@ -1490,6 +1518,7 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
         expected_window_title=target_window.title,
         screenshot_path=str(screenshot),
         reviewed_copy_script_evidence=_reviewed_copy_script_payload(),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -1620,6 +1649,7 @@ def test_live_view_replay_confirmation_accepts_strict_copy_script_payload(
             "camera_matches_manifest": True,
             "screenshot_path": str(screenshot),
             "reviewed_copy_script_evidence": _reviewed_copy_script_payload(),
+            "crystal_camera_evidence": _complete_crystal_camera_evidence(),
             "expected_revision": created["revision"],
             "expected_window_handle": target_window.handle,
             "expected_window_title": target_window.title,
@@ -1843,6 +1873,32 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "axis_c_projection": "up",
         "view_depth": "+A+B+C",
     }
+    for standard_view_name in (
+        "front",
+        "right",
+        "top",
+        "back",
+        "left",
+        "bottom",
+        "isometric",
+    ):
+        standard_recipe = view_by_name[standard_view_name]["execution_recipe"]
+        assert standard_recipe["recipe_kind"] == (
+            "crystal_standard_view_with_native_in_plane_roll"
+        )
+        assert standard_recipe["schema_version"] == (
+            gui_module.CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
+        )
+        assert standard_recipe["camera_match_contract"]["scope"] == (
+            "crystal_view_direction_with_observed_native_in_plane_roll"
+        )
+        assert standard_recipe["camera_match_contract"][
+            "required_analytic_camera_up_match"
+        ] is False
+        assert standard_recipe["required_record_evidence"][
+            "fresh_workspace_screenshot_required"
+        ] is True
+
     crystal_recipe = view_by_name["crystal_100"]["execution_recipe"]
     assert crystal_recipe["status"] == (
         "documented_crystal_direction_via_miller_plane_view_onto_recipe_unverified"
@@ -1899,11 +1955,17 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         project_id=created["project_id"],
         revision=created["revision"],
         native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
     assert recorded["ok"] is True
     assert recorded["view_replay"]["event"]["execution_recipe"]["automation_ready"] is True
+    assert recorded["view_replay"]["event"]["crystal_camera_evidence_complete"] is True
+    assert recorded["view_replay"]["event"]["crystal_camera_evidence"][
+        "analytic_in_plane_basis_matches_manifest"
+    ] is False
     assert recorded["view_replay"]["replay_continuation"]["status"] == "automatic_recipe_ready"
     assert recorded["view_replay"]["replay_continuation"]["next_pending_view_name"] == "right"
     assert recorded["view_replay"]["replay_continuation"]["next_automation_ready_view_name"] == "right"
@@ -1976,6 +2038,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         reset_before_key_sequence=True,
         rotation_increment_degrees=45,
         modifier_keys=[],
+        screenshot_path=_crystal_view_screenshot(tmp_path, "right_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -1995,6 +2059,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         reset_before_key_sequence=True,
         rotation_increment_degrees=45,
         modifier_keys=[],
+        screenshot_path=_crystal_view_screenshot(tmp_path, "top_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -2011,6 +2077,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         reset_before_key_sequence=True,
         rotation_increment_degrees=45,
         modifier_keys=[],
+        screenshot_path=_crystal_view_screenshot(tmp_path, "back_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -2025,6 +2093,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         reset_before_key_sequence=True,
         rotation_increment_degrees=45,
         modifier_keys=[],
+        screenshot_path=_crystal_view_screenshot(tmp_path, "left_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -2039,6 +2109,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         reset_before_key_sequence=True,
         rotation_increment_degrees=45,
         modifier_keys=[],
+        screenshot_path=_crystal_view_screenshot(tmp_path, "bottom_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -2096,6 +2168,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         movement_screen_factor_control_id="numNudgeFactor",
         movement_screen_factor=2.0,
         movement_dialog_closed=True,
+        screenshot_path=_crystal_view_screenshot(tmp_path, "isometric_standard.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
         response_mode="compact",
     )
@@ -2140,6 +2214,266 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert len(json.dumps(isometric_recorded, ensure_ascii=False).encode("utf-8")) < (
         server.COMPACT_RESPONSE_MAX_BYTES
     )
+
+
+def test_crystal_standard_view_requires_observed_native_roll_and_screenshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+    assert prepared["ok"] is True
+
+    missing = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_missing_camera.bmp"),
+        working_dir=str(tmp_path),
+    )
+    assert missing["accepted"] is False
+    assert "crystal_camera_evidence_missing" in missing["rejection_reasons"]
+
+    wrong_direction = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_wrong_direction.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(
+            direction_matches=False,
+        ),
+        working_dir=str(tmp_path),
+    )
+    assert wrong_direction["accepted"] is False
+    assert "crystal_view_direction_does_not_match_manifest" in wrong_direction[
+        "rejection_reasons"
+    ]
+
+    missing_roll = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_missing_roll.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(
+            native_roll_observed=False,
+        ),
+        working_dir=str(tmp_path),
+    )
+    assert missing_roll["accepted"] is False
+    assert "crystal_native_in_plane_roll_not_observed" in missing_roll[
+        "rejection_reasons"
+    ]
+
+    accepted = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_native_roll.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(
+            analytic_basis_matches=False,
+        ),
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    event = accepted["view_replay"]["event"]
+    assert accepted["view_replay"]["accepted"] is True
+    assert event["crystal_camera_evidence_required"] is True
+    assert event["crystal_camera_evidence_complete"] is True
+    assert event["crystal_camera_screenshot_verified"] is True
+    assert event["crystal_camera_evidence"] == {
+        **_complete_crystal_camera_evidence(analytic_basis_matches=False),
+        "complete": True,
+    }
+
+
+def test_molecule_standard_view_keeps_legacy_camera_acceptance_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build benzene.",
+        working_dir=str(tmp_path),
+    )
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("molecule fixture\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    target_window = WindowInfo(
+        handle=777,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=7777,
+        rect=(0, 0, 1024, 768),
+    )
+    backend.window = target_window
+    backend.windows = [target_window]
+
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+    recipe = prepared["manifest"]["views"][0]["execution_recipe"]
+    assert prepared["manifest"]["model_type"] == "molecule"
+    assert recipe.get("recipe_kind") is None
+    assert recipe["schema_version"] == gui_module.VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+    assert "camera_match_contract" not in recipe
+
+    recorded = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=created["project_id"],
+        revision=created["revision"],
+        native_command_id="cmdViewer3DResetView",
+        working_dir=str(tmp_path),
+    )
+    assert recorded["accepted"] is True
+    assert recorded["event"]["crystal_camera_evidence_required"] is False
+
+
+def test_crystal_view_recipe_migration_preserves_but_reverifies_old_event(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+    accepted = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_pre_migration.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
+        working_dir=str(tmp_path),
+    )
+    assert accepted["accepted"] is True
+
+    manifest_path = Path(prepared["manifest_path"])
+    events_path = manifest_path.with_name("gui_view_replay_events.jsonl")
+    stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stale_view = stale_manifest["views"][0]
+    stale_recipe = stale_view["execution_recipe"]
+    stale_recipe["schema_version"] = gui_module.VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+    stale_recipe.pop("recipe_kind", None)
+    stale_recipe.pop("camera_match_contract", None)
+    stale_recipe.pop("required_record_evidence", None)
+    stale_event = stale_manifest["replay_events"][0]
+    stale_event["execution_recipe"] = json.loads(json.dumps(stale_recipe))
+    for key in (
+        "crystal_camera_evidence_required",
+        "crystal_camera_evidence_complete",
+        "crystal_camera_screenshot_verified",
+        "crystal_camera_evidence",
+    ):
+        stale_event.pop(key, None)
+    stale_event["event_record_sha256"] = gui_module._view_replay_event_record_sha256(
+        stale_event
+    )
+    manifest_path.write_text(
+        json.dumps(stale_manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    events_path.write_text(
+        json.dumps(stale_event, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    migrated = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    replay = migrated
+    assert replay["recipe_migration"]["performed"] is True
+    assert replay["recipe_migration"]["preserved_replay_event_count"] == 1
+    replay_summary = replay["manifest"]["replay_summary"]
+    assert replay_summary["raw_accepted_event_count"] == 1
+    assert replay_summary["accepted_view_count"] == 0
+    assert replay_summary[
+        "current_camera_evidence_reverification_view_names"
+    ] == ["front"]
+    assert replay["recipe_contract"][
+        "current_evidence_reverification_view_names"
+    ] == ["front"]
+    assert replay["recipe_contract"]["view_contracts"][0][
+        "current_evidence_reverification_required"
+    ] is True
+    assert replay["replay_continuation"][
+        "current_camera_evidence_reverification_required"
+    ] is True
+
+    compact_status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    compact_replay = compact_status["gui_view_replay"]
+    assert compact_replay["replay_summary"][
+        "current_camera_evidence_reverification_view_names"
+    ] == ["front"]
+    assert compact_replay["recipe_contract"][
+        "current_evidence_reverification_view_names"
+    ] == ["front"]
+    assert compact_replay["replay_continuation"][
+        "current_camera_evidence_reverification_required"
+    ] is True
+
+    refreshed = server.material_studio_gui_record_view_replay(
+        view_name="front",
+        project_id=project_id,
+        revision=revision,
+        native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_post_migration.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
+        working_dir=str(tmp_path),
+    )
+    assert refreshed["accepted"] is True
+    assert refreshed["replay_summary"]["accepted_view_names"] == ["front"]
+    assert refreshed["replay_summary"][
+        "current_camera_evidence_reverification_view_names"
+    ] == []
 
 
 def test_gui_view_replay_runtime_accessibility_gate_blocks_unnamed_controls(
@@ -2503,6 +2837,11 @@ def test_gui_view_replay_maps_verified_anonymous_toolbar_children_and_audits_use
         expected_window_title=backend.window.title,
         native_command_id="cmdViewer3DResetView",
         accessibility_command_uses=command_uses,
+        screenshot_path=_crystal_view_screenshot(
+            tmp_path,
+            "front_anonymous_toolbar.bmp",
+        ),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
     assert recorded["ok"] is True
@@ -2581,6 +2920,9 @@ def test_gui_view_replay_suppresses_failed_verified_reset_recipe_and_dependents(
         expected_window_title=backend.window.title,
         native_command_id="cmdViewer3DResetView",
         accessibility_command_uses=command_uses,
+        crystal_camera_evidence=_complete_crystal_camera_evidence(
+            direction_matches=False,
+        ),
         working_dir=str(tmp_path),
     )
 
@@ -2667,9 +3009,13 @@ def test_gui_view_replay_suppresses_failed_verified_reset_recipe_and_dependents(
                 "post_review_record_payload_template"
             ]["accessibility_command_uses"]
         ),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
-    assert unbacked_success["accepted"] is True
+    assert unbacked_success["accepted"] is False
+    assert "crystal_camera_screenshot_missing" in unbacked_success[
+        "rejection_reasons"
+    ]
     assert unbacked_success["event"]["evidence_integrity"]["status"] == (
         "not_required"
     )
@@ -2703,6 +3049,7 @@ def test_gui_view_replay_suppresses_failed_verified_reset_recipe_and_dependents(
         expected_window_title=backend.window.title,
         native_command_id="cmdViewer3DResetView",
         accessibility_command_uses=command_uses,
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
     assert trusted_success["accepted"] is True
@@ -4506,6 +4853,8 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         revision=revision,
         source="computer_use",
         native_command_id="cmdViewer3DResetView",
+        screenshot_path=_crystal_view_screenshot(tmp_path, "front_migration.bmp"),
+        crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
     )
     assert front["ok"] is True
@@ -4587,7 +4936,10 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         view for view in migrated_manifest["views"] if view["view_name"] == "right"
     )
     assert migrated_right["execution_recipe"]["schema_version"] == (
-        gui_module.VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+        gui_module.CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
+    )
+    assert migrated_right["execution_recipe"]["recipe_kind"] == (
+        "crystal_standard_view_with_native_in_plane_roll"
     )
     assert [event["event_id"] for event in migrated_manifest["replay_events"]] == [
         accepted_event_id
@@ -28479,6 +28831,11 @@ def test_live_entry_records_only_window_bound_view_replay_confirmation(monkeypat
             "model_visible": True,
             "camera_matches_manifest": True,
             "note": "Reset View shows the unit cell and atomic sites in the prepared front projection.",
+            "screenshot_path": _crystal_view_screenshot(
+                tmp_path,
+                "front_live_confirmation.bmp",
+            ),
+            "crystal_camera_evidence": _complete_crystal_camera_evidence(),
             "expected_revision": revision,
             "expected_window_handle": window_handle,
             "expected_window_title": window_title,
@@ -28555,6 +28912,54 @@ def test_live_view_replay_confirmation_payload_forbids_extra_fields(tmp_path: Pa
     assert result["errors"][0]["type"] == "extra_forbidden"
 
 
+def test_crystal_camera_evidence_schema_preserves_required_null_and_forbids_extra(
+    tmp_path: Path,
+) -> None:
+    evidence = _complete_crystal_camera_evidence(analytic_basis_matches=None)
+    validated = server.GuiCrystalCameraEvidenceInput.model_validate(evidence)
+    assert server._dump_crystal_camera_evidence(validated) == evidence
+
+    missing_nullable = dict(evidence)
+    missing_nullable.pop("analytic_in_plane_basis_matches_manifest")
+    missing_result = server.material_studio_live_modeling_request(
+        "Record crystal camera evidence.",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        view_replay_confirmation={
+            "view_name": "front",
+            "source": "computer_use",
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "expected_revision": 0,
+            "expected_window_handle": 101,
+            "expected_window_title": "project - Materials Studio",
+            "crystal_camera_evidence": missing_nullable,
+        },
+    )
+    assert missing_result["status"] == "invalid_view_replay_confirmation_payload"
+    assert missing_result["errors"][0]["type"] == "missing"
+
+    extra_evidence = dict(evidence)
+    extra_evidence["assumed_roll"] = True
+    extra_result = server.material_studio_live_modeling_request(
+        "Record crystal camera evidence.",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+        view_replay_confirmation={
+            "view_name": "front",
+            "source": "computer_use",
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "expected_revision": 0,
+            "expected_window_handle": 101,
+            "expected_window_title": "project - Materials Studio",
+            "crystal_camera_evidence": extra_evidence,
+        },
+    )
+    assert extra_result["status"] == "invalid_view_replay_confirmation_payload"
+    assert extra_result["errors"][0]["type"] == "extra_forbidden"
+
+
 def test_live_entry_persists_documented_keyboard_view_replay_evidence(
     monkeypatch,
     tmp_path: Path,
@@ -28591,6 +28996,11 @@ def test_live_entry_persists_documented_keyboard_view_replay_evidence(
             "model_visible": True,
             "camera_matches_manifest": True,
             "note": "Reset, Up, Up, Left, Left; B right, C up, A depth.",
+            "screenshot_path": _crystal_view_screenshot(
+                tmp_path,
+                "right_live_confirmation.bmp",
+            ),
+            "crystal_camera_evidence": _complete_crystal_camera_evidence(),
             "expected_revision": revision,
             "expected_window_handle": window_management["target_window_handle"],
             "expected_window_title": window_management["target_window_title"],
@@ -28664,6 +29074,11 @@ def test_live_entry_persists_staged_isometric_replay_and_restore_evidence(
             "model_visible": True,
             "camera_matches_manifest": True,
             "note": "A left-down, B right-down, C up; Movement settings restored.",
+            "screenshot_path": _crystal_view_screenshot(
+                tmp_path,
+                "isometric_live_confirmation.bmp",
+            ),
+            "crystal_camera_evidence": _complete_crystal_camera_evidence(),
             "expected_revision": revision,
             "expected_window_handle": window_management["target_window_handle"],
             "expected_window_title": window_management["target_window_title"],

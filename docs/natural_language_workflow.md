@@ -387,6 +387,16 @@ source of truth for each exact sequence and signed axis layout. Keyboard
 events must persist `modifier_keys=[]`; Shift+arrow is a structure-editing
 operation and is never a camera replay action.
 
+For crystal standard views, do not compare the screenshot against the audit's
+analytic in-plane basis as an exact equality test. Confirm the requested view
+direction, observe the Materials Studio native in-plane roll, capture a fresh
+workspace screenshot, and submit `crystal_camera_evidence`. Both
+`view_direction_matches_manifest` and `native_in_plane_roll_observed` must be
+true; `analytic_in_plane_basis_matches_manifest` is required but may be false or
+null. After a recipe-schema upgrade, an old accepted event stays in history but
+the view remains pending while
+`current_camera_evidence_reverification_view_names` contains it.
+
 When the next automatic view is `crystal_plane_*`, the recipe instead uses a
 temporary Miller Plane, a verified semantic selection profile, Properties
 Explorer verification, and the named View Onto command. Object Tree before/after

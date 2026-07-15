@@ -514,6 +514,33 @@ class GuiViewReplayKeyboardStageInput(BaseModel):
     )
 
 
+class GuiCrystalCameraEvidenceInput(BaseModel):
+    """Observed crystal view direction and Materials Studio native-roll evidence."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    camera_match_scope: str = Field(
+        ...,
+        pattern=r"^crystal_view_direction_with_observed_native_in_plane_roll$",
+    )
+    view_direction_matches_manifest: bool
+    analytic_in_plane_basis_matches_manifest: bool | None
+    native_in_plane_roll_observed: bool
+
+
+def _dump_crystal_camera_evidence(
+    evidence: GuiCrystalCameraEvidenceInput | dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize crystal camera evidence without dropping its nullable basis field."""
+
+    validated = GuiCrystalCameraEvidenceInput.model_validate(evidence)
+    payload = validated.model_dump(mode="json", exclude_none=True)
+    payload["analytic_in_plane_basis_matches_manifest"] = (
+        validated.analytic_in_plane_basis_matches_manifest
+    )
+    return payload
+
+
 class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     """Observed transient Miller-plane selection, View Onto, and cleanup evidence."""
 
@@ -735,6 +762,13 @@ class GuiViewReplayConfirmationInput(BaseModel):
     movement_dialog_closed: bool | None = Field(
         default=None,
         description="Whether the Movement dialog was closed after restoring settings.",
+    )
+    crystal_camera_evidence: GuiCrystalCameraEvidenceInput | None = Field(
+        default=None,
+        description=(
+            "Observed standard crystal view direction and Materials Studio native "
+            "in-plane roll; exact analytic camera-up/right equality is not required."
+        ),
     )
     miller_plane_evidence: GuiMillerPlaneReplayEvidenceInput | None = Field(
         default=None,
@@ -3331,8 +3365,17 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "movement_screen_factor",
                 "movement_dialog_closed",
                 "accessibility_command_uses",
+                "crystal_camera_evidence",
                 "miller_plane_evidence",
             ],
+            "crystal_camera_evidence_required_for": (
+                "front/back/right/left/top/bottom/isometric crystal recipes"
+            ),
+            "crystal_camera_match_scope": (
+                "crystal_view_direction_with_observed_native_in_plane_roll"
+            ),
+            "crystal_camera_requires_fresh_workspace_screenshot": True,
+            "crystal_camera_requires_exact_analytic_in_plane_basis": False,
             "miller_plane_evidence_required_for": (
                 "crystal_plane_* and crystal_* recipes with an exact collinear Miller-plane mapping"
             ),
@@ -3431,6 +3474,17 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "documented_keyboard_rotation_increment_degrees": 45,
             "documented_keyboard_modifier_keys": [],
             "shift_arrow_keys_allowed": False,
+            "crystal_standard_view_camera_contract": {
+                "scope": (
+                    "crystal_view_direction_with_observed_native_in_plane_roll"
+                ),
+                "requires_view_direction_match": True,
+                "requires_native_in_plane_roll_observation": True,
+                "requires_exact_analytic_camera_up_or_right_match": False,
+                "requires_fresh_workspace_screenshot": True,
+                "record_evidence_field": "crystal_camera_evidence",
+                "old_recipe_events_require_fresh_reverification": True,
+            },
             "remaining_standard_views_require_reviewed_camera_backend": False,
             "crystallographic_plane_views_use_documented_miller_plane_recipe": True,
             "crystallographic_plane_views_require_current_bound_runtime_ui_preflight": True,
@@ -6307,6 +6361,17 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "documented_keyboard_rotation_increment_degrees": 45,
                 "documented_keyboard_modifier_keys": [],
                 "shift_arrow_keys_allowed": False,
+                "crystal_standard_view_camera_contract": {
+                    "scope": (
+                        "crystal_view_direction_with_observed_native_in_plane_roll"
+                    ),
+                    "requires_view_direction_match": True,
+                    "requires_native_in_plane_roll_observation": True,
+                    "requires_exact_analytic_camera_up_or_right_match": False,
+                    "requires_fresh_workspace_screenshot": True,
+                    "record_evidence_field": "crystal_camera_evidence",
+                    "old_recipe_events_require_fresh_reverification": True,
+                },
                 "keyboard_sequence_evidence_fields": [
                     "key_sequence",
                     "reset_before_key_sequence",
@@ -6319,6 +6384,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "movement_screen_factor_control_id",
                     "movement_screen_factor",
                     "movement_dialog_closed",
+                    "crystal_camera_evidence",
                 ],
                 "crystallographic_plane_recipe": {
                     "view_name_pattern": "crystal_plane_*",
@@ -28430,6 +28496,10 @@ def _compact_view_replay_event(value: Any) -> dict[str, Any]:
             "movement_screen_factor_control_id",
             "movement_screen_factor",
             "movement_dialog_closed",
+            "crystal_camera_evidence_required",
+            "crystal_camera_evidence_complete",
+            "crystal_camera_screenshot_verified",
+            "crystal_camera_evidence",
             "miller_plane_evidence_required",
             "direction_via_miller_plane_recipe",
             "miller_plane_evidence_complete",
@@ -28483,6 +28553,8 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
             "trust_blocked_view_names",
             "pending_view_count",
             "pending_view_names",
+            "current_camera_evidence_reverification_view_count",
+            "current_camera_evidence_reverification_view_names",
             "automation_ready_pending_view_count",
             "automation_ready_pending_view_names",
             "review_required_pending_view_count",
@@ -28509,6 +28581,7 @@ def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
             "outdated_view_names",
             "pending_upgrade_view_names",
             "accepted_historical_view_names",
+            "current_evidence_reverification_view_names",
             "reasons",
         ),
     )
@@ -28518,6 +28591,8 @@ def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
             (
                 "view_name",
                 "accepted",
+                "historically_accepted",
+                "current_evidence_reverification_required",
                 "status",
                 "current",
                 "recording_allowed",
@@ -28531,7 +28606,11 @@ def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
             ),
         )
         for item in value.get("view_contracts") or []
-        if isinstance(item, dict) and item.get("current") is not True
+        if isinstance(item, dict)
+        and (
+            item.get("current") is not True
+            or item.get("current_evidence_reverification_required") is True
+        )
     ]
     if view_contracts:
         compact["view_contracts"] = view_contracts
@@ -28554,6 +28633,8 @@ def _compact_view_replay_continuation(value: Any) -> dict[str, Any]:
             "recommended_executor",
             "automatic_replay_ready",
             "recipe_upgrade_required",
+            "current_camera_evidence_reverification_required",
+            "current_camera_evidence_reverification_view_names",
             "evidence_integrity_reverification_required",
             "integrity_blocked_view_names",
             "event_journal_reverification_required",
@@ -32970,6 +33051,14 @@ def material_studio_live_modeling_request(
                                 "movement_screen_factor_control_id": "numNudgeFactor",
                                 "movement_screen_factor": 2.0,
                                 "movement_dialog_closed": True,
+                                "crystal_camera_evidence": {
+                                    "camera_match_scope": (
+                                        "crystal_view_direction_with_observed_native_in_plane_roll"
+                                    ),
+                                    "view_direction_matches_manifest": True,
+                                    "analytic_in_plane_basis_matches_manifest": None,
+                                    "native_in_plane_roll_observed": True,
+                                },
                                 "miller_plane_evidence": (
                                     "required structured selection, native-roll, hash, and cleanup "
                                     "evidence for crystal_plane_* recipes"
@@ -33058,6 +33147,13 @@ def material_studio_live_modeling_request(
                         mode="json"
                     )
                     if replay_evidence.reviewed_copy_script_evidence is not None
+                    else None
+                ),
+                crystal_camera_evidence=(
+                    _dump_crystal_camera_evidence(
+                        replay_evidence.crystal_camera_evidence
+                    )
+                    if replay_evidence.crystal_camera_evidence is not None
                     else None
                 ),
                 miller_plane_evidence=(
@@ -35603,6 +35699,7 @@ def material_studio_gui_record_view_replay(
     movement_screen_factor_control_id: Annotated[str | None, Field(description="Accessibility ID of the Movement screen-factor control.", min_length=1, max_length=120)] = None,
     movement_screen_factor: Annotated[float | None, Field(description="Observed Movement screen factor after replay.", gt=0, le=100)] = None,
     movement_dialog_closed: Annotated[bool | None, Field(description="Whether the Movement dialog was closed after restoring settings.")] = None,
+    crystal_camera_evidence: Annotated[GuiCrystalCameraEvidenceInput | None, Field(description="Observed standard crystal view direction and Materials Studio native in-plane roll; exact analytic camera-up/right equality is optional.")] = None,
     miller_plane_evidence: Annotated[GuiMillerPlaneReplayEvidenceInput | None, Field(description="Exact transient Miller-plane selection, native View Onto, hash, and cleanup evidence.")] = None,
     evidence_request: Annotated[str | None, Field(description="Optional natural-language request whose explicit diagnostic intent should be merged into the persisted evidence audit.", min_length=1, max_length=5000)] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
@@ -35701,6 +35798,11 @@ def material_studio_gui_record_view_replay(
             movement_screen_factor_control_id=movement_screen_factor_control_id,
             movement_screen_factor=movement_screen_factor,
             movement_dialog_closed=movement_dialog_closed,
+            crystal_camera_evidence=(
+                _dump_crystal_camera_evidence(crystal_camera_evidence)
+                if crystal_camera_evidence is not None
+                else None
+            ),
             miller_plane_evidence=(
                 _dump_miller_plane_replay_evidence(miller_plane_evidence)
                 if miller_plane_evidence is not None
@@ -35752,6 +35854,13 @@ def material_studio_gui_record_view_replay(
             "movement_screen_factor": event.get("movement_screen_factor"),
             "movement_dialog_closed": event.get("movement_dialog_closed"),
             "keyboard_evidence_status": event.get("keyboard_evidence_status"),
+            "crystal_camera_evidence": event.get("crystal_camera_evidence"),
+            "crystal_camera_evidence_complete": event.get(
+                "crystal_camera_evidence_complete"
+            ),
+            "crystal_camera_screenshot_verified": event.get(
+                "crystal_camera_screenshot_verified"
+            ),
             "miller_plane_evidence": event.get("miller_plane_evidence"),
             "miller_plane_evidence_complete": event.get("miller_plane_evidence_complete"),
             "accepted": replay.get("accepted") is True,
@@ -35819,6 +35928,13 @@ def material_studio_gui_record_view_replay(
                 "evidence_integrity": event.get("evidence_integrity"),
                 "event_record_sha256": event.get("event_record_sha256"),
                 "journal_consistency": event.get("journal_consistency"),
+                "crystal_camera_evidence": event.get("crystal_camera_evidence"),
+                "crystal_camera_evidence_complete": event.get(
+                    "crystal_camera_evidence_complete"
+                ),
+                "crystal_camera_screenshot_verified": event.get(
+                    "crystal_camera_screenshot_verified"
+                ),
                 "miller_plane_evidence": event.get("miller_plane_evidence"),
                 "miller_plane_evidence_complete": event.get("miller_plane_evidence_complete"),
             }

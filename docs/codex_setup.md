@@ -113,6 +113,13 @@ can persist strict replay evidence without requiring the direct replay tool:
     "source": "computer_use",
     "model_visible": true,
     "camera_matches_manifest": true,
+    "screenshot_path": "C:\\path\\inside\\workspace\\front.bmp",
+    "crystal_camera_evidence": {
+      "camera_match_scope": "crystal_view_direction_with_observed_native_in_plane_roll",
+      "view_direction_matches_manifest": true,
+      "analytic_in_plane_basis_matches_manifest": false,
+      "native_in_plane_roll_observed": true
+    },
     "expected_revision": 1,
     "expected_window_handle": 12345,
     "expected_window_title": "msmcp_r001_xxxxxxxxxx - Materials Studio",
@@ -130,6 +137,11 @@ returned by `replay_continuation.payload_hint`, plus
 `modifier_keys: []`. Supplied keyboard
 evidence must exactly match the manifest recipe; Shift is rejected before an
 event is written.
+For crystal standard views, the screenshot and `crystal_camera_evidence` are
+required. Observe the direction and Materials Studio native in-plane roll;
+exact analytic `camera_up`/`camera_right` equality is not required, so
+`analytic_in_plane_basis_matches_manifest` may be `false` or `null`. Molecule
+standard views do not require this crystal-only nested object.
 For isometric, use the returned `keyboard_stages`: Reset, then `45 degrees: Up
 x2, Left x3`, followed by `35.26438968 degrees: Down x1`. Also submit
 `rotation_increment_restored_degrees: 45`, the returned Movement command and
@@ -213,6 +225,12 @@ When the reviewed Copy Script fallback is used, submit it only as inert evidence
   "model_visible": true,
   "camera_matches_manifest": true,
   "screenshot_path": "C:\\path\\inside\\workspace\\front.bmp",
+  "crystal_camera_evidence": {
+    "camera_match_scope": "crystal_view_direction_with_observed_native_in_plane_roll",
+    "view_direction_matches_manifest": true,
+    "analytic_in_plane_basis_matches_manifest": null,
+    "native_in_plane_roll_observed": true
+  },
   "expected_window_handle": 12345,
   "expected_window_title": "msmcp_r001_xxxxxxxxxx - Materials Studio",
   "reviewed_copy_script_evidence": {
@@ -243,6 +261,11 @@ Also inspect `gui_view_replay.event_journal.consistency_status` and
 append-only JSONL journal before manifest publication and are trusted only when
 the immutable event digests match. Do not copy a manifest event into the journal
 or vice versa to clear a mismatch; collect and record a fresh observed view.
+Also inspect `recipe_contract.current_evidence_reverification_view_names` and
+`replay_summary.current_camera_evidence_reverification_view_names`. A crystal
+event from an older recipe schema remains in append-only history but cannot
+authorize the current view until fresh screenshot/native-roll evidence is
+recorded.
 Prepare and record calls for one project/revision are serialized by a bounded
 kernel lock. A `view replay write transaction is busy` error means another write
 is active; retry the same observed payload after it completes, without deleting

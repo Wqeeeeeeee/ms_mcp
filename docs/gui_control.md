@@ -318,6 +318,19 @@ degrees: Up x2, Left x3`, then `35.26438968 degrees: Down`.
 It must show A left-down, B right-down, C up, restore Angle to 45 degrees,
 preserve Screen factor 2.0, and close Movement.
 
+For a crystal model, every standard face or isometric recipe also carries the
+`crystal_standard_view_with_native_in_plane_roll` camera contract. Acceptance
+requires a fresh workspace screenshot plus strict `crystal_camera_evidence`:
+`view_direction_matches_manifest=true`,
+`native_in_plane_roll_observed=true`, and the required nullable
+`analytic_in_plane_basis_matches_manifest`. The last field may be `false` or
+`null`, because Reset View and unmodified arrow rotation establish Materials
+Studio's native in-plane roll rather than the audit's exact analytic
+`camera_up`/`camera_right` basis. `camera_matches_manifest=true` therefore means
+the requested direction and native-roll contract were observed. Molecule
+standard views retain the prior camera contract and do not require this nested
+crystal evidence.
+
 The observation is submitted through `runtime_accessibility_evidence` and is
 persisted as `gui_view_replay_accessibility_preflight.json`. Static registry or
 help files never substitute for that live binding. For unnamed toolbar
@@ -404,9 +417,14 @@ Persisted replay recipes are versioned safety contracts. Read
 `pending_recipe_upgrade_required`, the continuation status is
 `recipe_upgrade_required` and new replay evidence is rejected. Call the
 high-level `continue_view_replay` workflow to regenerate the manifest with the
-current recipe schemas. The migration preserves accepted events and does not
-create a model revision or change the structure. Compact MCP responses include
-the Miller dialog correction timing contract required for execution.
+current recipe schemas. The migration preserves replay events and does not
+create a model revision or change the structure. An older crystal standard-view
+event may remain historically `accepted=true`, but it is excluded from current
+`accepted_view_names` until a fresh screenshot and current
+`crystal_camera_evidence` are recorded. Compact status exposes this gate through
+`current_camera_evidence_reverification_view_names` in the replay summary and
+recipe contract. Compact MCP responses also include the Miller dialog correction
+timing contract required for execution.
 Persist the observed text, the
 `fresh_modeless_child_accessibility_value` source, and the verification result in
 `miller_plane_evidence`. If an unexpected

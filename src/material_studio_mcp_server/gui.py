@@ -39,6 +39,7 @@ class GuiError(RuntimeError):
 VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 5
 VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 4
 VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
+CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION = 5
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 7
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
@@ -287,6 +288,16 @@ MILLER_PLANE_CAMERA_MATCH_SCOPE = "crystal_plane_normal_with_native_in_plane_rol
 MILLER_DIRECTION_CAMERA_MATCH_SCOPE = (
     "crystal_lattice_direction_via_collinear_plane_normal_with_native_in_plane_roll"
 )
+CRYSTAL_STANDARD_VIEW_RECIPE_KIND = "crystal_standard_view_with_native_in_plane_roll"
+CRYSTAL_STANDARD_VIEW_CAMERA_MATCH_SCOPE = (
+    "crystal_view_direction_with_observed_native_in_plane_roll"
+)
+CRYSTAL_STANDARD_VIEW_CAMERA_EVIDENCE_FIELDS = {
+    "camera_match_scope",
+    "view_direction_matches_manifest",
+    "analytic_in_plane_basis_matches_manifest",
+    "native_in_plane_roll_observed",
+}
 MILLER_VIEW_ONTO_RECIPE_KINDS = {
     "miller_plane_view_onto",
     "crystal_direction_via_collinear_miller_plane_view_onto",
@@ -1610,6 +1621,74 @@ def _miller_plane_label(indices: list[int]) -> str:
     """Return the compact Miller label used by the Properties Explorer."""
 
     return "(" + "".join(str(value) for value in indices) + ")"
+
+
+def _normalize_crystal_standard_view_camera_evidence(
+    evidence: dict[str, Any],
+    *,
+    expected_camera_match_scope: str,
+) -> dict[str, Any]:
+    """Validate observed camera direction and native-roll evidence for a crystal view."""
+
+    if not isinstance(evidence, dict):
+        raise GuiError("crystal_camera_evidence must be a JSON object")
+    extra_fields = sorted(
+        set(evidence) - CRYSTAL_STANDARD_VIEW_CAMERA_EVIDENCE_FIELDS
+    )
+    if extra_fields:
+        raise GuiError(
+            "crystal_camera_evidence contains unsupported fields: "
+            + ", ".join(extra_fields)
+        )
+    missing_fields = sorted(
+        CRYSTAL_STANDARD_VIEW_CAMERA_EVIDENCE_FIELDS - set(evidence)
+    )
+    if missing_fields:
+        raise GuiError(
+            "crystal_camera_evidence is missing required fields: "
+            + ", ".join(missing_fields)
+        )
+
+    camera_match_scope = str(evidence["camera_match_scope"]).strip()
+    if camera_match_scope != expected_camera_match_scope:
+        raise GuiError(
+            "crystal_camera_evidence.camera_match_scope does not match the "
+            "prepared crystal native-roll contract"
+        )
+
+    view_direction_matches_manifest = evidence["view_direction_matches_manifest"]
+    native_in_plane_roll_observed = evidence["native_in_plane_roll_observed"]
+    analytic_in_plane_basis_matches_manifest = evidence[
+        "analytic_in_plane_basis_matches_manifest"
+    ]
+    for field_name, value in (
+        ("view_direction_matches_manifest", view_direction_matches_manifest),
+        ("native_in_plane_roll_observed", native_in_plane_roll_observed),
+    ):
+        if not isinstance(value, bool):
+            raise GuiError(f"crystal_camera_evidence.{field_name} must be a boolean")
+    if (
+        analytic_in_plane_basis_matches_manifest is not None
+        and not isinstance(analytic_in_plane_basis_matches_manifest, bool)
+    ):
+        raise GuiError(
+            "crystal_camera_evidence.analytic_in_plane_basis_matches_manifest "
+            "must be a boolean or null"
+        )
+
+    complete = bool(
+        view_direction_matches_manifest is True
+        and native_in_plane_roll_observed is True
+    )
+    return {
+        "camera_match_scope": camera_match_scope,
+        "view_direction_matches_manifest": view_direction_matches_manifest,
+        "analytic_in_plane_basis_matches_manifest": (
+            analytic_in_plane_basis_matches_manifest
+        ),
+        "native_in_plane_roll_observed": native_in_plane_roll_observed,
+        "complete": complete,
+    }
 
 
 def _normalize_miller_plane_replay_evidence(
@@ -3576,6 +3655,7 @@ class MaterialsStudioGuiController:
             step["execution_recipe"] = _view_replay_execution_recipe(
                 step,
                 command_evidence,
+                model_type=str(audit.get("model_type") or "") or None,
                 runtime_ui_preflight=runtime_ui_preflight,
                 runtime_accessibility_preflight=runtime_accessibility_preflight,
             )
@@ -4241,6 +4321,7 @@ class MaterialsStudioGuiController:
         movement_screen_factor: float | None = None,
         movement_dialog_closed: bool | None = None,
         reviewed_copy_script_evidence: dict[str, Any] | None = None,
+        crystal_camera_evidence: dict[str, Any] | None = None,
         miller_plane_evidence: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Record externally executed view replay evidence without driving the GUI."""
@@ -4309,7 +4390,10 @@ class MaterialsStudioGuiController:
         manifest_recipe_contract = view_replay_manifest_recipe_contract_status(manifest)
         matching_recipe_contract = _view_replay_recipe_contract_status(
             execution_recipe,
-            expected_recipe_kind=_expected_view_replay_recipe_kind(matching_view),
+            expected_recipe_kind=_expected_view_replay_recipe_kind(
+                matching_view,
+                model_type=str(manifest.get("model_type") or "") or None,
+            ),
         )
         if (
             manifest_recipe_contract.get("manifest_schema_current") is not True
@@ -4352,10 +4436,30 @@ class MaterialsStudioGuiController:
                     "use the prepared execution recipe or reviewed external evidence"
                 )
         recipe_kind = execution_recipe.get("recipe_kind")
+        crystal_standard_view_recipe = (
+            recipe_kind == CRYSTAL_STANDARD_VIEW_RECIPE_KIND
+        )
         miller_plane_recipe = recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS
         direction_via_miller_plane_recipe = (
             recipe_kind == "crystal_direction_via_collinear_miller_plane_view_onto"
         )
+        normalized_crystal_camera_evidence: dict[str, Any] | None = None
+        if crystal_camera_evidence is not None:
+            if not crystal_standard_view_recipe:
+                raise GuiError(
+                    f"view {view_name!r} does not define a crystal native-roll camera contract"
+                )
+            normalized_crystal_camera_evidence = (
+                _normalize_crystal_standard_view_camera_evidence(
+                    crystal_camera_evidence,
+                    expected_camera_match_scope=str(
+                        (execution_recipe.get("camera_match_contract") or {}).get(
+                            "scope"
+                        )
+                        or ""
+                    ),
+                )
+            )
         normalized_miller_plane_evidence: dict[str, Any] | None = None
         if miller_plane_evidence is not None:
             if not miller_plane_recipe:
@@ -4690,6 +4794,13 @@ class MaterialsStudioGuiController:
             and resolved_screenshot is not None
             and structure_artifact_sha256_current is not None
         )
+        crystal_camera_evidence_required = bool(crystal_standard_view_recipe)
+        crystal_camera_screenshot_verified = resolved_screenshot is not None
+        crystal_camera_evidence_complete = bool(
+            normalized_crystal_camera_evidence is not None
+            and normalized_crystal_camera_evidence.get("complete") is True
+            and crystal_camera_screenshot_verified
+        )
         miller_plane_evidence_required = bool(miller_plane_recipe)
         miller_plane_artifact_binding_matches = bool(
             normalized_miller_plane_evidence is not None
@@ -4729,6 +4840,10 @@ class MaterialsStudioGuiController:
             and (
                 not reviewed_copy_script_evidence_required
                 or reviewed_copy_script_evidence_complete
+            )
+            and (
+                not crystal_camera_evidence_required
+                or crystal_camera_evidence_complete
             )
             and (
                 not miller_plane_evidence_required
@@ -4804,6 +4919,30 @@ class MaterialsStudioGuiController:
                 rejection_reasons.append(
                     "reviewed_copy_script_structure_artifact_missing"
                 )
+        if crystal_camera_evidence_required:
+            if normalized_crystal_camera_evidence is None:
+                rejection_reasons.append("crystal_camera_evidence_missing")
+            elif normalized_crystal_camera_evidence.get("complete") is not True:
+                if (
+                    normalized_crystal_camera_evidence.get(
+                        "view_direction_matches_manifest"
+                    )
+                    is not True
+                ):
+                    rejection_reasons.append(
+                        "crystal_view_direction_does_not_match_manifest"
+                    )
+                if (
+                    normalized_crystal_camera_evidence.get(
+                        "native_in_plane_roll_observed"
+                    )
+                    is not True
+                ):
+                    rejection_reasons.append(
+                        "crystal_native_in_plane_roll_not_observed"
+                    )
+            if not crystal_camera_screenshot_verified:
+                rejection_reasons.append("crystal_camera_screenshot_missing")
         if miller_plane_evidence_required:
             if normalized_miller_plane_evidence is None:
                 rejection_reasons.append("miller_plane_evidence_missing")
@@ -4994,6 +5133,12 @@ class MaterialsStudioGuiController:
                 reviewed_copy_script_evidence_complete
             ),
             "reviewed_copy_script_evidence": copy_script_evidence_summary,
+            "crystal_camera_evidence_required": crystal_camera_evidence_required,
+            "crystal_camera_evidence_complete": crystal_camera_evidence_complete,
+            "crystal_camera_screenshot_verified": (
+                crystal_camera_screenshot_verified
+            ),
+            "crystal_camera_evidence": normalized_crystal_camera_evidence,
             "miller_plane_evidence_required": miller_plane_evidence_required,
             "direction_via_miller_plane_recipe": direction_via_miller_plane_recipe,
             "miller_plane_evidence_complete": miller_plane_evidence_complete,
@@ -5788,10 +5933,44 @@ def _resolved_recipe_accessibility_target(
     }
 
 
+def _crystal_standard_view_recipe_fields(
+    expected_axis_layout: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the crystal-only camera contract layered onto a standard view recipe."""
+
+    return {
+        "schema_version": CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION,
+        "recipe_kind": CRYSTAL_STANDARD_VIEW_RECIPE_KIND,
+        "camera_match_contract": {
+            "scope": CRYSTAL_STANDARD_VIEW_CAMERA_MATCH_SCOPE,
+            "required_view_direction_match": True,
+            "required_analytic_camera_up_match": False,
+            "required_analytic_camera_right_match": False,
+            "in_plane_roll_policy": (
+                "materials_studio_native_reset_or_unmodified_arrow_rotation_roll"
+            ),
+            "expected_axis_layout": dict(expected_axis_layout),
+            "camera_matches_manifest_interpretation": (
+                "view_direction_and_native_roll_contract_match_not_exact_analytic_camera_basis"
+            ),
+        },
+        "required_record_evidence": {
+            "field": "crystal_camera_evidence",
+            "required_true_fields": [
+                "view_direction_matches_manifest",
+                "native_in_plane_roll_observed",
+            ],
+            "analytic_in_plane_basis_match_required": False,
+            "fresh_workspace_screenshot_required": True,
+        },
+    }
+
+
 def _view_replay_execution_recipe(
     step: dict[str, Any],
     command_evidence: dict[str, Any],
     *,
+    model_type: str | None = None,
     runtime_ui_preflight: dict[str, Any] | None = None,
     runtime_accessibility_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -5803,6 +5982,9 @@ def _view_replay_execution_recipe(
         step.get("crystallography")
         if isinstance(step.get("crystallography"), dict)
         else {}
+    )
+    crystal_standard_view = bool(
+        model_type == "crystal" and view_name in STANDARD_CARTESIAN_VIEW_NAMES
     )
     commands = [item for item in command_evidence.get("commands") or [] if isinstance(item, dict)]
     registered_command_ids = command_evidence.get("registered_view_command_ids")
@@ -5824,7 +6006,11 @@ def _view_replay_execution_recipe(
         and command_evidence.get("movement_options_command_registered") is True
     )
     base = {
-        "schema_version": VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION,
+        "schema_version": (
+            CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
+            if crystal_standard_view
+            else VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
+        ),
         "view_name": view_name,
         "executor": "computer_use_or_reviewed_external_gui",
         "structure_mutation_allowed": False,
@@ -5876,6 +6062,11 @@ def _view_replay_execution_recipe(
             block_reasons.append("reset_view_command_not_registered")
         block_reasons.extend(runtime_accessibility_gate["block_reasons"])
         block_reasons = _unique_strings(block_reasons)
+        expected_axis_layout = {
+            "screen_right": "A",
+            "screen_up": "B",
+            "view_depth": "C",
+        }
         return {
             **base,
             "status": (
@@ -5902,11 +6093,12 @@ def _view_replay_execution_recipe(
                     "command_id": command_id,
                 },
             ),
-            "expected_axis_layout": {
-                "screen_right": "A",
-                "screen_up": "B",
-                "view_depth": "C",
-            },
+            "expected_axis_layout": expected_axis_layout,
+            **(
+                _crystal_standard_view_recipe_fields(expected_axis_layout)
+                if crystal_standard_view
+                else {}
+            ),
             "action_sequence": [
                 "verify_exact_current_wrapper_window",
                 "activate_target_window",
@@ -6032,6 +6224,12 @@ def _view_replay_execution_recipe(
             ],
             "block_reasons": block_reasons,
         }
+        if crystal_standard_view:
+            common_recipe.update(
+                _crystal_standard_view_recipe_fields(
+                    dict(documented_key_recipe["expected_axis_layout"])
+                )
+            )
         if not staged_keyboard_recipe:
             common_recipe.update(
                 {
@@ -6056,7 +6254,11 @@ def _view_replay_execution_recipe(
         ]
         common_recipe.update(
             {
-                "schema_version": VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION,
+                "schema_version": (
+                    CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
+                    if crystal_standard_view
+                    else VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION
+                ),
                 "keyboard_stages": normalized_stages,
                 "restore_rotation_increment_degrees": documented_key_recipe[
                     "restore_rotation_increment_degrees"
@@ -7205,7 +7407,11 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
     }
 
 
-def _expected_view_replay_recipe_kind(view: Any) -> str | None:
+def _expected_view_replay_recipe_kind(
+    view: Any,
+    *,
+    model_type: str | None = None,
+) -> str | None:
     """Derive safety-sensitive recipe kind from the prepared view definition."""
 
     if not isinstance(view, dict):
@@ -7232,6 +7438,11 @@ def _expected_view_replay_recipe_kind(view: Any) -> str | None:
         and direction_mapping.get("miller_plane_indices") is not None
     ):
         return "crystal_direction_via_collinear_miller_plane_view_onto"
+    if (
+        model_type == "crystal"
+        and str(view.get("view_name") or "") in STANDARD_CARTESIAN_VIEW_NAMES
+    ):
+        return CRYSTAL_STANDARD_VIEW_RECIPE_KIND
     return None
 
 
@@ -7246,6 +7457,8 @@ def _view_replay_recipe_contract_status(
         expected_schema_version = (
             MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION
             if expected_recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS
+            else CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
+            if expected_recipe_kind == CRYSTAL_STANDARD_VIEW_RECIPE_KIND
             else VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION
         )
         return {
@@ -7263,6 +7476,8 @@ def _view_replay_recipe_contract_status(
     effective_recipe_kind = expected_recipe_kind or recipe_kind
     if effective_recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS:
         expected_schema_version = MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION
+    elif effective_recipe_kind == CRYSTAL_STANDARD_VIEW_RECIPE_KIND:
+        expected_schema_version = CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION
     elif isinstance(recipe.get("keyboard_stages"), list):
         expected_schema_version = VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION
     else:
@@ -7364,6 +7579,29 @@ def _view_replay_recipe_contract_status(
             )
             if recipe.get("camera_result_established_by") != expected_basis:
                 reasons.append("standard_view_camera_result_basis_mismatch")
+        if effective_recipe_kind == CRYSTAL_STANDARD_VIEW_RECIPE_KIND:
+            camera_contract = (
+                recipe.get("camera_match_contract")
+                if isinstance(recipe.get("camera_match_contract"), dict)
+                else {}
+            )
+            record_contract = (
+                recipe.get("required_record_evidence")
+                if isinstance(recipe.get("required_record_evidence"), dict)
+                else {}
+            )
+            if camera_contract.get("scope") != CRYSTAL_STANDARD_VIEW_CAMERA_MATCH_SCOPE:
+                reasons.append("crystal_standard_view_camera_match_scope_missing")
+            if camera_contract.get("required_view_direction_match") is not True:
+                reasons.append("crystal_standard_view_direction_match_contract_missing")
+            if camera_contract.get("required_analytic_camera_up_match") is not False:
+                reasons.append("crystal_standard_view_native_roll_up_contract_missing")
+            if camera_contract.get("required_analytic_camera_right_match") is not False:
+                reasons.append("crystal_standard_view_native_roll_right_contract_missing")
+            if record_contract.get("field") != "crystal_camera_evidence":
+                reasons.append("crystal_standard_view_record_evidence_contract_missing")
+            if record_contract.get("fresh_workspace_screenshot_required") is not True:
+                reasons.append("crystal_standard_view_screenshot_contract_missing")
 
     reasons = _unique_strings(reasons)
     current = not reasons
@@ -8096,6 +8334,62 @@ def _view_replay_event_is_trusted(event: dict[str, Any]) -> bool:
     )
 
 
+def _view_replay_event_recipe_matches_step(
+    event: dict[str, Any],
+    step: dict[str, Any],
+) -> bool:
+    """Return whether an event was recorded against the step's current recipe identity."""
+
+    event_recipe = (
+        event.get("execution_recipe")
+        if isinstance(event.get("execution_recipe"), dict)
+        else {}
+    )
+    step_recipe = (
+        step.get("execution_recipe")
+        if isinstance(step.get("execution_recipe"), dict)
+        else {}
+    )
+    return bool(
+        event_recipe
+        and step_recipe
+        and event_recipe.get("schema_version") == step_recipe.get("schema_version")
+        and event_recipe.get("recipe_kind") == step_recipe.get("recipe_kind")
+    )
+
+
+def _view_replay_event_satisfies_current_view_contract(
+    event: dict[str, Any],
+    view: dict[str, Any],
+    *,
+    model_type: str | None,
+) -> bool:
+    """Require fresh native-roll evidence only for current crystal standard recipes."""
+
+    expected_recipe_kind = _expected_view_replay_recipe_kind(
+        view,
+        model_type=model_type,
+    )
+    if expected_recipe_kind != CRYSTAL_STANDARD_VIEW_RECIPE_KIND:
+        return True
+    if not _view_replay_event_recipe_matches_step(event, view):
+        return False
+    evidence = (
+        event.get("crystal_camera_evidence")
+        if isinstance(event.get("crystal_camera_evidence"), dict)
+        else {}
+    )
+    return bool(
+        event.get("crystal_camera_evidence_required") is True
+        and event.get("crystal_camera_evidence_complete") is True
+        and event.get("crystal_camera_screenshot_verified") is True
+        and evidence.get("camera_match_scope")
+        == CRYSTAL_STANDARD_VIEW_CAMERA_MATCH_SCOPE
+        and evidence.get("view_direction_matches_manifest") is True
+        and evidence.get("native_in_plane_roll_observed") is True
+    )
+
+
 def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]:
     """Audit persisted recipe versions without mutating replay evidence."""
 
@@ -8121,13 +8415,12 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         else None
     )
     manifest_schema_current = actual_manifest_schema == VIEW_REPLAY_MANIFEST_SCHEMA_VERSION
-    accepted_view_names = {
-        str(event.get("view_name"))
+    trusted_accepted_events = [
+        event
         for event in manifest.get("replay_events") or []
-        if isinstance(event, dict)
-        and _view_replay_event_is_trusted(event)
-        and event.get("view_name") is not None
-    }
+        if isinstance(event, dict) and _view_replay_event_is_trusted(event)
+    ]
+    model_type = str(manifest.get("model_type") or "") or None
     view_contracts: list[dict[str, Any]] = []
     for view in manifest.get("views") or []:
         if not isinstance(view, dict) or view.get("supported") is not True:
@@ -8135,12 +8428,33 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         view_name = str(view.get("view_name") or "")
         recipe_contract = _view_replay_recipe_contract_status(
             view.get("execution_recipe"),
-            expected_recipe_kind=_expected_view_replay_recipe_kind(view),
+            expected_recipe_kind=_expected_view_replay_recipe_kind(
+                view,
+                model_type=str(manifest.get("model_type") or "") or None,
+            ),
+        )
+        matching_events = [
+            event
+            for event in trusted_accepted_events
+            if str(event.get("view_name") or "") == view_name
+        ]
+        historical_accepted = bool(matching_events)
+        accepted = any(
+            _view_replay_event_satisfies_current_view_contract(
+                event,
+                view,
+                model_type=model_type,
+            )
+            for event in matching_events
         )
         view_contracts.append(
             {
                 "view_name": view_name,
-                "accepted": view_name in accepted_view_names,
+                "accepted": accepted,
+                "historically_accepted": historical_accepted,
+                "current_evidence_reverification_required": bool(
+                    historical_accepted and not accepted
+                ),
                 **recipe_contract,
             }
         )
@@ -8158,6 +8472,11 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         for item in view_contracts
         if item.get("current") is not True and item.get("accepted") is True
     ]
+    current_evidence_reverification_view_names = [
+        item["view_name"]
+        for item in view_contracts
+        if item.get("current_evidence_reverification_required") is True
+    ]
     pending_recipe_upgrade_required = bool(
         pending_upgrade_view_names or not manifest_schema_current
     )
@@ -8169,6 +8488,8 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         reasons.append("pending_execution_recipe_upgrade_required")
     if accepted_historical_view_names:
         reasons.append("accepted_historical_recipe_evidence_retained")
+    if current_evidence_reverification_view_names:
+        reasons.append("current_crystal_camera_evidence_reverification_required")
     status = (
         "current"
         if current
@@ -8187,6 +8508,9 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
         "outdated_view_names": outdated_view_names,
         "pending_upgrade_view_names": pending_upgrade_view_names,
         "accepted_historical_view_names": accepted_historical_view_names,
+        "current_evidence_reverification_view_names": (
+            current_evidence_reverification_view_names
+        ),
         "reasons": reasons,
     }
 
@@ -8206,6 +8530,8 @@ def _verified_automatic_recipe_command_receipt(
         or event.get("single_window_policy_ok") is not True
         or event.get("current_revision_loaded") is not True
     ):
+        return None
+    if not _view_replay_event_recipe_matches_step(event, step):
         return None
     window_binding = (
         event.get("window_binding")
@@ -8370,10 +8696,24 @@ def _refresh_view_replay_summary(
         for item in raw_accepted_events
         if not _view_replay_event_journal_trusted(item)
     ]
+    supported_steps = [
+        item
+        for item in manifest.get("views") or []
+        if isinstance(item, dict) and item.get("supported") is True
+    ]
+    model_type = str(manifest.get("model_type") or "") or None
     accepted_views = {
-        str(item.get("view_name"))
-        for item in trusted_accepted_events
-        if item.get("view_name") is not None
+        str(step.get("view_name"))
+        for step in supported_steps
+        if any(
+            str(event.get("view_name") or "") == str(step.get("view_name") or "")
+            and _view_replay_event_satisfies_current_view_contract(
+                event,
+                step,
+                model_type=model_type,
+            )
+            for event in trusted_accepted_events
+        )
     }
     raw_accepted_views = {
         str(item.get("view_name"))
@@ -8390,11 +8730,6 @@ def _refresh_view_replay_summary(
         for item in journal_trusted_events
         if item.get("view_name") is not None
     }
-    supported_steps = [
-        item
-        for item in manifest.get("views") or []
-        if isinstance(item, dict) and item.get("supported") is True
-    ]
     supported_view_names = {str(item.get("view_name")) for item in supported_steps}
     accepted_supported_views = accepted_views & supported_view_names
     pending_steps = [
@@ -8407,6 +8742,14 @@ def _refresh_view_replay_summary(
         for item in recipe_contract.get("view_contracts") or []
         if isinstance(item, dict) and item.get("current") is True
     }
+    current_camera_evidence_reverification_view_names = {
+        str(item)
+        for item in recipe_contract.get(
+            "current_evidence_reverification_view_names"
+        )
+        or []
+        if item
+    }
     automatic_postcheck_direct_failures: list[dict[str, Any]] = []
     for step in pending_steps:
         for event in reversed(replay_events):
@@ -8416,20 +8759,40 @@ def _refresh_view_replay_summary(
                 break
 
     reset_baseline_resolutions: dict[str, dict[str, Any]] = {}
+    current_front_step = next(
+        (
+            step
+            for step in supported_steps
+            if str(step.get("view_name") or "") == "front"
+        ),
+        None,
+    )
     for event in reversed(replay_events):
         if event.get("view_name") != "front":
             continue
-        event_recipe = (
-            event.get("execution_recipe")
-            if isinstance(event.get("execution_recipe"), dict)
-            else {}
-        )
-        receipt = _verified_automatic_recipe_command_receipt(
-            event,
-            {
+        receipt_step = current_front_step
+        if receipt_step is None:
+            event_recipe = (
+                event.get("execution_recipe")
+                if isinstance(event.get("execution_recipe"), dict)
+                else {}
+            )
+            event_recipe_contract = _view_replay_recipe_contract_status(
+                event_recipe,
+                expected_recipe_kind=_expected_view_replay_recipe_kind(
+                    {"view_name": "front"},
+                    model_type=model_type,
+                ),
+            )
+            if event_recipe_contract.get("current") is not True:
+                continue
+            receipt_step = {
                 "view_name": "front",
                 "execution_recipe": event_recipe,
-            },
+            }
+        receipt = _verified_automatic_recipe_command_receipt(
+            event,
+            receipt_step,
         )
         if receipt is None:
             continue
@@ -8673,6 +9036,12 @@ def _refresh_view_replay_summary(
         "supported_view_count": len(supported_view_names),
         "pending_view_count": len(pending_steps),
         "pending_view_names": pending_view_names,
+        "current_camera_evidence_reverification_view_count": len(
+            current_camera_evidence_reverification_view_names
+        ),
+        "current_camera_evidence_reverification_view_names": sorted(
+            current_camera_evidence_reverification_view_names
+        ),
         "automation_ready_pending_view_count": len(automation_ready_steps),
         "automation_ready_pending_view_names": automation_ready_view_names,
         "automatic_postcheck_failure_count": len(
@@ -8912,6 +9281,16 @@ def _refresh_view_replay_summary(
         if isinstance(selected_keyboard_stages, list)
         else None
     )
+    crystal_camera_payload_hint: dict[str, Any] | None = None
+    if selected_recipe.get("recipe_kind") == CRYSTAL_STANDARD_VIEW_RECIPE_KIND:
+        crystal_camera_payload_hint = {
+            "camera_match_scope": (
+                selected_recipe.get("camera_match_contract") or {}
+            ).get("scope"),
+            "view_direction_matches_manifest": True,
+            "analytic_in_plane_basis_matches_manifest": None,
+            "native_in_plane_roll_observed": True,
+        }
     miller_plane_payload_hint: dict[str, Any] | None = None
     if selected_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS:
         target_resolution = (
@@ -9041,6 +9420,7 @@ def _refresh_view_replay_summary(
         ),
         "movement_screen_factor": selected_recipe.get("movement_screen_factor_expected"),
         "movement_dialog_closed": selected_recipe.get("movement_dialog_closed_after_restore"),
+        "crystal_camera_evidence": crystal_camera_payload_hint,
         "miller_plane_evidence": miller_plane_payload_hint,
     }
     if record_payload_hint["source"] == "reviewed_copy_script":
@@ -9088,6 +9468,7 @@ def _refresh_view_replay_summary(
                     "movement_screen_factor_control_id",
                     "movement_screen_factor",
                     "movement_dialog_closed",
+                    "crystal_camera_evidence",
                     "miller_plane_evidence",
                 )
                 if record_payload_hint.get(key) is not None
@@ -9232,6 +9613,12 @@ def _refresh_view_replay_summary(
         "automatic_replay_ready": next_automation_step is not None,
         "recipe_upgrade_required": pending_recipe_upgrade_required,
         "recipe_contract": recipe_contract,
+        "current_camera_evidence_reverification_required": bool(
+            current_camera_evidence_reverification_view_names
+        ),
+        "current_camera_evidence_reverification_view_names": sorted(
+            current_camera_evidence_reverification_view_names
+        ),
         "evidence_integrity_reverification_required": bool(
             integrity_blocked_view_names
         ),
@@ -9294,7 +9681,8 @@ def _refresh_view_replay_summary(
             post_review_high_level_payload_template
         ),
         "evidence_values_must_be_observed_not_assumed": bool(
-            miller_plane_payload_hint
+            crystal_camera_payload_hint
+            or miller_plane_payload_hint
             or runtime_accessibility_observation_blocks_automation
             or next_action_integrity_blocked
             or next_action_journal_blocked

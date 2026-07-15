@@ -3818,12 +3818,6 @@ class MaterialsStudioGuiController:
             "revision_created": False,
             "structure_modified": False,
         }
-        if manifest.get("replay_status") == "externally_confirmed":
-            manifest["next_action"] = {
-                "recommended_tool": "material_studio_live_project_status",
-                "recommended_action": "review_current_revision_after_all_prepared_views_were_confirmed",
-                "payload_hint": {"project_id": safe_project},
-            }
         _write_json_atomic(manifest_path, manifest)
         log_path = self._write_log(
             "prepare_view_replay",
@@ -3867,6 +3861,7 @@ class MaterialsStudioGuiController:
             "recipe_contract": manifest.get("recipe_contract"),
             "recipe_migration": manifest.get("recipe_migration"),
             "next_action": manifest["next_action"],
+            "next_action_resolution": manifest.get("next_action_resolution"),
             "manifest": manifest,
         }
 
@@ -8669,6 +8664,167 @@ def _derive_view_replay_status(
     return "ready_for_external_replay"
 
 
+_VIEW_REPLAY_CONTINUATION_ACTION_OVERRIDE_STATUSES = frozenset(
+    {
+        "complete",
+        "recipe_upgrade_required",
+        "evidence_integrity_reverification_required",
+        "event_journal_reverification_required",
+        "automatic_recipe_postcheck_failed",
+        "no_supported_pending_view",
+    }
+)
+
+
+def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
+    """Keep stale prepared actions behind current replay safety decisions."""
+
+    continuation = (
+        manifest.get("replay_continuation")
+        if isinstance(manifest.get("replay_continuation"), dict)
+        else {}
+    )
+    incoming_action = (
+        dict(manifest.get("next_action"))
+        if isinstance(manifest.get("next_action"), dict)
+        else {}
+    )
+    continuation_status = str(continuation.get("status") or "unknown")
+    continuation_overrides = (
+        continuation_status in _VIEW_REPLAY_CONTINUATION_ACTION_OVERRIDE_STATUSES
+    )
+    recommended_tool = continuation.get("recommended_mcp_tool")
+    recommended_action = continuation.get("recommended_action")
+    continuation_payload = continuation.get("payload_hint")
+    high_level_payload = continuation.get("high_level_payload_hint")
+
+    if continuation_status == "complete":
+        resolved_payload: dict[str, Any] = {
+            "project_id": manifest.get("project_id")
+        }
+    elif (
+        recommended_tool == "material_studio_live_modeling_request"
+        and isinstance(high_level_payload, dict)
+        and high_level_payload
+    ):
+        resolved_payload = dict(high_level_payload)
+    elif isinstance(continuation_payload, dict):
+        resolved_payload = dict(continuation_payload)
+    else:
+        resolved_payload = {}
+
+    if continuation_overrides or not incoming_action:
+        resolved_action = {
+            "continuation_status": continuation_status,
+            "recommended_tool": recommended_tool,
+            "recommended_action": recommended_action,
+            "payload_hint": resolved_payload,
+            "payload_hint_is_directly_callable": continuation.get(
+                "payload_hint_is_directly_callable"
+            )
+            is True,
+            "source": "replay_continuation",
+        }
+    else:
+        resolved_action = incoming_action
+
+    incoming_identity = (
+        incoming_action.get("recommended_tool"),
+        incoming_action.get("recommended_action"),
+        incoming_action.get("payload_hint"),
+    )
+    resolved_identity = (
+        resolved_action.get("recommended_tool"),
+        resolved_action.get("recommended_action"),
+        resolved_action.get("payload_hint"),
+    )
+    incoming_action_overridden = bool(
+        continuation_overrides and incoming_identity != resolved_identity
+    )
+    recipe_contract = (
+        manifest.get("recipe_contract")
+        if isinstance(manifest.get("recipe_contract"), dict)
+        else {}
+    )
+    preflight = (
+        manifest.get("preflight")
+        if isinstance(manifest.get("preflight"), dict)
+        else {}
+    )
+    automatic_replay_allowed = bool(
+        continuation_status == "automatic_recipe_ready"
+        and continuation.get("automatic_replay_ready") is True
+        and recipe_contract.get("current") is True
+        and preflight.get("ready_for_external_replay") is True
+        and preflight.get("activation_required") is not True
+    )
+    stale_recipe_execution_blocked = bool(
+        continuation_status == "recipe_upgrade_required"
+        or continuation.get("recipe_upgrade_required") is True
+        or recipe_contract.get("pending_recipe_upgrade_required") is True
+    )
+    external_review_required = continuation_status in {
+        "evidence_integrity_reverification_required",
+        "event_journal_reverification_required",
+        "automatic_recipe_postcheck_failed",
+    }
+    reason_codes: list[str] = []
+    if continuation_overrides:
+        reason_codes.append(
+            "replay_continuation_safety_state_precedes_prepared_gui_action"
+        )
+    if stale_recipe_execution_blocked:
+        reason_codes.append("current_safety_recipe_required_before_gui_replay")
+    if external_review_required:
+        reason_codes.append("fresh_observed_gui_evidence_required")
+    if continuation_status == "complete":
+        reason_codes.append("all_supported_views_already_confirmed")
+
+    manifest["next_action"] = resolved_action
+    manifest["next_action_resolution"] = {
+        "status": (
+            "continuation_safety_override_applied"
+            if incoming_action_overridden
+            else "continuation_safety_action_already_current"
+            if continuation_overrides
+            else "prepared_action_preserved"
+        ),
+        "authoritative_source": (
+            "replay_continuation"
+            if continuation_overrides or not incoming_action
+            else "prepared_manifest_action"
+        ),
+        "continuation_status": continuation_status,
+        "incoming_action_overridden": incoming_action_overridden,
+        "resolved_recommended_tool": resolved_action.get("recommended_tool"),
+        "resolved_recommended_action": resolved_action.get("recommended_action"),
+        "reason_codes": reason_codes,
+        "safety_gate": {
+            "automatic_replay_allowed": automatic_replay_allowed,
+            "stale_recipe_execution_blocked": stale_recipe_execution_blocked,
+            "external_review_required": external_review_required,
+            "activation_required_before_gui_input": preflight.get(
+                "activation_required"
+            )
+            is True,
+            "structure_mutation_allowed": False,
+            "revision_creation_allowed": False,
+        },
+        **(
+            {
+                "superseded_action": {
+                    "recommended_tool": incoming_action.get("recommended_tool"),
+                    "recommended_action": incoming_action.get(
+                        "recommended_action"
+                    ),
+                }
+            }
+            if incoming_action_overridden
+            else {}
+        ),
+    }
+
+
 def _refresh_view_replay_summary(
     manifest: dict[str, Any],
     *,
@@ -9719,6 +9875,7 @@ def _refresh_view_replay_summary(
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
+    _reconcile_view_replay_next_action(manifest)
     manifest["replay_status"] = _derive_view_replay_status(
         preflight_ready=preflight.get("ready_for_external_replay") is True,
         all_confirmed=all_confirmed,

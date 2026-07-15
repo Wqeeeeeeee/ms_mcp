@@ -1858,6 +1858,15 @@ def test_refresh_view_replay_invalidates_drifted_reviewed_evidence(
         "evidence_integrity_reverification_required"
     )
     assert refreshed["replay_continuation"]["automatic_replay_ready"] is False
+    assert refreshed["next_action"]["recommended_tool"] == (
+        "material_studio_gui_copy_script_assist"
+    )
+    assert refreshed["next_action_resolution"]["status"] == (
+        "continuation_safety_override_applied"
+    )
+    assert refreshed["next_action_resolution"]["safety_gate"][
+        "external_review_required"
+    ] is True
     persisted_event = json.loads(
         Path(recorded["events_path"]).read_text(encoding="utf-8").splitlines()[0]
     )

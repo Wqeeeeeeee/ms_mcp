@@ -423,8 +423,14 @@ event may remain historically `accepted=true`, but it is excluded from current
 `accepted_view_names` until a fresh screenshot and current
 `crystal_camera_evidence` are recorded. Compact status exposes this gate through
 `current_camera_evidence_reverification_view_names` in the replay summary and
-recipe contract. Compact MCP responses also include the Miller dialog correction
-timing contract required for execution.
+recipe contract. Full and compact status also expose a reconciled `next_action`
+and `next_action_resolution`. A continuation safety override supersedes an older
+GUI activation or execution hint; when `stale_recipe_execution_blocked=true`,
+call the directly callable high-level recipe-upgrade payload before any replay
+input. Reading status performs this reconciliation in memory only and does not
+rewrite the manifest, create a revision, or change the structure. Compact MCP
+responses also include the Miller dialog correction timing contract required for
+execution.
 Persist the observed text, the
 `fresh_modeless_child_accessibility_value` source, and the verification result in
 `miller_plane_evidence`. If an unexpected

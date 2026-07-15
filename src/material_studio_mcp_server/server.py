@@ -29460,6 +29460,46 @@ def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
     return continuation
 
 
+def _compact_view_replay_next_action(value: Any) -> dict[str, Any]:
+    """Keep the resolved replay action callable without copying full recipes."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "continuation_status",
+            "recommended_tool",
+            "recommended_action",
+            "payload_hint",
+            "payload_hint_is_directly_callable",
+            "source",
+        ),
+    )
+
+
+def _compact_view_replay_next_action_resolution(value: Any) -> dict[str, Any]:
+    """Keep the replay action precedence and safety gate in compact status."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "authoritative_source",
+            "continuation_status",
+            "incoming_action_overridden",
+            "resolved_recommended_tool",
+            "resolved_recommended_action",
+            "reason_codes",
+            "safety_gate",
+            "superseded_action",
+        ),
+    )
+    return compact
+
+
 def _compact_runtime_preflight_summary(value: Any) -> dict[str, Any]:
     """Keep persisted preflight status while referring control evidence to disk."""
 
@@ -29863,6 +29903,7 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
             "unsupported_view_count",
             "recipe_migration",
             "next_action",
+            "next_action_resolution",
             "spec_fingerprint",
             "model_type",
             "gui_modified",
@@ -29922,6 +29963,14 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     )
     if continuation:
         replay["replay_continuation"] = continuation
+    next_action = _compact_view_replay_next_action(value.get("next_action"))
+    if next_action:
+        replay["next_action"] = next_action
+    next_action_resolution = _compact_view_replay_next_action_resolution(
+        value.get("next_action_resolution")
+    )
+    if next_action_resolution:
+        replay["next_action_resolution"] = next_action_resolution
     event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
     if event_journal:
         replay["event_journal"] = event_journal
@@ -32265,6 +32314,9 @@ def material_studio_live_project_status(
             "recipe_migration": (view_replay_manifest or {}).get("recipe_migration"),
             "last_replay_event": (view_replay_manifest or {}).get("last_replay_event"),
             "next_action": (view_replay_manifest or {}).get("next_action"),
+            "next_action_resolution": (view_replay_manifest or {}).get(
+                "next_action_resolution"
+            ),
         }
         computed_audit = model_view_audit(spec)
         computed_health = build_modeling_health(

@@ -450,6 +450,7 @@ class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
     def __init__(self) -> None:
         self.window = WindowInfo(handle=501, title="Untitled - Materials Studio", pid=4444, rect=(0, 0, 1024, 768))
         self.opened: list[Path] = []
+        self.activated_handles: list[int] = []
 
     def list_processes(self) -> list[ProcessInfo]:
         return [ProcessInfo(name="MatStudio.exe", pid=self.window.pid or 4444)]
@@ -465,6 +466,7 @@ class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
         return [self.window]
 
     def activate_window(self, window: WindowInfo) -> bool:
+        self.activated_handles.append(window.handle)
         return True
 
     def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
@@ -4871,6 +4873,7 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         json.dumps(stale_manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    stale_manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
     status = server.material_studio_live_project_status(
         project_id=project_id,
@@ -4885,6 +4888,41 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
     assert replay["replay_continuation"]["automatic_replay_ready"] is False
     assert replay["replay_continuation"]["recommended_mcp_tool"] == (
         "material_studio_live_modeling_request"
+    )
+    assert replay["next_action"] == {
+        "continuation_status": "recipe_upgrade_required",
+        "recommended_tool": "material_studio_live_modeling_request",
+        "recommended_action": (
+            "regenerate_view_replay_manifest_with_current_safety_recipes_preserving_events"
+        ),
+        "payload_hint": {
+            "user_request": "Continue GUI view replay using the current safety recipe.",
+            "project_id": project_id,
+        },
+        "payload_hint_is_directly_callable": True,
+        "source": "replay_continuation",
+    }
+    resolution = replay["next_action_resolution"]
+    assert resolution["status"] == "continuation_safety_override_applied"
+    assert resolution["authoritative_source"] == "replay_continuation"
+    assert resolution["incoming_action_overridden"] is True
+    assert resolution["safety_gate"]["automatic_replay_allowed"] is False
+    assert resolution["safety_gate"]["stale_recipe_execution_blocked"] is True
+    assert resolution["safety_gate"]["structure_mutation_allowed"] is False
+    assert resolution["safety_gate"]["revision_creation_allowed"] is False
+
+    full_status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    assert full_status["gui_view_replay"]["next_action"] == replay["next_action"]
+    assert full_status["gui_view_replay"]["next_action_resolution"][
+        "resolved_recommended_tool"
+    ] == resolution["resolved_recommended_tool"]
+    assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == (
+        stale_manifest_sha256
     )
 
     rejected = server.material_studio_gui_record_view_replay(
@@ -4910,6 +4948,8 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         project_id,
         working_dir=str(tmp_path),
     )["history"]
+    activated_before = list(backend.activated_handles)
+    opened_before = list(backend.opened)
     continued = server.material_studio_live_modeling_request(
         "Continue the next GUI view replay safely.",
         project_id=project_id,
@@ -4930,6 +4970,8 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
     )
     assert continued["view_replay_continuation"]["next_pending_view_name"] == "right"
     assert continued["gui_view_replay"]["recipe_contract"]["status"] == "current"
+    assert backend.activated_handles == activated_before
+    assert backend.opened == opened_before
 
     migrated_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     migrated_right = next(

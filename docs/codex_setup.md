@@ -253,6 +253,24 @@ or invoke a follow-up report persistence step after the nested apply/update call
 returns; the lock has already been released and a later write could discard a
 concurrent snapshot or visual-confirmation update.
 
+Direct view-audit and view-bundle exports use this same revision transaction,
+including exports with `include_gui_snapshot=false`. Inspect
+`report_write_transaction.coverage` for `diagnostic_export`, the matching
+`workflow:model_export_view_*` label, `view_audit_bundle_write`, and
+`report_read_modify_write`. When a snapshot is attempted, the response also
+returns the same receipt as `gui_action_transaction` and adds
+`target_window_revalidation` plus `gui_snapshot`. High-level
+`inspect_current` owns one outer transaction; its nested bundle export reuses
+that lock and the final inspection report is published before release.
+
+On lock timeout, do not reconstruct or manually overwrite diagnostics. Retry
+the returned `diagnostic_export_retry_tool` with
+`diagnostic_export_retry_payload`; no snapshot or report write occurred. A
+`diagnostic_export_current_revision_block` means the current pointer advanced
+while the request waited, so use the retry payload to resolve and export the
+new current revision. Inline-spec retry payloads carry the original `spec`, and
+an inline spec that conflicts with a stored immutable revision is rejected.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

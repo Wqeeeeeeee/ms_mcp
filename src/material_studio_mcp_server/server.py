@@ -28162,6 +28162,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_mode",
             "execution_mode_source",
             "diagnostic_export_requested",
+            "diagnostic_export_deferred",
+            "diagnostic_export_retry_tool",
+            "diagnostic_export_retry_payload",
+            "diagnostic_export_current_revision_block",
             "normality_check_requested",
             "gui_evidence_reaudit",
             "requested_diagnostic_focuses",
@@ -28258,6 +28262,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_mode",
             "execution_mode_source",
             "diagnostic_export_requested",
+            "diagnostic_export_deferred",
+            "diagnostic_export_retry_tool",
+            "diagnostic_export_retry_payload",
+            "diagnostic_export_current_revision_block",
             "normality_check_requested",
             "recommended_tool",
             "normality",
@@ -28538,6 +28546,10 @@ def _compact_live_response(
             "execution_mode",
             "execution_mode_source",
             "diagnostic_export_requested",
+            "diagnostic_export_deferred",
+            "diagnostic_export_retry_tool",
+            "diagnostic_export_retry_payload",
+            "diagnostic_export_current_revision_block",
             "normality_check_requested",
             "gui_evidence_reaudit",
             "requested_diagnostic_focuses",
@@ -30229,6 +30241,156 @@ def material_studio_forcite_dynamics_from_spec(
         return _error(exc)
 
 
+def _diagnostic_export_retry_payload(
+    *,
+    project_id: str,
+    spec_payload: dict[str, Any] | None,
+    views: list[str] | None,
+    include_gui_snapshot: bool,
+    working_dir: str | None,
+    response_mode: McpResponseMode | str | None = None,
+) -> dict[str, Any]:
+    """Return an exact retry payload for a deferred diagnostic export."""
+
+    payload: dict[str, Any] = {
+        "views": views,
+        "include_gui_snapshot": include_gui_snapshot,
+    }
+    if spec_payload is not None:
+        payload["spec"] = spec_payload
+    else:
+        payload["project_id"] = project_id
+    if working_dir is not None:
+        payload["working_dir"] = working_dir
+    if response_mode is not None:
+        payload["response_mode"] = (
+            response_mode.value
+            if isinstance(response_mode, McpResponseMode)
+            else str(response_mode)
+        )
+    return payload
+
+
+def _diagnostic_export_deferred_response(
+    *,
+    error: str,
+    tool_name: str,
+    project_id: str,
+    revision: int,
+    project_resolution: dict[str, Any],
+    retry_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a stable retry contract when diagnostics cannot acquire the report lock."""
+
+    return {
+        "ok": False,
+        "status": "diagnostic_export_deferred",
+        "error": error,
+        "project_id": project_id,
+        "project_resolution": project_resolution,
+        "revision": revision,
+        "diagnostic_export_deferred": True,
+        "report_persistence_deferred": True,
+        "gui_action_transaction_error": error,
+        "recommended_tool": tool_name,
+        "required_next_step": (
+            "Retry the same diagnostic export after the active GUI artifact "
+            "transaction completes."
+        ),
+        "diagnostic_export_retry_tool": tool_name,
+        "diagnostic_export_retry_payload": retry_payload,
+    }
+
+
+@contextmanager
+def _diagnostic_export_report_transaction(
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+    project_resolution: dict[str, Any],
+    working_dir: str | None,
+    workflow: str,
+):
+    """Serialize one diagnostic bundle and reject conflicting inline revisions."""
+
+    require_revision = True
+    if project_resolution.get("source") == "inline_spec":
+        revision_path = (
+            store.project_dir(spec.project_id)
+            / "revisions"
+            / f"r{spec.revision:03d}_model_spec.json"
+        )
+        if revision_path.exists():
+            persisted = store.get_revision(spec.project_id, spec.revision)
+            if persisted.model_dump(mode="json") != spec.model_dump(mode="json"):
+                raise ValueError(
+                    "Inline ModelSpec conflicts with an existing immutable revision. "
+                    "Use the stored project revision or a unique project_id."
+                )
+        else:
+            require_revision = False
+
+    with _gui_artifact_report_transaction(
+        project_id=spec.project_id,
+        revision=spec.revision,
+        working_dir=working_dir,
+        coverage=(
+            "diagnostic_export",
+            f"workflow:{workflow}",
+            "view_audit_bundle_write",
+            "report_read_modify_write",
+        ),
+        require_revision=require_revision,
+    ) as transaction:
+        yield transaction
+
+
+def _diagnostic_export_current_revision_block(
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+    project_resolution: dict[str, Any],
+    tool_name: str,
+    retry_payload: dict[str, Any],
+    transaction: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Block a current-project export that became stale while waiting for its lock."""
+
+    if project_resolution.get("source") not in {"explicit", "latest_current"}:
+        return None
+    current_spec, current_pointer = store.resolve_current(spec.project_id)
+    if current_spec.revision == spec.revision:
+        return None
+    block = {
+        "blocked": True,
+        "reason": "current_revision_advanced_before_diagnostic_export",
+        "target_revision": spec.revision,
+        "current_revision": current_spec.revision,
+        "current_pointer": current_pointer,
+        "recommended_tool": tool_name,
+        "recommended_action": "retry_diagnostic_export_for_current_revision",
+    }
+    return {
+        "ok": False,
+        "status": "diagnostic_export_revision_superseded",
+        "error": (
+            f"Refusing to export revision {spec.revision} because current revision "
+            f"advanced to {current_spec.revision} while waiting for the report lock."
+        ),
+        "project_id": spec.project_id,
+        "project_resolution": project_resolution,
+        "revision": spec.revision,
+        "current_revision": current_spec.revision,
+        "diagnostic_export_deferred": True,
+        "recommended_tool": tool_name,
+        "required_next_step": "Retry the diagnostic export for the current revision.",
+        "diagnostic_export_retry_tool": tool_name,
+        "diagnostic_export_retry_payload": retry_payload,
+        "diagnostic_export_current_revision_block": block,
+        "write_transaction": transaction,
+    }
+
+
 @mcp.tool(
     name="material_studio_model_export_view_audit",
     annotations={
@@ -30248,42 +30410,107 @@ def material_studio_model_export_view_audit(
 ) -> dict[str, Any]:
     """Export model health metrics and standard view projection parameters."""
 
+    model_spec: ModelSpec | None = None
+    project_resolution: dict[str, Any] = {}
+    retry_payload: dict[str, Any] = {}
     try:
         store = _structured_store(working_dir)
         model_spec, project_resolution = _resolve_model_spec_for_read(store, spec, project_id)
-        audit = model_view_audit(model_spec, views)
-        gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=model_spec.project_id, revision=model_spec.revision)
-        persisted_context = _persisted_live_context_for_export(store, model_spec)
-        persisted_artifacts = list(persisted_context.pop("gui_artifacts", []) or [])
-        artifacts: list[dict[str, Any]] = []
-        if include_gui_snapshot and gui_status.get("window_found"):
-            try:
-                artifacts.append(gui.snapshot(label="view_audit_current", project_id=model_spec.project_id, revision=model_spec.revision))
-            except Exception as exc:
-                artifacts.append({"type": "snapshot_warning", "warning": str(exc)})
-        artifacts = persisted_artifacts + artifacts
-        response = {
-            **persisted_context,
-            "project_id": model_spec.project_id,
-            "project_resolution": project_resolution,
-            "revision": model_spec.revision,
-            "audit": audit,
-            "view_audit": audit,
-            "gui_status": gui_status,
-            "gui_artifacts": artifacts,
-        }
-        response = _attach_modeling_health(
-            response,
-            execution_mode=response.get("execution_mode") or ExecutionMode.PREVIEW,
+        retry_payload = _diagnostic_export_retry_payload(
+            project_id=model_spec.project_id,
+            spec_payload=spec,
+            views=views,
+            include_gui_snapshot=include_gui_snapshot,
+            working_dir=working_dir,
+        )
+        with _diagnostic_export_report_transaction(
             store=store,
             spec=model_spec,
-            gui_artifacts=artifacts,
-        )
-        response["report_path"] = response["view_audit_report_path"]
-        return _ok(response)
+            project_resolution=project_resolution,
+            working_dir=working_dir,
+            workflow="model_export_view_audit",
+        ) as transaction:
+            revision_block = _diagnostic_export_current_revision_block(
+                store=store,
+                spec=model_spec,
+                project_resolution=project_resolution,
+                tool_name="material_studio_model_export_view_audit",
+                retry_payload=retry_payload,
+                transaction=transaction,
+            )
+            if revision_block is not None:
+                return revision_block
+
+            audit = model_view_audit(model_spec, views)
+            gui = _gui_controller(working_dir)
+            gui_status = gui.status(
+                project_id=model_spec.project_id,
+                revision=model_spec.revision,
+            )
+            persisted_context = _persisted_live_context_for_export(store, model_spec)
+            persisted_artifacts = list(
+                persisted_context.pop("gui_artifacts", []) or []
+            )
+            artifacts: list[dict[str, Any]] = []
+            snapshot_attempted = bool(
+                include_gui_snapshot and gui_status.get("window_found")
+            )
+            if snapshot_attempted:
+                _extend_gui_artifact_transaction_coverage(
+                    transaction,
+                    ("target_window_revalidation", "gui_snapshot"),
+                )
+                try:
+                    artifacts.append(
+                        gui.snapshot(
+                            label="view_audit_current",
+                            project_id=model_spec.project_id,
+                            revision=model_spec.revision,
+                        )
+                    )
+                except Exception as exc:
+                    artifacts.append(
+                        {"type": "snapshot_warning", "warning": str(exc)}
+                    )
+            artifacts = persisted_artifacts + artifacts
+            response = {
+                **persisted_context,
+                "project_id": model_spec.project_id,
+                "project_resolution": project_resolution,
+                "revision": model_spec.revision,
+                "audit": audit,
+                "view_audit": audit,
+                "gui_status": gui_status,
+                "gui_artifacts": artifacts,
+            }
+            _attach_gui_artifact_transaction(response, transaction)
+            if snapshot_attempted:
+                response["gui_action_transaction"] = transaction
+            response = _attach_modeling_health(
+                response,
+                execution_mode=response.get("execution_mode") or ExecutionMode.PREVIEW,
+                store=store,
+                spec=model_spec,
+                gui_artifacts=artifacts,
+            )
+            response["report_path"] = response["view_audit_report_path"]
+            return _ok(response)
     except ValidationError as exc:
         return _validation_error(exc)
+    except GuiError as exc:
+        if (
+            model_spec is not None
+            and "GUI artifact report write transaction is busy" in str(exc)
+        ):
+            return _diagnostic_export_deferred_response(
+                error=str(exc),
+                tool_name="material_studio_model_export_view_audit",
+                project_id=model_spec.project_id,
+                revision=model_spec.revision,
+                project_resolution=project_resolution,
+                retry_payload=retry_payload,
+            )
+        return _error(exc)
     except Exception as exc:
         return _error(exc)
 
@@ -30308,71 +30535,149 @@ def material_studio_model_export_view_bundle(
 ) -> dict[str, Any]:
     """Export JSON plus CSV diagnostics for model-health and multi-view checks."""
 
+    model_spec: ModelSpec | None = None
+    project_resolution: dict[str, Any] = {}
+    retry_payload: dict[str, Any] = {}
     try:
         store = _structured_store(working_dir)
         model_spec, project_resolution = _resolve_model_spec_for_read(store, spec, project_id)
-        audit = model_view_audit(model_spec, views)
-        generated = _generate_structured_script(model_spec, store)
-        gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=model_spec.project_id, revision=model_spec.revision)
-        persisted_context = _persisted_live_context_for_export(store, model_spec)
-        persisted_artifacts = list(persisted_context.pop("gui_artifacts", []) or [])
-        artifacts: list[dict[str, Any]] = []
-        if include_gui_snapshot and gui_status.get("window_found"):
-            try:
-                artifacts.append(gui.snapshot(label="view_bundle_current", project_id=model_spec.project_id, revision=model_spec.revision))
-            except Exception as exc:
-                artifacts.append({"type": "snapshot_warning", "warning": str(exc)})
-        artifacts = persisted_artifacts + artifacts
-        response = {
-            **persisted_context,
-            "project_id": model_spec.project_id,
-            "project_resolution": project_resolution,
-            "revision": model_spec.revision,
-            "validation": generated["script_validation"],
-            "warnings": generated["warnings"],
-            "planned_outputs": generated["planned_outputs"],
-            "audit": audit,
-            "view_audit": audit,
-            "gui_status": gui_status,
-            "gui_artifacts": artifacts,
-        }
-        execution_mode = response.get("execution_mode") or ExecutionMode.PREVIEW.value
-        _attach_structure_artifact_validation(
-            response,
+        retry_payload = _diagnostic_export_retry_payload(
+            project_id=model_spec.project_id,
+            spec_payload=spec,
+            views=views,
+            include_gui_snapshot=include_gui_snapshot,
+            working_dir=working_dir,
+            response_mode=response_mode,
+        )
+        with _diagnostic_export_report_transaction(
+            store=store,
             spec=model_spec,
-            execution_mode=str(execution_mode),
-        )
-        modeling_health = build_modeling_health(response, execution_mode=str(execution_mode))
-        bundle = write_view_audit_bundle(
-            store.outputs_dir(model_spec.project_id, model_spec.revision),
-            model_spec,
-            audit,
-            gui_status=gui_status,
-            gui_artifacts=artifacts,
-            modeling_health=modeling_health,
-        )
-        response["modeling_health"] = modeling_health
-        response["bundle"] = bundle
-        response["bundle_dir"] = bundle["bundle_dir"]
-        response["view_bundle"] = bundle
-        response["view_bundle_dir"] = bundle["bundle_dir"]
-        response["manifest_path"] = bundle["manifest_path"]
-        response["view_bundle_manifest_path"] = bundle["manifest_path"]
-        response["report_path"] = bundle["report_path"]
-        response["view_audit_report_path"] = bundle["report_path"]
-        response["files"] = bundle["files"]
-        response["view_bundle_files"] = bundle["files"]
-        response["row_counts"] = bundle["row_counts"]
-        response["view_bundle_row_counts"] = bundle["row_counts"]
-        response["modeling_report"] = _build_modeling_report(response)
-        _persist_modeling_report(store, model_spec, response)
-        response["files"] = response.get("view_bundle_files", response["files"])
-        response["row_counts"] = response.get("view_bundle_row_counts", response["row_counts"])
-        response["bundle"] = response.get("view_bundle", response["bundle"])
-        return _compact_live_response(_ok(response), response_mode)
+            project_resolution=project_resolution,
+            working_dir=working_dir,
+            workflow="model_export_view_bundle",
+        ) as transaction:
+            revision_block = _diagnostic_export_current_revision_block(
+                store=store,
+                spec=model_spec,
+                project_resolution=project_resolution,
+                tool_name="material_studio_model_export_view_bundle",
+                retry_payload=retry_payload,
+                transaction=transaction,
+            )
+            if revision_block is not None:
+                return _compact_live_response(revision_block, response_mode)
+
+            audit = model_view_audit(model_spec, views)
+            generated = _generate_structured_script(model_spec, store)
+            gui = _gui_controller(working_dir)
+            gui_status = gui.status(
+                project_id=model_spec.project_id,
+                revision=model_spec.revision,
+            )
+            persisted_context = _persisted_live_context_for_export(store, model_spec)
+            persisted_artifacts = list(
+                persisted_context.pop("gui_artifacts", []) or []
+            )
+            artifacts: list[dict[str, Any]] = []
+            snapshot_attempted = bool(
+                include_gui_snapshot and gui_status.get("window_found")
+            )
+            if snapshot_attempted:
+                _extend_gui_artifact_transaction_coverage(
+                    transaction,
+                    ("target_window_revalidation", "gui_snapshot"),
+                )
+                try:
+                    artifacts.append(
+                        gui.snapshot(
+                            label="view_bundle_current",
+                            project_id=model_spec.project_id,
+                            revision=model_spec.revision,
+                        )
+                    )
+                except Exception as exc:
+                    artifacts.append(
+                        {"type": "snapshot_warning", "warning": str(exc)}
+                    )
+            artifacts = persisted_artifacts + artifacts
+            response = {
+                **persisted_context,
+                "project_id": model_spec.project_id,
+                "project_resolution": project_resolution,
+                "revision": model_spec.revision,
+                "validation": generated["script_validation"],
+                "warnings": generated["warnings"],
+                "planned_outputs": generated["planned_outputs"],
+                "audit": audit,
+                "view_audit": audit,
+                "gui_status": gui_status,
+                "gui_artifacts": artifacts,
+            }
+            _attach_gui_artifact_transaction(response, transaction)
+            if snapshot_attempted:
+                response["gui_action_transaction"] = transaction
+            execution_mode = (
+                response.get("execution_mode") or ExecutionMode.PREVIEW.value
+            )
+            _attach_structure_artifact_validation(
+                response,
+                spec=model_spec,
+                execution_mode=str(execution_mode),
+            )
+            modeling_health = build_modeling_health(
+                response,
+                execution_mode=str(execution_mode),
+            )
+            bundle = write_view_audit_bundle(
+                store.outputs_dir(model_spec.project_id, model_spec.revision),
+                model_spec,
+                audit,
+                gui_status=gui_status,
+                gui_artifacts=artifacts,
+                modeling_health=modeling_health,
+            )
+            response["modeling_health"] = modeling_health
+            response["bundle"] = bundle
+            response["bundle_dir"] = bundle["bundle_dir"]
+            response["view_bundle"] = bundle
+            response["view_bundle_dir"] = bundle["bundle_dir"]
+            response["manifest_path"] = bundle["manifest_path"]
+            response["view_bundle_manifest_path"] = bundle["manifest_path"]
+            response["report_path"] = bundle["report_path"]
+            response["view_audit_report_path"] = bundle["report_path"]
+            response["files"] = bundle["files"]
+            response["view_bundle_files"] = bundle["files"]
+            response["row_counts"] = bundle["row_counts"]
+            response["view_bundle_row_counts"] = bundle["row_counts"]
+            response["modeling_report"] = _build_modeling_report(response)
+            _persist_modeling_report(store, model_spec, response)
+            response["files"] = response.get(
+                "view_bundle_files",
+                response["files"],
+            )
+            response["row_counts"] = response.get(
+                "view_bundle_row_counts",
+                response["row_counts"],
+            )
+            response["bundle"] = response.get("view_bundle", response["bundle"])
+            return _compact_live_response(_ok(response), response_mode)
     except ValidationError as exc:
         return _validation_error(exc)
+    except GuiError as exc:
+        if (
+            model_spec is not None
+            and "GUI artifact report write transaction is busy" in str(exc)
+        ):
+            deferred = _diagnostic_export_deferred_response(
+                error=str(exc),
+                tool_name="material_studio_model_export_view_bundle",
+                project_id=model_spec.project_id,
+                revision=model_spec.revision,
+                project_resolution=project_resolution,
+                retry_payload=retry_payload,
+            )
+            return _compact_live_response(deferred, response_mode)
+        return _error(exc)
     except Exception as exc:
         return _error(exc)
 
@@ -31664,61 +31969,147 @@ def material_studio_live_modeling_request(
                         "capabilities_hint": _live_capabilities_hint(),
                     }, status="missing_current_project", recommended_action="create_or_select_project", payload_hint={"spec": "ModelSpec", "project_id": "existing project id"})
                 export_requested = bool((plan.payload or {}).get("export_diagnostics")) or _diagnostic_export_requested_from_text(user_request)
-                diagnostic_export: dict[str, Any] | None = None
-                if export_requested:
-                    diagnostic_export = material_studio_model_export_view_bundle(
+                normality_requested = _normality_check_requested_from_text(user_request)
+                retry_payload: dict[str, Any] = {
+                    "user_request": user_request,
+                    "project_id": project_id,
+                    "take_snapshot": take_snapshot,
+                    "views": views,
+                    "working_dir": working_dir,
+                    "response_mode": (
+                        response_mode.value
+                        if isinstance(response_mode, McpResponseMode)
+                        else str(response_mode)
+                    ),
+                }
+                if execution_mode is not None:
+                    retry_payload["execution_mode"] = mode.value
+                try:
+                    with _gui_artifact_report_transaction(
                         project_id=project_id,
-                        views=views,
-                        include_gui_snapshot=take_snapshot,
+                        revision=current_spec.revision,
                         working_dir=working_dir,
-                    )
-                    if not diagnostic_export.get("ok"):
-                        return finish({
-                            **diagnostic_export,
+                        coverage=(
+                            "workflow:inspect_current",
+                            "current_revision_revalidation",
+                            "report_read_modify_write",
+                        ),
+                    ) as transaction:
+                        locked_spec, locked_pointer = store.resolve_current(project_id)
+                        if locked_spec.revision != current_spec.revision:
+                            return finish({
+                                "ok": False,
+                                "status": "inspect_current_revision_superseded",
+                                "error": (
+                                    f"Refusing to inspect revision {current_spec.revision} "
+                                    f"because current revision advanced to {locked_spec.revision} "
+                                    "while waiting for the report lock."
+                                ),
+                                "workflow": "inspect_current",
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_id": project_id,
+                                "project_resolution": project_resolution,
+                                "revision": current_spec.revision,
+                                "current_revision": locked_spec.revision,
+                                "diagnostic_export_deferred": export_requested,
+                                "report_persistence_deferred": True,
+                                "recommended_tool": "material_studio_live_modeling_request",
+                                "required_next_step": "Retry the inspection for the current revision.",
+                                "diagnostic_export_retry_tool": "material_studio_live_modeling_request",
+                                "diagnostic_export_retry_payload": retry_payload,
+                                "diagnostic_export_current_revision_block": {
+                                    "blocked": True,
+                                    "reason": "current_revision_advanced_before_inspection",
+                                    "target_revision": current_spec.revision,
+                                    "current_revision": locked_spec.revision,
+                                    "current_pointer": locked_pointer,
+                                },
+                                "write_transaction": transaction,
+                            })
+
+                        diagnostic_export: dict[str, Any] | None = None
+                        if export_requested:
+                            diagnostic_export = material_studio_model_export_view_bundle(
+                                project_id=project_id,
+                                views=views,
+                                include_gui_snapshot=take_snapshot,
+                                working_dir=working_dir,
+                            )
+                            if not diagnostic_export.get("ok"):
+                                return finish({
+                                    **diagnostic_export,
+                                    "workflow": "inspect_current",
+                                    "user_request": user_request,
+                                    "nl_plan": nl_plan,
+                                    "project_resolution": project_resolution or diagnostic_export.get("project_resolution"),
+                                })
+                        result = material_studio_live_project_status(
+                            project_id=project_id,
+                            include_gui_status=True,
+                            working_dir=working_dir,
+                        )
+                        result = {
+                            **result,
                             "workflow": "inspect_current",
                             "user_request": user_request,
                             "nl_plan": nl_plan,
-                            "project_resolution": project_resolution or diagnostic_export.get("project_resolution"),
-                        })
-                result = material_studio_live_project_status(
-                    project_id=project_id,
-                    include_gui_status=True,
-                    working_dir=working_dir,
-                )
-                result = {
-                    **result,
-                    "workflow": "inspect_current",
-                    "user_request": user_request,
-                    "nl_plan": nl_plan,
-                    "project_resolution": project_resolution or result.get("project_resolution"),
-                    "diagnostic_export_requested": export_requested,
-                    "normality_check_requested": _normality_check_requested_from_text(user_request),
-                    "requested_diagnostic_focuses": requested_diagnostic_focuses,
-                }
-                if diagnostic_export is not None:
-                    result["diagnostic_export"] = diagnostic_export
-                    result["view_bundle_manifest_path"] = diagnostic_export.get("manifest_path") or result.get("view_bundle_manifest_path")
-                    result["view_bundle_files"] = diagnostic_export.get("files") or result.get("view_bundle_files")
-                    result["view_bundle_row_counts"] = diagnostic_export.get("row_counts") or result.get("view_bundle_row_counts")
-                    outputs = result.setdefault("outputs", {})
-                    if isinstance(outputs, dict):
-                        outputs["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
-                        outputs["view_bundle_manifest_exists"] = bool(result.get("view_bundle_manifest_path"))
-                if isinstance(result.get("modeling_report"), dict):
-                    result["modeling_report"]["workflow"] = "inspect_current"
-                    result["modeling_report"]["user_request"] = user_request
-                    result["modeling_report"]["nl_plan"] = nl_plan
-                    result["modeling_report"]["project_resolution"] = result.get("project_resolution")
-                    result["modeling_report"]["diagnostic_export_requested"] = export_requested
-                    result["modeling_report"]["normality_check_requested"] = result.get("normality_check_requested")
-                    if diagnostic_export is not None:
-                        diagnostics = result["modeling_report"].setdefault("diagnostics", {})
-                        diagnostics["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
-                        diagnostics["view_bundle_row_counts"] = result.get("view_bundle_row_counts")
-                    _refresh_response_summaries(result)
-                    if result.get("ok"):
-                        _persist_modeling_report(store, current_spec, result)
-                return finish(result)
+                            "project_resolution": project_resolution or result.get("project_resolution"),
+                            "diagnostic_export_requested": export_requested,
+                            "normality_check_requested": normality_requested,
+                            "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                        }
+                        if diagnostic_export is not None:
+                            result["diagnostic_export"] = diagnostic_export
+                            result["view_bundle_manifest_path"] = diagnostic_export.get("manifest_path") or result.get("view_bundle_manifest_path")
+                            result["view_bundle_files"] = diagnostic_export.get("files") or result.get("view_bundle_files")
+                            result["view_bundle_row_counts"] = diagnostic_export.get("row_counts") or result.get("view_bundle_row_counts")
+                            outputs = result.setdefault("outputs", {})
+                            if isinstance(outputs, dict):
+                                outputs["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
+                                outputs["view_bundle_manifest_exists"] = bool(result.get("view_bundle_manifest_path"))
+                        _attach_gui_artifact_transaction(result, transaction)
+                        if (
+                            isinstance(diagnostic_export, dict)
+                            and diagnostic_export.get("gui_action_transaction")
+                        ):
+                            result["gui_action_transaction"] = transaction
+                        if isinstance(result.get("modeling_report"), dict):
+                            result["modeling_report"]["workflow"] = "inspect_current"
+                            result["modeling_report"]["user_request"] = user_request
+                            result["modeling_report"]["nl_plan"] = nl_plan
+                            result["modeling_report"]["project_resolution"] = result.get("project_resolution")
+                            result["modeling_report"]["diagnostic_export_requested"] = export_requested
+                            result["modeling_report"]["normality_check_requested"] = normality_requested
+                            if diagnostic_export is not None:
+                                diagnostics = result["modeling_report"].setdefault("diagnostics", {})
+                                diagnostics["view_bundle_manifest_path"] = result.get("view_bundle_manifest_path")
+                                diagnostics["view_bundle_row_counts"] = result.get("view_bundle_row_counts")
+                            _refresh_response_summaries(result)
+                            if result.get("ok"):
+                                _persist_modeling_report(store, locked_spec, result)
+                        return finish(result)
+                except GuiError as exc:
+                    if "GUI artifact report write transaction is busy" not in str(exc):
+                        raise
+                    deferred = _diagnostic_export_deferred_response(
+                        error=str(exc),
+                        tool_name="material_studio_live_modeling_request",
+                        project_id=project_id,
+                        revision=current_spec.revision,
+                        project_resolution=project_resolution or {},
+                        retry_payload=retry_payload,
+                    )
+                    deferred.update(
+                        {
+                            "workflow": "inspect_current",
+                            "user_request": user_request,
+                            "nl_plan": nl_plan,
+                            "diagnostic_export_requested": export_requested,
+                            "normality_check_requested": normality_requested,
+                        }
+                    )
+                    return finish(deferred)
             elif plan.kind == "show_current":
                 if project_id is None or current_spec is None:
                     return _attach_live_failure_contract({
@@ -32108,13 +32499,15 @@ def _gui_artifact_report_transaction(
     revision: int,
     working_dir: str | None,
     coverage: str | list[str] | tuple[str, ...],
+    require_revision: bool = True,
 ):
     """Serialize GUI evidence actions and report writes for one immutable revision."""
 
     store = _structured_store(working_dir)
     resolved_project_id = str(project_id)
     resolved_revision = int(revision)
-    store.get_revision(resolved_project_id, resolved_revision)
+    if require_revision:
+        store.get_revision(resolved_project_id, resolved_revision)
     transaction_key = (
         str(store.workspace_root.resolve()),
         resolved_project_id,

@@ -193,6 +193,29 @@ artifact lock is released. Callers and maintainers must not perform a second
 post-lock report write, because it could replace evidence appended by a
 concurrent snapshot or visual-confirmation call.
 
+Diagnostic audit and bundle exports participate in this transaction domain as
+well. For a persisted revision,
+`material_studio_model_export_view_audit` and
+`material_studio_model_export_view_bundle` acquire the lock before rereading
+prior GUI artifacts, rechecking the current revision, probing the target
+window, optionally capturing it, and writing the bundle plus `report.json`.
+They return `report_write_transaction`; when a GUI snapshot was attempted they
+also return the same receipt as `gui_action_transaction`. The lock is required
+even with `include_gui_snapshot=false`, because the diagnostic bundle and
+report are still writes. Natural-language `inspect_current` holds one outer
+transaction while its nested bundle export and final inspection report run, so
+all report writes remain serialized.
+
+If the lock wait expires, the export returns
+`diagnostic_export_deferred=true`, leaves the committed report and GUI
+untouched, and provides `diagnostic_export_retry_tool` plus the exact
+`diagnostic_export_retry_payload`. If the project advances while an export is
+waiting, the old revision is not captured or rewritten; the response includes
+`diagnostic_export_current_revision_block` and retries against current state.
+An inline `ModelSpec` uses the same output lock. If its project/revision already
+exists with different immutable content, the export is rejected rather than
+replacing that revision's diagnostics.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

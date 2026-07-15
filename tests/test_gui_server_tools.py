@@ -24644,6 +24644,436 @@ def test_gui_snapshot_and_visual_confirmation_share_report_transaction(
     )
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "workflow_label"),
+    [
+        (
+            "material_studio_model_export_view_audit",
+            "workflow:model_export_view_audit",
+        ),
+        (
+            "material_studio_model_export_view_bundle",
+            "workflow:model_export_view_bundle",
+        ),
+    ],
+)
+def test_model_diagnostic_exports_publish_in_gui_artifact_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tool_name: str,
+    workflow_label: str,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    spec = load_benzene(f"diagnostic_transaction_{tool_name}")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    exported = getattr(server, tool_name)(
+        project_id=created["project_id"],
+        include_gui_snapshot=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert exported["ok"] is True
+    transaction = exported["report_write_transaction"]
+    assert transaction["scope"] == "project_revision"
+    assert transaction["domain"] == "gui_artifact_report"
+    assert transaction["project_id"] == created["project_id"]
+    assert transaction["revision"] == created["revision"]
+    assert transaction["path"].endswith("gui_artifact_report.lock")
+    assert exported["gui_action_transaction"]["path"] == transaction["path"]
+    assert {
+        "diagnostic_export",
+        workflow_label,
+        "view_audit_bundle_write",
+        "target_window_revalidation",
+        "gui_snapshot",
+        "report_read_modify_write",
+    } <= set(transaction["coverage"])
+
+
+def test_inline_diagnostic_export_is_serialized_and_cannot_replace_stored_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    inline_spec = load_benzene("inline_diagnostic_transaction")
+    inline = server.material_studio_model_export_view_bundle(
+        spec=inline_spec,
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert inline["ok"] is True
+    assert inline["project_resolution"]["source"] == "inline_spec"
+    assert inline["report_write_transaction"]["domain"] == "gui_artifact_report"
+    assert "diagnostic_export" in inline["report_write_transaction"]["coverage"]
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS", 0.005)
+    inline_lock_path = Path(inline["report_json_path"]).parent / "gui_artifact_report.lock"
+    with gui_module._workspace_advisory_write_lock(
+        inline_lock_path,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        blocked_inline = server.material_studio_model_export_view_bundle(
+            spec=inline_spec,
+            include_gui_snapshot=False,
+            working_dir=str(tmp_path),
+        )
+    assert blocked_inline["ok"] is False
+    assert blocked_inline["diagnostic_export_deferred"] is True
+    assert blocked_inline["diagnostic_export_retry_payload"]["spec"] == inline_spec
+    assert "project_id" not in blocked_inline["diagnostic_export_retry_payload"]
+
+    stored_spec = load_benzene("inline_diagnostic_conflict")
+    created = server.material_studio_model_create_from_spec(
+        stored_spec,
+        working_dir=str(tmp_path),
+    )
+    baseline = server.material_studio_model_export_view_bundle(
+        project_id=created["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    report_path = Path(baseline["report_json_path"])
+    committed_report = report_path.read_bytes()
+    conflicting_spec = json.loads(json.dumps(stored_spec))
+    conflicting_spec["model"]["atoms"][0]["xyz_angstrom"][0] += 0.25
+
+    conflict = server.material_studio_model_export_view_bundle(
+        spec=conflicting_spec,
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert conflict["ok"] is False
+    assert "conflicts with an existing immutable revision" in conflict["error"]
+    assert report_path.read_bytes() == committed_report
+
+
+def test_diagnostic_bundle_serializes_with_visual_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    management = created["gui_status"]["window_management"]
+
+    confirmation, exported = _run_concurrent_gui_report_updates(
+        monkeypatch,
+        lambda: server.material_studio_gui_record_visual_confirmation(
+            project_id=project_id,
+            revision=revision,
+            source="computer_use",
+            note="confirmation preserved across diagnostic export",
+            expected_window_handle=management["target_window_handle"],
+            expected_window_title=management["target_window_title"],
+            working_dir=str(tmp_path),
+        ),
+        lambda: server.material_studio_model_export_view_bundle(
+            project_id=project_id,
+            include_gui_snapshot=True,
+            working_dir=str(tmp_path),
+        ),
+    )
+
+    assert confirmation["ok"] is True
+    assert exported["ok"] is True
+    assert (
+        confirmation["report_write_transaction"]["path"]
+        == exported["report_write_transaction"]["path"]
+    )
+    assert exported["report_write_transaction"]["waited_seconds"] > 0.0
+    report = json.loads(Path(created["report_json_path"]).read_text(encoding="utf-8"))
+    assert any(
+        artifact.get("type") == "visual_confirmation"
+        and artifact.get("note")
+        == "confirmation preserved across diagnostic export"
+        for artifact in report["gui_artifacts"]
+    )
+    snapshot_path = exported["modeling_report"]["gui"]["snapshot_path"]
+    assert any(
+        artifact.get("screenshot_path") == snapshot_path
+        for artifact in report["gui_artifacts"]
+    )
+
+
+def test_diagnostic_export_lock_timeout_preserves_report_and_skips_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    spec = load_benzene("diagnostic_export_timeout")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    baseline = server.material_studio_model_export_view_bundle(
+        project_id=created["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert baseline["ok"] is True
+    report_path = Path(baseline["report_json_path"])
+    committed_report = report_path.read_bytes()
+    capture_count = 0
+    original_capture = backend.capture_window
+
+    def counted_capture(window: WindowInfo, output_path: Path) -> Path:
+        nonlocal capture_count
+        capture_count += 1
+        return original_capture(window, output_path)
+
+    monkeypatch.setattr(backend, "capture_window", counted_capture)
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS", 0.005)
+    lock_path = report_path.parent / "gui_artifact_report.lock"
+
+    with gui_module._workspace_advisory_write_lock(
+        lock_path,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        audit = server.material_studio_model_export_view_audit(
+            project_id=created["project_id"],
+            include_gui_snapshot=True,
+            working_dir=str(tmp_path),
+        )
+        bundle = server.material_studio_model_export_view_bundle(
+            project_id=created["project_id"],
+            include_gui_snapshot=True,
+            working_dir=str(tmp_path),
+            response_mode="compact",
+        )
+        inspection = server.material_studio_live_modeling_request(
+            "Is the current model normal?",
+            project_id=created["project_id"],
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+        )
+
+    for result, tool_name in (
+        (audit, "material_studio_model_export_view_audit"),
+        (bundle, "material_studio_model_export_view_bundle"),
+    ):
+        assert result["ok"] is False
+        assert result["status"] == "diagnostic_export_deferred"
+        assert result["diagnostic_export_deferred"] is True
+        assert result["report_persistence_deferred"] is True
+        assert result["diagnostic_export_retry_tool"] == tool_name
+        assert result["diagnostic_export_retry_payload"]["project_id"] == created["project_id"]
+        assert "GUI artifact report write transaction is busy" in result["error"]
+    assert inspection["ok"] is False
+    assert inspection["status"] == "diagnostic_export_deferred"
+    assert inspection["workflow"] == "inspect_current"
+    assert inspection["diagnostic_export_deferred"] is True
+    assert inspection["report_persistence_deferred"] is True
+    assert (
+        inspection["diagnostic_export_retry_tool"]
+        == "material_studio_live_modeling_request"
+    )
+    assert (
+        inspection["diagnostic_export_retry_payload"]["project_id"]
+        == created["project_id"]
+    )
+    assert capture_count == 0
+    assert report_path.read_bytes() == committed_report
+
+
+def test_diagnostic_export_rejects_revision_superseded_while_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    spec = load_benzene("diagnostic_export_superseded")
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    baseline = server.material_studio_model_export_view_bundle(
+        project_id=created["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert baseline["ok"] is True
+    report_path = Path(baseline["report_json_path"])
+    committed_report = report_path.read_bytes()
+    lock_path = report_path.parent / "gui_artifact_report.lock"
+    contention_observed = threading.Event()
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+    capture_count = 0
+    original_capture = backend.capture_window
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    def counted_capture(window: WindowInfo, output_path: Path) -> Path:
+        nonlocal capture_count
+        capture_count += 1
+        return original_capture(window, output_path)
+
+    monkeypatch.setattr(
+        gui_module,
+        "_lock_file_descriptor_nonblocking",
+        observed_lock_attempt,
+    )
+    monkeypatch.setattr(backend, "capture_window", counted_capture)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with gui_module._workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=tmp_path,
+            timeout_seconds=1.0,
+            poll_seconds=0.01,
+        ):
+            pending = executor.submit(
+                server.material_studio_model_export_view_bundle,
+                None,
+                created["project_id"],
+                None,
+                True,
+                str(tmp_path),
+            )
+            assert contention_observed.wait(timeout=10.0)
+            patched = server.material_studio_model_modify_with_patch(
+                project_id=created["project_id"],
+                base_revision=created["revision"],
+                patch={"operations": [{"type": "delete_atom", "atom_id": "H1"}]},
+                working_dir=str(tmp_path),
+            )
+            assert patched["ok"] is True
+            assert patched["revision"] == 1
+        exported = pending.result(timeout=30.0)
+
+    assert exported["ok"] is False
+    assert exported["status"] == "diagnostic_export_revision_superseded"
+    assert exported["revision"] == 0
+    assert exported["current_revision"] == 1
+    assert exported["diagnostic_export_current_revision_block"]["blocked"] is True
+    assert exported["diagnostic_export_retry_payload"]["project_id"] == created["project_id"]
+    assert capture_count == 0
+    assert report_path.read_bytes() == committed_report
+
+
+def test_inspect_current_publishes_all_reports_inside_one_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+    original_persist = server._persist_modeling_report
+    persist_calls: list[dict[str, object]] = []
+
+    def tracked_persist(store, model_spec, response):
+        active = server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get()
+        persist_calls.append(
+            {
+                "revision": model_spec.revision,
+                "active": active is not None,
+                "transaction_revision": (
+                    (active or {}).get("transaction", {}).get("revision")
+                    if isinstance(active, dict)
+                    else None
+                ),
+            }
+        )
+        return original_persist(store, model_spec, response)
+
+    monkeypatch.setattr(server, "_persist_modeling_report", tracked_persist)
+    inspected = server.material_studio_live_modeling_request(
+        "Is the current model normal?",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+
+    assert inspected["ok"] is True
+    assert len(persist_calls) == 2
+    assert all(call["active"] is True for call in persist_calls)
+    assert all(call["revision"] == created["revision"] for call in persist_calls)
+    assert all(
+        call["transaction_revision"] == created["revision"]
+        for call in persist_calls
+    )
+    transaction = inspected["report_write_transaction"]
+    assert transaction["nested_call_count"] >= 1
+    assert {
+        "workflow:inspect_current",
+        "workflow:model_export_view_bundle",
+        "current_revision_revalidation",
+        "diagnostic_export",
+        "view_audit_bundle_write",
+        "report_read_modify_write",
+    } <= set(transaction["coverage"])
+
+
 def test_gui_snapshot_blocks_concurrent_open_before_gui_action(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

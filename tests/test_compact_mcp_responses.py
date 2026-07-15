@@ -32,6 +32,26 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["natural_language"]["patch_command_count"] == len(
         compact["natural_language"]["patch_commands"]
     )
+    semiconductor_view_defaults = compact["natural_language"]["view_selection"][
+        "semiconductor_domain_defaults"
+    ]
+    assert semiconductor_view_defaults["policy_version"] == 1
+    assert semiconductor_view_defaults["explicit_views_override"] is True
+    assert semiconductor_view_defaults["selection_precedence"] == [
+        "interface_axis",
+        "surface_axis",
+        "lattice_family",
+    ]
+    assert semiconductor_view_defaults["cartesian_context_views"] == [
+        "front",
+        "top",
+        "isometric",
+    ]
+    assert semiconductor_view_defaults["profiles"]["bulk"]["cubic"] == [
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ]
     assert all(
         "pattern" not in command
         for command in compact["natural_language"]["patch_commands"]
@@ -232,6 +252,7 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert isinstance(json.loads(view_audit_path.read_text(encoding="utf-8")), dict)
     assert report_path.stat().st_size > _json_size(created)
 
+
     project_id = created["project_id"]
     compact_status = server.material_studio_live_project_status(
         project_id=project_id,
@@ -346,6 +367,56 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert not Path(gui_preview["planned_outputs"]["structure"]).exists()
     assert "modeling_report" not in gui_preview
     assert _json_size(gui_preview) < server.COMPACT_RESPONSE_MAX_BYTES
+
+
+def test_semiconductor_default_view_selection_survives_full_and_compact_live_responses(
+    tmp_path: Path,
+) -> None:
+    expected_views = [
+        "front",
+        "top",
+        "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ]
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal, export diagnostics, and check whether the model is normal.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+
+    assert created["ok"] is True
+    assert created["view_selection"]["selection_profile"] == "semiconductor_bulk_cubic"
+    assert created["view_selection"]["view_names"] == expected_views
+    assert created["view_audit"]["view_selection"] == created["view_selection"]
+    assert created["modeling_report"]["view_selection"] == created["view_selection"]
+    assert created["modeling_report"]["view_review"]["view_selection"] == created[
+        "view_selection"
+    ]
+    assert created["view_parameter_summary"]["view_selection"] == created[
+        "view_selection"
+    ]
+    assert created["live_summary"]["view_selection"] == created["view_selection"]
+    assert created["view_parameter_summary"]["view_names"] == expected_views
+
+    compact_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    compact_selection = compact_status["view_parameter_summary"]["view_selection"]
+    assert compact_selection["source"] == "semiconductor_domain_default"
+    assert compact_selection["selection_profile"] == "semiconductor_bulk_cubic"
+    assert compact_selection["view_names"] == expected_views
+    assert compact_status["view_parameter_summary"]["view_names"] == expected_views
+    assert _json_size(compact_status) < server.COMPACT_RESPONSE_MAX_BYTES
 
 
 def test_compact_live_status_uses_latest_current_project_resolution(tmp_path: Path) -> None:
@@ -469,13 +540,18 @@ def test_compact_status_preserves_bound_nondefault_views_and_rejects_stale_audit
     ]
     assert fallback["view_parameter_summary"]["view_names"] == [
         "front",
-        "back",
-        "right",
-        "left",
         "top",
-        "bottom",
         "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
     ]
+    assert fallback["view_parameter_summary"]["view_selection"]["source"] == (
+        "semiconductor_domain_default"
+    )
+    assert fallback["view_parameter_summary"]["view_selection"]["selection_profile"] == (
+        "semiconductor_bulk_cubic"
+    )
     assert audit_path.read_bytes() == stale_bytes
 
 

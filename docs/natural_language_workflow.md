@@ -45,6 +45,16 @@ exports the default front/back/right/left/top/bottom/isometric set.
 as `导出各个视角模型参数`, `导出不同视角模型参数`, `导出多角度模型参数`, and
 `导出全视角模型参数` select the default seven-view set.
 
+When no view phrase or explicit `views` list is supplied, semiconductor crystal
+diagnostics use a domain-aware default set. Every set starts with
+front/top/isometric. Interface models then add interface-normal and two in-plane
+views, surface or slab models add surface-normal and two in-plane views, and
+bulk models add three lattice-family plane-normal views. Cubic bulk defaults to
+(100)/(110)/(111), while hexagonal bulk defaults to
+(0001)/(10-10)/(11-20). Explicit views are never expanded by this policy. The
+same `view_selection` receipt is available in the audit, modeling report, view
+parameter summary, and live summary.
+
 Crystal diagnostics also accept lattice-aware direction views. For example,
 `export [001], [110], and [111] crystallographic view parameters` selects
 `crystal_001`, `crystal_110`, and `crystal_111`; `沿[0001]晶向导出视图参数`
@@ -268,7 +278,7 @@ the Al/Si Schottky contact template; `接触诊断` selects the
 `metal_semiconductor_contact` diagnostic focus.
 
 These templates are deterministic `ModelSpec` starting points with CASTEP energy
-settings and seven-view diagnostics. MaterialsScript lattice construction remains
+settings and context-aware multi-view diagnostics. MaterialsScript lattice construction remains
 preview-only until local Materials Studio Copy Script output confirms the exact
 API, but explicit `execution_mode="execute"` can materialize a CIF artifact and
 hot-load that CIF into the Materials Studio GUI.

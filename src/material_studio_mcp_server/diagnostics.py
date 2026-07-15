@@ -17,6 +17,84 @@ from .specs.project import ImportedStructureSpec, ModelSpec
 
 
 DEFAULT_VIEWS = ("front", "back", "right", "left", "top", "bottom", "isometric")
+SEMICONDUCTOR_VIEW_DEFAULT_POLICY_VERSION = 1
+SEMICONDUCTOR_DEFAULT_CARTESIAN_VIEWS = ("front", "top", "isometric")
+SEMICONDUCTOR_BULK_DEFAULT_VIEW_PROFILES: dict[str, tuple[str, ...]] = {
+    "cubic": (
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ),
+    "hexagonal": (
+        "crystal_plane_0001",
+        "crystal_plane_10m10",
+        "crystal_plane_11m20",
+    ),
+    "tetragonal": (
+        "crystal_plane_001",
+        "crystal_plane_100",
+        "crystal_plane_110",
+    ),
+    "orthorhombic": (
+        "crystal_plane_100",
+        "crystal_plane_010",
+        "crystal_plane_001",
+    ),
+    "monoclinic": (
+        "crystal_plane_100",
+        "crystal_plane_010",
+        "crystal_plane_001",
+    ),
+    "rhombohedral": (
+        "crystal_plane_001",
+        "crystal_plane_100",
+        "crystal_plane_110",
+    ),
+    "triclinic": (
+        "crystal_plane_100",
+        "crystal_plane_010",
+        "crystal_plane_001",
+    ),
+}
+SEMICONDUCTOR_LATTICE_FAMILY_MARKERS: tuple[
+    tuple[str, tuple[str, ...]], ...
+] = (
+    (
+        "hexagonal",
+        (
+            "hexagonal",
+            "wurtzite",
+            "4h-sic",
+            "4h sic",
+            "6h-sic",
+            "6h sic",
+            "2d tmd",
+            "layered tmd",
+            "hbn",
+        ),
+    ),
+    (
+        "cubic",
+        (
+            "diamond cubic",
+            "zinc blende",
+            "zincblende",
+            "3c-sic",
+            "3c sic",
+            "cubic perovskite",
+        ),
+    ),
+    (
+        "orthorhombic",
+        ("orthorhombic", "phosphorene", "black phosphorus"),
+    ),
+    (
+        "monoclinic",
+        ("monoclinic", "beta-ga2o3", "beta gallium oxide"),
+    ),
+    ("tetragonal", ("tetragonal",)),
+    ("rhombohedral", ("rhombohedral", "trigonal")),
+)
 CRYSTAL_DIRECTION_VIEW_INDICES: dict[str, tuple[int, ...]] = {
     "crystal_100": (1, 0, 0),
     "crystal_010": (0, 1, 0),
@@ -274,10 +352,195 @@ NOMINAL_VALENCE_ELECTRONS = {
 }
 
 
+def _view_axis_name(value: Any) -> str | None:
+    axis = str(value or "").strip().lower()
+    return {"a": "a", "b": "b", "c": "c", "x": "a", "y": "b", "z": "c"}.get(
+        axis
+    )
+
+
+def _is_semiconductor_view_domain(spec: ModelSpec) -> bool:
+    metadata = spec.metadata or {}
+    domain = str(metadata.get("domain") or "").strip().lower()
+    family = str(metadata.get("structure_family") or "").strip().lower()
+    return bool(
+        "semiconductor" in domain
+        or "semiconductor" in family
+        or metadata.get("wide_bandgap_semiconductor") is True
+        or metadata.get("oxide_semiconductor") is True
+        or metadata.get("semiconductor_oxide_interface") is True
+    )
+
+
+def _lattice_values_close(left: float, right: float) -> bool:
+    return math.isclose(left, right, rel_tol=1.0e-4, abs_tol=1.0e-3)
+
+
+def _lattice_angle_close(value: float, target: float) -> bool:
+    return math.isclose(value, target, rel_tol=0.0, abs_tol=5.0e-2)
+
+
+def _semiconductor_lattice_family(spec: ModelSpec) -> str | None:
+    if not isinstance(spec.model, CrystalSpec):
+        return None
+
+    metadata = spec.metadata or {}
+    family_text = " ".join(
+        str(value or "")
+        for value in (
+            metadata.get("structure_family"),
+            metadata.get("prototype"),
+            metadata.get("polytype"),
+            spec.model.name,
+        )
+    ).lower()
+    for family, markers in SEMICONDUCTOR_LATTICE_FAMILY_MARKERS:
+        if any(marker in family_text for marker in markers):
+            return family
+
+    lattice = spec.model.lattice
+    a_eq_b = _lattice_values_close(lattice.a, lattice.b)
+    b_eq_c = _lattice_values_close(lattice.b, lattice.c)
+    alpha_90 = _lattice_angle_close(lattice.alpha, 90.0)
+    beta_90 = _lattice_angle_close(lattice.beta, 90.0)
+    gamma_90 = _lattice_angle_close(lattice.gamma, 90.0)
+    gamma_hexagonal = _lattice_angle_close(
+        lattice.gamma, 120.0
+    ) or _lattice_angle_close(lattice.gamma, 60.0)
+
+    if a_eq_b and alpha_90 and beta_90 and gamma_hexagonal:
+        return "hexagonal"
+    if a_eq_b and b_eq_c and alpha_90 and beta_90 and gamma_90:
+        return "cubic"
+    if a_eq_b and b_eq_c and _lattice_values_close(
+        lattice.alpha, lattice.beta
+    ) and _lattice_values_close(lattice.beta, lattice.gamma):
+        return "rhombohedral"
+    if a_eq_b and alpha_90 and beta_90 and gamma_90:
+        return "tetragonal"
+    right_angle_count = sum((alpha_90, beta_90, gamma_90))
+    if right_angle_count == 3:
+        return "orthorhombic"
+    if right_angle_count == 2:
+        return "monoclinic"
+    return "triclinic"
+
+
+def resolve_view_selection(
+    spec: ModelSpec,
+    views: list[str] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """Resolve explicit or domain-aware default views with an audit receipt."""
+
+    metadata = spec.metadata or {}
+    is_crystal = isinstance(spec.model, CrystalSpec)
+    semiconductor_domain = is_crystal and _is_semiconductor_view_domain(spec)
+    lattice_family = _semiconductor_lattice_family(spec) if semiconductor_domain else None
+    default_view_names = list(DEFAULT_VIEWS)
+    default_profile = "generic_default"
+    orientation_kind: str | None = None
+    orientation_axis: str | None = None
+    domain_views: list[str] = []
+    reason_codes: list[str] = []
+
+    if semiconductor_domain:
+        interface_axis_raw = metadata.get("interface_axis")
+        surface_axis_raw = metadata.get("surface_axis")
+        interface_axis = _view_axis_name(interface_axis_raw)
+        surface_axis = _view_axis_name(surface_axis_raw)
+        if interface_axis_raw is not None and interface_axis is None:
+            reason_codes.append("invalid_interface_axis_ignored")
+        if surface_axis_raw is not None and surface_axis is None:
+            reason_codes.append("invalid_surface_axis_ignored")
+
+        if interface_axis is not None:
+            orientation_kind = "interface"
+            orientation_axis = interface_axis
+            default_profile = "semiconductor_interface_frame"
+            domain_views = [
+                "interface_normal",
+                "interface_in_plane_1",
+                "interface_in_plane_2",
+            ]
+            reason_codes.append("valid_interface_axis_has_priority")
+        elif surface_axis is not None:
+            orientation_kind = "surface"
+            orientation_axis = surface_axis
+            default_profile = "semiconductor_surface_frame"
+            domain_views = [
+                "surface_normal",
+                "surface_in_plane_1",
+                "surface_in_plane_2",
+            ]
+            reason_codes.append("valid_surface_axis_selected")
+        else:
+            resolved_family = lattice_family or "triclinic"
+            default_profile = f"semiconductor_bulk_{resolved_family}"
+            domain_views = list(
+                SEMICONDUCTOR_BULK_DEFAULT_VIEW_PROFILES.get(
+                    resolved_family,
+                    SEMICONDUCTOR_BULK_DEFAULT_VIEW_PROFILES["triclinic"],
+                )
+            )
+            reason_codes.append("bulk_lattice_family_selected")
+
+        default_view_names = list(
+            dict.fromkeys([*SEMICONDUCTOR_DEFAULT_CARTESIAN_VIEWS, *domain_views])
+        )
+
+    default_receipt = {
+        "policy_version": SEMICONDUCTOR_VIEW_DEFAULT_POLICY_VERSION,
+        "source": (
+            "semiconductor_domain_default"
+            if semiconductor_domain
+            else "generic_default"
+        ),
+        "policy_applied": True,
+        "explicit_views_provided": False,
+        "model_type": spec.model_type.value,
+        "domain": metadata.get("domain"),
+        "semiconductor_domain": semiconductor_domain,
+        "selection_profile": default_profile,
+        "lattice_family": lattice_family,
+        "orientation_kind": orientation_kind,
+        "orientation_axis": orientation_axis,
+        "cartesian_context_views": (
+            list(SEMICONDUCTOR_DEFAULT_CARTESIAN_VIEWS)
+            if semiconductor_domain
+            else list(DEFAULT_VIEWS)
+        ),
+        "domain_diagnostic_views": domain_views,
+        "view_names": default_view_names,
+        "view_count": len(default_view_names),
+        "reason_codes": reason_codes
+        or [
+            "non_crystal_generic_default"
+            if not is_crystal
+            else "non_semiconductor_generic_default"
+        ],
+        "explicit_views_override_domain_defaults": True,
+    }
+    if views:
+        explicit_view_names = list(views)
+        return explicit_view_names, {
+            **default_receipt,
+            "source": "explicit_request",
+            "policy_applied": False,
+            "explicit_views_provided": True,
+            "selection_profile": "explicit_request",
+            "suggested_default_profile": default_profile,
+            "suggested_default_view_names": default_view_names,
+            "view_names": explicit_view_names,
+            "view_count": len(explicit_view_names),
+            "reason_codes": ["explicit_views_preserved"],
+        }
+    return default_view_names, default_receipt
+
+
 def model_view_audit(spec: ModelSpec, views: list[str] | None = None) -> dict[str, Any]:
     """Return JSON-serializable model health and view audit data."""
 
-    requested_views = views or list(DEFAULT_VIEWS)
+    requested_views, view_selection = resolve_view_selection(spec, views)
     points, atom_rows, warnings, model_summary = _extract_points(spec)
     geometry = _geometry_summary(points)
     view_rows = []
@@ -302,6 +565,7 @@ def model_view_audit(spec: ModelSpec, views: list[str] | None = None) -> dict[st
         "atoms": [_audit_atom(atom) for atom in atom_rows],
         "geometry": geometry,
         "views": view_rows,
+        "view_selection": view_selection,
         "health": _health_checks(spec, points, atom_rows, warnings),
         "simulation": spec.simulation.model_dump(mode="json") if spec.simulation else None,
         "outputs": spec.outputs,

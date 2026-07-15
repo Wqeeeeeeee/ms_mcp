@@ -1305,7 +1305,6 @@ def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, 
     backend.windows = [target_window]
 
     prepared = server.material_studio_gui_prepare_view_replay(
-        views=["front", "crystal_plane_110"],
         working_dir=str(tmp_path),
     )
 
@@ -1316,7 +1315,16 @@ def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, 
     assert prepared["viewport_control_backend"] == "manifest_only"
     assert prepared["gui_modified"] is False
     assert prepared["structure_modified"] is False
-    assert prepared["view_names"] == ["front", "crystal_plane_110"]
+    assert prepared["view_names"] == [
+        "front",
+        "top",
+        "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ]
+    assert prepared["view_selection"]["source"] == "semiconductor_domain_default"
+    assert prepared["view_selection"]["selection_profile"] == "semiconductor_bulk_cubic"
     assert Path(prepared["manifest_path"]).exists()
     assert backend.activated_handles == []
 
@@ -1346,6 +1354,9 @@ def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, 
     assert replay_status["manifest_exists"] is True
     assert replay_status["events_exist"] is True
     assert replay_status["replay_status"] == "partially_confirmed"
+    assert replay_status["view_selection"]["selection_profile"] == (
+        "semiconductor_bulk_cubic"
+    )
     assert replay_status["replay_summary"]["accepted_view_count"] == 1
     assert replay_status["last_replay_event"]["view_name"] == "front"
 
@@ -6223,6 +6234,35 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "gate_stack_thickness" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     view_selection = capabilities["natural_language"]["view_selection"]
     assert view_selection["default_views"] == ["front", "back", "right", "left", "top", "bottom", "isometric"]
+    semiconductor_defaults = view_selection["semiconductor_domain_defaults"]
+    assert semiconductor_defaults["policy_version"] == 1
+    assert semiconductor_defaults["explicit_views_override"] is True
+    assert semiconductor_defaults["selection_precedence"] == [
+        "interface_axis",
+        "surface_axis",
+        "lattice_family",
+    ]
+    assert semiconductor_defaults["receipt_field"] == "view_selection"
+    assert semiconductor_defaults["cartesian_context_views"] == [
+        "front",
+        "top",
+        "isometric",
+    ]
+    assert semiconductor_defaults["profiles"]["surface"] == [
+        "surface_normal",
+        "surface_in_plane_1",
+        "surface_in_plane_2",
+    ]
+    assert semiconductor_defaults["profiles"]["interface"] == [
+        "interface_normal",
+        "interface_in_plane_1",
+        "interface_in_plane_2",
+    ]
+    assert semiconductor_defaults["profiles"]["bulk"]["hexagonal"] == [
+        "crystal_plane_0001",
+        "crystal_plane_10m10",
+        "crystal_plane_11m20",
+    ]
     assert "三视图" in view_selection["three_view_terms"]
     assert "导出三视图模型参数" in view_selection["examples"]
     assert "导出多角度模型参数" in view_selection["examples"]
@@ -9863,8 +9903,8 @@ def test_live_modeling_request_inspects_current_model_status(monkeypatch, tmp_pa
     assert inspected["diagnostic_export_requested"] is True
     assert inspected["normality_check_requested"] is True
     assert Path(inspected["view_bundle_manifest_path"]).exists()
-    assert inspected["view_bundle_row_counts"]["view_projections"] == 56
-    assert inspected["view_bundle_row_counts"]["view_quality"] == 7
+    assert inspected["view_bundle_row_counts"]["view_projections"] == 48
+    assert inspected["view_bundle_row_counts"]["view_quality"] == 6
     assert Path(inspected["view_bundle_files"]["view_quality_csv"]).exists()
     assert inspected["project_id"] == created["project_id"]
     assert inspected["revision"] == created["revision"]
@@ -9880,7 +9920,7 @@ def test_live_modeling_request_inspects_current_model_status(monkeypatch, tmp_pa
     assert inspected["live_summary"]["view_bundle_manifest_path"] == inspected["view_bundle_manifest_path"]
     assert inspected["live_summary"]["view_quality_csv"] == inspected["view_bundle_files"]["view_quality_csv"]
     assert inspected["modeling_report"]["normality"] in {"preview_ready", "review_warnings"}
-    assert inspected["computed_audit_summary"]["view_count"] == 7
+    assert inspected["computed_audit_summary"]["view_count"] == 6
     status = server.material_studio_live_project_status(created["project_id"], include_gui_status=False, working_dir=str(tmp_path))
     assert status["ok"] is True
     assert status["workflow"] == "inspect_current"
@@ -9888,7 +9928,7 @@ def test_live_modeling_request_inspects_current_model_status(monkeypatch, tmp_pa
     assert status["live_summary"]["project_resolution"]["source"] == "explicit"
     assert status["normality_check_requested"] is True
     assert status["live_summary"]["normality_check_requested"] is True
-    assert status["view_bundle_row_counts"]["view_quality"] == 7
+    assert status["view_bundle_row_counts"]["view_quality"] == 6
     assert Path(status["view_bundle_files"]["view_quality_csv"]).exists()
     history = server.material_studio_project_history(created["project_id"], working_dir=str(tmp_path))
     assert [item["revision"] for item in history["history"]] == [created["revision"]]
@@ -9903,12 +9943,11 @@ def test_live_modeling_request_inspects_current_model_status(monkeypatch, tmp_pa
     assert compact_status["workflow"] == "inspect_current"
     assert compact_status["visual_normality_summary"]["recommended_view_name"] in {
         "front",
-        "back",
-        "right",
-        "left",
         "top",
-        "bottom",
         "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
     }
     assert compact_status["visual_clean_view_available"] is True
     assert compact_status["visual_clean_view_count"] >= 1
@@ -10046,7 +10085,9 @@ def test_live_modeling_request_chinese_create_exports_band_gap_preflight_and_vie
     assert result["view_bundle_row_counts"]["semiconductor_calculation_preflight"] >= 1
     assert result["view_bundle_row_counts"]["semiconductor_reciprocal_lattice"] >= 1
     assert result["view_bundle_row_counts"]["semiconductor_band_path"] >= 1
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
+    assert result["view_selection"]["selection_profile"] == "semiconductor_bulk_cubic"
+    assert result["view_selection"]["source"] == "semiconductor_domain_default"
 
     history = server.material_studio_project_history(result["project_id"], working_dir=str(tmp_path))
     assert [item["revision"] for item in history["history"]] == [result["revision"]]
@@ -10075,7 +10116,7 @@ def test_live_modeling_request_chinese_normality_check_persists_current_status(m
     assert inspected["diagnostic_export_requested"] is True
     assert inspected["nl_plan"]["kind"] == "inspect_current"
     assert inspected["project_id"] == created["project_id"]
-    assert inspected["view_bundle_row_counts"]["view_quality"] == 7
+    assert inspected["view_bundle_row_counts"]["view_quality"] == 6
     assert Path(inspected["view_bundle_files"]["view_quality_csv"]).exists()
 
     status = server.material_studio_live_project_status(created["project_id"], include_gui_status=False, working_dir=str(tmp_path))
@@ -10084,7 +10125,7 @@ def test_live_modeling_request_chinese_normality_check_persists_current_status(m
     assert status["normality_check_requested"] is True
     assert status["live_summary"]["normality_check_requested"] is True
     assert status["modeling_report"]["change_receipt"]["normality_check_requested"] is True
-    assert status["view_bundle_row_counts"]["view_quality"] == 7
+    assert status["view_bundle_row_counts"]["view_quality"] == 6
 
     history = server.material_studio_project_history(created["project_id"], working_dir=str(tmp_path))
     assert [item["revision"] for item in history["history"]] == [created["revision"]]
@@ -12389,7 +12430,7 @@ def test_live_modeling_request_infers_semiconductor_crystal_templates(monkeypatc
         current = server.material_studio_model_get_current(result["project_id"], working_dir=str(tmp_path))
         assert current["spec"]["metadata"]["domain"] == "semiconductor"
         assert current["spec"]["metadata"]["structure_family"] == structure_family
-        assert result["modeling_report"]["inspection"]["view_count"] == 7
+        assert result["modeling_report"]["inspection"]["view_count"] == 6
         assert result["modeling_report"]["inspection"]["crystal_nearest_neighbor_stats_angstrom"]["min"] > 1.0
         assert result["modeling_report"]["inspection"]["crystal_coordination_count"] == result["view_audit"]["model"]["atom_count"]
         assert result["modeling_report"]["inspection"]["semiconductor_health"]["ok"] is True
@@ -14211,7 +14252,7 @@ def test_live_modeling_request_builds_gaas_schottky_contact_scaffold(tmp_path: P
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/GaAs Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -14295,7 +14336,7 @@ def test_live_modeling_request_builds_gan_schottky_contact_scaffold(tmp_path: Pa
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/GaN Schottky contact with interface gap 3.1 angstrom and export contact diagnostics.",
@@ -14379,7 +14420,7 @@ def test_live_modeling_request_builds_zno_schottky_contact_scaffold(tmp_path: Pa
     assert result["live_summary"]["semiconductor_contact_geometry_status"] == "matched"
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "\u6784\u5efa Pt/\u6c27\u5316\u950c\u8096\u7279\u57fa\u63a5\u89e6\u5e76\u8bbe\u7f6e\u754c\u9762\u95f4\u8ddd\u4e3a 3.0 \u57c3\uff0c\u5bfc\u51fa\u63a5\u89e6\u8bca\u65ad\u3002",
@@ -14498,7 +14539,7 @@ def test_live_modeling_request_builds_beta_ga2o3_schottky_contact_scaffold(
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_surface_polarity_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "\u6784\u5efa Pt/\u03b2-\u6c27\u5316\u9553(010)\u8096\u7279\u57fa\u63a5\u89e6\uff0c\u754c\u9762\u95f4\u8ddd 3.0 \u57c3\uff0c\u5bfc\u51fa\u63a5\u89e6\u8bca\u65ad\u3002",
@@ -14598,7 +14639,7 @@ def test_live_modeling_request_builds_inp_schottky_contact_scaffold(tmp_path: Pa
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/InP Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -14682,7 +14723,7 @@ def test_live_modeling_request_builds_inas_schottky_contact_scaffold(tmp_path: P
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/InAs Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -14766,7 +14807,7 @@ def test_live_modeling_request_builds_alas_schottky_contact_scaffold(tmp_path: P
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/AlAs Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -14865,7 +14906,7 @@ def test_live_modeling_request_builds_cdte_schottky_contact_scaffold(tmp_path: P
     assert Path(result["live_summary"]["semiconductor_contact_csv"]).exists()
     assert Path(result["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
 
     pt_gap = server.material_studio_live_modeling_request(
         "Build a Pt/CdTe Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -14929,7 +14970,7 @@ def test_live_modeling_request_builds_generic_ii_vi_schottky_contact_scaffolds(t
     assert znse["live_summary"]["semiconductor_contact_sequence"] == ["ZnSe", "Au"]
     assert Path(znse["view_bundle_files"]["semiconductor_contact_csv"]).exists()
     assert znse["view_bundle_row_counts"]["semiconductor_contact"] == 2
-    assert znse["view_bundle_row_counts"]["view_quality"] == 7
+    assert znse["view_bundle_row_counts"]["view_quality"] == 6
 
     cdse = server.material_studio_live_modeling_request(
         "Build a Pt/CdSe Schottky contact with interface gap 3.0 angstrom and export contact diagnostics.",
@@ -15726,7 +15767,7 @@ def test_live_modeling_request_customizes_chinese_al_content_hemt_2deg(tmp_path:
     assert result["view_projection_row_count"] == live_summary["view_projection_row_count"]
     assert result["view_projection_row_count"] == result["view_bundle_row_counts"]["view_projections"]
     assert result["view_overlap_candidate_count"] == report["inspection"]["view_overlap_candidate_count"]
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
     assert result["view_bundle_row_counts"]["semiconductor_polarization_2deg"] == 1
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_polarization_2deg_csv"]).exists()
     assert Path(result["modeling_report"]["diagnostics"]["view_quality_csv"]).exists()
@@ -19278,7 +19319,7 @@ def test_semiconductor_recommended_focuses_mark_ready_when_already_exported(
         "semiconductor_structure_health",
         "electronic_structure_preflight",
     }
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
     assert result["view_bundle_row_counts"]["semiconductor_composition"] == 1
     assert result["view_bundle_row_counts"]["semiconductor_calculation_preflight"] == 1
     assert Path(result["view_bundle_files"]["semiconductor_composition_csv"]).exists()
@@ -19519,7 +19560,7 @@ def test_live_modeling_request_handles_chinese_realtime_gui_diagnostics_and_norm
     ]
     assert summary_row["current_revision_loaded_in_gui"] == "True"
     assert summary_row["loaded_current_revision"] == "True"
-    assert result["view_bundle_row_counts"]["view_projections"] == 56
+    assert result["view_bundle_row_counts"]["view_projections"] == 48
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
     snapshot = server.material_studio_gui_snapshot(
@@ -20241,8 +20282,15 @@ def test_live_modeling_request_checks_chinese_reasonable_bond_length_anomalies(
     assert "semiconductor_local_environment_csv" in health_focus["existing_csv_keys"]
     assert Path(health_focus["artifacts"]["semiconductor_neighbor_pairs_csv"]).exists()
     assert Path(health_focus["artifacts"]["semiconductor_local_environment_csv"]).exists()
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
-    assert result["live_summary"]["view_names"] == ["front", "back", "right", "left", "top", "bottom", "isometric"]
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
+    assert result["live_summary"]["view_names"] == [
+        "front",
+        "top",
+        "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ]
     assert result["live_summary"]["requested_diagnostic_focuses"] == user_focuses + auto_focuses
     assert result["live_summary"]["auto_completed_diagnostic_focuses"] == auto_focuses
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
@@ -20415,7 +20463,7 @@ def test_live_modeling_request_shows_current_revision_with_chinese_gui_and_diagn
     assert shown["modeling_report"]["change_receipt"]["workflow"] == "show_current"
     assert shown["modeling_report"]["gui"]["hot_loaded"] is True
     assert Path(shown["view_bundle_manifest_path"]).exists()
-    assert shown["view_bundle_row_counts"]["view_projections"] == 56
+    assert shown["view_bundle_row_counts"]["view_projections"] == 48
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
     history = server.material_studio_project_history(created["project_id"], working_dir=str(tmp_path))
@@ -20557,7 +20605,7 @@ def test_live_modeling_request_pushes_current_model_to_current_ms_window_with_di
     assert shown["live_summary"]["diagnostic_export_requested"] is True
     assert Path(shown["view_bundle_manifest_path"]).exists()
     assert Path(shown["view_bundle_files"]["view_quality_csv"]).exists()
-    assert shown["view_bundle_row_counts"]["view_quality"] == 7
+    assert shown["view_bundle_row_counts"]["view_quality"] == 6
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
     history = server.material_studio_project_history(created["project_id"], working_dir=str(tmp_path))
@@ -20653,7 +20701,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert normality_explanation["ready_for_calculation"] is False
     assert normality_explanation["next_action_tool"] == "material_studio_live_modeling_request"
     assert normality_explanation["evidence"]["hot_loaded"] is True
-    assert normality_explanation["evidence"]["view_projection_row_count"] == 56
+    assert normality_explanation["evidence"]["view_projection_row_count"] == 48
     assert live_summary["normality_explanation"] == normality_explanation
     assert live_summary["normality_summary"] == "ready_for_model_edits_but_not_for_calculation"
     assert live_summary["normality_primary_reason"] == "acceptance_criteria_failed"
@@ -21160,7 +21208,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert artifacts_contract["key_row_counts"]["view_projections"] == result["view_bundle_row_counts"]["view_projections"]
     assert artifacts_contract["key_row_counts"]["view_quality"] == result["view_bundle_row_counts"]["view_quality"]
     assert artifacts_contract["key_row_counts"]["semiconductor_composition"] == result["view_bundle_row_counts"]["semiconductor_composition"]
-    assert artifacts_contract["view_count"] == 7
+    assert artifacts_contract["view_count"] == 6
     assert "front" in artifacts_contract["view_names"]
     assert artifacts_contract["requested_focus_status"]["ok"] is True
     assert artifacts_contract["missing_csv_keys"] == []
@@ -21367,7 +21415,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert live_summary["view_manual_review_view_names"][0] == view_review["recommended_view_name"]
     assert live_summary["view_recommended_view_camera_direction"] == view_review["recommended_view_camera_direction"]
     assert live_summary["view_recommended_view_camera_up"] == view_review["recommended_view_camera_up"]
-    assert live_summary["view_projection_row_count"] == 56
+    assert live_summary["view_projection_row_count"] == 48
     assert live_summary["semiconductor_available"] is True
     assert live_summary["semiconductor_ok"] is True
     assert live_summary["semiconductor_rule"] == "iii_v_tetrahedral"
@@ -21403,10 +21451,10 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert receipt_row_counts["semiconductor_calculation_preflight"] == result["view_bundle_row_counts"]["semiconductor_calculation_preflight"]
     receipt_view_check = result["modeling_report"]["change_receipt"]["view_check"]
     assert receipt_view_check["available"] is True
-    assert receipt_view_check["view_count"] == 7
-    assert receipt_view_check["supported_view_count"] == 7
+    assert receipt_view_check["view_count"] == 6
+    assert receipt_view_check["supported_view_count"] == 6
     assert receipt_view_check["expected_atom_projection_count"] == 8
-    assert receipt_view_check["view_projection_row_count"] == 56
+    assert receipt_view_check["view_projection_row_count"] == 48
     assert receipt_view_check["gui_loaded_current_revision"] is True
     assert receipt_view_check["best_view_candidates"]
     assert receipt_view_check["recommended_view_name"] == view_review["recommended_view_name"]
@@ -21444,8 +21492,8 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert Path(result["view_bundle_files"]["view_projections_csv"]).exists()
     assert Path(result["view_bundle_files"]["view_quality_csv"]).exists()
     assert result["view_bundle_row_counts"]["atoms"] == 8
-    assert result["view_bundle_row_counts"]["view_projections"] == 56
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_projections"] == 48
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
     summary_rows = list(csv.DictReader(Path(result["view_bundle_files"]["modeling_report_summary_csv"]).open(encoding="utf-8")))
     assert len(summary_rows) == 1
     assert summary_rows[0]["acceptance_ok"] == "False"
@@ -21508,7 +21556,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert report_payload["modeling_report"]["diagnostic_export_requested"] is True
     assert report_payload["modeling_report"]["normality_check_requested"] is True
     assert report_payload["live_summary"]["project_id"] == result["project_id"]
-    assert report_payload["live_summary"]["view_projection_row_count"] == 56
+    assert report_payload["live_summary"]["view_projection_row_count"] == 48
     assert report_payload["live_summary"]["semiconductor_rule"] == "iii_v_tetrahedral"
     assert report_payload["live_summary"]["acceptance_ok"] is False
     assert report_payload["live_summary"]["acceptance_failed_checks"] == ["warning_count_within_acceptance"]
@@ -21545,8 +21593,8 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert report_payload["modeling_report"]["change_receipt"]["diagnostic_export_requested"] is True
     assert report_payload["modeling_report"]["change_receipt"]["normality_check_requested"] is True
     assert report_payload["modeling_report"]["change_receipt"]["artifacts"]["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
-    assert report_payload["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_projections"] == 56
-    assert report_payload["modeling_report"]["change_receipt"]["view_check"]["view_projection_row_count"] == 56
+    assert report_payload["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_projections"] == 48
+    assert report_payload["modeling_report"]["change_receipt"]["view_check"]["view_projection_row_count"] == 48
     assert report_payload["modeling_report"]["change_receipt"]["health_check"]["normality"] == result["modeling_report"]["normality"]
 
     status = server.material_studio_live_project_status(
@@ -21610,7 +21658,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert status["modeling_report"]["change_receipt"]["health_check"]["live_gui_acceptance_ok"] is False
     assert status["live_summary"]["acceptance_ok"] is False
     assert status["live_summary"]["acceptance_failed_checks"] == ["warning_count_within_acceptance"]
-    assert status["live_summary"]["view_projection_row_count"] == 56
+    assert status["live_summary"]["view_projection_row_count"] == 48
     assert status["live_summary"]["semiconductor_rule"] == "iii_v_tetrahedral"
     assert status["live_summary"]["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
     assert status["modeling_report"]["change_receipt"]["diagnostic_export_requested"] is True
@@ -21621,18 +21669,18 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert status["modeling_report"]["change_receipt"]["artifacts"]["modeling_issue_index_csv"] == result["view_bundle_files"]["modeling_issue_index_csv"]
     assert status["modeling_report"]["change_receipt"]["artifacts"]["modeling_issue_index_json"] == result["view_bundle_files"]["modeling_issue_index_json"]
     assert status["modeling_report"]["change_receipt"]["artifacts"]["diagnostic_export_manifest_json"] == result["view_bundle_files"]["diagnostic_export_manifest_json"]
-    assert status["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_projections"] == 56
-    assert status["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_quality"] == 7
+    assert status["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_projections"] == 48
+    assert status["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["view_quality"] == 6
     assert status["modeling_report"]["change_receipt"]["diagnostic_row_counts"]["semiconductor_composition"] == result["view_bundle_row_counts"]["semiconductor_composition"]
-    assert status["modeling_report"]["change_receipt"]["view_check"]["view_projection_row_count"] == 56
+    assert status["modeling_report"]["change_receipt"]["view_check"]["view_projection_row_count"] == 48
     assert status["modeling_report"]["change_receipt"]["view_check"]["gui_loaded_current_revision"] is True
     assert status["modeling_report"]["change_receipt"]["health_check"]["normality"] == status["modeling_report"]["normality"]
     assert status["modeling_report"]["change_receipt"]["health_check"]["ready_for_next_edit"] is True
     assert status["persisted_change_receipt"]["diagnostic_export_requested"] is True
     assert status["persisted_change_receipt"]["normality_check_requested"] is True
     assert status["persisted_change_receipt"]["artifacts"]["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
-    assert status["persisted_change_receipt"]["diagnostic_row_counts"]["view_projections"] == 56
-    assert status["persisted_change_receipt"]["view_check"]["view_projection_row_count"] == 56
+    assert status["persisted_change_receipt"]["diagnostic_row_counts"]["view_projections"] == 48
+    assert status["persisted_change_receipt"]["view_check"]["view_projection_row_count"] == 48
     assert status["persisted_change_receipt"]["health_check"]["normality"] == result["modeling_report"]["normality"]
     assert status["persisted_change_receipt"]["health_check"]["live_gui_acceptance_ok"] is True
     assert status["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
@@ -22426,7 +22474,7 @@ def test_live_modeling_request_builds_chinese_silicon_pn_junction_hotload_with_d
     assert Path(result["view_bundle_files"]["semiconductor_junctions_csv"]).exists()
     assert Path(result["view_bundle_files"]["view_quality_csv"]).exists()
     assert result["view_bundle_row_counts"]["semiconductor_junctions"] == 1
-    assert result["view_bundle_row_counts"]["view_quality"] == 7
+    assert result["view_bundle_row_counts"]["view_quality"] == 6
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
@@ -23852,7 +23900,7 @@ def test_live_modeling_request_applies_castep_property_settings_during_create(
     assert len(summary_rows) == 1
     summary = summary_rows[0]
     assert summary["atom_count"] == str(result["view_audit"]["model"]["atom_count"])
-    assert summary["view_count"] == "7"
+    assert summary["view_count"] == "6"
     assert summary["view_overlap_candidate_count"] == str(result["modeling_report"]["inspection"]["view_overlap_candidate_count"])
     assert summary["semiconductor_calculation_status"] == calculation["status"]
     assert summary["semiconductor_calculation_task"] == "BandStructure"
@@ -24070,7 +24118,7 @@ def test_live_modeling_request_infers_semiconductor_slab_templates(monkeypatch, 
         assert any("dangling bonds" in warning for warning in result["modeling_health"]["warnings"])
         assert result["modeling_report"]["inspection"]["crystal_nearest_neighbor_stats_angstrom"]["min"] > 1.0
         assert result["view_bundle_row_counts"]["crystal_coordination"] == result["view_audit"]["model"]["atom_count"]
-        assert result["modeling_report"]["inspection"]["view_count"] == 7
+        assert result["modeling_report"]["inspection"]["view_count"] == 6
         assert Path(result["view_audit_report_path"]).exists()
 
 
@@ -24387,7 +24435,7 @@ def test_live_modeling_request_infers_semiconductor_crystal_patches(monkeypatch,
     assert vacuum["nl_plan"]["template_id"] == "crystal_vacuum"
     assert vacuum["new_revision"] == 4
     assert abs(vacuum["view_audit"]["model"]["lattice"]["c"] - 15.431) < 1e-6
-    assert vacuum["modeling_report"]["inspection"]["view_count"] == 7
+    assert vacuum["modeling_report"]["inspection"]["view_count"] == 6
     assert vacuum["modeling_report"]["inspection"]["slab_vacuum"]["surface_axis"] == "c"
     assert vacuum["modeling_report"]["inspection"]["slab_vacuum"]["declared_vacuum_angstrom"] == 10.0
     assert vacuum["modeling_report"]["inspection"]["slab_vacuum"]["vacuum_ok"] is True
@@ -28328,13 +28376,16 @@ def test_gui_snapshot_reaudit_rejects_stale_persisted_view_selection(
     ]
     assert resolution["view_names"] == [
         "front",
-        "back",
-        "right",
-        "left",
         "top",
-        "bottom",
         "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
     ]
+    assert resolution["view_selection"]["source"] == "semiconductor_domain_default"
+    assert resolution["view_selection"]["selection_profile"] == (
+        "semiconductor_bulk_cubic"
+    )
     refreshed_audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert [row["name"] for row in refreshed_audit["views"]] == resolution[
         "view_names"

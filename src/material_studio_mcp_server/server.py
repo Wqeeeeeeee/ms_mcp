@@ -22,7 +22,10 @@ from .diagnostics import (
     CRYSTAL_PLANE_VIEW_INDICES,
     DEFAULT_VIEWS,
     ORIENTED_FRAME_VIEW_SPECS,
+    SEMICONDUCTOR_BULK_DEFAULT_VIEW_PROFILES,
+    SEMICONDUCTOR_DEFAULT_CARTESIAN_VIEWS,
     SEMICONDUCTOR_REFERENCE_ELECTRONIC_PROPERTIES,
+    SEMICONDUCTOR_VIEW_DEFAULT_POLICY_VERSION,
     model_view_audit,
     write_view_audit_bundle,
     write_view_audit_report,
@@ -2595,6 +2598,7 @@ _TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS = (
     "visual_blocking_reasons",
     "visual_nonblocking_flags",
     "visual_critical_flags",
+    "view_selection",
     "view_parameter_summary",
     "view_parameter_status",
     "view_parameter_view_count",
@@ -3718,6 +3722,38 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ],
             "view_selection": {
                 "default_views": list(DEFAULT_VIEWS),
+                "semiconductor_domain_defaults": {
+                    "policy_version": SEMICONDUCTOR_VIEW_DEFAULT_POLICY_VERSION,
+                    "applies_when": (
+                        "views_omitted_and_metadata_domain_semiconductor_crystal"
+                    ),
+                    "explicit_views_override": True,
+                    "selection_precedence": [
+                        "interface_axis",
+                        "surface_axis",
+                        "lattice_family",
+                    ],
+                    "receipt_field": "view_selection",
+                    "cartesian_context_views": list(
+                        SEMICONDUCTOR_DEFAULT_CARTESIAN_VIEWS
+                    ),
+                    "profiles": {
+                        "interface": [
+                            "interface_normal",
+                            "interface_in_plane_1",
+                            "interface_in_plane_2",
+                        ],
+                        "surface": [
+                            "surface_normal",
+                            "surface_in_plane_1",
+                            "surface_in_plane_2",
+                        ],
+                        "bulk": {
+                            family: list(view_names)
+                            for family, view_names in SEMICONDUCTOR_BULK_DEFAULT_VIEW_PROFILES.items()
+                        },
+                    },
+                },
                 "crystallographic_direction_views": {
                     view_name: {
                         "indices": list(indices),
@@ -7851,6 +7887,7 @@ def _resolve_gui_reaudit_view_selection(
             "view_names": view_names,
             "view_count": len(view_names),
             "spec_fingerprint": audit.get("spec_fingerprint"),
+            "view_selection": audit.get("view_selection"),
         }
 
     default_audit = model_view_audit(spec)
@@ -7862,6 +7899,9 @@ def _resolve_gui_reaudit_view_selection(
     if persisted_matches:
         persisted_view_names = _view_names_from_rows((persisted_audit or {}).get("views"))
         audit = model_view_audit(spec, persisted_view_names)
+        persisted_selection = (persisted_audit or {}).get("view_selection")
+        if isinstance(persisted_selection, dict):
+            audit["view_selection"] = persisted_selection
         source = "persisted_current_revision"
     else:
         audit = default_audit
@@ -7879,6 +7919,8 @@ def _resolve_gui_reaudit_view_selection(
         "view_names": view_names,
         "view_count": len(view_names),
         "spec_fingerprint": audit.get("spec_fingerprint"),
+        "view_selection": audit.get("view_selection"),
+        "default_view_selection": default_audit.get("view_selection"),
     }
 
 
@@ -13387,6 +13429,12 @@ def _promote_response_model_diagnostics(response: dict[str, Any]) -> None:
                 live_summary.get("visual_critical_flags"),
                 visual_normality.get("critical_flags"),
             ),
+            "view_selection": _first_not_none(
+                live_summary.get("view_selection"),
+                view_parameter_summary.get("view_selection"),
+                view_review.get("view_selection"),
+                report.get("view_selection"),
+            ),
             "view_parameter_summary": view_parameter_summary or None,
             "view_parameter_status": view_parameter_summary.get("status"),
             "view_parameter_view_count": view_parameter_summary.get("view_count"),
@@ -17120,6 +17168,15 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     gui_open = response.get("gui_open") if isinstance(response.get("gui_open"), dict) else None
     bundle_files = response.get("view_bundle_files") or response.get("files") or {}
     audit = response.get("view_audit") if isinstance(response.get("view_audit"), dict) else None
+    view_selection = (
+        audit.get("view_selection")
+        if isinstance(audit, dict) and isinstance(audit.get("view_selection"), dict)
+        else response.get("view_selection")
+        if isinstance(response.get("view_selection"), dict)
+        else None
+    )
+    if view_selection is not None:
+        response["view_selection"] = view_selection
     gui_summary = _gui_report_summary(response, gui_status=gui_status, gui_open=gui_open)
     report_ok = bool(response.get("ok", health.get("ok", True)))
     change_validation = _change_validation_summary(response.get("revision_delta"), audit)
@@ -17225,6 +17282,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "change_validation": change_validation,
         "script_valid": (response.get("validation") or response.get("script_validation") or {}).get("valid"),
         "semiconductor_review": semiconductor_review,
+        "view_selection": view_selection,
         "view_review": view_review,
         "inspection": inspection,
         "structure": {
@@ -19511,6 +19569,13 @@ def _view_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
     """Return compact per-view camera/projection parameters for @mcp clients."""
 
     view_review = report.get("view_review") if isinstance(report.get("view_review"), dict) else {}
+    view_selection = (
+        view_review.get("view_selection")
+        if isinstance(view_review.get("view_selection"), dict)
+        else report.get("view_selection")
+        if isinstance(report.get("view_selection"), dict)
+        else None
+    )
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
     row_counts = (
         diagnostics.get("view_bundle_row_counts")
@@ -19523,6 +19588,7 @@ def _view_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
                 "available": False,
                 "status": "no_view_review",
                 "reason": view_review.get("reason") if isinstance(view_review, dict) else "no_view_review",
+                "view_selection": view_selection,
                 "view_summary_csv": diagnostics.get("view_summary_csv"),
                 "view_projections_csv": diagnostics.get("view_projections_csv"),
                 "view_overlaps_csv": diagnostics.get("view_overlaps_csv"),
@@ -19575,6 +19641,7 @@ def _view_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
             "total_overlap_candidate_count": view_review.get("total_overlap_candidate_count"),
             "view_warning_count": view_review.get("view_warning_count"),
             "expected_atom_projection_count": view_review.get("expected_atom_projection_count"),
+            "view_selection": view_selection,
             "recommended_view": recommended_view,
             "views": views,
             "files": _drop_none_values(
@@ -23190,6 +23257,13 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     gui_current = report.get("gui_current_revision") if isinstance(report.get("gui_current_revision"), dict) else {}
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
     view_review = report.get("view_review") if isinstance(report.get("view_review"), dict) else {}
+    view_selection = (
+        report.get("view_selection")
+        if isinstance(report.get("view_selection"), dict)
+        else view_review.get("view_selection")
+        if isinstance(view_review.get("view_selection"), dict)
+        else None
+    )
     inspection = report.get("inspection") if isinstance(report.get("inspection"), dict) else {}
     semiconductor_health = (
         inspection.get("semiconductor_health")
@@ -24045,6 +24119,7 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "live_request_payload_hint": live_request_summary.get("payload_hint") or {},
             "live_request_requested_views": requested_views,
             "view_request_requested": bool(requested_views),
+            "view_selection": view_selection,
             "view_request_exported_names": exported_view_names,
             "view_request_matches_export": (not view_request_missing_exports) if requested_views else None,
             "view_request_missing_exports": view_request_missing_exports,
@@ -25692,6 +25767,7 @@ def _view_review_from_audit(audit: dict[str, Any] | None, gui_summary: dict[str,
         "available": True,
         "ok": not critical_flags,
         "status": status,
+        "view_selection": audit.get("view_selection"),
         "view_count": len(rows),
         "view_names": _view_names_from_rows(rows),
         "supported_view_count": len(supported_rows),
@@ -27828,6 +27904,30 @@ def _compact_view_parameter_summary(value: Any) -> dict[str, Any] | None:
             )
         )
     compact["views"] = compact_views
+    view_selection = value.get("view_selection")
+    if isinstance(view_selection, dict):
+        compact["view_selection"] = _mapping_subset(
+            view_selection,
+            (
+                "policy_version",
+                "source",
+                "policy_applied",
+                "explicit_views_provided",
+                "semiconductor_domain",
+                "selection_profile",
+                "suggested_default_profile",
+                "lattice_family",
+                "orientation_kind",
+                "orientation_axis",
+                "cartesian_context_views",
+                "domain_diagnostic_views",
+                "suggested_default_view_names",
+                "view_names",
+                "view_count",
+                "reason_codes",
+                "explicit_views_override_domain_defaults",
+            ),
+        )
     recommended_view = value.get("recommended_view")
     if isinstance(recommended_view, dict):
         compact["recommended_view"] = _mapping_subset(
@@ -28009,6 +28109,20 @@ def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
     compact_views: dict[str, Any] = {}
     if isinstance(view_selection, dict):
         compact_views = _mapping_subset(view_selection, ("default_views",))
+        semiconductor_defaults = view_selection.get("semiconductor_domain_defaults")
+        if isinstance(semiconductor_defaults, dict):
+            compact_views["semiconductor_domain_defaults"] = _mapping_subset(
+                semiconductor_defaults,
+                (
+                    "policy_version",
+                    "applies_when",
+                    "explicit_views_override",
+                    "selection_precedence",
+                    "receipt_field",
+                    "cartesian_context_views",
+                    "profiles",
+                ),
+            )
         for source_key, target_key in (
             ("crystallographic_direction_views", "crystallographic_direction_view_names"),
             ("crystallographic_plane_views", "crystallographic_plane_view_names"),
@@ -28573,6 +28687,7 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
             "runtime_ui_preflight_path",
             "runtime_accessibility_preflight_path",
             "activation_required",
+            "view_selection",
             "view_names",
             "requested_view_count",
             "supported_view_count",
@@ -28625,6 +28740,7 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "runtime_accessibility_preflight_read_error",
             "runtime_accessibility_preflight_observed_at",
             "replay_status",
+            "view_selection",
             "view_names",
             "requested_view_count",
             "supported_view_count",
@@ -30735,6 +30851,7 @@ def material_studio_live_project_status(
                 view_replay_accessibility_preflight or {}
             ).get("observed_at"),
             "replay_status": (view_replay_manifest or {}).get("replay_status"),
+            "view_selection": (view_replay_manifest or {}).get("view_selection"),
             "view_names": list((view_replay_manifest or {}).get("view_names") or []),
             "requested_view_count": (view_replay_manifest or {}).get("requested_view_count"),
             "supported_view_count": (view_replay_manifest or {}).get("supported_view_count"),
@@ -30773,11 +30890,13 @@ def material_studio_live_project_status(
             if persisted_view_audit_matches_current and report_payload is not None
             else []
         )
-        effective_audit = (
-            model_view_audit(spec, views=persisted_view_names)
-            if persisted_view_names
-            else computed_audit
-        )
+        if persisted_view_names:
+            effective_audit = model_view_audit(spec, views=persisted_view_names)
+            persisted_view_selection = (report_payload or {}).get("view_selection")
+            if isinstance(persisted_view_selection, dict):
+                effective_audit["view_selection"] = persisted_view_selection
+        else:
+            effective_audit = computed_audit
         view_audit_source = (
             "computed_status_with_persisted_view_selection"
             if persisted_view_audit_matches_current

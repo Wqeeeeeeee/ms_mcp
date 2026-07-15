@@ -948,6 +948,160 @@ def test_crystal_plane_views_require_crystal_lattice() -> None:
     assert "require a crystal model" in view["warning"]
 
 
+def test_model_view_audit_keeps_generic_defaults_for_non_semiconductor_models() -> None:
+    audit = model_view_audit(load_example("benzene_spec.json"))
+
+    assert [view["name"] for view in audit["views"]] == [
+        "front",
+        "back",
+        "right",
+        "left",
+        "top",
+        "bottom",
+        "isometric",
+    ]
+    assert audit["view_selection"] == {
+        "policy_version": 1,
+        "source": "generic_default",
+        "policy_applied": True,
+        "explicit_views_provided": False,
+        "model_type": "molecule",
+        "domain": None,
+        "semiconductor_domain": False,
+        "selection_profile": "generic_default",
+        "lattice_family": None,
+        "orientation_kind": None,
+        "orientation_axis": None,
+        "cartesian_context_views": [
+            "front",
+            "back",
+            "right",
+            "left",
+            "top",
+            "bottom",
+            "isometric",
+        ],
+        "domain_diagnostic_views": [],
+        "view_names": [
+            "front",
+            "back",
+            "right",
+            "left",
+            "top",
+            "bottom",
+            "isometric",
+        ],
+        "view_count": 7,
+        "reason_codes": ["non_crystal_generic_default"],
+        "explicit_views_override_domain_defaults": True,
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "example_name",
+        "expected_profile",
+        "expected_lattice_family",
+        "expected_orientation_kind",
+        "expected_orientation_axis",
+        "expected_domain_views",
+    ),
+    [
+        (
+            "silicon_diamond_spec.json",
+            "semiconductor_bulk_cubic",
+            "cubic",
+            None,
+            None,
+            ["crystal_plane_100", "crystal_plane_110", "crystal_plane_111"],
+        ),
+        (
+            "gallium_nitride_wurtzite_spec.json",
+            "semiconductor_bulk_hexagonal",
+            "hexagonal",
+            None,
+            None,
+            [
+                "crystal_plane_0001",
+                "crystal_plane_10m10",
+                "crystal_plane_11m20",
+            ],
+        ),
+        (
+            "molybdenum_disulfide_2d_mos2_monolayer_spec.json",
+            "semiconductor_surface_frame",
+            "hexagonal",
+            "surface",
+            "c",
+            ["surface_normal", "surface_in_plane_1", "surface_in_plane_2"],
+        ),
+        (
+            "silicon_silicon_dioxide_100_interface_spec.json",
+            "semiconductor_interface_frame",
+            "tetragonal",
+            "interface",
+            "c",
+            ["interface_normal", "interface_in_plane_1", "interface_in_plane_2"],
+        ),
+        (
+            "beta_gallium_oxide_010_slab_spec.json",
+            "semiconductor_surface_frame",
+            "monoclinic",
+            "surface",
+            "b",
+            ["surface_normal", "surface_in_plane_1", "surface_in_plane_2"],
+        ),
+    ],
+)
+def test_model_view_audit_selects_semiconductor_domain_default_views(
+    example_name: str,
+    expected_profile: str,
+    expected_lattice_family: str,
+    expected_orientation_kind: str | None,
+    expected_orientation_axis: str | None,
+    expected_domain_views: list[str],
+) -> None:
+    audit = model_view_audit(load_example(example_name))
+    selection = audit["view_selection"]
+    expected_views = ["front", "top", "isometric", *expected_domain_views]
+
+    assert [view["name"] for view in audit["views"]] == expected_views
+    assert selection["source"] == "semiconductor_domain_default"
+    assert selection["policy_applied"] is True
+    assert selection["semiconductor_domain"] is True
+    assert selection["selection_profile"] == expected_profile
+    assert selection["lattice_family"] == expected_lattice_family
+    assert selection["orientation_kind"] == expected_orientation_kind
+    assert selection["orientation_axis"] == expected_orientation_axis
+    assert selection["cartesian_context_views"] == ["front", "top", "isometric"]
+    assert selection["domain_diagnostic_views"] == expected_domain_views
+    assert selection["view_names"] == expected_views
+    assert selection["view_count"] == 6
+
+
+def test_explicit_views_override_semiconductor_domain_defaults_without_expansion() -> None:
+    requested = ["front", "crystal_plane_001"]
+    audit = model_view_audit(load_example("silicon_diamond_spec.json"), requested)
+    selection = audit["view_selection"]
+
+    assert [view["name"] for view in audit["views"]] == requested
+    assert selection["source"] == "explicit_request"
+    assert selection["policy_applied"] is False
+    assert selection["explicit_views_provided"] is True
+    assert selection["selection_profile"] == "explicit_request"
+    assert selection["suggested_default_profile"] == "semiconductor_bulk_cubic"
+    assert selection["suggested_default_view_names"] == [
+        "front",
+        "top",
+        "isometric",
+        "crystal_plane_100",
+        "crystal_plane_110",
+        "crystal_plane_111",
+    ]
+    assert selection["view_names"] == requested
+    assert selection["reason_codes"] == ["explicit_views_preserved"]
+
+
 def test_plane_view_diagnostics_do_not_select_surface_templates() -> None:
     bulk_requests = {
         (
@@ -1175,7 +1329,7 @@ def test_view_audit_bundle_marks_clean_semiconductor_projection_notes(tmp_path: 
     )
 
     rows = list(csv.DictReader(Path(bundle["files"]["view_quality_csv"]).open(encoding="utf-8")))
-    assert bundle["row_counts"]["view_quality"] == 7
+    assert bundle["row_counts"]["view_quality"] == 6
     assert any(row["clean_for_visual_review"] == "True" and row["recommended_rank"] for row in rows)
     isometric = next(row for row in rows if row["view"] == "isometric")
     assert isometric["overlap_candidate_count"] == "4"

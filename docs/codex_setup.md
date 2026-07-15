@@ -54,6 +54,11 @@ semiconductor decisions, current GUI revision identity, next-action payloads,
 and stable artifact paths. Use `response_mode="full"` only when the complete
 in-band report is needed; both modes persist the same full report files.
 
+If `views` is omitted for a semiconductor crystal, read
+`view_parameter_summary.view_selection`: the server selects front/top/isometric
+plus interface-, surface-, or lattice-family diagnostic views. An explicit
+`views` list is preserved exactly and records `source="explicit_request"`.
+
 Compact schema v2 is protocol-tested below 48 KB for capabilities, create,
 status, and view-bundle replies. `view_bundle_files` normally remains the complete
 diagnostic artifact index; top-level `artifacts` is intentionally limited to

@@ -41,8 +41,10 @@ is preserved; a plain evidence-recording request cannot silently set
 GUI open, standalone snapshot, and visual-confirmation re-audits also preserve
 the current revision's nondefault view list when the persisted audit matches the
 project ID, revision, and immutable spec fingerprint. Explicit `views` still
-take precedence. A missing or stale binding falls back to the standard views;
-`view_selection_resolution` and the visual-confirmation
+take precedence. A missing or stale binding recomputes defaults from the current
+model: generic models use the standard views, while semiconductor crystals use
+front/top/isometric plus interface-, surface-, or lattice-family diagnostic
+views. `view_selection`, `view_selection_resolution`, and the visual-confirmation
 `gui_evidence_reaudit` receipt expose the selected source, names, reuse flag,
 and mismatch reasons.
 

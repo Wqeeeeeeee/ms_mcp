@@ -70,12 +70,16 @@ in-band response shape. Neither mode changes persisted diagnostics or execution
 behavior.
 
 Compact schema v2 removes repeated evidence trees and full capability catalogs
-from the in-band receipt. It retains the complete `view_bundle_files` index and
-uses `report_json_path`, `view_audit_report_path`, and
-`view_bundle_manifest_path` as stable detail entry points.
+from the in-band receipt. It targets 45 KB below the hard 48 KB limit, keeps one
+authoritative next-action payload, and preserves normality, visual, and camera
+decision fields before artifact indexes. It uses `report_json_path`,
+`view_audit_report_path`, and `view_bundle_manifest_path` as stable detail entry
+points.
 Complex responses that require hard-budget fallback return
 `response_compaction.hard_budget_applied=true` and an explicit `omitted_fields`
-list. This fallback changes only the in-band receipt, not persisted diagnostics.
+list. The same receipt reports `semantic_core_preserved`, exact
+`response_bytes`, and remaining `headroom_bytes`. This fallback changes only the
+in-band receipt, not persisted diagnostics.
 
 Protocol discovery also requires
 `material_studio_gui_record_visual_confirmation`. The high-level modeling tool

@@ -59,14 +59,16 @@ If `views` is omitted for a semiconductor crystal, read
 plus interface-, surface-, or lattice-family diagnostic views. An explicit
 `views` list is preserved exactly and records `source="explicit_request"`.
 
-Compact schema v2 is protocol-tested below 48 KB for capabilities, create,
-status, and view-bundle replies. `view_bundle_files` normally remains the complete
-diagnostic artifact index; top-level `artifacts` is intentionally limited to
-frequent entry points. Full diagnostic-focus profiles and repeated evidence
-trees are retrieved with `response_mode="full"` or from `report_json_path`.
+Compact schema v2 targets 45 KB and is protocol-tested below the hard 48 KB
+limit for capabilities, create, status, and view-bundle replies. The response
+deduplicates callable payloads into `next_action_plan.payload_hint` and reduces
+successful diagnostic focuses to issue-only summaries. Full diagnostic-focus
+profiles and repeated evidence trees are retrieved with `response_mode="full"`
+or from `report_json_path`.
 For unusually large all-view/focus requests, inspect
-`response_compaction.hard_budget_applied` and `omitted_fields`; use the returned
-detail paths instead of assuming an omitted duplicate field was unavailable.
+`response_compaction.hard_budget_applied`, `semantic_core_preserved`,
+`response_bytes`, `headroom_bytes`, and `omitted_fields`; use the returned detail
+paths instead of assuming an omitted duplicate field was unavailable.
 
 When Computer Use or a human reviewer has actually observed the model, record
 that evidence with the already-enabled live entry point:

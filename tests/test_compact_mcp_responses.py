@@ -20,6 +20,8 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["ok"] is True
     assert compact["response_mode"] == "compact"
     assert compact["response_schema"] == "material_studio_capabilities_compact_v2"
+    assert compact["target_response_bytes"] == server.COMPACT_RESPONSE_TARGET_BYTES
+    assert compact["max_response_bytes"] == server.COMPACT_RESPONSE_MAX_BYTES
     assert compact["full_detail_hint"]["arguments"] == {"response_mode": "full"}
     assert compact["recommended_kpoint_remediation_action_id"] == (
         "apply_recommended_semiconductor_kpoint_grid"
@@ -984,3 +986,188 @@ def test_compact_hard_budget_fallback_bounds_oversized_error_payload() -> None:
     assert len(compact["error"]) == 2000
     assert len(compact["errors"]) == 10
     assert all(len(item) == 1000 for item in compact["errors"])
+
+
+def test_compact_requested_focus_status_expands_only_problem_details() -> None:
+    full = {
+        "available": True,
+        "ok": False,
+        "focus_count": 2,
+        "missing_csv_keys": ["semiconductor_defects_csv"],
+        "missing_summary_keys": [],
+        "focuses": [
+            {
+                "focus": "view_quality",
+                "source": "user_request",
+                "auto_completed": False,
+                "available": True,
+                "ok": True,
+                "missing_summary_keys": [],
+                "missing_csv_keys": [],
+                "next_action": "requested_diagnostic_focus_ready",
+            },
+            {
+                "focus": "semiconductor_defects",
+                "source": "auto_completed",
+                "auto_completed": True,
+                "available": False,
+                "ok": False,
+                "missing_summary_keys": ["defect_summary"],
+                "missing_csv_keys": ["semiconductor_defects_csv"],
+                "next_action": "export_missing_diagnostic_focus_artifacts",
+            },
+        ],
+    }
+
+    compact = server._compact_requested_diagnostic_focus_status(full)
+
+    assert compact is not None
+    assert compact["focus_detail_level"] == "issues_only"
+    assert compact["problem_focus_count"] == 1
+    assert compact["focuses"][0] == {"focus": "view_quality", "ok": True}
+    assert compact["focuses"][1]["auto_completed"] is True
+    assert compact["focuses"][1]["available"] is False
+    assert compact["focuses"][1]["missing_summary_keys"] == ["defect_summary"]
+    assert compact["focuses"][1]["missing_csv_keys"] == [
+        "semiconductor_defects_csv"
+    ]
+    assert _json_size(compact) < _json_size(full)
+
+
+def test_compact_action_payload_is_kept_once_in_authoritative_plan() -> None:
+    payload_hint = {
+        "project_id": "semiconductor_project",
+        "base_revision": 4,
+        "patch": {
+            "project_id": "semiconductor_project",
+            "base_revision": 4,
+            "operations": [
+                {
+                    "type": "set_castep_energy",
+                    "task": "Energy",
+                    "kpoints": [29, 29, 1],
+                }
+            ],
+        },
+        "execution_mode": "preview",
+    }
+    compact = server._compact_live_response(
+        {
+            "ok": True,
+            "project_id": "semiconductor_project",
+            "revision": 4,
+            "next_action_plan": {
+                "available": True,
+                "action_id": "apply_recommended_semiconductor_kpoint_grid",
+                "recommended_tool": "material_studio_live_update_with_patch",
+                "recommended_action": (
+                    "apply_recommended_explicit_kpoint_grid_then_reaudit"
+                ),
+                "needs_user_confirmation": True,
+                "safe_to_call_without_confirmation": False,
+                "payload_hint": payload_hint,
+            },
+            "mcp_client_readiness": {
+                "status": "ready_for_followup_live_modeling",
+                "recommended_tool": "material_studio_live_update_with_patch",
+                "recommended_action": (
+                    "apply_recommended_explicit_kpoint_grid_then_reaudit"
+                ),
+                "next_action_id": "apply_recommended_semiconductor_kpoint_grid",
+                "needs_user_confirmation": True,
+                "safe_to_call_without_confirmation": False,
+                "payload_hint": payload_hint,
+            },
+            "semiconductor_normality_diagnosis": {
+                "available": True,
+                "status": "model_normal_calculation_review",
+                "action_id": "apply_recommended_semiconductor_kpoint_grid",
+                "recommended_tool": "material_studio_live_update_with_patch",
+                "recommended_action": (
+                    "apply_recommended_explicit_kpoint_grid_then_reaudit"
+                ),
+                "payload_hint": payload_hint,
+            },
+        },
+        "compact",
+    )
+
+    assert compact["next_action_plan"]["payload_hint"] == payload_hint
+    assert "payload_hint" not in compact["mcp_client_readiness"]
+    assert compact["mcp_client_readiness"]["payload_hint_ref"] == (
+        "next_action_plan.payload_hint"
+    )
+    assert "payload_hint" not in compact["semiconductor_normality_diagnosis"]
+    assert compact["semiconductor_normality_diagnosis"]["payload_hint_ref"] == (
+        "next_action_plan.payload_hint"
+    )
+    assert compact["response_compaction"]["semantic_core_preserved"] is True
+
+
+def test_hard_budget_preserves_normality_visual_and_action_core() -> None:
+    semantic_core = {
+        "next_action_plan": {
+            "available": True,
+            "action_id": "apply_recommended_semiconductor_kpoint_grid",
+            "recommended_tool": "material_studio_live_update_with_patch",
+            "recommended_action": "apply_kpoint_patch_then_reaudit",
+            "needs_user_confirmation": True,
+            "payload_hint": {"project_id": "semiconductor_project"},
+        },
+        "normality_gate": {
+            "available": True,
+            "status": "calculation_blocked",
+            "can_claim_model_normal": True,
+            "ready_for_calculation": False,
+        },
+        "normality_explanation": {
+            "available": True,
+            "status": "review_warnings",
+            "primary_reason": "semiconductor:kpoint_reciprocal_lattice_warnings",
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+        },
+        "visual_normality_summary": {
+            "available": True,
+            "status": "review_warnings",
+            "clean_view_available": True,
+            "recommended_view_name": "isometric",
+        },
+        "view_parameter_summary": {
+            "available": True,
+            "status": "exported",
+            "view_count": 3,
+            "view_names": ["front", "top", "isometric"],
+        },
+    }
+    oversized = {
+        "ok": True,
+        "project_id": "semiconductor_project",
+        "revision": 4,
+        **semantic_core,
+        "calculation_preview": {
+            "available": True,
+            "task": "Energy",
+            "extended": "c" * 60_000,
+        },
+        "artifacts": {"oversized": "a" * 60_000},
+        "live_gui_acceptance": {"oversized": "g" * 60_000},
+        "diagnostic_focus_plan": {"oversized": "d" * 60_000},
+    }
+
+    bounded = server._enforce_live_compact_budget(oversized)
+
+    assert _json_size(bounded) < server.COMPACT_RESPONSE_MAX_BYTES
+    for key, value in semantic_core.items():
+        assert bounded[key] == value
+    receipt = bounded["response_compaction"]
+    assert receipt["hard_budget_applied"] is True
+    assert receipt["semantic_core_preserved"] is True
+    assert receipt["semantic_core_omitted_fields"] == []
+    assert receipt["response_bytes"] == _json_size(bounded)
+    assert receipt["headroom_bytes"] == (
+        server.COMPACT_RESPONSE_MAX_BYTES - _json_size(bounded)
+    )
+    assert "artifacts" in receipt["omitted_fields"]
+    assert "live_gui_acceptance" in receipt["omitted_fields"]
+    assert "diagnostic_focus_plan" in receipt["omitted_fields"]

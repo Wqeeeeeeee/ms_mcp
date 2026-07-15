@@ -109,6 +109,14 @@ class McpResponseMode(str, Enum):
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
+COMPACT_RESPONSE_TARGET_BYTES = 45_000
+LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
+    "next_action_plan",
+    "normality_gate",
+    "normality_explanation",
+    "visual_normality_summary",
+    "view_parameter_summary",
+)
 GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
 GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS = 0.05
 REVISION_EXECUTION_LOCK_TIMEOUT_SECONDS = 30.0
@@ -3347,6 +3355,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "recommended_for_interactive_mcp": McpResponseMode.COMPACT.value,
             "compact_schema": LIVE_COMPACT_RESPONSE_SCHEMA,
             "compact_max_bytes": COMPACT_RESPONSE_MAX_BYTES,
+            "compact_target_bytes": COMPACT_RESPONSE_TARGET_BYTES,
+            "compact_reserved_headroom_bytes": (
+                COMPACT_RESPONSE_MAX_BYTES - COMPACT_RESPONSE_TARGET_BYTES
+            ),
+            "compact_semantic_core_fields": list(
+                LIVE_COMPACT_SEMANTIC_CORE_FIELDS
+            ),
             "compact_preserves_persisted_reports": True,
             "full_detail_entry_points": ["report_json_path", "view_audit_report_path", "view_bundle_manifest_path"],
             "supported_tools": [
@@ -28604,24 +28619,114 @@ def _compact_requested_diagnostic_focus_status(value: Any) -> dict[str, Any] | N
         ),
     )
     focuses: list[dict[str, Any]] = []
+    problem_focus_count = 0
     for focus in value.get("focuses") or []:
         if not isinstance(focus, dict):
             continue
-        item = _mapping_subset(
-            focus,
+        missing_summary_keys = focus.get("missing_summary_keys") or []
+        missing_csv_keys = focus.get("missing_csv_keys") or []
+        problem = bool(
+            focus.get("available") is not True
+            or focus.get("ok") is not True
+            or missing_summary_keys
+            or missing_csv_keys
+        )
+        item = _mapping_subset(focus, ("focus", "ok"))
+        if focus.get("available") is not True:
+            item["available"] = focus.get("available")
+        if focus.get("auto_completed") is True:
+            item["auto_completed"] = True
+        if focus.get("source") not in {None, "user_request"}:
+            item["source"] = focus.get("source")
+        if problem:
+            problem_focus_count += 1
+            item.update(
+                _mapping_subset(
+                    focus,
+                    (
+                        "missing_summary_keys",
+                        "missing_csv_keys",
+                        "next_action",
+                    ),
+                )
+            )
+        elif focus.get("next_action") not in {
+            None,
+            "requested_diagnostic_focus_ready",
+        }:
+            item["next_action"] = focus.get("next_action")
+        focuses.append(item)
+    compact.update(
+        {
+            "focuses": focuses,
+            "focus_detail_level": "issues_only",
+            "problem_focus_count": problem_focus_count,
+            "detail_artifact_key": "requested_diagnostic_focus_status_json",
+        }
+    )
+    return compact
+
+
+def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
+    """Keep focus readiness and one callable action without repeated catalogs."""
+
+    if not isinstance(value, dict):
+        return None
+    compact = _mapping_subset(
+        value,
+        (
+            "available",
+            "ok",
+            "status",
+            "export_needed",
+            "diagnostic_export_requested",
+            "normality_check_requested",
+            "requested_focuses",
+            "requested_focus_status_ok",
+            "requested_focus_count",
+            "recommended_focus_status_ok",
+            "recommended_focuses_ready",
+            "action_id",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+        )
+    )
+    requested_focuses = value.get("requested_focuses") or []
+    recommended_focuses = value.get("recommended_focuses") or []
+    if recommended_focuses == requested_focuses:
+        compact["recommended_focuses_match_requested"] = True
+    elif recommended_focuses:
+        compact["recommended_focuses"] = recommended_focuses
+    for key in (
+        "auto_completed_focuses",
+        "unrequested_recommended_focuses",
+        "recommended_focus_missing_csv_keys",
+        "recommended_focus_missing_summary_keys",
+        "missing_requested_focuses",
+        "missing_csv_keys",
+        "missing_summary_keys",
+    ):
+        items = value.get(key)
+        if items:
+            compact[key] = items
+    if value.get("auto_completed_focus_count"):
+        compact["auto_completed_focus_count"] = value["auto_completed_focus_count"]
+    if value.get("recommended_focus_count") != value.get("requested_focus_count"):
+        compact["recommended_focus_count"] = value.get("recommended_focus_count")
+    payload_hint = value.get("payload_hint")
+    if isinstance(payload_hint, dict):
+        compact_payload = _mapping_subset(
+            payload_hint,
             (
-                "focus",
-                "source",
-                "auto_completed",
-                "available",
-                "ok",
-                "missing_summary_keys",
-                "missing_csv_keys",
-                "next_action",
+                "project_id",
+                "revision",
+                "include_gui_snapshot",
             ),
         )
-        focuses.append(item)
-    compact["focuses"] = focuses
+        if compact_payload:
+            compact["payload_hint"] = compact_payload
     compact["detail_artifact_key"] = "requested_diagnostic_focus_status_json"
     return compact
 
@@ -28791,10 +28896,33 @@ def _compact_normality_gate(value: Any) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         return None
-    return _mapping_subset(
+    compact = _mapping_subset(
         value,
         tuple(key for key in value if key != "evidence"),
     )
+    for key in (
+        "must_not_claim_normal_reasons",
+        "blocking_reasons",
+        "gui_single_window_violation_reasons",
+    ):
+        if compact.get(key) == []:
+            compact.pop(key, None)
+    if compact.get("all_must_not_claim_reasons") == compact.get(
+        "must_not_claim_live_gui_normal_reasons"
+    ):
+        compact.pop("all_must_not_claim_reasons", None)
+    calculation_only_reasons = compact.get("calculation_only_review_reasons")
+    if calculation_only_reasons == compact.get(
+        "review_reasons"
+    ) or calculation_only_reasons == compact.get("calculation_blocking_reasons"):
+        compact.pop("calculation_only_review_reasons", None)
+    requested_focuses = compact.pop("requested_diagnostic_focuses", None)
+    if isinstance(requested_focuses, list):
+        compact["requested_diagnostic_focus_count"] = len(requested_focuses)
+        compact["requested_diagnostic_focus_status_ref"] = (
+            "requested_diagnostic_focus_status"
+        )
+    return compact
 
 
 def _compact_visual_normality_summary(value: Any) -> dict[str, Any] | None:
@@ -28802,10 +28930,39 @@ def _compact_visual_normality_summary(value: Any) -> dict[str, Any] | None:
 
     if not isinstance(value, dict):
         return None
+    camera_keys = {
+        "recommended_view_projection_span_angstrom",
+        "recommended_view_camera_direction",
+        "recommended_view_camera_up",
+        "recommended_view_camera_position",
+        "recommended_view_camera_distance_angstrom",
+        "recommended_view_orthographic_width_angstrom",
+        "recommended_view_orthographic_height_angstrom",
+    }
     compact = _mapping_subset(
         value,
-        tuple(key for key in value if key != "payload_hint"),
+        tuple(
+            key
+            for key in value
+            if key != "payload_hint" and key not in camera_keys
+        ),
     )
+    if any(value.get(key) is not None for key in camera_keys):
+        compact["recommended_view_parameters_ref"] = (
+            "view_parameter_summary.recommended_view"
+        )
+    for key in (
+        "blocking_reasons",
+        "nonblocking_visual_flags",
+        "calculation_risk_flags",
+        "critical_flags",
+        "manual_review_view_names",
+        "views_with_overlaps",
+        "views_with_warnings",
+        "visual_note_reasons",
+    ):
+        if compact.get(key) == []:
+            compact.pop(key, None)
     return compact
 
 
@@ -28843,45 +29000,6 @@ def _compact_semiconductor_normality_diagnosis(value: Any) -> dict[str, Any] | N
             ),
         )
     return compact
-
-
-def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
-    """Keep requested/recommended focus decisions without duplicate catalogs."""
-
-    if not isinstance(value, dict):
-        return None
-    return _mapping_subset(
-        value,
-        (
-            "available",
-            "ok",
-            "status",
-            "export_needed",
-            "diagnostic_export_requested",
-            "normality_check_requested",
-            "requested_focuses",
-            "auto_completed_focuses",
-            "auto_completed_focus_count",
-            "recommended_focuses",
-            "unrequested_recommended_focuses",
-            "requested_focus_status_ok",
-            "requested_focus_count",
-            "recommended_focus_count",
-            "recommended_focus_status_ok",
-            "recommended_focuses_ready",
-            "recommended_focus_missing_csv_keys",
-            "recommended_focus_missing_summary_keys",
-            "missing_requested_focuses",
-            "missing_csv_keys",
-            "missing_summary_keys",
-            "action_id",
-            "recommended_tool",
-            "recommended_action",
-            "needs_user_confirmation",
-            "safe_to_call_without_confirmation",
-            "payload_hint",
-        ),
-    )
 
 
 def _compact_live_gui_acceptance(value: Any) -> dict[str, Any] | None:
@@ -29003,6 +29121,27 @@ def _compact_next_action_resolution(value: Any) -> dict[str, Any]:
             "confirmation_gate_consistent",
         ),
     )
+
+
+def _deduplicate_compact_action_payloads(compact: dict[str, Any]) -> None:
+    """Keep a callable payload once in the authoritative next-action plan."""
+
+    next_action = compact.get("next_action_plan")
+    if not isinstance(next_action, dict):
+        return
+    authoritative_payload = next_action.get("payload_hint")
+    if not isinstance(authoritative_payload, dict):
+        return
+    for key in ("mcp_client_readiness", "semiconductor_normality_diagnosis"):
+        candidate = compact.get(key)
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("payload_hint") != authoritative_payload:
+            continue
+        candidate = dict(candidate)
+        candidate.pop("payload_hint", None)
+        candidate["payload_hint_ref"] = "next_action_plan.payload_hint"
+        compact[key] = candidate
 
 
 def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
@@ -29441,8 +29580,6 @@ def _compact_view_replay_event_summary(value: Any) -> dict[str, Any]:
             "movement_screen_factor_control_id",
             "movement_screen_factor",
             "movement_dialog_closed",
-            "event_record_schema_version",
-            "event_record_sha256",
         ),
     )
     for required_key, related_keys in (
@@ -29475,63 +29612,64 @@ def _compact_view_replay_event_summary(value: Any) -> dict[str, Any]:
                 event[related_key] = value[related_key]
     window_binding = value.get("window_binding")
     if isinstance(window_binding, dict):
-        event["window_binding"] = _mapping_subset(
+        compact_window_binding = _mapping_subset(
             window_binding,
             (
                 "ok",
                 "status",
-                "expected_window_handle",
-                "actual_window_handle",
-                "window_handle_matches",
-                "window_title_matches",
                 "matched_project_window",
                 "current_revision_loaded",
                 "single_window_policy_ok",
             ),
         )
+        if (
+            compact_window_binding.get("ok") is True
+            and compact_window_binding.get("matched_project_window") is True
+        ):
+            compact_window_binding.pop("matched_project_window", None)
+        event["window_binding"] = compact_window_binding
     evidence_integrity = value.get("evidence_integrity")
     if isinstance(evidence_integrity, dict):
-        event["evidence_integrity"] = _mapping_subset(
+        compact_evidence_integrity = _mapping_subset(
             evidence_integrity,
             (
-                "schema_version",
                 "status",
                 "trusted_for_replay",
-                "strict",
-                "policy",
-                "required_artifact_kinds",
                 "issue_codes",
             ),
         )
+        if compact_evidence_integrity.get("issue_codes") == []:
+            compact_evidence_integrity.pop("issue_codes", None)
+        event["evidence_integrity"] = compact_evidence_integrity
     journal_consistency = value.get("journal_consistency")
     if isinstance(journal_consistency, dict):
-        event["journal_consistency"] = _mapping_subset(
+        compact_journal_consistency = _mapping_subset(
             journal_consistency,
             (
-                "schema_version",
                 "status",
                 "trusted_for_replay",
-                "required",
-                "event_id",
                 "journal_match_count",
                 "issue_codes",
             ),
         )
+        if compact_journal_consistency.get("issue_codes") == []:
+            compact_journal_consistency.pop("issue_codes", None)
+        event["journal_consistency"] = compact_journal_consistency
     recipe_contract = value.get("execution_recipe_contract")
     if isinstance(recipe_contract, dict):
-        event["execution_recipe_contract"] = _mapping_subset(
+        compact_recipe_contract = _mapping_subset(
             recipe_contract,
             (
                 "status",
                 "current",
                 "recording_allowed",
                 "recipe_kind",
-                "expected_recipe_kind",
-                "actual_schema_version",
-                "expected_schema_version",
                 "reasons",
             ),
         )
+        if compact_recipe_contract.get("reasons") == []:
+            compact_recipe_contract.pop("reasons", None)
+        event["execution_recipe_contract"] = compact_recipe_contract
     return event
 
 
@@ -29619,9 +29757,7 @@ def _compact_view_replay_next_action_resolution(value: Any) -> dict[str, Any]:
             "incoming_action_overridden",
             "resolved_recommended_tool",
             "resolved_recommended_action",
-            "reason_codes",
             "safety_gate",
-            "superseded_action",
         ),
     )
     return compact
@@ -29969,6 +30105,20 @@ def _compact_view_replay_event_journal(value: Any) -> dict[str, Any]:
     ):
         if value.get(key) is True:
             compact[key] = True
+    omitted_zero_counts = False
+    for key in (
+        "invalid_line_count",
+        "duplicate_event_id_count",
+        "journal_divergent_event_count",
+        "journal_only_event_count",
+        "trusted_accepted_event_count",
+        "journal_blocked_accepted_event_count",
+    ):
+        if compact.get(key) == 0:
+            compact.pop(key, None)
+            omitted_zero_counts = True
+    if omitted_zero_counts:
+        compact["zero_counts_omitted"] = True
     return compact
 
 
@@ -30068,11 +30218,9 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "manifest_read_error",
             "events_path",
             "events_exist",
-            "runtime_ui_preflight_path",
             "runtime_ui_preflight_exists",
             "runtime_ui_preflight_read_error",
             "runtime_ui_preflight_observed_at",
-            "runtime_accessibility_preflight_path",
             "runtime_accessibility_preflight_exists",
             "runtime_accessibility_preflight_read_error",
             "replay_status",
@@ -30122,16 +30270,104 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     return replay
 
 
+def _deduplicate_compact_gui_view_replay(
+    replay: Any,
+    top_level_continuation: Any,
+) -> dict[str, Any]:
+    """Replace repeated replay state with stable compact-response references."""
+
+    if not isinstance(replay, dict):
+        return {}
+    compact = dict(replay)
+    nested_continuation = compact.get("replay_continuation")
+    if isinstance(nested_continuation, dict) and isinstance(
+        top_level_continuation, dict
+    ):
+        identity_keys = (
+            "status",
+            "next_pending_view_name",
+            "recommended_action",
+            "recommended_mcp_tool",
+        )
+        if all(
+            nested_continuation.get(key) == top_level_continuation.get(key)
+            for key in identity_keys
+        ):
+            compact["replay_continuation"] = _mapping_subset(
+                nested_continuation,
+                (
+                    "status",
+                    "next_pending_view_name",
+                    "next_actionable_pending_view_name",
+                    "next_automation_ready_view_name",
+                    "recommended_action",
+                    "recommended_mcp_tool",
+                    "automatic_replay_ready",
+                    "recipe_upgrade_required",
+                    "current_camera_evidence_reverification_required",
+                    "evidence_integrity_reverification_required",
+                    "event_journal_reverification_required",
+                    "journal_consistency_status",
+                    "runtime_ui_preflight_required",
+                    "runtime_accessibility_preflight_required",
+                    "runtime_accessibility_observation_blocks_automation",
+                    "needs_user_confirmation",
+                    "safe_to_call_without_confirmation",
+                ),
+            )
+
+    event_journal = compact.get("event_journal")
+    if isinstance(event_journal, dict) and event_journal.get("path") == compact.get(
+        "events_path"
+    ):
+        event_journal = dict(event_journal)
+        event_journal.pop("path", None)
+        compact["event_journal"] = event_journal
+
+    replay_summary = compact.get("replay_summary")
+    if isinstance(replay_summary, dict):
+        replay_summary = dict(replay_summary)
+        view_names = compact.get("view_names")
+        pending_view_names = replay_summary.get("pending_view_names")
+        if isinstance(view_names, list) and pending_view_names == view_names:
+            replay_summary.pop("pending_view_names", None)
+            replay_summary["all_requested_views_pending"] = True
+        review_view_names = replay_summary.get("review_required_pending_view_names")
+        if isinstance(pending_view_names, list) and review_view_names == pending_view_names:
+            replay_summary.pop("review_required_pending_view_names", None)
+            replay_summary["all_pending_views_require_review"] = True
+        for count_key, names_key in (
+            ("accepted_view_count", "accepted_view_names"),
+            (
+                "current_camera_evidence_reverification_view_count",
+                "current_camera_evidence_reverification_view_names",
+            ),
+            (
+                "automation_ready_pending_view_count",
+                "automation_ready_pending_view_names",
+            ),
+            ("unsupported_pending_view_count", "unsupported_pending_view_names"),
+        ):
+            if replay_summary.get(count_key) == 0:
+                replay_summary.pop(names_key, None)
+        compact["replay_summary"] = replay_summary
+    return compact
+
+
 def _compact_json_size_bytes(value: Any) -> int:
     """Return the protocol test size for a JSON-compatible value."""
 
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
 
-def _compact_response_receipt(*, detail_paths: dict[str, Any]) -> dict[str, Any]:
+def _compact_response_receipt(
+    *,
+    detail_paths: dict[str, Any],
+    semantic_core_fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
     """Build the common compact-response budget receipt."""
 
-    return {
+    receipt = {
         "budget_bytes": COMPACT_RESPONSE_MAX_BYTES,
         "hard_budget_applied": False,
         "omitted_fields": [],
@@ -30145,6 +30381,49 @@ def _compact_response_receipt(*, detail_paths: dict[str, Any]) -> dict[str, Any]
             ),
         ),
     }
+    if semantic_core_fields:
+        receipt.update(
+            {
+                "target_bytes": COMPACT_RESPONSE_TARGET_BYTES,
+                "reserved_headroom_bytes": (
+                    COMPACT_RESPONSE_MAX_BYTES - COMPACT_RESPONSE_TARGET_BYTES
+                ),
+                "response_bytes": 99_999,
+                "headroom_bytes": 99_999,
+                "target_exceeded": True,
+                "semantic_core_preserved": False,
+                "semantic_core_omitted_fields": list(semantic_core_fields),
+            }
+        )
+    return receipt
+
+
+def _finalize_live_compact_response(
+    payload: dict[str, Any],
+    receipt: dict[str, Any],
+    semantic_core_fields: tuple[str, ...],
+) -> dict[str, Any]:
+    """Finalize exact size and semantic-core preservation evidence."""
+
+    omitted_core_fields = [
+        key for key in semantic_core_fields if key not in payload
+    ]
+    receipt["semantic_core_preserved"] = not omitted_core_fields
+    receipt["semantic_core_omitted_fields"] = omitted_core_fields
+    for _ in range(4):
+        response_bytes = _compact_json_size_bytes(payload)
+        headroom_bytes = max(COMPACT_RESPONSE_MAX_BYTES - response_bytes, 0)
+        target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
+        if (
+            receipt.get("response_bytes") == response_bytes
+            and receipt.get("headroom_bytes") == headroom_bytes
+            and receipt.get("target_exceeded") == target_exceeded
+        ):
+            break
+        receipt["response_bytes"] = response_bytes
+        receipt["headroom_bytes"] = headroom_bytes
+        receipt["target_exceeded"] = target_exceeded
+    return payload
 
 
 def _compact_gui_evidence_reaudit(value: Any) -> dict[str, Any]:
@@ -30186,10 +30465,20 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     """Guarantee a bounded live receipt with explicit deterministic fallback."""
 
     bounded = dict(compact)
-    receipt = _compact_response_receipt(detail_paths=bounded)
+    semantic_core_fields = tuple(
+        key for key in LIVE_COMPACT_SEMANTIC_CORE_FIELDS if key in bounded
+    )
+    receipt = _compact_response_receipt(
+        detail_paths=bounded,
+        semantic_core_fields=semantic_core_fields,
+    )
     bounded["response_compaction"] = receipt
     if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-        return bounded
+        return _finalize_live_compact_response(
+            bounded,
+            receipt,
+            semantic_core_fields,
+        )
 
     receipt["hard_budget_applied"] = True
     omitted_fields = receipt["omitted_fields"]
@@ -30209,7 +30498,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
         )
         omitted_fields.append("calculation_preview.extended_fields")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
         bounded.pop("calculation_preview", None)
         live_summary = bounded.get("live_summary")
@@ -30229,21 +30522,26 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             bounded["artifacts"] = artifacts
         omitted_fields.append("calculation_preview")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
     for key in (
-        "normality_explanation",
-        "visual_normality_summary",
-        "diagnostic_focus_plan",
-        "semiconductor_normality_diagnosis",
         "artifacts",
         "live_gui_acceptance",
+        "diagnostic_focus_plan",
     ):
         if key in bounded:
             bounded.pop(key, None)
             omitted_fields.append(key)
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
     bundle_files = bounded.get("view_bundle_files")
     if isinstance(bundle_files, dict):
@@ -30253,7 +30551,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
         bounded.setdefault("view_bundle_files_total_count", len(bundle_files))
         omitted_fields.append("view_bundle_files.nonessential_paths")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
     gui_current = bounded.get("gui_current_revision")
     if isinstance(gui_current, dict):
@@ -30280,17 +30582,21 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
         )
         omitted_fields.append("gui_current_revision.extended_window_evidence")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
-    view_parameters = bounded.get("view_parameter_summary")
-    if isinstance(view_parameters, dict) and isinstance(view_parameters.get("views"), list):
-        view_parameters = dict(view_parameters)
-        view_parameters.pop("views", None)
-        view_parameters["views_in_artifact"] = "view_summary_csv"
-        bounded["view_parameter_summary"] = view_parameters
-        omitted_fields.append("view_parameter_summary.views")
+    if "semiconductor_normality_diagnosis" in bounded:
+        bounded.pop("semiconductor_normality_diagnosis", None)
+        omitted_fields.append("semiconductor_normality_diagnosis")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-            return bounded
+            return _finalize_live_compact_response(
+                bounded,
+                receipt,
+                semantic_core_fields,
+            )
 
     essential = _mapping_subset(
         bounded,
@@ -30378,6 +30684,8 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "validation",
             "live_summary",
             "normality_gate",
+            "normality_explanation",
+            "visual_normality_summary",
             "next_action_plan",
             "mcp_client_readiness",
             "revision_delta",
@@ -30411,14 +30719,17 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     receipt["omitted_fields"].append("nonessential_top_level_fields")
     essential["response_compaction"] = receipt
     if _compact_json_size_bytes(essential) < COMPACT_RESPONSE_MAX_BYTES:
-        return essential
+        return _finalize_live_compact_response(
+            essential,
+            receipt,
+            semantic_core_fields,
+        )
 
     for key in (
         "revision_delta",
         "structure_artifact_validation",
         "view_bundle_row_counts",
         "view_bundle_files",
-        "view_parameter_summary",
         "gui_current_revision",
         "live_summary",
     ):
@@ -30426,7 +30737,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             essential.pop(key, None)
             receipt["omitted_fields"].append(key)
         if _compact_json_size_bytes(essential) < COMPACT_RESPONSE_MAX_BYTES:
-            return essential
+            return _finalize_live_compact_response(
+                essential,
+                receipt,
+                semantic_core_fields,
+            )
     minimal = _mapping_subset(
         essential,
         (
@@ -30516,6 +30831,9 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "planned_outputs",
             "validation",
             "normality_gate",
+            "normality_explanation",
+            "visual_normality_summary",
+            "view_parameter_summary",
             "next_action_plan",
             "mcp_client_readiness",
             "view_name",
@@ -30540,13 +30858,24 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             minimal[key] = [str(item)[:1000] for item in values[:10]]
     receipt["omitted_fields"].append("oversized_extended_receipt")
     minimal["response_compaction"] = receipt
-    for key in ("normality_gate", "mcp_client_readiness", "next_action_plan"):
+    for key in (
+        "view_parameter_summary",
+        "visual_normality_summary",
+        "normality_explanation",
+        "mcp_client_readiness",
+        "normality_gate",
+        "next_action_plan",
+    ):
         if _compact_json_size_bytes(minimal) < COMPACT_RESPONSE_MAX_BYTES:
             break
         if key in minimal:
             minimal.pop(key, None)
             receipt["omitted_fields"].append(key)
-    return minimal
+    return _finalize_live_compact_response(
+        minimal,
+        receipt,
+        semantic_core_fields,
+    )
 
 
 def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
@@ -30607,6 +30936,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "response_schema",
             "supported_response_modes",
             "max_response_bytes",
+            "target_response_bytes",
             "full_detail_hint",
             "domain_focus",
             "diagnostics",
@@ -31209,6 +31539,11 @@ def _compact_live_response(
         )
         if continuation:
             compact["view_replay_continuation"] = continuation
+    if isinstance(compact.get("gui_view_replay"), dict):
+        compact["gui_view_replay"] = _deduplicate_compact_gui_view_replay(
+            compact["gui_view_replay"],
+            compact.get("view_replay_continuation"),
+        )
     compact_readiness = _mapping_subset(
         readiness,
         (
@@ -31319,6 +31654,7 @@ def _compact_live_response(
         for key in ("report_json_path", "view_audit_report_path", "view_bundle_manifest_path"):
             if artifacts.get(key) and not compact.get(key):
                 compact[key] = artifacts[key]
+    _deduplicate_compact_action_payloads(compact)
     compact["detail_retrieval"] = {
         "response_mode": McpResponseMode.FULL.value,
         "report_json_path": compact.get("report_json_path"),
@@ -31373,6 +31709,7 @@ def _compact_capabilities_response(
             "response_schema": CAPABILITIES_COMPACT_RESPONSE_SCHEMA,
             "supported_response_modes": [McpResponseMode.COMPACT.value, McpResponseMode.FULL.value],
             "max_response_bytes": COMPACT_RESPONSE_MAX_BYTES,
+            "target_response_bytes": COMPACT_RESPONSE_TARGET_BYTES,
             "full_detail_hint": {
                 "tool": "material_studio_live_capabilities",
                 "arguments": {"response_mode": McpResponseMode.FULL.value},

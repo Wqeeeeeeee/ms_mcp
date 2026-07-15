@@ -132,15 +132,16 @@ keeps the protocol response bounded while preserving full diagnostics in
 `report.json`, `view_audit.json`, and the view-bundle manifest. The default
 remains `full` for backward compatibility.
 
-Compact schema v2 enforces a 48 KB protocol acceptance budget for capabilities,
-create, status, and view-bundle replies. It keeps camera parameters, current GUI
-binding, normality and next-action gates, and the complete `view_bundle_files`
-index in normal compact projection. Repeated evidence trees and capability catalogs remain available through
-`response_mode="full"` and the persisted report artifacts.
+Compact schema v2 targets 45 KB and enforces a 48 KB protocol acceptance budget
+for capabilities, create, status, and view-bundle replies. It keeps camera
+parameters, current GUI binding, normality explanations, visual conclusions,
+and the authoritative next-action payload. Repeated action payloads, successful
+diagnostic-focus detail, evidence trees, and capability catalogs remain
+available through `response_mode="full"` and the persisted report artifacts.
 If a complex all-view response still reaches the hard budget, the receipt adds
 `response_compaction.hard_budget_applied=true` and lists each omitted duplicate
-field. Camera parameters and artifact indexes are retained first; the manifest
-paths remain the authoritative fallback.
+field. Check `semantic_core_preserved`, `response_bytes`, and `headroom_bytes`
+before summarizing the result; manifest paths remain the authoritative fallback.
 
 Live GUI status performs a bounded provenance lookup across the active
 workspace, `MATERIAL_STUDIO_MCP_WORKSPACE`, and the platform default user

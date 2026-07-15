@@ -4951,6 +4951,63 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
     assert len(history_after) == len(history_before)
 
 
+def test_live_status_reconciles_stale_failure_when_recipe_upgrade_is_required(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _verified_view_command_evidence,
+    )
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    prepared = server.material_studio_gui_prepare_view_replay(
+        project_id=project_id,
+        revision=revision,
+        views=["front"],
+        runtime_accessibility_evidence=_complete_view_runtime_accessibility_evidence(
+            revision=revision,
+            window=backend.window,
+            include_movement=False,
+        ),
+        working_dir=str(tmp_path),
+    )
+    assert prepared["replay_status"] == "ready_for_external_replay"
+
+    manifest_path = Path(prepared["manifest_path"])
+    stale_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    stale_manifest["views"][0]["execution_recipe"]["schema_version"] = 0
+    stale_manifest["replay_status"] = "automatic_recipe_postcheck_failed"
+    manifest_path.write_text(
+        json.dumps(stale_manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    status = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    replay = status["gui_view_replay"]
+    assert replay["recipe_contract"]["pending_upgrade_view_names"] == ["front"]
+    assert replay["replay_continuation"]["status"] == "recipe_upgrade_required"
+    assert replay["replay_summary"]["automatic_postcheck_failure_count"] == 0
+    assert replay["replay_status"] == "recipe_upgrade_required"
+
+
 def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_blocker(tmp_path: Path) -> None:
     plan = infer_modeling_plan(
         "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."

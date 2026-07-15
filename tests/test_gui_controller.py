@@ -1602,6 +1602,40 @@ def test_prepare_view_replay_persists_preview_manifest_without_gui_input(tmp_pat
     assert "cmdViewer3DFitToView" in command_ids
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({}, "ready_for_external_replay"),
+        ({"preflight_ready": False}, "blocked"),
+        (
+            {"preflight_ready": False, "accepted_view_count": 1},
+            "blocked_with_prior_confirmation",
+        ),
+        ({"pending_recipe_upgrade_required": True}, "recipe_upgrade_required"),
+        (
+            {"pending_recipe_upgrade_required": True, "accepted_view_count": 1},
+            "partially_confirmed",
+        ),
+    ],
+)
+def test_derive_view_replay_status_is_exhaustive(
+    overrides: dict[str, object],
+    expected: str,
+) -> None:
+    inputs: dict[str, object] = {
+        "preflight_ready": True,
+        "all_confirmed": False,
+        "accepted_view_count": 0,
+        "integrity_blocked": False,
+        "journal_blocked": False,
+        "automatic_postcheck_failed": False,
+        "pending_recipe_upgrade_required": False,
+    }
+    inputs.update(overrides)
+
+    assert gui_module._derive_view_replay_status(**inputs) == expected
+
+
 def test_record_view_replay_requires_manifest_view_and_persists_append_only_event(tmp_path: Path) -> None:
     controller, _ = _controller_with_verified_project_window(tmp_path)
     prepared = controller.prepare_view_replay(

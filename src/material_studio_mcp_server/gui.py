@@ -8640,6 +8640,35 @@ def _verified_automatic_recipe_postcheck_failure(
     }
 
 
+def _derive_view_replay_status(
+    *,
+    preflight_ready: bool,
+    all_confirmed: bool,
+    accepted_view_count: int,
+    integrity_blocked: bool,
+    journal_blocked: bool,
+    automatic_postcheck_failed: bool,
+    pending_recipe_upgrade_required: bool,
+) -> str:
+    """Derive a complete top-level status without retaining stale state."""
+
+    if not preflight_ready:
+        return "blocked_with_prior_confirmation" if accepted_view_count else "blocked"
+    if all_confirmed:
+        return "externally_confirmed"
+    if integrity_blocked:
+        return "evidence_integrity_reverification_required"
+    if journal_blocked:
+        return "event_journal_reverification_required"
+    if automatic_postcheck_failed:
+        return "automatic_recipe_postcheck_failed"
+    if accepted_view_count:
+        return "partially_confirmed"
+    if pending_recipe_upgrade_required:
+        return "recipe_upgrade_required"
+    return "ready_for_external_replay"
+
+
 def _refresh_view_replay_summary(
     manifest: dict[str, Any],
     *,
@@ -9690,20 +9719,15 @@ def _refresh_view_replay_summary(
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
-    if preflight.get("ready_for_external_replay") is not True:
-        if accepted_views:
-            manifest["replay_status"] = "blocked_with_prior_confirmation"
-        return
-    if all_confirmed:
-        manifest["replay_status"] = "externally_confirmed"
-    elif integrity_blocked_view_names:
-        manifest["replay_status"] = "evidence_integrity_reverification_required"
-    elif journal_blocked_view_names:
-        manifest["replay_status"] = "event_journal_reverification_required"
-    elif automatic_postcheck_failed_view_names:
-        manifest["replay_status"] = "automatic_recipe_postcheck_failed"
-    elif accepted_views:
-        manifest["replay_status"] = "partially_confirmed"
+    manifest["replay_status"] = _derive_view_replay_status(
+        preflight_ready=preflight.get("ready_for_external_replay") is True,
+        all_confirmed=all_confirmed,
+        accepted_view_count=len(accepted_supported_views),
+        integrity_blocked=bool(integrity_blocked_view_names),
+        journal_blocked=bool(journal_blocked_view_names),
+        automatic_postcheck_failed=bool(automatic_postcheck_failed_view_names),
+        pending_recipe_upgrade_required=pending_recipe_upgrade_required,
+    )
 
 
 def _write_text_atomic(path: Path, content: str) -> None:

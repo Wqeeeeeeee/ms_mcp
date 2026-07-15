@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime, timezone
 from enum import Enum
+from functools import wraps
 from math import gcd
 from pathlib import Path
 from typing import Annotated, Any
@@ -85,8 +86,8 @@ class McpResponseMode(str, Enum):
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
-GUI_VISUAL_CONFIRMATION_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
-GUI_VISUAL_CONFIRMATION_REPORT_LOCK_POLL_SECONDS = 0.05
+GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
+GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS = 0.05
 
 
 class ForciteQuality(str, Enum):
@@ -32074,6 +32075,45 @@ def _handle_live_rollback_request(
     return result
 
 
+def _serialize_gui_artifact_report_update(method: Any) -> Any:
+    """Serialize one revision's GUI artifact report read-modify-write cycle."""
+
+    @wraps(method)
+    def serialized(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        project_id = kwargs.get("project_id")
+        revision = kwargs.get("revision")
+        if project_id is None or revision is None:
+            raise TypeError("GUI artifact report updates require project_id and revision")
+
+        store = _structured_store(kwargs.get("working_dir"))
+        lock_path = store.outputs_dir(str(project_id), int(revision)) / "gui_artifact_report.lock"
+        try:
+            with _workspace_advisory_write_lock(
+                lock_path,
+                workspace_root=store.workspace_root,
+                timeout_seconds=GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS,
+                poll_seconds=GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS,
+            ) as transaction:
+                result = method(*args, **kwargs)
+        except GuiError as exc:
+            if "workspace write transaction is busy" in str(exc):
+                raise GuiError(
+                    "GUI artifact report write transaction is busy; retry after the "
+                    "current GUI evidence update finishes"
+                ) from exc
+            raise
+
+        transaction["domain"] = "gui_artifact_report"
+        result["report_write_transaction"] = transaction
+        structured_sync = result.get("structured_sync")
+        if isinstance(structured_sync, dict):
+            structured_sync["report_write_transaction"] = transaction
+        return result
+
+    return serialized
+
+
+@_serialize_gui_artifact_report_update
 def _persist_gui_open_structure_report(
     *,
     project_id: str,
@@ -32159,6 +32199,7 @@ def _persist_gui_open_structure_report(
     }
 
 
+@_serialize_gui_artifact_report_update
 def _persist_gui_snapshot_report(
     *,
     project_id: str,
@@ -32325,6 +32366,7 @@ def _gui_visual_confirmation_binding(
     }
 
 
+@_serialize_gui_artifact_report_update
 def _persist_gui_visual_confirmation_report(
     *,
     project_id: str,
@@ -32336,40 +32378,18 @@ def _persist_gui_visual_confirmation_report(
     project_resolution: dict[str, Any] | None = None,
     evidence_request: str | None = None,
 ) -> dict[str, Any]:
-    """Serialize one current-revision visual confirmation report update."""
+    """Persist one current-revision visual confirmation report update."""
 
-    store = _structured_store(working_dir)
-    output_dir = store.outputs_dir(project_id, revision)
-    lock_path = output_dir / "gui_visual_confirmation_report.lock"
-    try:
-        with _workspace_advisory_write_lock(
-            lock_path,
-            workspace_root=store.workspace_root,
-            timeout_seconds=GUI_VISUAL_CONFIRMATION_REPORT_LOCK_TIMEOUT_SECONDS,
-            poll_seconds=GUI_VISUAL_CONFIRMATION_REPORT_LOCK_POLL_SECONDS,
-        ) as transaction:
-            result = _persist_gui_visual_confirmation_report_unlocked(
-                project_id=project_id,
-                revision=revision,
-                confirmation=confirmation,
-                gui_status=gui_status,
-                views=views,
-                project_resolution=project_resolution,
-                evidence_request=evidence_request,
-                store=store,
-            )
-    except GuiError as exc:
-        if "workspace write transaction is busy" in str(exc):
-            raise GuiError(
-                "visual confirmation report write transaction is busy; retry after "
-                "the current confirmation finishes"
-            ) from exc
-        raise
-    result["report_write_transaction"] = transaction
-    structured_sync = result.get("structured_sync")
-    if isinstance(structured_sync, dict):
-        structured_sync["report_write_transaction"] = transaction
-    return result
+    return _persist_gui_visual_confirmation_report_unlocked(
+        project_id=project_id,
+        revision=revision,
+        confirmation=confirmation,
+        gui_status=gui_status,
+        views=views,
+        project_resolution=project_resolution,
+        evidence_request=evidence_request,
+        store=_structured_store(working_dir),
+    )
 
 
 def _persist_gui_visual_confirmation_report_unlocked(

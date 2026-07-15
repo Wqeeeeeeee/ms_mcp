@@ -148,12 +148,14 @@ if the bounded wait expires, the operation fails before writing a partial event.
 The lock is released by the operating system when a process exits, and callers
 must not delete the persistent lock file to force progress.
 
-Persisting an accepted manual or replay-derived visual confirmation uses a
-separate `gui_visual_confirmation_report.lock` for the same project/revision.
-That transaction reads prior GUI artifacts, appends the new confirmation,
-rebuilds diagnostics, and publishes `report.json` with `fsync` plus atomic
-replacement. Concurrent confirmations therefore remain in `gui_artifacts`; a
-timeout or publish interruption preserves the previously committed report.
+Persisting a GUI open, snapshot, or accepted manual or replay-derived visual
+confirmation uses a shared `gui_artifact_report.lock` for the same
+project/revision. That transaction reads prior GUI artifacts, applies the
+operation's reset or append semantics, rebuilds diagnostics, and publishes
+`report.json` with `fsync` plus atomic replacement. Concurrent report updates
+therefore follow lock acquisition order without losing evidence; a timeout or
+publish interruption preserves the previously committed report. This report
+lock remains separate from the replay manifest lock.
 
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through

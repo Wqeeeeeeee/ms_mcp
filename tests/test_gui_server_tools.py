@@ -9523,6 +9523,17 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert executed["modeling_health"]["checks"]["gui_open_identity_verification"] == "matched_open_artifact"
     assert executed["modeling_health"]["checks"]["gui_window_identity_verification"] == "unverified"
     assert "gui_open" in executed
+    high_level_transaction = executed["gui_action_transaction"]
+    assert high_level_transaction["path"] == executed["report_write_transaction"]["path"]
+    assert high_level_transaction["nested_call_count"] == 0
+    assert {
+        "high_level_hotload",
+        "workflow:gui_apply_current_revision",
+        "target_window_revalidation",
+        "gui_open_structure",
+        "gui_snapshot",
+        "report_read_modify_write",
+    } <= set(high_level_transaction["coverage"])
     assert executed["modeling_report"]["normality"] == "review_warnings"
     normality_gate = executed["modeling_report"]["normality_gate"]
     assert normality_gate["status"] == "review_required"
@@ -10934,6 +10945,17 @@ def test_live_update_with_patch_execute_opens_gui(monkeypatch, tmp_path: Path) -
     assert updated["new_revision"] == 1
     assert updated["revision"] == 1
     assert "gui_open" in updated
+    high_level_transaction = updated["gui_action_transaction"]
+    assert high_level_transaction["path"] == updated["report_write_transaction"]["path"]
+    assert high_level_transaction["nested_call_count"] == 0
+    assert {
+        "high_level_hotload",
+        "workflow:live_patch",
+        "target_window_revalidation",
+        "gui_open_structure",
+        "gui_snapshot",
+        "report_read_modify_write",
+    } <= set(high_level_transaction["coverage"])
     assert backend.opened
     assert backend.opened[0].name == "live_execute_proj_r001.xsd"
 
@@ -19348,6 +19370,16 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert result["nl_plan"]["template_id"] == "gallium_arsenide_zincblende"
     assert result["result"]["execution_backend"] == "crystal_cif_materialize"
     assert result["gui_open"]["structure_path"].endswith(".cif")
+    high_level_transaction = result["gui_action_transaction"]
+    assert high_level_transaction["path"] == result["report_write_transaction"]["path"]
+    assert high_level_transaction["nested_call_count"] == 0
+    assert {
+        "high_level_hotload",
+        "workflow:create",
+        "target_window_revalidation",
+        "gui_open_structure",
+        "report_read_modify_write",
+    } <= set(high_level_transaction["coverage"])
     assert result["modeling_report"]["diagnostic_export_requested"] is True
     assert result["modeling_report"]["normality_check_requested"] is True
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
@@ -24971,6 +25003,428 @@ def test_gui_artifact_report_lock_timeout_preserves_report(
         working_dir=str(tmp_path),
     )
     assert recorded["ok"] is True
+
+
+def test_high_level_patch_waits_for_snapshot_transaction_before_hotload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    patch_execution_ready = threading.Event()
+    release_patch_execution = threading.Event()
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"fake revision {spec.revision}", encoding="utf-8")
+        if spec.revision == 1:
+            patch_execution_ready.set()
+            assert release_patch_execution.wait(timeout=10.0)
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("high_level_patch_transaction_proj"),
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    loaded = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert loaded["ok"] is True
+    initial_open_count = len(backend.opened)
+
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    contention_observed = threading.Event()
+    original_capture = backend.capture_window
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def blocking_capture(window: WindowInfo, output_path: Path) -> Path:
+        capture_started.set()
+        assert release_capture.wait(timeout=10.0)
+        return original_capture(window, output_path)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(backend, "capture_window", blocking_capture)
+    monkeypatch.setattr(gui_module, "_lock_file_descriptor_nonblocking", observed_lock_attempt)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        patch_future = executor.submit(
+            server.material_studio_live_update_with_patch,
+            project_id=created["project_id"],
+            base_revision=0,
+            patch={
+                "operations": [
+                    {
+                        "type": "set_atom_position",
+                        "atom_id": "H1",
+                        "xyz_angstrom": [2.6, 0.0, 0.0],
+                    }
+                ]
+            },
+            user_text="Move H1 and hot-load the current revision in Materials Studio.",
+            execution_mode="execute",
+            open_in_gui=True,
+            take_snapshot=False,
+            export_view_audit=True,
+            working_dir=str(tmp_path),
+        )
+        assert patch_execution_ready.wait(timeout=10.0)
+        snapshot_future = executor.submit(
+            server.material_studio_gui_snapshot,
+            "high_level_patch_blocker",
+            created["project_id"],
+            1,
+            str(tmp_path),
+        )
+        assert capture_started.wait(timeout=10.0)
+        release_patch_execution.set()
+        try:
+            assert contention_observed.wait(timeout=10.0)
+            assert patch_future.done() is False
+            assert len(backend.opened) == initial_open_count
+        finally:
+            release_capture.set()
+        snapshot_result = snapshot_future.result(timeout=30.0)
+        patch_result = patch_future.result(timeout=30.0)
+
+    assert snapshot_result["ok"] is True
+    assert patch_result["ok"] is True
+    assert patch_result["revision"] == 1
+    assert len(backend.opened) == initial_open_count + 1
+    assert backend.opened[-1].suffix == ".stp"
+    snapshot_transaction = snapshot_result["gui_action_transaction"]
+    patch_transaction = patch_result["gui_action_transaction"]
+    assert snapshot_transaction["path"] == patch_transaction["path"]
+    assert patch_transaction["path"] == patch_result["report_write_transaction"]["path"]
+    assert patch_transaction["waited_seconds"] > 0.0
+    assert patch_transaction["nested_call_count"] == 0
+    assert {
+        "high_level_hotload",
+        "workflow:live_patch",
+        "target_window_revalidation",
+        "gui_open_structure",
+        "report_read_modify_write",
+    } <= set(patch_transaction["coverage"])
+
+
+def test_high_level_patch_revalidates_window_count_after_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    patch_execution_ready = threading.Event()
+    release_patch_execution = threading.Event()
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"fake revision {spec.revision}", encoding="utf-8")
+        if spec.revision == 1:
+            patch_execution_ready.set()
+            assert release_patch_execution.wait(timeout=10.0)
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("high_level_window_drift_proj"),
+        working_dir=str(tmp_path),
+    )
+    loaded = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert loaded["ok"] is True
+    initial_open_count = len(backend.opened)
+    drift_enabled = threading.Event()
+    original_list_windows = backend.list_windows
+    extra_window = WindowInfo(
+        handle=999,
+        title="Unexpected - Materials Studio",
+        pid=backend.window.pid,
+        rect=(20, 20, 1024, 768),
+    )
+
+    def drifting_list_windows(pid: int | None = None) -> list[WindowInfo]:
+        windows = original_list_windows(pid)
+        if drift_enabled.is_set() and (pid is None or pid == extra_window.pid):
+            windows.append(extra_window)
+        return windows
+
+    monkeypatch.setattr(backend, "list_windows", drifting_list_windows)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        patch_future = executor.submit(
+            server.material_studio_live_update_with_patch,
+            project_id=created["project_id"],
+            base_revision=0,
+            patch={
+                "operations": [
+                    {
+                        "type": "set_atom_position",
+                        "atom_id": "H1",
+                        "xyz_angstrom": [2.7, 0.0, 0.0],
+                    }
+                ]
+            },
+            user_text="Move H1 and hot-load it in Materials Studio.",
+            execution_mode="execute",
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+        )
+        assert patch_execution_ready.wait(timeout=10.0)
+        drift_enabled.set()
+        release_patch_execution.set()
+        patch_result = patch_future.result(timeout=30.0)
+
+    assert patch_result["ok"] is False
+    assert patch_result["result"]["success"] is True
+    assert patch_result["single_window_hotload_block"]["reason"] == "single_window_policy_violation"
+    assert patch_result["single_window_hotload_block"]["single_window_violation_reasons"] == [
+        "multiple_matstudio_windows_detected"
+    ]
+    assert "gui_open" not in patch_result
+    assert len(backend.opened) == initial_open_count
+    transaction = patch_result["gui_action_transaction"]
+    assert transaction["path"] == patch_result["report_write_transaction"]["path"]
+    assert "target_window_revalidation" in transaction["coverage"]
+    persisted_report = json.loads(Path(patch_result["report_json_path"]).read_text(encoding="utf-8"))
+    assert persisted_report["ok"] is False
+    assert persisted_report["gui_open"] is None
+    assert persisted_report["modeling_report"]["live_readiness"]["state"] == "blocked"
+
+
+def test_high_level_patch_does_not_hotload_revision_superseded_during_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    first_patch_execution_ready = threading.Event()
+    release_first_patch_execution = threading.Event()
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(f"fake revision {spec.revision}", encoding="utf-8")
+        if spec.revision == 1:
+            first_patch_execution_ready.set()
+            assert release_first_patch_execution.wait(timeout=10.0)
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("high_level_revision_drift_proj"),
+        working_dir=str(tmp_path),
+    )
+    loaded = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="execute",
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert loaded["ok"] is True
+    initial_open_count = len(backend.opened)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        first_patch_future = executor.submit(
+            server.material_studio_live_update_with_patch,
+            project_id=created["project_id"],
+            base_revision=0,
+            patch={
+                "operations": [
+                    {
+                        "type": "set_atom_position",
+                        "atom_id": "H1",
+                        "xyz_angstrom": [2.6, 0.0, 0.0],
+                    }
+                ]
+            },
+            user_text="Move H1 and hot-load it in Materials Studio.",
+            execution_mode="execute",
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+        )
+        assert first_patch_execution_ready.wait(timeout=10.0)
+        superseding_patch = server.material_studio_live_update_with_patch(
+            project_id=created["project_id"],
+            base_revision=1,
+            patch={
+                "operations": [
+                    {
+                        "type": "set_atom_position",
+                        "atom_id": "H2",
+                        "xyz_angstrom": [-2.7, 0.0, 0.0],
+                    }
+                ]
+            },
+            user_text="Move H2 and keep the newer revision as preview.",
+            execution_mode="preview",
+            open_in_gui=False,
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+        )
+        assert superseding_patch["ok"] is True
+        assert superseding_patch["revision"] == 2
+        release_first_patch_execution.set()
+        first_patch = first_patch_future.result(timeout=30.0)
+
+    assert first_patch["ok"] is False
+    assert first_patch["revision"] == 1
+    assert first_patch["result"]["success"] is True
+    block = first_patch["current_revision_hotload_block"]
+    assert block["reason"] == "current_revision_advanced_during_execution"
+    assert block["target_revision"] == 1
+    assert block["current_revision"] == 2
+    assert block["recommended_tool"] == "material_studio_live_project_status"
+    assert "gui_open" not in first_patch
+    assert len(backend.opened) == initial_open_count
+    assert "current_revision_revalidation" in first_patch["gui_action_transaction"]["coverage"]
+    current = server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )
+    assert current["revision"] == 2
+    persisted_report = json.loads(Path(first_patch["report_json_path"]).read_text(encoding="utf-8"))
+    assert persisted_report["current_revision_hotload_block"]["current_revision"] == 2
+    assert persisted_report["gui_open"] is None
+
+
+def test_high_level_hotload_lock_timeout_defers_gui_and_report_after_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    executed_revisions: list[int] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        executed_revisions.append(spec.revision)
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("executed before GUI lock timeout", encoding="utf-8")
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(server, "GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS", 0.005)
+    created = server.material_studio_model_create_from_spec(
+        load_benzene("high_level_lock_timeout_proj"),
+        working_dir=str(tmp_path),
+    )
+    previewed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode="preview",
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert previewed["ok"] is True
+    report_path = Path(previewed["report_json_path"])
+    committed_report = report_path.read_bytes()
+    lock_path = report_path.parent / "gui_artifact_report.lock"
+
+    with gui_module._workspace_advisory_write_lock(
+        lock_path,
+        workspace_root=tmp_path,
+        timeout_seconds=1.0,
+        poll_seconds=0.01,
+    ):
+        blocked = server.material_studio_gui_apply_current_revision(
+            project_id=created["project_id"],
+            execution_mode="execute",
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+            response_mode="compact",
+        )
+
+    assert executed_revisions == [0]
+    assert blocked["ok"] is False
+    assert blocked["report_persistence_deferred"] is True
+    assert "GUI artifact report write transaction is busy" in blocked["gui_action_transaction_error"]
+    assert blocked["recommended_tool"] == "material_studio_gui_open_structure"
+    assert blocked["gui_open_retry_tool"] == "material_studio_gui_open_structure"
+    assert blocked["execution_completed_before_gui_transaction"] is True
+    assert blocked["structure_ready_for_gui_retry"] is True
+    retry_payload = blocked["gui_open_retry_payload"]
+    assert retry_payload["project_id"] == created["project_id"]
+    assert retry_payload["revision"] == 0
+    assert retry_payload["take_snapshot"] is False
+    assert Path(retry_payload["structure_path"]).exists()
+    assert backend.opened == []
+    assert report_path.read_bytes() == committed_report
 
 
 def test_atomic_report_publish_failure_preserves_committed_report(

@@ -166,8 +166,23 @@ evidence. They hold it until report publication and return
 `gui_action_transaction`; successful persistence returns the same lock receipt
 as `report_write_transaction`. The internal report writer reuses an active
 same-revision transaction instead of attempting a second OS lock. If the lock
-wait times out, these direct tools do not begin their GUI action. High-level
-model execute/hot-load workflows remain a separate transaction boundary.
+wait times out, these direct tools do not begin their GUI action.
+
+High-level create, live-patch, and apply-current execute workflows use the same
+revision lock for their GUI phase, but not for MaterialsScript execution or
+crystal CIF materialization. After the structure exists, they acquire the lock,
+verify that the target revision is still current, rerun the single-window
+preflight, open the structure, optionally capture a snapshot, and publish the
+final report before releasing it. A revision superseded during execution is
+never hot-loaded. Successful replies
+return one matching `gui_action_transaction` and `report_write_transaction`
+with `high_level_hotload` plus the workflow name in `coverage`. If the lock
+times out after execution, the structure remains available while GUI open and
+report publication are deferred. The response sets
+`report_persistence_deferred=true`,
+`execution_completed_before_gui_transaction=true`, and returns
+`gui_open_retry_tool` with an exact `gui_open_retry_payload`; retry that open
+after the active transaction completes.
 
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through

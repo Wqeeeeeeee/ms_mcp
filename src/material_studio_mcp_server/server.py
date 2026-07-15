@@ -16567,6 +16567,7 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "gui_artifacts": response.get("gui_artifacts"),
         "gui_visual_confirmation": response.get("gui_visual_confirmation"),
         "gui_open_warning": response.get("gui_open_warning"),
+        "current_revision_hotload_block": response.get("current_revision_hotload_block"),
         "errors": response.get("errors"),
         "error": response.get("error"),
     }
@@ -28144,6 +28145,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "errors",
             "warnings",
             "required_next_step",
+            "recommended_tool",
             "accepted_payloads",
             "workflow",
             "project_id",
@@ -28176,6 +28178,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
+            "gui_action_transaction_error",
+            "report_persistence_deferred",
+            "execution_completed_before_gui_transaction",
+            "structure_ready_for_gui_retry",
+            "current_revision_hotload_block",
+            "gui_open_retry_tool",
+            "gui_open_retry_payload",
             "gui_open_warning",
             "response_mode",
             "response_schema",
@@ -28246,6 +28255,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_mode_source",
             "diagnostic_export_requested",
             "normality_check_requested",
+            "recommended_tool",
             "normality",
             "health_verdict",
             "ready_for_next_edit",
@@ -28262,6 +28272,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
+            "gui_action_transaction_error",
+            "report_persistence_deferred",
+            "execution_completed_before_gui_transaction",
+            "structure_ready_for_gui_retry",
+            "current_revision_hotload_block",
+            "gui_open_retry_tool",
+            "gui_open_retry_payload",
             "response_mode",
             "response_schema",
             "planned_outputs",
@@ -28496,6 +28513,7 @@ def _compact_live_response(
             "errors",
             "warnings",
             "required_next_step",
+            "recommended_tool",
             "accepted_payloads",
             "workflow",
             "user_request",
@@ -28553,6 +28571,13 @@ def _compact_live_response(
             "write_transaction",
             "report_write_transaction",
             "gui_action_transaction",
+            "gui_action_transaction_error",
+            "report_persistence_deferred",
+            "execution_completed_before_gui_transaction",
+            "structure_ready_for_gui_retry",
+            "current_revision_hotload_block",
+            "gui_open_retry_tool",
+            "gui_open_retry_payload",
             "gui_open_warning",
             "gui_status_warning",
             "reconciliation_status",
@@ -31016,30 +31041,23 @@ def material_studio_live_update_with_patch(
         structure_path = Path(str(generated["planned_outputs"].get("structure", ""))).expanduser()
         if execution.get("result", {}).get("success") and open_in_gui:
             if structure_path.exists():
-                try:
-                    response["gui_open"] = gui.open_structure(
-                        structure_path,
-                        project_id=project_id,
-                        revision=info.revision,
+                return _compact_live_response(
+                    _finalize_high_level_gui_hotload(
+                        response=response,
+                        store=store,
+                        spec=new_spec,
+                        gui=gui,
+                        structure_path=structure_path,
                         take_snapshot=take_snapshot,
-                    )
-                    response["gui_status"] = gui.status(project_id=project_id, revision=info.revision)
-                    if effective_export_view_audit:
-                        audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
-                        report_path = write_view_audit_report(
-                            store.outputs_dir(project_id, info.revision),
-                            new_spec,
-                            response["view_audit"],
-                            gui_status=response["gui_status"],
-                            gui_artifacts=audit_artifacts,
-                        )
-                        response["view_audit_report_path"] = str(report_path)
-                except Exception as exc:
-                    response["gui_open_warning"] = str(exc)
-                    try:
-                        response["gui_status"] = gui.status(project_id=project_id, revision=info.revision)
-                    except Exception as status_exc:
-                        response["gui_status_warning"] = str(status_exc)
+                        audit_artifacts=audit_artifacts,
+                        execution_mode=mode,
+                        working_dir=working_dir,
+                        workflow=patch_workflow,
+                        record_gui_open_artifact=effective_export_view_audit,
+                        refresh_view_audit_report=effective_export_view_audit,
+                    ),
+                    response_mode,
+                )
             else:
                 response["gui_open_warning"] = f"planned output structure was not found: {structure_path}"
         return _compact_live_response(
@@ -31921,30 +31939,22 @@ def material_studio_live_modeling_request(
         structure_path = Path(str(generated["planned_outputs"].get("structure", ""))).expanduser()
         if execution.get("result", {}).get("success") and open_in_gui:
             if structure_path.exists():
-                try:
-                    response["gui_open"] = gui.open_structure(
-                        structure_path,
-                        project_id=model_spec.project_id,
-                        revision=info.revision,
+                return finish(
+                    _finalize_high_level_gui_hotload(
+                        response=response,
+                        store=store,
+                        spec=model_spec,
+                        gui=gui,
+                        structure_path=structure_path,
                         take_snapshot=take_snapshot,
+                        audit_artifacts=audit_artifacts,
+                        execution_mode=mode,
+                        working_dir=working_dir,
+                        workflow="create",
+                        record_gui_open_artifact=export_view_audit,
+                        refresh_view_audit_report=export_view_audit,
                     )
-                    response["gui_status"] = gui.status(project_id=model_spec.project_id, revision=info.revision)
-                    if export_view_audit:
-                        audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
-                        report_path = write_view_audit_report(
-                            store.outputs_dir(model_spec.project_id, info.revision),
-                            model_spec,
-                            response["view_audit"],
-                            gui_status=response["gui_status"],
-                            gui_artifacts=audit_artifacts,
-                        )
-                        response["view_audit_report_path"] = str(report_path)
-                except Exception as exc:
-                    response["gui_open_warning"] = str(exc)
-                    try:
-                        response["gui_status"] = gui.status(project_id=model_spec.project_id, revision=info.revision)
-                    except Exception as status_exc:
-                        response["gui_status_warning"] = str(status_exc)
+                )
             else:
                 response["gui_open_warning"] = f"planned output structure was not found: {structure_path}"
         return finish(
@@ -32176,6 +32186,161 @@ def _attach_gui_artifact_transaction(
     if isinstance(structured_sync, dict):
         structured_sync["report_write_transaction"] = transaction
     return result
+
+
+def _finalize_high_level_gui_hotload(
+    *,
+    response: dict[str, Any],
+    store: ProjectStore,
+    spec: ModelSpec,
+    gui: MaterialsStudioGuiController,
+    structure_path: Path,
+    take_snapshot: bool,
+    audit_artifacts: list[dict[str, Any]],
+    execution_mode: ExecutionMode | str,
+    working_dir: str | None,
+    workflow: str,
+    record_gui_open_artifact: bool,
+    refresh_view_audit_report: bool,
+) -> dict[str, Any]:
+    """Revalidate, hot-load, and publish one high-level response under the GUI lock."""
+
+    retry_payload = {
+        "structure_path": str(structure_path),
+        "project_id": spec.project_id,
+        "revision": spec.revision,
+        "take_snapshot": take_snapshot,
+        "working_dir": working_dir,
+    }
+    coverage = [
+        "high_level_hotload",
+        f"workflow:{workflow}",
+        "current_revision_revalidation",
+        "target_window_revalidation",
+        "gui_open_structure",
+        "report_read_modify_write",
+    ]
+    if take_snapshot:
+        coverage.append("gui_snapshot")
+    try:
+        with _gui_artifact_report_transaction(
+            project_id=spec.project_id,
+            revision=spec.revision,
+            working_dir=working_dir,
+            coverage=coverage,
+        ) as transaction:
+            current_spec, current_resolution = store.resolve_current(spec.project_id)
+            if current_spec.revision != spec.revision:
+                message = (
+                    f"Refusing to hot-load revision {spec.revision} because the current "
+                    f"revision advanced to {current_spec.revision} during execution."
+                )
+                response = {
+                    **response,
+                    "ok": False,
+                    "error": message,
+                    "gui_open_warning": message,
+                    "current_revision_hotload_block": {
+                        "blocked": True,
+                        "reason": "current_revision_advanced_during_execution",
+                        "target_revision": spec.revision,
+                        "current_revision": current_spec.revision,
+                        "current_pointer": current_resolution,
+                        "recommended_tool": "material_studio_live_project_status",
+                        "recommended_action": "inspect_current_revision_before_retrying_hotload",
+                    },
+                }
+            else:
+                try:
+                    fresh_gui_status = gui.status(
+                        project_id=spec.project_id,
+                        revision=spec.revision,
+                    )
+                except Exception as exc:
+                    fresh_gui_status = {"ok": False, "error": str(exc)}
+                response["gui_status"] = fresh_gui_status
+                blocked_response = _with_single_window_hotload_block(response, fresh_gui_status)
+                if blocked_response is not response:
+                    response = blocked_response
+                else:
+                    try:
+                        response["gui_open"] = gui.open_structure(
+                            structure_path,
+                            project_id=spec.project_id,
+                            revision=spec.revision,
+                            take_snapshot=take_snapshot,
+                        )
+                        try:
+                            response["gui_status"] = gui.status(
+                                project_id=spec.project_id,
+                                revision=spec.revision,
+                            )
+                        except Exception as status_exc:
+                            response["gui_status_warning"] = str(status_exc)
+                        if record_gui_open_artifact:
+                            audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
+                        if (
+                            refresh_view_audit_report
+                            and isinstance(response.get("view_audit"), dict)
+                        ):
+                            report_path = write_view_audit_report(
+                                store.outputs_dir(spec.project_id, spec.revision),
+                                spec,
+                                response["view_audit"],
+                                gui_status=response.get("gui_status"),
+                                gui_artifacts=audit_artifacts,
+                            )
+                            response["view_audit_report_path"] = str(report_path)
+                    except Exception as exc:
+                        response["gui_open_warning"] = str(exc)
+                        try:
+                            response["gui_status"] = gui.status(
+                                project_id=spec.project_id,
+                                revision=spec.revision,
+                            )
+                        except Exception as status_exc:
+                            response["gui_status_warning"] = str(status_exc)
+            response["gui_action_transaction"] = transaction
+            _attach_gui_artifact_transaction(response, transaction)
+            return _attach_modeling_health(
+                response,
+                execution_mode=execution_mode,
+                store=store,
+                spec=spec,
+                gui_artifacts=audit_artifacts,
+            )
+    except GuiError as exc:
+        if "GUI artifact report write transaction is busy" not in str(exc):
+            raise
+        deferred = {
+            **response,
+            "ok": False,
+            "gui_open_warning": str(exc),
+            "gui_action_transaction_error": str(exc),
+            "report_persistence_deferred": True,
+            "execution_completed_before_gui_transaction": bool(
+                isinstance(response.get("result"), dict)
+                and response["result"].get("success") is True
+            ),
+            "structure_ready_for_gui_retry": structure_path.exists(),
+            "required_next_step": (
+                "Retry material_studio_gui_open_structure after the active GUI "
+                "artifact transaction completes."
+            ),
+            "recommended_tool": "material_studio_gui_open_structure",
+            "gui_open_retry_tool": "material_studio_gui_open_structure",
+            "gui_open_retry_payload": retry_payload,
+        }
+        deferred = _attach_modeling_health(
+            deferred,
+            execution_mode=execution_mode,
+            store=None,
+            spec=spec,
+            gui_artifacts=audit_artifacts,
+        )
+        deferred["recommended_tool"] = "material_studio_gui_open_structure"
+        deferred["gui_open_retry_tool"] = "material_studio_gui_open_structure"
+        return deferred
 
 
 def _serialize_gui_artifact_report_update(method: Any) -> Any:
@@ -33867,21 +34032,22 @@ def material_studio_gui_apply_current_revision(
         structure_path = Path(str(generated["planned_outputs"].get("structure", ""))).expanduser()
         if result.get("success") and open_in_gui:
             if structure_path.exists():
-                try:
-                    response["gui_open"] = gui.open_structure(
-                        structure_path,
-                        project_id=project_id,
-                        revision=spec.revision,
+                return finish(
+                    _finalize_high_level_gui_hotload(
+                        response=response,
+                        store=store,
+                        spec=spec,
+                        gui=gui,
+                        structure_path=structure_path,
                         take_snapshot=take_snapshot,
+                        audit_artifacts=audit_artifacts,
+                        execution_mode=mode,
+                        working_dir=working_dir,
+                        workflow="gui_apply_current_revision",
+                        record_gui_open_artifact=True,
+                        refresh_view_audit_report=False,
                     )
-                    response["gui_status"] = gui.status(project_id=project_id, revision=spec.revision)
-                    audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
-                except Exception as exc:
-                    response["gui_open_warning"] = str(exc)
-                    try:
-                        response["gui_status"] = gui.status(project_id=project_id, revision=spec.revision)
-                    except Exception as status_exc:
-                        response["gui_status_warning"] = str(status_exc)
+                )
             else:
                 response["gui_open_warning"] = f"未找到计划的输出结构: {structure_path}"
         return finish(

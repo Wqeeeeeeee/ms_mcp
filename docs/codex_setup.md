@@ -231,6 +231,20 @@ the same path in `gui_action_transaction` and
 `report_write_transaction`; `nested_call_count` confirms that internal report
 persistence reused the outer transaction instead of reacquiring the OS lock.
 
+High-level create, patch, and apply-current execute calls acquire this lock only
+after MaterialsScript execution or crystal materialization succeeds. Inside the
+lock they verify the target revision is still current, rerun GUI status and the
+single-window gate, hot-load the structure, optionally snapshot it, and publish
+the final report. A revision superseded during execution returns
+`current_revision_hotload_block` and is not opened. Inspect
+`gui_action_transaction.coverage` for `high_level_hotload` and the matching
+`workflow:*` label. If the lock becomes busy after execution, no GUI action or
+report overwrite occurs; the compact response keeps
+`report_persistence_deferred`, `execution_completed_before_gui_transaction`,
+`structure_ready_for_gui_retry`, `gui_open_retry_tool`, and
+`gui_open_retry_payload`. Retry the returned `material_studio_gui_open_structure`
+payload after the active transaction completes.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

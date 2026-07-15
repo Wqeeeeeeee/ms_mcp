@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from enum import Enum
 from functools import wraps
@@ -88,6 +90,10 @@ CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
 GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
 GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS = 0.05
+_ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_gui_artifact_report_transaction",
+    default=None,
+)
 
 
 class ForciteQuality(str, Enum):
@@ -28169,6 +28175,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_audit_report_path",
             "write_transaction",
             "report_write_transaction",
+            "gui_action_transaction",
             "gui_open_warning",
             "response_mode",
             "response_schema",
@@ -28254,6 +28261,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_audit_report_path",
             "write_transaction",
             "report_write_transaction",
+            "gui_action_transaction",
             "response_mode",
             "response_schema",
             "planned_outputs",
@@ -28544,6 +28552,7 @@ def _compact_live_response(
             "view_audit_report_path",
             "write_transaction",
             "report_write_transaction",
+            "gui_action_transaction",
             "gui_open_warning",
             "gui_status_warning",
             "reconciliation_status",
@@ -32075,6 +32084,100 @@ def _handle_live_rollback_request(
     return result
 
 
+def _extend_gui_artifact_transaction_coverage(
+    transaction: dict[str, Any],
+    coverage: str | list[str] | tuple[str, ...],
+) -> None:
+    """Add stable coverage labels to a GUI artifact transaction receipt."""
+
+    requested = [coverage] if isinstance(coverage, str) else list(coverage)
+    current = [str(item) for item in transaction.get("coverage") or []]
+    for item in requested:
+        value = str(item).strip()
+        if value and value not in current:
+            current.append(value)
+    transaction["coverage"] = current
+
+
+@contextmanager
+def _gui_artifact_report_transaction(
+    *,
+    project_id: str,
+    revision: int,
+    working_dir: str | None,
+    coverage: str | list[str] | tuple[str, ...],
+):
+    """Serialize GUI evidence actions and report writes for one immutable revision."""
+
+    store = _structured_store(working_dir)
+    resolved_project_id = str(project_id)
+    resolved_revision = int(revision)
+    store.get_revision(resolved_project_id, resolved_revision)
+    transaction_key = (
+        str(store.workspace_root.resolve()),
+        resolved_project_id,
+        resolved_revision,
+    )
+    active = _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get()
+    if active is not None:
+        if active.get("key") != transaction_key:
+            raise GuiError(
+                "A GUI artifact report transaction cannot acquire a different "
+                "project or revision while another transaction is active"
+            )
+        transaction = active["transaction"]
+        transaction["nested_call_count"] = int(transaction.get("nested_call_count") or 0) + 1
+        _extend_gui_artifact_transaction_coverage(transaction, coverage)
+        yield transaction
+        return
+
+    lock_path = store.outputs_dir(resolved_project_id, resolved_revision) / "gui_artifact_report.lock"
+    try:
+        with _workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=store.workspace_root,
+            timeout_seconds=GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS,
+            poll_seconds=GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS,
+        ) as transaction:
+            transaction.update(
+                {
+                    "domain": "gui_artifact_report",
+                    "project_id": resolved_project_id,
+                    "revision": resolved_revision,
+                    "workspace_root": str(store.workspace_root),
+                    "nested_call_count": 0,
+                }
+            )
+            _extend_gui_artifact_transaction_coverage(transaction, coverage)
+            token = _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.set(
+                {"key": transaction_key, "transaction": transaction}
+            )
+            try:
+                yield transaction
+            finally:
+                _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.reset(token)
+    except GuiError as exc:
+        if "workspace write transaction is busy" in str(exc):
+            raise GuiError(
+                "GUI artifact report write transaction is busy; retry after the "
+                "current GUI evidence update finishes"
+            ) from exc
+        raise
+
+
+def _attach_gui_artifact_transaction(
+    result: dict[str, Any],
+    transaction: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach one transaction receipt to a GUI action and its structured sync."""
+
+    result["report_write_transaction"] = transaction
+    structured_sync = result.get("structured_sync")
+    if isinstance(structured_sync, dict):
+        structured_sync["report_write_transaction"] = transaction
+    return result
+
+
 def _serialize_gui_artifact_report_update(method: Any) -> Any:
     """Serialize one revision's GUI artifact report read-modify-write cycle."""
 
@@ -32085,30 +32188,14 @@ def _serialize_gui_artifact_report_update(method: Any) -> Any:
         if project_id is None or revision is None:
             raise TypeError("GUI artifact report updates require project_id and revision")
 
-        store = _structured_store(kwargs.get("working_dir"))
-        lock_path = store.outputs_dir(str(project_id), int(revision)) / "gui_artifact_report.lock"
-        try:
-            with _workspace_advisory_write_lock(
-                lock_path,
-                workspace_root=store.workspace_root,
-                timeout_seconds=GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS,
-                poll_seconds=GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS,
-            ) as transaction:
-                result = method(*args, **kwargs)
-        except GuiError as exc:
-            if "workspace write transaction is busy" in str(exc):
-                raise GuiError(
-                    "GUI artifact report write transaction is busy; retry after the "
-                    "current GUI evidence update finishes"
-                ) from exc
-            raise
-
-        transaction["domain"] = "gui_artifact_report"
-        result["report_write_transaction"] = transaction
-        structured_sync = result.get("structured_sync")
-        if isinstance(structured_sync, dict):
-            structured_sync["report_write_transaction"] = transaction
-        return result
+        with _gui_artifact_report_transaction(
+            project_id=str(project_id),
+            revision=int(revision),
+            working_dir=kwargs.get("working_dir"),
+            coverage="report_read_modify_write",
+        ) as transaction:
+            result = method(*args, **kwargs)
+        return _attach_gui_artifact_transaction(result, transaction)
 
     return serialized
 
@@ -32822,47 +32909,69 @@ def material_studio_gui_activate(
     try:
         context = _resolve_gui_action_context(project_id=project_id, revision=revision, working_dir=working_dir)
         gui = _gui_controller(working_dir)
-        result = gui.activate(project_id=context["project_id"], revision=context["revision"])
-        window = result.get("window") if isinstance(result.get("window"), dict) else {}
-        if window:
-            result["handle"] = window.get("handle")
-            result["title"] = window.get("title")
-            result["window_handle"] = window.get("handle")
-            result["window_title"] = window.get("title")
-        result["gui_action_context"] = context
-        if isinstance(context.get("project_resolution"), dict):
-            result["project_resolution"] = context["project_resolution"]
-        result["resolved_latest_current_for_activate"] = (
-            project_id is None and revision is None and context.get("reason") == "latest_current_project"
-        )
-        if take_snapshot:
-            try:
-                snapshot = gui.snapshot(
-                    label="activate_current_revision",
-                    project_id=context["project_id"],
-                    revision=context["revision"],
-                )
-                result["snapshot"] = snapshot
-                result["snapshot_after_activate"] = True
-                if context.get("project_id") is not None and context.get("revision") is not None:
-                    try:
-                        structured = _persist_gui_snapshot_report(
-                            project_id=str(context["project_id"]),
-                            revision=int(context["revision"]),
-                            snapshot=snapshot,
-                            gui=gui,
-                            working_dir=working_dir,
-                            views=views,
-                            project_resolution=context.get("project_resolution"),
-                        )
-                        result.update(structured)
-                    except Exception as exc:
-                        result["structured_sync_warning"] = str(exc)
-                else:
-                    result["structured_sync_context"] = {"available": False, "reason": "no_project_revision_context"}
-            except Exception as exc:
-                result["snapshot_warning"] = str(exc)
-        return _ok(result)
+
+        def perform_activation() -> dict[str, Any]:
+            result = gui.activate(project_id=context["project_id"], revision=context["revision"])
+            window = result.get("window") if isinstance(result.get("window"), dict) else {}
+            if window:
+                result["handle"] = window.get("handle")
+                result["title"] = window.get("title")
+                result["window_handle"] = window.get("handle")
+                result["window_title"] = window.get("title")
+            result["gui_action_context"] = context
+            if isinstance(context.get("project_resolution"), dict):
+                result["project_resolution"] = context["project_resolution"]
+            result["resolved_latest_current_for_activate"] = (
+                project_id is None and revision is None and context.get("reason") == "latest_current_project"
+            )
+            if take_snapshot:
+                try:
+                    snapshot = gui.snapshot(
+                        label="activate_current_revision",
+                        project_id=context["project_id"],
+                        revision=context["revision"],
+                    )
+                    result["snapshot"] = snapshot
+                    result["snapshot_after_activate"] = True
+                    if context.get("project_id") is not None and context.get("revision") is not None:
+                        try:
+                            structured = _persist_gui_snapshot_report(
+                                project_id=str(context["project_id"]),
+                                revision=int(context["revision"]),
+                                snapshot=snapshot,
+                                gui=gui,
+                                working_dir=working_dir,
+                                views=views,
+                                project_resolution=context.get("project_resolution"),
+                            )
+                            result.update(structured)
+                        except Exception as exc:
+                            result["structured_sync_warning"] = str(exc)
+                    else:
+                        result["structured_sync_context"] = {
+                            "available": False,
+                            "reason": "no_project_revision_context",
+                        }
+                except Exception as exc:
+                    result["snapshot_warning"] = str(exc)
+            return _ok(result)
+
+        if take_snapshot and context.get("project_id") is not None and context.get("revision") is not None:
+            with _gui_artifact_report_transaction(
+                project_id=str(context["project_id"]),
+                revision=int(context["revision"]),
+                working_dir=working_dir,
+                coverage=(
+                    "target_window_activation",
+                    "target_window_revalidation",
+                    "gui_snapshot",
+                    "report_read_modify_write",
+                ),
+            ) as transaction:
+                response = perform_activation()
+                response["gui_action_transaction"] = transaction
+                return response
+        return perform_activation()
     except Exception as exc:
         return _error(exc)
 
@@ -32898,28 +33007,154 @@ def material_studio_gui_snapshot(
 
         snapshot_project_id = str(sync_context["project_id"]) if sync_context.get("available") else project_id
         snapshot_revision = int(sync_context["revision"]) if sync_context.get("available") else revision
-        snapshot = gui.snapshot(label=label, project_id=snapshot_project_id, revision=snapshot_revision)
-        response: dict[str, Any] = {**snapshot}
-        response["structured_sync_context"] = sync_context
-        if isinstance(sync_context.get("project_resolution"), dict):
-            response["project_resolution"] = sync_context["project_resolution"]
+
+        def perform_snapshot() -> dict[str, Any]:
+            snapshot = gui.snapshot(label=label, project_id=snapshot_project_id, revision=snapshot_revision)
+            response: dict[str, Any] = {**snapshot}
+            response["structured_sync_context"] = sync_context
+            if isinstance(sync_context.get("project_resolution"), dict):
+                response["project_resolution"] = sync_context["project_resolution"]
+            if sync_context.get("available"):
+                try:
+                    structured = _persist_gui_snapshot_report(
+                        project_id=str(sync_context["project_id"]),
+                        revision=int(sync_context["revision"]),
+                        snapshot=snapshot,
+                        gui=gui,
+                        working_dir=working_dir,
+                        views=None,
+                        project_resolution=sync_context.get("project_resolution"),
+                    )
+                    response.update(structured)
+                except Exception as exc:
+                    response["structured_sync_warning"] = str(exc)
+            return _ok(response)
+
         if sync_context.get("available"):
-            try:
-                structured = _persist_gui_snapshot_report(
-                    project_id=str(sync_context["project_id"]),
-                    revision=int(sync_context["revision"]),
-                    snapshot=snapshot,
-                    gui=gui,
-                    working_dir=working_dir,
-                    views=None,
-                    project_resolution=sync_context.get("project_resolution"),
-                )
-                response.update(structured)
-            except Exception as exc:
-                response["structured_sync_warning"] = str(exc)
-        return _ok(response)
+            with _gui_artifact_report_transaction(
+                project_id=str(sync_context["project_id"]),
+                revision=int(sync_context["revision"]),
+                working_dir=working_dir,
+                coverage=(
+                    "target_window_revalidation",
+                    "gui_snapshot",
+                    "report_read_modify_write",
+                ),
+            ) as transaction:
+                response = perform_snapshot()
+                response["gui_action_transaction"] = transaction
+                return response
+        return perform_snapshot()
     except Exception as exc:
         return _error(exc)
+
+
+def _record_gui_visual_confirmation_action(
+    *,
+    gui: MaterialsStudioGuiController,
+    sync_context: dict[str, Any],
+    source: str,
+    model_visible: bool,
+    note: str | None,
+    screenshot_path: str | None,
+    expected_window_handle: int | None,
+    expected_window_title: str | None,
+    evidence_request: str | None,
+    working_dir: str | None,
+    response_mode: McpResponseMode | str,
+    transaction: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind and persist one visual confirmation inside its GUI action transaction."""
+
+    resolved_project_id = str(sync_context["project_id"])
+    resolved_revision = int(sync_context["revision"])
+    try:
+        gui_status = gui.status(project_id=resolved_project_id, revision=resolved_revision)
+    except Exception as exc:
+        gui_status = {"ok": False, "error": str(exc)}
+    window_management = (
+        gui_status.get("window_management")
+        if isinstance(gui_status.get("window_management"), dict)
+        else {}
+    )
+    window = gui_status.get("window") if isinstance(gui_status.get("window"), dict) else {}
+    resolved_expected_window_handle = int(
+        expected_window_handle
+        or window_management.get("target_window_handle")
+        or window.get("handle")
+        or 0
+    )
+    resolved_expected_window_title = str(
+        expected_window_title
+        or window_management.get("target_window_title")
+        or window.get("title")
+        or ""
+    )
+    binding = _gui_visual_confirmation_binding(
+        gui_status,
+        project_id=resolved_project_id,
+        revision=resolved_revision,
+        expected_window_handle=resolved_expected_window_handle,
+        expected_window_title=resolved_expected_window_title,
+    )
+    if not binding["ok"]:
+        failure = {
+            "ok": False,
+            "status": "visual_confirmation_rejected",
+            "error": (
+                "Visual confirmation was not persisted because the observed window "
+                "was not the verified current wrapper window."
+            ),
+            "project_id": resolved_project_id,
+            "revision": resolved_revision,
+            "project_resolution": sync_context.get("project_resolution"),
+            "visual_confirmation_binding": binding,
+            "gui_status": gui_status,
+            "gui_action_transaction": transaction,
+        }
+        return _compact_live_response(failure, response_mode)
+
+    confirmation = {
+        "project_id": resolved_project_id,
+        "revision": resolved_revision,
+        "source": source,
+        "model_visible": bool(model_visible),
+        "note": note,
+        "screenshot_path": screenshot_path,
+        "recorded_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "window": _select_keys(
+            window,
+            ["handle", "title", "pid", "project_id", "revision", "source_path", "is_selected", "is_foreground"],
+        )
+        if isinstance(window, dict)
+        else {},
+        "gui_status_ok": gui_status.get("ok"),
+        "single_window_policy_ok": gui_status.get("single_window_policy_ok"),
+        "single_window_violation_reasons": gui_status.get("single_window_violation_reasons") or [],
+        "window_binding": binding,
+    }
+    response: dict[str, Any] = {
+        "project_id": resolved_project_id,
+        "revision": resolved_revision,
+        "project_resolution": sync_context.get("project_resolution"),
+        "visual_confirmation": confirmation,
+        "visual_confirmation_binding": binding,
+        "gui_status": gui_status,
+        "structured_sync_context": sync_context,
+        "gui_action_transaction": transaction,
+    }
+    structured = _persist_gui_visual_confirmation_report(
+        project_id=resolved_project_id,
+        revision=resolved_revision,
+        confirmation=confirmation,
+        gui_status=gui_status,
+        working_dir=working_dir,
+        views=None,
+        project_resolution=sync_context.get("project_resolution"),
+        evidence_request=evidence_request,
+    )
+    response.update(structured)
+    return _compact_live_response(_ok(response), response_mode)
 
 
 @mcp.tool(
@@ -32959,89 +33194,97 @@ def material_studio_gui_record_visual_confirmation(
 
         resolved_project_id = str(sync_context["project_id"])
         resolved_revision = int(sync_context["revision"])
-        try:
-            gui_status = gui.status(project_id=resolved_project_id, revision=resolved_revision)
-        except Exception as exc:
-            gui_status = {"ok": False, "error": str(exc)}
-        window_management = (
-            gui_status.get("window_management")
-            if isinstance(gui_status.get("window_management"), dict)
-            else {}
-        )
-        window = gui_status.get("window") if isinstance(gui_status.get("window"), dict) else {}
-        resolved_expected_window_handle = int(
-            expected_window_handle
-            or window_management.get("target_window_handle")
-            or window.get("handle")
-            or 0
-        )
-        resolved_expected_window_title = str(
-            expected_window_title
-            or window_management.get("target_window_title")
-            or window.get("title")
-            or ""
-        )
-        binding = _gui_visual_confirmation_binding(
-            gui_status,
+        with _gui_artifact_report_transaction(
             project_id=resolved_project_id,
             revision=resolved_revision,
-            expected_window_handle=resolved_expected_window_handle,
-            expected_window_title=resolved_expected_window_title,
-        )
-        if not binding["ok"]:
-            failure = {
-                "ok": False,
-                "status": "visual_confirmation_rejected",
-                "error": "Visual confirmation was not persisted because the observed window was not the verified current wrapper window.",
-                "project_id": resolved_project_id,
-                "revision": resolved_revision,
-                "project_resolution": sync_context.get("project_resolution"),
-                "visual_confirmation_binding": binding,
-                "gui_status": gui_status,
-            }
-            return _compact_live_response(failure, response_mode)
-        confirmation = {
-            "project_id": resolved_project_id,
-            "revision": resolved_revision,
-            "source": source,
-            "model_visible": bool(model_visible),
-            "note": note,
-            "screenshot_path": screenshot_path,
-            "recorded_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "window": _select_keys(
-                window,
-                ["handle", "title", "pid", "project_id", "revision", "source_path", "is_selected", "is_foreground"],
-            )
-            if isinstance(window, dict)
-            else {},
-            "gui_status_ok": gui_status.get("ok"),
-            "single_window_policy_ok": gui_status.get("single_window_policy_ok"),
-            "single_window_violation_reasons": gui_status.get("single_window_violation_reasons") or [],
-            "window_binding": binding,
-        }
-        response: dict[str, Any] = {
-            "project_id": resolved_project_id,
-            "revision": resolved_revision,
-            "project_resolution": sync_context.get("project_resolution"),
-            "visual_confirmation": confirmation,
-            "visual_confirmation_binding": binding,
-            "gui_status": gui_status,
-            "structured_sync_context": sync_context,
-        }
-        structured = _persist_gui_visual_confirmation_report(
-            project_id=resolved_project_id,
-            revision=resolved_revision,
-            confirmation=confirmation,
-            gui_status=gui_status,
             working_dir=working_dir,
-            views=None,
-            project_resolution=sync_context.get("project_resolution"),
-            evidence_request=evidence_request,
-        )
-        response.update(structured)
-        return _compact_live_response(_ok(response), response_mode)
+            coverage=(
+                "target_window_revalidation",
+                "visual_confirmation_binding",
+                "report_read_modify_write",
+            ),
+        ) as transaction:
+            return _record_gui_visual_confirmation_action(
+                gui=gui,
+                sync_context=sync_context,
+                source=source,
+                model_visible=model_visible,
+                note=note,
+                screenshot_path=screenshot_path,
+                expected_window_handle=expected_window_handle,
+                expected_window_title=expected_window_title,
+                evidence_request=evidence_request,
+                working_dir=working_dir,
+                response_mode=response_mode,
+                transaction=transaction,
+            )
     except Exception as exc:
         return _error(exc)
+
+
+def _open_gui_structure_action(
+    *,
+    gui: MaterialsStudioGuiController,
+    structure_path: str,
+    sync_context: dict[str, Any],
+    project_id: str | None,
+    revision: int | None,
+    take_snapshot: bool,
+    reuse_existing_window_only: bool,
+    views: list[str] | None,
+    working_dir: str | None,
+    transaction: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Open and persist one structure while its GUI action transaction is held."""
+
+    log_project_id = sync_context.get("project_id") if sync_context.get("available") else project_id
+    log_revision = sync_context.get("revision") if sync_context.get("available") else revision
+    gui_status = gui.status(project_id=log_project_id, revision=log_revision)
+    response_base: dict[str, Any] = {
+        "structured_sync_context": sync_context,
+        "gui_status": gui_status,
+    }
+    if transaction is not None:
+        response_base["gui_action_transaction"] = transaction
+    if isinstance(sync_context.get("project_resolution"), dict):
+        response_base["project_resolution"] = sync_context["project_resolution"]
+    blocked_response = _with_single_window_hotload_block(response_base, gui_status)
+    if blocked_response is not response_base:
+        return blocked_response
+
+    opened = gui.open_structure(
+        structure_path,
+        project_id=log_project_id,
+        revision=log_revision,
+        take_snapshot=take_snapshot,
+        reuse_existing_window_only=reuse_existing_window_only,
+    )
+    response: dict[str, Any] = {**opened}
+    response["gui_open"] = opened
+    response["structured_sync_context"] = sync_context
+    if transaction is not None:
+        response["gui_action_transaction"] = transaction
+    try:
+        response["gui_status"] = gui.status(project_id=log_project_id, revision=log_revision)
+    except Exception:
+        response["gui_status"] = gui_status
+    if isinstance(sync_context.get("project_resolution"), dict):
+        response["project_resolution"] = sync_context["project_resolution"]
+    if sync_context.get("available"):
+        try:
+            structured = _persist_gui_open_structure_report(
+                project_id=str(sync_context["project_id"]),
+                revision=int(sync_context["revision"]),
+                gui_open=opened,
+                gui=gui,
+                working_dir=working_dir,
+                views=views,
+                project_resolution=sync_context.get("project_resolution"),
+            )
+            response.update(structured)
+        except Exception as exc:
+            response["structured_sync_warning"] = str(exc)
+    return _ok(response)
 
 
 @mcp.tool(
@@ -33084,50 +33327,45 @@ def material_studio_gui_open_structure(
         else:
             sync_context = {"available": False, "reason": "export_view_audit_disabled"}
 
-        log_project_id = sync_context.get("project_id") if sync_context.get("available") else project_id
-        log_revision = sync_context.get("revision") if sync_context.get("available") else revision
         gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=log_project_id, revision=log_revision)
-        response_base: dict[str, Any] = {
-            "structured_sync_context": sync_context,
-            "gui_status": gui_status,
-        }
-        if isinstance(sync_context.get("project_resolution"), dict):
-            response_base["project_resolution"] = sync_context["project_resolution"]
-        blocked_response = _with_single_window_hotload_block(response_base, gui_status)
-        if blocked_response is not response_base:
-            return blocked_response
-        opened = gui.open_structure(
-            structure_path,
-            project_id=log_project_id,
-            revision=log_revision,
+        if sync_context.get("available"):
+            coverage = [
+                "target_window_revalidation",
+                "gui_open_structure",
+                "report_read_modify_write",
+            ]
+            if take_snapshot:
+                coverage.append("gui_snapshot")
+            with _gui_artifact_report_transaction(
+                project_id=str(sync_context["project_id"]),
+                revision=int(sync_context["revision"]),
+                working_dir=working_dir,
+                coverage=coverage,
+            ) as transaction:
+                return _open_gui_structure_action(
+                    gui=gui,
+                    structure_path=structure_path,
+                    sync_context=sync_context,
+                    project_id=project_id,
+                    revision=revision,
+                    take_snapshot=take_snapshot,
+                    reuse_existing_window_only=reuse_existing_window_only,
+                    views=views,
+                    working_dir=working_dir,
+                    transaction=transaction,
+                )
+        return _open_gui_structure_action(
+            gui=gui,
+            structure_path=structure_path,
+            sync_context=sync_context,
+            project_id=project_id,
+            revision=revision,
             take_snapshot=take_snapshot,
             reuse_existing_window_only=reuse_existing_window_only,
+            views=views,
+            working_dir=working_dir,
+            transaction=None,
         )
-        response: dict[str, Any] = {**opened}
-        response["gui_open"] = opened
-        response["structured_sync_context"] = sync_context
-        try:
-            response["gui_status"] = gui.status(project_id=log_project_id, revision=log_revision)
-        except Exception:
-            response["gui_status"] = gui_status
-        if isinstance(sync_context.get("project_resolution"), dict):
-            response["project_resolution"] = sync_context["project_resolution"]
-        if sync_context.get("available"):
-            try:
-                structured = _persist_gui_open_structure_report(
-                    project_id=str(sync_context["project_id"]),
-                    revision=int(sync_context["revision"]),
-                    gui_open=opened,
-                    gui=gui,
-                    working_dir=working_dir,
-                    views=views,
-                    project_resolution=sync_context.get("project_resolution"),
-                )
-                response.update(structured)
-            except Exception as exc:
-                response["structured_sync_warning"] = str(exc)
-        return _ok(response)
     except Exception as exc:
         return _error(exc)
 

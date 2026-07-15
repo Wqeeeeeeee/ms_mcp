@@ -7750,6 +7750,9 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["structured_sync"]["persisted"] is True
     assert activated["structured_sync"]["project_id"] == created["project_id"]
     assert activated["structured_sync"]["revision"] == created["revision"]
+    assert activated["gui_action_transaction"]["path"] == activated["report_write_transaction"]["path"]
+    assert activated["gui_action_transaction"]["nested_call_count"] == 1
+    assert "target_window_activation" in activated["gui_action_transaction"]["coverage"]
     assert Path(activated["report_json_path"]).exists()
     assert Path(activated["view_audit_report_path"]).exists()
     assert Path(activated["view_bundle_manifest_path"]).exists()
@@ -8068,6 +8071,9 @@ def test_gui_open_structure_infers_latest_project_when_structure_matches_planned
     assert opened["structured_sync"]["persisted"] is True
     assert opened["structured_sync"]["project_id"] == created["project_id"]
     assert opened["structured_sync"]["revision"] == created["revision"]
+    assert opened["gui_action_transaction"]["path"] == opened["report_write_transaction"]["path"]
+    assert opened["gui_action_transaction"]["nested_call_count"] == 1
+    assert "gui_open_structure" in opened["gui_action_transaction"]["coverage"]
     assert Path(opened["report_json_path"]).exists()
     assert opened["modeling_report"]["gui"]["hot_loaded"] is True
     assert opened["modeling_report"]["project_resolution"]["source"] == "latest_current"
@@ -18995,6 +19001,9 @@ def test_gui_snapshot_without_project_id_uses_latest_project_context_for_paths(
     assert snapshot["structured_sync"]["persisted"] is True
     assert snapshot["structured_sync"]["project_id"] == result["project_id"]
     assert snapshot["structured_sync"]["revision"] == result["revision"]
+    assert snapshot["gui_action_transaction"]["path"] == snapshot["report_write_transaction"]["path"]
+    assert snapshot["gui_action_transaction"]["nested_call_count"] == 1
+    assert "gui_snapshot" in snapshot["gui_action_transaction"]["coverage"]
 
     screenshot_path = Path(snapshot["screenshot_path"])
     assert screenshot_path.exists()
@@ -24603,6 +24612,192 @@ def test_gui_snapshot_and_visual_confirmation_share_report_transaction(
     )
 
 
+def test_gui_snapshot_blocks_concurrent_open_before_gui_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    structure_path = created["planned_outputs"]["structure"]
+    initial_open_count = len(backend.opened)
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    contention_observed = threading.Event()
+    original_capture = backend.capture_window
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def blocking_capture(window: WindowInfo, output_path: Path) -> Path:
+        capture_started.set()
+        assert release_capture.wait(timeout=10.0)
+        return original_capture(window, output_path)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(backend, "capture_window", blocking_capture)
+    monkeypatch.setattr(gui_module, "_lock_file_descriptor_nonblocking", observed_lock_attempt)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            server.material_studio_gui_snapshot,
+            "action_transaction_snapshot",
+            project_id,
+            revision,
+            str(tmp_path),
+        )
+        assert capture_started.wait(timeout=10.0)
+        second = executor.submit(
+            server.material_studio_gui_open_structure,
+            structure_path,
+            project_id,
+            revision,
+            False,
+            True,
+            True,
+            None,
+            str(tmp_path),
+        )
+        try:
+            assert contention_observed.wait(timeout=10.0)
+            assert second.done() is False
+            assert len(backend.opened) == initial_open_count
+        finally:
+            release_capture.set()
+        snapshot_result = first.result(timeout=30.0)
+        open_result = second.result(timeout=30.0)
+
+    assert snapshot_result["ok"] is True
+    assert open_result["ok"] is True
+    assert len(backend.opened) == initial_open_count + 1
+    snapshot_transaction = snapshot_result["gui_action_transaction"]
+    open_transaction = open_result["gui_action_transaction"]
+    assert snapshot_transaction["path"] == open_transaction["path"]
+    assert snapshot_transaction["nested_call_count"] == 1
+    assert open_transaction["nested_call_count"] == 1
+    assert open_transaction["waited_seconds"] > 0.0
+    assert {
+        "target_window_revalidation",
+        "gui_snapshot",
+        "report_read_modify_write",
+    } <= set(snapshot_transaction["coverage"])
+    assert {
+        "target_window_revalidation",
+        "gui_open_structure",
+        "report_read_modify_write",
+    } <= set(open_transaction["coverage"])
+    report = json.loads(Path(created["report_json_path"]).read_text(encoding="utf-8"))
+    assert [artifact["type"] for artifact in report["gui_artifacts"]] == ["gui_open"]
+
+
+def test_visual_confirmation_revalidates_window_after_waiting_for_gui_action_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond semiconductor crystal and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    project_id = created["project_id"]
+    revision = created["revision"]
+    management = created["gui_status"]["window_management"]
+    capture_started = threading.Event()
+    release_capture = threading.Event()
+    contention_observed = threading.Event()
+    original_capture = backend.capture_window
+    original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
+
+    def blocking_capture(window: WindowInfo, output_path: Path) -> Path:
+        capture_started.set()
+        assert release_capture.wait(timeout=10.0)
+        return original_capture(window, output_path)
+
+    def observed_lock_attempt(file_descriptor: int) -> None:
+        try:
+            original_lock_attempt(file_descriptor)
+        except OSError:
+            contention_observed.set()
+            raise
+
+    monkeypatch.setattr(backend, "capture_window", blocking_capture)
+    monkeypatch.setattr(gui_module, "_lock_file_descriptor_nonblocking", observed_lock_attempt)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            server.material_studio_gui_snapshot,
+            "binding_revalidation_snapshot",
+            project_id,
+            revision,
+            str(tmp_path),
+        )
+        assert capture_started.wait(timeout=10.0)
+        second = executor.submit(
+            server.material_studio_gui_record_visual_confirmation,
+            project_id,
+            revision,
+            "computer_use",
+            True,
+            "must be rejected after the target window changes",
+            None,
+            management["target_window_handle"],
+            management["target_window_title"],
+            None,
+            str(tmp_path),
+        )
+        try:
+            assert contention_observed.wait(timeout=10.0)
+            assert second.done() is False
+            prior_window = backend.window
+            backend.window = WindowInfo(
+                handle=prior_window.handle + 100,
+                title=prior_window.title,
+                pid=prior_window.pid,
+                rect=prior_window.rect,
+            )
+        finally:
+            release_capture.set()
+        snapshot_result = first.result(timeout=30.0)
+        confirmation_result = second.result(timeout=30.0)
+
+    assert snapshot_result["ok"] is True
+    assert confirmation_result["ok"] is False
+    assert confirmation_result["status"] == "visual_confirmation_rejected"
+    assert "observed_window_handle_mismatch" in confirmation_result["visual_confirmation_binding"]["rejection_reasons"]
+    assert confirmation_result["gui_action_transaction"]["waited_seconds"] > 0.0
+    assert "visual_confirmation_binding" in confirmation_result["gui_action_transaction"]["coverage"]
+    report = json.loads(Path(created["report_json_path"]).read_text(encoding="utf-8"))
+    assert not any(
+        artifact.get("type") == "visual_confirmation"
+        and artifact.get("note") == "must be rejected after the target window changes"
+        for artifact in report["gui_artifacts"]
+    )
+
+
 @pytest.mark.parametrize(
     ("first_operation", "expected_artifact_types"),
     [
@@ -24707,6 +24902,16 @@ def test_gui_artifact_report_lock_timeout_preserves_report(
     output_dir = report_path.parent
     lock_path = output_dir / "gui_artifact_report.lock"
     management = created["gui_status"]["window_management"]
+    initial_open_count = len(backend.opened)
+    capture_call_count = 0
+    original_capture = backend.capture_window
+
+    def counted_capture(window: WindowInfo, output_path: Path) -> Path:
+        nonlocal capture_call_count
+        capture_call_count += 1
+        return original_capture(window, output_path)
+
+    monkeypatch.setattr(backend, "capture_window", counted_capture)
     monkeypatch.setattr(
         server,
         "GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS",
@@ -24724,6 +24929,19 @@ def test_gui_artifact_report_lock_timeout_preserves_report(
         timeout_seconds=1.0,
         poll_seconds=0.01,
     ):
+        blocked_snapshot = server.material_studio_gui_snapshot(
+            label="must_not_capture_while_transaction_is_busy",
+            project_id=created["project_id"],
+            revision=created["revision"],
+            working_dir=str(tmp_path),
+        )
+        blocked_open = server.material_studio_gui_open_structure(
+            created["planned_outputs"]["structure"],
+            project_id=created["project_id"],
+            revision=created["revision"],
+            take_snapshot=False,
+            working_dir=str(tmp_path),
+        )
         blocked = server.material_studio_gui_record_visual_confirmation(
             project_id=created["project_id"],
             revision=created["revision"],
@@ -24734,8 +24952,14 @@ def test_gui_artifact_report_lock_timeout_preserves_report(
             working_dir=str(tmp_path),
         )
 
+    assert blocked_snapshot["ok"] is False
+    assert "GUI artifact report write transaction is busy" in blocked_snapshot["error"]
+    assert blocked_open["ok"] is False
+    assert "GUI artifact report write transaction is busy" in blocked_open["error"]
     assert blocked["ok"] is False
     assert "GUI artifact report write transaction is busy" in blocked["error"]
+    assert capture_call_count == 0
+    assert len(backend.opened) == initial_open_count
     assert report_path.read_bytes() == committed_report
     recorded = server.material_studio_gui_record_visual_confirmation(
         project_id=created["project_id"],
@@ -24866,6 +25090,13 @@ def test_live_entry_records_only_window_bound_visual_confirmation(monkeypatch, t
     assert recorded["report_write_transaction"]["path"].endswith(
         "gui_artifact_report.lock"
     )
+    assert recorded["gui_action_transaction"]["path"] == recorded["report_write_transaction"]["path"]
+    assert recorded["gui_action_transaction"]["nested_call_count"] == 1
+    assert {
+        "target_window_revalidation",
+        "visual_confirmation_binding",
+        "report_read_modify_write",
+    } <= set(recorded["gui_action_transaction"]["coverage"])
     assert len(json.dumps(recorded, ensure_ascii=False).encode("utf-8")) < server.COMPACT_RESPONSE_MAX_BYTES
     history_after = server.material_studio_project_history(project_id, working_dir=str(tmp_path))["history"]
     assert len(history_after) == len(history_before)

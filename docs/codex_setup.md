@@ -221,6 +221,16 @@ older viewport evidence or a later snapshot appends to that open. `report.json`
 is atomically replaced, so do not reconstruct it from a temporary file after an
 interrupted write.
 
+For direct GUI calls with a resolved structured project/revision, inspect
+`gui_action_transaction.coverage`. Snapshot, open-structure,
+activation-with-snapshot, and visual-confirmation tools acquire the same lock
+before target-window revalidation and hold it through the GUI action or evidence
+binding plus report publication. A busy error therefore means the direct GUI
+action did not start and can be retried. A successful structured sync returns
+the same path in `gui_action_transaction` and
+`report_write_transaction`; `nested_call_count` confirms that internal report
+persistence reused the outer transaction instead of reacquiring the OS lock.
+
 Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
 automatic-ready, observe the live controls on the exact current wrapper and
 submit them back to the prepare tool. A complete payload has this shape:

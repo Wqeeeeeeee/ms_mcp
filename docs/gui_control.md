@@ -157,6 +157,18 @@ therefore follow lock acquisition order without losing evidence; a timeout or
 publish interruption preserves the previously committed report. This report
 lock remains separate from the replay manifest lock.
 
+When a structured project/revision is resolved, the direct
+`material_studio_gui_activate` snapshot path,
+`material_studio_gui_snapshot`, `material_studio_gui_open_structure`, and
+`material_studio_gui_record_visual_confirmation` acquire this lock before
+revalidating the target window and before capturing, opening, or binding
+evidence. They hold it until report publication and return
+`gui_action_transaction`; successful persistence returns the same lock receipt
+as `report_write_transaction`. The internal report writer reuses an active
+same-revision transaction instead of attempting a second OS lock. If the lock
+wait times out, these direct tools do not begin their GUI action. High-level
+model execute/hot-load workflows remain a separate transaction boundary.
+
 When the direct replay tool is not enabled in the active MCP allowlist, submit
 the same evidence through
 `material_studio_live_modeling_request.view_replay_confirmation`. This payload

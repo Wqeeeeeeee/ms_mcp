@@ -686,7 +686,12 @@ They also include `modeling_report`, a compact receipt for clients.  Use
 `modeling_report.next_action_plan` as the structured @mcp call recipe. It
 contains the action id, recommended tool, payload hint, confirmation
 requirement, readiness booleans, key artifact paths, and blocking or review
-reasons, so clients do not need to parse the prose `next_action`. Use
+reasons, so clients do not need to parse the prose `next_action`.
+`live_summary.next_action_id`, `next_action_tool`, `next_action`, payload, and
+confirmation booleans are reconciled from that same plan. Check
+`live_summary.next_action_source` and `next_action_resolution` when resuming an
+older report. A differing prior free-text hint is preserved only as
+`legacy_next_action` or superseded-action evidence and is not callable. Use
 `modeling_report.live_readiness` for the underlying orchestration decision. It
 tells the client whether the current revision is ready for hot-loading, ready
 for the next edit, or ready for calculation, whether explicit user

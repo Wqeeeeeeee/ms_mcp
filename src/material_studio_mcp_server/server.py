@@ -2865,6 +2865,9 @@ _TOP_LEVEL_FOLLOWUP_ACTION_FIELDS = (
     "next_action_payload_hint",
     "next_action_needs_user_confirmation",
     "next_action_safe_to_call_without_confirmation",
+    "next_action_source",
+    "next_action_resolution",
+    "legacy_next_action",
     "next_action_state",
     "ready_for_next_edit",
     "next_edit_status",
@@ -5970,6 +5973,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "next_action_payload_hint",
                 "next_action_ready",
                 "next_action",
+                "next_action_source",
+                "next_action_resolution",
             ],
             "live_readiness_fields": [
                 "state",
@@ -14064,6 +14069,7 @@ def _promote_response_semiconductor_diagnostics(response: dict[str, Any]) -> Non
 def _promote_response_followup_actions(response: dict[str, Any]) -> None:
     """Expose next-action and follow-up patch hints at the response top level."""
 
+    incoming_top_level_next_action = response.get("next_action")
     report = response.get("modeling_report") if isinstance(response.get("modeling_report"), dict) else {}
     live_summary = response.get("live_summary")
     if not isinstance(live_summary, dict):
@@ -14084,70 +14090,72 @@ def _promote_response_followup_actions(response: dict[str, Any]) -> None:
     promoted = _drop_none_values(
         {
             "recommended_tool": _first_not_none(
+                next_action_plan.get("recommended_tool"),
                 live_summary.get("mcp_next_tool"),
                 live_summary.get("next_action_tool"),
-                next_action_plan.get("recommended_tool"),
                 response.get("recommended_tool"),
                 live_summary.get("recommended_tool"),
             ),
             "recommended_action": _first_not_none(
+                next_action_plan.get("recommended_action"),
                 live_summary.get("mcp_next_action"),
                 live_summary.get("next_action"),
-                next_action_plan.get("recommended_action"),
                 response.get("recommended_action"),
                 live_summary.get("recommended_action"),
             ),
             "needs_user_confirmation": _first_not_none(
-                live_summary.get("mcp_next_needs_user_confirmation"),
                 next_action_plan.get("needs_user_confirmation"),
+                live_summary.get("mcp_next_needs_user_confirmation"),
                 live_summary.get("next_action_needs_user_confirmation"),
                 response.get("needs_user_confirmation"),
                 live_summary.get("needs_user_confirmation"),
             ),
             "safe_to_call_without_confirmation": _first_not_none(
-                live_summary.get("mcp_next_safe_to_call_without_confirmation"),
                 next_action_plan.get("safe_to_call_without_confirmation"),
+                live_summary.get("mcp_next_safe_to_call_without_confirmation"),
                 live_summary.get("next_action_safe_to_call_without_confirmation"),
                 response.get("safe_to_call_without_confirmation"),
                 live_summary.get("safe_to_call_without_confirmation"),
             ),
             "payload_hint": _first_not_none(
-                live_summary.get("mcp_next_payload_hint"),
                 next_action_plan.get("payload_hint"),
+                live_summary.get("mcp_next_payload_hint"),
                 live_summary.get("next_action_payload_hint"),
                 response.get("payload_hint"),
                 live_summary.get("payload_hint"),
             ),
             "next_action_id": _first_not_none(
+                next_action_plan.get("action_id"),
                 live_summary.get("next_action_id"),
                 live_summary.get("mcp_next_action_id"),
-                next_action_plan.get("action_id"),
             ),
             "next_action_tool": _first_not_none(
+                next_action_plan.get("recommended_tool"),
                 live_summary.get("next_action_tool"),
                 live_summary.get("mcp_next_tool"),
-                next_action_plan.get("recommended_tool"),
             ),
             "next_action": _first_not_none(
+                next_action_plan.get("recommended_action"),
                 live_summary.get("next_action"),
                 live_summary.get("mcp_next_action"),
-                next_action_plan.get("recommended_action"),
             ),
             "next_action_payload_hint": _first_not_none(
+                next_action_plan.get("payload_hint"),
                 live_summary.get("next_action_payload_hint"),
                 live_summary.get("mcp_next_payload_hint"),
-                next_action_plan.get("payload_hint"),
             ),
             "next_action_needs_user_confirmation": _first_not_none(
+                next_action_plan.get("needs_user_confirmation"),
                 live_summary.get("next_action_needs_user_confirmation"),
                 live_summary.get("mcp_next_needs_user_confirmation"),
-                next_action_plan.get("needs_user_confirmation"),
             ),
             "next_action_safe_to_call_without_confirmation": _first_not_none(
+                next_action_plan.get("safe_to_call_without_confirmation"),
                 live_summary.get("next_action_safe_to_call_without_confirmation"),
                 live_summary.get("mcp_next_safe_to_call_without_confirmation"),
-                next_action_plan.get("safe_to_call_without_confirmation"),
             ),
+            "next_action_source": live_summary.get("next_action_source"),
+            "next_action_resolution": live_summary.get("next_action_resolution"),
             "next_action_state": next_action_plan.get("state"),
             "ready_for_next_edit": _first_not_none(
                 live_summary.get("ready_for_next_edit"),
@@ -14260,6 +14268,25 @@ def _promote_response_followup_actions(response: dict[str, Any]) -> None:
             ),
         }
     )
+    resolved_top_level_next_action = promoted.get("next_action")
+    if (
+        isinstance(incoming_top_level_next_action, str)
+        and incoming_top_level_next_action
+        and incoming_top_level_next_action != resolved_top_level_next_action
+    ):
+        promoted["legacy_next_action"] = incoming_top_level_next_action
+        resolution = (
+            dict(promoted.get("next_action_resolution"))
+            if isinstance(promoted.get("next_action_resolution"), dict)
+            else {}
+        )
+        resolution.update(
+            {
+                "top_level_legacy_action_overridden": True,
+                "top_level_superseded_action": incoming_top_level_next_action,
+            }
+        )
+        promoted["next_action_resolution"] = resolution
     for key in _TOP_LEVEL_FOLLOWUP_ACTION_FIELDS:
         if key in promoted:
             response[key] = promoted[key]
@@ -23817,6 +23844,94 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
     }
 
 
+def _live_summary_next_action_contract(
+    report: dict[str, Any],
+    next_action_plan: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve one coherent follow-up action contract for compact clients."""
+
+    legacy_action = report.get("next_action")
+    if not isinstance(legacy_action, str) or not legacy_action.strip():
+        legacy_action = None
+    action_id = next_action_plan.get("action_id")
+    recommended_tool = next_action_plan.get("recommended_tool")
+    planned_action = next_action_plan.get("recommended_action")
+    plan_contract_complete = all(
+        isinstance(value, str) and bool(value.strip())
+        for value in (action_id, recommended_tool, planned_action)
+    )
+    plan_contract_available = any(
+        value is not None
+        for value in (action_id, recommended_tool, planned_action)
+    )
+    if plan_contract_complete:
+        resolved_action = planned_action
+        authoritative_source = "next_action_plan"
+        legacy_action_overridden = bool(
+            legacy_action is not None and legacy_action != resolved_action
+        )
+        resolution_status = (
+            "next_action_plan_override_applied"
+            if legacy_action_overridden
+            else "next_action_plan_already_consistent"
+        )
+    elif plan_contract_available:
+        resolved_action = planned_action or legacy_action
+        authoritative_source = "partial_next_action_plan"
+        legacy_action_overridden = False
+        resolution_status = "partial_next_action_plan_fallback"
+    else:
+        resolved_action = legacy_action
+        authoritative_source = "legacy_report_action"
+        legacy_action_overridden = False
+        resolution_status = "legacy_report_action_fallback"
+
+    needs_user_confirmation = next_action_plan.get("needs_user_confirmation")
+    safe_to_call_without_confirmation = next_action_plan.get(
+        "safe_to_call_without_confirmation"
+    )
+    confirmation_gate_consistent = (
+        needs_user_confirmation is not safe_to_call_without_confirmation
+        if isinstance(needs_user_confirmation, bool)
+        and isinstance(safe_to_call_without_confirmation, bool)
+        else None
+    )
+    resolution = _drop_none_values(
+        {
+            "status": resolution_status,
+            "authoritative_source": authoritative_source,
+            "contract_consistent": plan_contract_complete,
+            "legacy_action_overridden": legacy_action_overridden,
+            "resolved_action_id": action_id,
+            "resolved_recommended_tool": recommended_tool,
+            "resolved_recommended_action": resolved_action,
+            "needs_user_confirmation": needs_user_confirmation,
+            "safe_to_call_without_confirmation": safe_to_call_without_confirmation,
+            "confirmation_gate_consistent": confirmation_gate_consistent,
+            **(
+                {"superseded_action": legacy_action}
+                if legacy_action_overridden
+                else {}
+            ),
+        }
+    )
+    return _drop_none_values(
+        {
+            "next_action_id": action_id,
+            "next_action_tool": recommended_tool,
+            "next_action_needs_user_confirmation": needs_user_confirmation,
+            "next_action_safe_to_call_without_confirmation": (
+                safe_to_call_without_confirmation
+            ),
+            "next_action_payload_hint": next_action_plan.get("payload_hint") or {},
+            "next_action_ready": next_action_plan.get("ready") or {},
+            "next_action": resolved_action,
+            "next_action_source": authoritative_source,
+            "next_action_resolution": resolution,
+        }
+    )
+
+
 def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     """Return the smallest stable status object for live @mcp clients."""
 
@@ -23855,6 +23970,10 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     acceptance = report.get("acceptance_review") if isinstance(report.get("acceptance_review"), dict) else {}
     view_check = receipt.get("view_check") if isinstance(receipt.get("view_check"), dict) else {}
     next_action_plan = report.get("next_action_plan") if isinstance(report.get("next_action_plan"), dict) else {}
+    next_action_contract = _live_summary_next_action_contract(
+        report,
+        next_action_plan,
+    )
     mcp_client_readiness = (
         report.get("mcp_client_readiness")
         if isinstance(report.get("mcp_client_readiness"), dict)
@@ -25151,18 +25270,7 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_contact_csv": artifacts.get("semiconductor_contact_csv")
             or diagnostics.get("semiconductor_contact_csv"),
             "recommended_tool": readiness.get("recommended_tool"),
-            "next_action_id": next_action_plan.get("action_id"),
-            "next_action_tool": next_action_plan.get("recommended_tool"),
-            "next_action_needs_user_confirmation": next_action_plan.get("needs_user_confirmation"),
-            "next_action_safe_to_call_without_confirmation": next_action_plan.get("safe_to_call_without_confirmation"),
-            "next_action_payload_hint": next_action_plan.get("payload_hint") or {},
-            "next_action_ready": next_action_plan.get("ready") or {},
-            "next_action": (
-                next_action_plan.get("recommended_action")
-                if next_action_plan.get("action_id")
-                in {"reconcile_dopant_metadata", "rematerialize_current_structure_artifact"}
-                else report.get("next_action")
-            ),
+            **next_action_contract,
         }
     )
 
@@ -28878,6 +28986,25 @@ def _compact_next_action_plan(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_next_action_resolution(value: Any) -> dict[str, Any]:
+    """Keep action-source and confirmation gates without duplicate action text."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "status",
+            "authoritative_source",
+            "contract_consistent",
+            "legacy_action_overridden",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "confirmation_gate_consistent",
+        ),
+    )
+
+
 def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
     """Return supported NL operation discovery without full prompt examples."""
 
@@ -30978,8 +31105,17 @@ def _compact_live_response(
             "next_action_id",
             "next_action_tool",
             "next_action",
+            "next_action_source",
+            "next_action_resolution",
         ),
     )
+    compact_next_action_resolution = _compact_next_action_resolution(
+        live.get("next_action_resolution")
+    )
+    if compact_next_action_resolution:
+        compact_live["next_action_resolution"] = compact_next_action_resolution
+    else:
+        compact_live.pop("next_action_resolution", None)
     compact_project_resolution = _compact_project_resolution(
         live.get("project_resolution")
     )

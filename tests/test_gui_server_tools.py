@@ -7223,6 +7223,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "payload_hint" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
     assert "next_action_id" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
     assert "next_action_payload_hint" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
+    assert "next_action_source" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
+    assert "next_action_resolution" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
+    assert "legacy_next_action" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
     assert "followup_edit_status" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
     assert "followup_edit_patch_payload_hint" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
     assert "mcp_followup_recommended_command_ids" in capabilities["response_followup_actions"]["top_level_shortcut_fields"]
@@ -7613,6 +7616,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "next_action_tool" in capabilities["diagnostics"]["live_summary_fields"]
     assert "next_action_payload_hint" in capabilities["diagnostics"]["live_summary_fields"]
     assert "next_action_needs_user_confirmation" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "next_action_source" in capabilities["diagnostics"]["live_summary_fields"]
+    assert "next_action_resolution" in capabilities["diagnostics"]["live_summary_fields"]
     assert "normality_explanation" in capabilities["diagnostics"]["live_summary_fields"]
     assert "normality_summary" in capabilities["diagnostics"]["live_summary_fields"]
     assert "normality_primary_reason" in capabilities["diagnostics"]["live_summary_fields"]
@@ -9902,7 +9907,14 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["computed_audit_summary"]["model"]["atom_count"] == 12
     assert status["computed_audit_summary"]["view_count"] == 7
     assert status["modeling_health"]["verdict"] == "ready_for_review"
-    assert "view_audit" in status["next_action"]
+    assert status["next_action"] == status["next_action_plan"]["recommended_action"]
+    assert "view_audit" in status["legacy_next_action"]
+    assert status["next_action_source"] == "next_action_plan"
+    assert status["next_action_resolution"]["contract_consistent"] is True
+    assert status["next_action_resolution"]["top_level_legacy_action_overridden"] is True
+    assert status["next_action_resolution"]["top_level_superseded_action"] == (
+        status["legacy_next_action"]
+    )
     assert status["modeling_report"]["normality"] == "preview_ready"
     assert status["modeling_report"]["project_id"] == "live_status_no_report_proj"
     assert status["current_model_available"] is True
@@ -19798,6 +19810,56 @@ def test_view_parameter_summary_recommends_export_refresh_when_counts_are_stale(
     assert "view_parameter_export_not_current" not in gate["all_must_not_claim_reasons"]
 
 
+def test_live_summary_next_action_contract_prefers_plan_and_preserves_legacy_fallback() -> None:
+    next_action_plan = {
+        "action_id": "apply_recommended_semiconductor_kpoint_grid",
+        "recommended_tool": "material_studio_live_update_with_patch",
+        "recommended_action": "apply_recommended_explicit_kpoint_grid_then_reaudit",
+        "needs_user_confirmation": True,
+        "safe_to_call_without_confirmation": False,
+        "payload_hint": {"project_id": "action_contract", "base_revision": 4},
+        "ready": {"hotload": False, "next_edit": True, "calculation": False},
+    }
+    live = server._live_summary_from_report(
+        {
+            "project_id": "action_contract",
+            "revision": 4,
+            "next_action": "Inspect the GUI snapshot, then continue modeling.",
+            "next_action_plan": next_action_plan,
+        }
+    )
+
+    assert live["next_action_id"] == next_action_plan["action_id"]
+    assert live["next_action_tool"] == next_action_plan["recommended_tool"]
+    assert live["next_action"] == next_action_plan["recommended_action"]
+    assert live["next_action_payload_hint"] == next_action_plan["payload_hint"]
+    assert live["next_action_needs_user_confirmation"] is True
+    assert live["next_action_safe_to_call_without_confirmation"] is False
+    assert live["next_action_source"] == "next_action_plan"
+    resolution = live["next_action_resolution"]
+    assert resolution["status"] == "next_action_plan_override_applied"
+    assert resolution["contract_consistent"] is True
+    assert resolution["legacy_action_overridden"] is True
+    assert resolution["confirmation_gate_consistent"] is True
+    assert resolution["superseded_action"] == (
+        "Inspect the GUI snapshot, then continue modeling."
+    )
+
+    legacy = server._live_summary_from_report(
+        {
+            "project_id": "legacy_action_contract",
+            "revision": 1,
+            "next_action": "legacy_review_action",
+        }
+    )
+    assert legacy["next_action"] == "legacy_review_action"
+    assert legacy["next_action_source"] == "legacy_report_action"
+    assert legacy["next_action_resolution"]["status"] == (
+        "legacy_report_action_fallback"
+    )
+    assert legacy["next_action_resolution"]["contract_consistent"] is False
+
+
 def test_semiconductor_recommended_focuses_mark_ready_when_already_exported(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -29494,6 +29556,35 @@ def test_live_modeling_request_combines_slab_centering_and_passivation(monkeypat
         "apply_recommended_semiconductor_kpoint_grid"
     )
     assert result["next_action_plan"]["payload_hint"] == calculation_readiness["payload_hint"]
+    action_plan = result["next_action_plan"]
+    live_action = result["live_summary"]
+    assert live_action["next_action_id"] == action_plan["action_id"]
+    assert live_action["next_action_tool"] == action_plan["recommended_tool"]
+    assert live_action["next_action"] == action_plan["recommended_action"]
+    assert live_action["next_action_payload_hint"] == action_plan["payload_hint"]
+    assert live_action["next_action_needs_user_confirmation"] is True
+    assert live_action["next_action_safe_to_call_without_confirmation"] is False
+    assert live_action["next_action_resolution"]["contract_consistent"] is True
+    assert live_action["next_action_resolution"]["legacy_action_overridden"] is True
+    assert result["next_action"] == action_plan["recommended_action"]
+    assert result["recommended_action"] == action_plan["recommended_action"]
+    assert result["needs_user_confirmation"] is True
+    assert result["safe_to_call_without_confirmation"] is False
+    compact_status = server.material_studio_live_project_status(
+        project_id=result["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    compact_plan = compact_status["next_action_plan"]
+    compact_live = compact_status["live_summary"]
+    assert compact_live["next_action_id"] == compact_plan["action_id"]
+    assert compact_live["next_action_tool"] == compact_plan["recommended_tool"]
+    assert compact_live["next_action"] == compact_plan["recommended_action"]
+    assert compact_live["next_action_source"] == "next_action_plan"
+    assert compact_live["next_action_resolution"]["contract_consistent"] is True
+    assert compact_live["next_action_resolution"]["needs_user_confirmation"] is True
+    assert compact_live["next_action_resolution"]["safe_to_call_without_confirmation"] is False
     assert result["live_action_summary"]["phase"] == (
         "apply_recommended_semiconductor_kpoint_grid"
     )

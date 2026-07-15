@@ -142,6 +142,14 @@ If a complex all-view response still reaches the hard budget, the receipt adds
 field. Camera parameters and artifact indexes are retained first; the manifest
 paths remain the authoritative fallback.
 
+Live GUI status performs a bounded provenance lookup across the active
+workspace, `MATERIAL_STUDIO_MCP_WORKSPACE`, and the platform default user
+workspace. If the visible MCP wrapper belongs to a different workspace,
+preflight reports `preview_ready_gui_workspace_context_mismatch` and returns the
+exact `recommended_working_dir`, project, and revision. Omitted-project
+follow-up edits stop before writing a revision; the server never switches to or
+writes the visible wrapper workspace automatically.
+
 Computer Use or manual viewport evidence can be recorded through the enabled
 high-level `material_studio_live_modeling_request` tool by supplying a
 `visual_confirmation` object. The payload must contain the observed revision,

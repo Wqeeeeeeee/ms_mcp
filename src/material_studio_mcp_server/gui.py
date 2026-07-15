@@ -2148,6 +2148,7 @@ class MaterialsStudioGuiController:
         """
         self.workspace_root = Path(workspace_root).expanduser().resolve() if workspace_root else default_workspace_root()
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+        self.trusted_wrapper_workspace_roots = _trusted_wrapper_workspace_roots(self.workspace_root)
         self.backend = backend or (WindowsGuiBackend() if os.name == "nt" else NullGuiBackend())
 
     def status(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
@@ -2169,6 +2170,7 @@ class MaterialsStudioGuiController:
             target_window, target_resolution = self._resolve_target_window(project_id=project_id, revision=revision)
         wrapper_window_count = sum(1 for item in window_inventory if item.get("project_wrapper_metadata"))
         window_management = _window_management_receipt(
+            controller_workspace_root=self.workspace_root,
             processes=processes,
             window_inventory=window_inventory,
             selected_window=window,
@@ -2212,6 +2214,9 @@ class MaterialsStudioGuiController:
             "live_window_count": wrapper_window_count,
             "wrapper_window_count": wrapper_window_count,
             "window_management": window_management,
+            "workspace_context": window_management.get("workspace_context"),
+            "workspace_context_mismatch": bool(window_management.get("workspace_context_mismatch")),
+            "recommended_working_dir": window_management.get("recommended_working_dir"),
             "matstudio_exe": str(matstudio_exe) if matstudio_exe else None,
             "open_strategy": open_strategy,
             "open_strategy_may_launch_new_instance": file_open_may_launch_new_instance,
@@ -2253,6 +2258,10 @@ class MaterialsStudioGuiController:
             "can_launch_matstudio": open_strategy is not None,
             "can_launch_blank_session": matstudio_exe is not None,
             "workspace_root": str(self.workspace_root),
+            "trusted_wrapper_workspace_roots": [
+                {"workspace_root": str(root), "trust_basis": trust_basis}
+                for root, trust_basis in self.trusted_wrapper_workspace_roots
+            ],
             "screenshots_dir": str(self.workspace_root / "screenshots"),
             "capabilities": [
                 "detect_matstudio_window",
@@ -2295,6 +2304,15 @@ class MaterialsStudioGuiController:
                 entry["project_id"] = metadata.get("project_id")
                 entry["revision"] = metadata.get("revision")
                 entry["source_path"] = metadata.get("source_path")
+                entry["wrapper_workspace_root"] = metadata.get("wrapper_workspace_root")
+                entry["wrapper_workspace_scope"] = metadata.get("wrapper_workspace_scope")
+                entry["wrapper_workspace_matches_controller"] = metadata.get(
+                    "wrapper_workspace_matches_controller"
+                )
+                entry["external_workspace_wrapper_detected"] = metadata.get(
+                    "external_workspace_wrapper_detected"
+                )
+                entry["wrapper_provenance_status"] = metadata.get("wrapper_provenance_status")
             entries.append(entry)
         return entries
 
@@ -2304,20 +2322,115 @@ class MaterialsStudioGuiController:
         project_name = _project_name_from_window_title(window.title)
         if project_name is None:
             return None
-        metadata_path = (self.workspace_root / "gui_projects" / project_name / "metadata.json").resolve()
-        try:
-            _ensure_inside(self.workspace_root, metadata_path)
-        except GuiError:
-            return None
-        if not metadata_path.exists() or not metadata_path.is_file():
-            return None
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {"metadata_path": str(metadata_path), "read_error": True}
-        if not isinstance(metadata, dict):
-            return {"metadata_path": str(metadata_path), "read_error": True}
-        return {"metadata_path": str(metadata_path), **metadata}
+        readable_candidates: list[dict[str, Any]] = []
+        unreadable_candidates: list[dict[str, Any]] = []
+        for workspace_root, trust_basis in self.trusted_wrapper_workspace_roots:
+            metadata_path = (workspace_root / "gui_projects" / project_name / "metadata.json").resolve()
+            try:
+                _ensure_inside(workspace_root, metadata_path)
+            except GuiError:
+                continue
+            if not metadata_path.exists() or not metadata_path.is_file():
+                continue
+
+            workspace_matches_controller = _same_resolved_path(workspace_root, self.workspace_root)
+            candidate_identity = {
+                "metadata_path": str(metadata_path),
+                "wrapper_workspace_root": str(workspace_root),
+                "wrapper_workspace_scope": "controller" if workspace_matches_controller else "trusted_external",
+                "wrapper_workspace_trust_basis": trust_basis,
+                "wrapper_workspace_matches_controller": workspace_matches_controller,
+                "external_workspace_wrapper_detected": not workspace_matches_controller,
+            }
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception:
+                unreadable_candidates.append(
+                    {
+                        **candidate_identity,
+                        "read_error": True,
+                        "wrapper_provenance_status": "metadata_read_error",
+                    }
+                )
+                continue
+            if not isinstance(metadata, dict):
+                unreadable_candidates.append(
+                    {
+                        **candidate_identity,
+                        "read_error": True,
+                        "wrapper_provenance_status": "metadata_not_object",
+                    }
+                )
+                continue
+            metadata_project_name = metadata.get("project_name")
+            if metadata_project_name is not None and str(metadata_project_name) != project_name:
+                unreadable_candidates.append(
+                    {
+                        **candidate_identity,
+                        "read_error": True,
+                        "wrapper_provenance_status": "project_name_mismatch",
+                    }
+                )
+                continue
+
+            source_path = metadata.get("source_path")
+            source_inside_workspace = (
+                _path_is_inside(workspace_root, Path(str(source_path)).expanduser())
+                if source_path
+                else None
+            )
+            has_revision_identity = False
+            try:
+                has_revision_identity = int(metadata.get("revision")) >= 0
+            except (TypeError, ValueError):
+                pass
+            has_project_identity = False
+            if isinstance(metadata.get("project_id"), str) and metadata["project_id"]:
+                try:
+                    has_project_identity = sanitize_project_id(metadata["project_id"]) == metadata["project_id"]
+                except ValueError:
+                    pass
+            if (
+                has_project_identity
+                and has_revision_identity
+                and metadata_project_name == project_name
+                and source_inside_workspace is True
+            ):
+                provenance_status = "verified_revision_wrapper"
+            elif source_path and source_inside_workspace is False:
+                provenance_status = "source_outside_wrapper_workspace"
+            else:
+                provenance_status = "legacy_or_unscoped_wrapper"
+            readable_candidates.append(
+                {
+                    **metadata,
+                    **candidate_identity,
+                    "wrapper_project_name": project_name,
+                    "source_inside_wrapper_workspace": source_inside_workspace,
+                    "wrapper_provenance_status": provenance_status,
+                }
+            )
+
+        if len(readable_candidates) == 1 and not unreadable_candidates:
+            return readable_candidates[0]
+        if readable_candidates:
+            return {
+                "wrapper_project_name": project_name,
+                "read_error": True,
+                "wrapper_provenance_status": "ambiguous_across_trusted_workspaces",
+                "wrapper_workspace_candidates": [
+                    {
+                        "metadata_path": candidate.get("metadata_path"),
+                        "wrapper_workspace_root": candidate.get("wrapper_workspace_root"),
+                        "wrapper_workspace_scope": candidate.get("wrapper_workspace_scope"),
+                        "wrapper_workspace_trust_basis": candidate.get("wrapper_workspace_trust_basis"),
+                    }
+                    for candidate in [*readable_candidates, *unreadable_candidates]
+                ],
+            }
+        if unreadable_candidates:
+            return unreadable_candidates[0]
+        return None
 
     def launch(
         self,
@@ -2345,6 +2458,7 @@ class MaterialsStudioGuiController:
         same_window_open_supported = _backend_same_window_open_supported(self.backend)
         file_open_may_launch_new_instance = _backend_file_open_may_launch_new_instance(self.backend)
         window_management = _window_management_receipt(
+            controller_workspace_root=self.workspace_root,
             processes=processes,
             window_inventory=window_inventory,
             selected_window=existing_window,
@@ -2754,6 +2868,7 @@ class MaterialsStudioGuiController:
         if not any(item.handle == target_window.handle for item in windows):
             windows = [target_window, *windows]
         return _window_management_receipt(
+            controller_workspace_root=self.workspace_root,
             processes=processes,
             window_inventory=self._window_inventory(windows, selected_window=selected_window),
             selected_window=selected_window,
@@ -4388,10 +4503,19 @@ class MaterialsStudioGuiController:
                 "target_handle": target_window.handle,
                 "target_title": target_window.title,
                 "target_project_wrapper_metadata": metadata,
+                "target_wrapper_workspace_root": metadata.get("wrapper_workspace_root"),
+                "target_wrapper_workspace_matches_controller": metadata.get(
+                    "wrapper_workspace_matches_controller"
+                ),
                 "fallback_used": False,
             }
 
         fallback_window = selected_window or (candidates[0] if candidates else None)
+        fallback_metadata = (
+            self._project_wrapper_metadata_for_window(fallback_window)
+            if fallback_window is not None
+            else None
+        )
         return fallback_window, {
             "requested_project_id": project_id,
             "requested_revision": revision,
@@ -4399,6 +4523,17 @@ class MaterialsStudioGuiController:
             "matching_window_count": 0,
             "target_handle": fallback_window.handle if fallback_window else None,
             "target_title": fallback_window.title if fallback_window else None,
+            "target_project_wrapper_metadata": fallback_metadata,
+            "target_wrapper_workspace_root": (
+                fallback_metadata.get("wrapper_workspace_root")
+                if isinstance(fallback_metadata, dict)
+                else None
+            ),
+            "target_wrapper_workspace_matches_controller": (
+                fallback_metadata.get("wrapper_workspace_matches_controller")
+                if isinstance(fallback_metadata, dict)
+                else None
+            ),
             "fallback_used": fallback_window is not None and requested_target,
         }
 
@@ -7972,6 +8107,7 @@ def _unique_strings(values: list[str]) -> list[str]:
 
 def _window_management_receipt(
     *,
+    controller_workspace_root: Path,
     processes: list[ProcessInfo],
     window_inventory: list[dict[str, Any]],
     selected_window: WindowInfo | None,
@@ -7989,6 +8125,90 @@ def _window_management_receipt(
     selected_entry = _window_inventory_entry(window_inventory, selected_window.handle if selected_window else None)
     target_entry = _window_inventory_entry(window_inventory, target_window.handle if target_window else None)
     wrapper_entries = [entry for entry in window_inventory if entry.get("project_wrapper_metadata")]
+    external_wrapper_entries = [
+        entry
+        for entry in wrapper_entries
+        if entry.get("wrapper_workspace_matches_controller") is False
+    ]
+    ambiguous_wrapper_entries = [
+        entry
+        for entry in wrapper_entries
+        if entry.get("wrapper_provenance_status") == "ambiguous_across_trusted_workspaces"
+    ]
+    selected_workspace_mismatch = bool(
+        selected_entry and selected_entry.get("wrapper_workspace_matches_controller") is False
+    )
+    target_workspace_mismatch = bool(
+        target_entry and target_entry.get("wrapper_workspace_matches_controller") is False
+    )
+    selected_workspace_ambiguous = bool(
+        selected_entry
+        and selected_entry.get("wrapper_provenance_status") == "ambiguous_across_trusted_workspaces"
+    )
+    target_workspace_ambiguous = bool(
+        target_entry
+        and target_entry.get("wrapper_provenance_status") == "ambiguous_across_trusted_workspaces"
+    )
+    workspace_context_mismatch_reasons: list[str] = []
+    if selected_workspace_mismatch:
+        workspace_context_mismatch_reasons.append("selected_wrapper_belongs_to_trusted_external_workspace")
+    if target_workspace_mismatch:
+        workspace_context_mismatch_reasons.append("target_wrapper_belongs_to_trusted_external_workspace")
+    if selected_workspace_ambiguous:
+        workspace_context_mismatch_reasons.append("selected_wrapper_workspace_provenance_ambiguous")
+    if target_workspace_ambiguous:
+        workspace_context_mismatch_reasons.append("target_wrapper_workspace_provenance_ambiguous")
+    workspace_context_mismatch = bool(workspace_context_mismatch_reasons)
+    context_entry = (
+        selected_entry
+        if selected_entry and selected_entry.get("project_wrapper_metadata")
+        else target_entry
+        if target_entry and target_entry.get("project_wrapper_metadata")
+        else None
+    )
+    recommended_working_dir = (
+        context_entry.get("wrapper_workspace_root")
+        if context_entry and context_entry.get("wrapper_workspace_matches_controller") is False
+        else None
+    )
+    visible_wrapper_identity_trusted = bool(
+        context_entry
+        and context_entry.get("wrapper_provenance_status") == "verified_revision_wrapper"
+    )
+    workspace_context = {
+        "controller_workspace_root": str(controller_workspace_root.resolve()),
+        "mismatch": workspace_context_mismatch,
+        "mismatch_reasons": workspace_context_mismatch_reasons,
+        "selected_wrapper_workspace_root": (
+            selected_entry.get("wrapper_workspace_root") if selected_entry else None
+        ),
+        "selected_wrapper_workspace_matches_controller": (
+            selected_entry.get("wrapper_workspace_matches_controller") if selected_entry else None
+        ),
+        "target_wrapper_workspace_root": (
+            target_entry.get("wrapper_workspace_root") if target_entry else None
+        ),
+        "target_wrapper_workspace_matches_controller": (
+            target_entry.get("wrapper_workspace_matches_controller") if target_entry else None
+        ),
+        "visible_wrapper_project_id": context_entry.get("project_id") if context_entry else None,
+        "visible_wrapper_revision": context_entry.get("revision") if context_entry else None,
+        "visible_wrapper_source_path": context_entry.get("source_path") if context_entry else None,
+        "visible_wrapper_window_handle": context_entry.get("handle") if context_entry else None,
+        "visible_wrapper_window_title": context_entry.get("title") if context_entry else None,
+        "visible_wrapper_provenance_status": (
+            context_entry.get("wrapper_provenance_status") if context_entry else None
+        ),
+        "visible_wrapper_identity_trusted": visible_wrapper_identity_trusted,
+        "recommended_project_id": (
+            context_entry.get("project_id") if visible_wrapper_identity_trusted else None
+        ),
+        "recommended_revision": (
+            context_entry.get("revision") if visible_wrapper_identity_trusted else None
+        ),
+        "recommended_working_dir": recommended_working_dir,
+        "automatic_workspace_adoption_allowed": False,
+    }
     mcp_title_entries = [
         entry for entry in window_inventory if _project_name_from_window_title(str(entry.get("title") or "")) is not None
     ]
@@ -8064,6 +8284,10 @@ def _window_management_receipt(
         warnings.append("materials_studio_dialog_detected")
     if unmatched_mcp_title_count:
         warnings.append("mcp_wrapper_window_metadata_missing")
+    if ambiguous_wrapper_entries:
+        warnings.append("mcp_wrapper_workspace_provenance_ambiguous")
+    if workspace_context_mismatch:
+        warnings.append("gui_wrapper_workspace_mismatch")
     if requested_target and fallback_used:
         warnings.append("target_project_window_not_verified")
     if target_window is not None and selected_window is not None and not target_window_is_selected:
@@ -8092,6 +8316,11 @@ def _window_management_receipt(
         recommended_action = "dismiss_startup_or_modal_dialog_then_retry_hotload"
         ready_for_snapshot = True
         ready_for_open = False
+    elif workspace_context_mismatch:
+        recommended_tool = "material_studio_live_session_preflight"
+        recommended_action = "rerun_preflight_with_visible_wrapper_workspace_before_implicit_followup"
+        ready_for_snapshot = True
+        ready_for_open = True
     elif requested_target and not matched_project_window:
         recommended_tool = "material_studio_gui_open_structure"
         recommended_action = "reload_requested_project_revision_in_gui"
@@ -8134,8 +8363,11 @@ def _window_management_receipt(
         can_hotload_without_new_window
         and not needs_reload
         and not needs_activation
+        and not workspace_context_mismatch
     )
-    can_apply_current_revision_without_new_window = can_hotload_without_new_window
+    can_apply_current_revision_without_new_window = bool(
+        can_hotload_without_new_window and not workspace_context_mismatch
+    )
     if target_window is None:
         status = "target_window_missing"
     elif needs_single_window_resolution:
@@ -8144,6 +8376,8 @@ def _window_management_receipt(
         status = "modal_dialog_blocking_hotload"
     elif startup_dialog_open_ready:
         status = "startup_dialog_ready_for_same_window_open"
+    elif workspace_context_mismatch:
+        status = "workspace_context_mismatch"
     elif needs_reload:
         status = "requested_revision_not_loaded"
     elif needs_activation:
@@ -8158,6 +8392,14 @@ def _window_management_receipt(
         "revision": requested_revision,
         "reuse_existing_window_only": True,
     }
+    if workspace_context_mismatch:
+        payload_hint.update(
+            {
+                "working_dir": recommended_working_dir,
+                "project_id": workspace_context.get("recommended_project_id"),
+                "revision": workspace_context.get("recommended_revision"),
+            }
+        )
     if recommended_tool == "material_studio_gui_open_structure":
         payload_hint["execution_mode"] = "execute"
         payload_hint["open_in_gui"] = True
@@ -8179,6 +8421,8 @@ def _window_management_receipt(
         "welcome_dialog_count": len(welcome_dialog_entries),
         "startup_dialog_count": len(startup_dialog_entries),
         "wrapper_window_count": len(wrapper_entries),
+        "external_wrapper_window_count": len(external_wrapper_entries),
+        "ambiguous_wrapper_window_count": len(ambiguous_wrapper_entries),
         "mcp_title_window_count": len(mcp_title_entries),
         "unmatched_mcp_title_window_count": unmatched_mcp_title_count,
         "requested_project_id": requested_project_id,
@@ -8187,11 +8431,23 @@ def _window_management_receipt(
         "selected_window_title": selected_window.title if selected_window else None,
         "selected_window_project_id": selected_entry.get("project_id") if selected_entry else None,
         "selected_window_revision": selected_entry.get("revision") if selected_entry else None,
+        "selected_window_wrapper_workspace_root": (
+            selected_entry.get("wrapper_workspace_root") if selected_entry else None
+        ),
+        "selected_window_wrapper_workspace_matches_controller": (
+            selected_entry.get("wrapper_workspace_matches_controller") if selected_entry else None
+        ),
         "selected_window_has_project_metadata": bool(selected_entry and selected_entry.get("project_wrapper_metadata")),
         "target_window_handle": target_window.handle if target_window else None,
         "target_window_title": target_window.title if target_window else None,
         "target_window_project_id": target_entry.get("project_id") if target_entry else None,
         "target_window_revision": target_entry.get("revision") if target_entry else None,
+        "target_window_wrapper_workspace_root": (
+            target_entry.get("wrapper_workspace_root") if target_entry else None
+        ),
+        "target_window_wrapper_workspace_matches_controller": (
+            target_entry.get("wrapper_workspace_matches_controller") if target_entry else None
+        ),
         "target_window_has_project_metadata": bool(target_entry and target_entry.get("project_wrapper_metadata")),
         "target_window_is_selected": target_window_is_selected,
         "target_window_is_visible": target_window_is_visible,
@@ -8203,6 +8459,10 @@ def _window_management_receipt(
         "activation_required_before_capture_or_input": activation_required_before_capture_or_input,
         "matched_project_window": matched_project_window,
         "fallback_used": fallback_used,
+        "workspace_context": workspace_context,
+        "workspace_context_mismatch": workspace_context_mismatch,
+        "recommended_working_dir": recommended_working_dir,
+        "automatic_workspace_adoption_allowed": False,
         "same_window_open_supported": same_window_open_supported,
         "startup_dialog_open_supported": startup_dialog_open_supported,
         "startup_dialog_open_ready": startup_dialog_open_ready,
@@ -8321,6 +8581,52 @@ def _project_name_from_window_title(title: str) -> str | None:
         return None
     project_name = normalized[: -len(suffix)].strip()
     return _safe_component(project_name) if project_name else None
+
+
+def _platform_default_workspace_root() -> Path:
+    """Return the per-user workspace without honoring an override environment variable."""
+
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return (Path(base) / "materials_studio_mcp" / "workspace").expanduser().resolve()
+    return (Path.home() / ".local" / "share" / "materials_studio_mcp" / "workspace").resolve()
+
+
+def _trusted_wrapper_workspace_roots(controller_workspace_root: Path) -> list[tuple[Path, str]]:
+    """Return the bounded workspace roots allowed for read-only wrapper provenance lookup."""
+
+    candidates: list[tuple[Path, str]] = [(controller_workspace_root.resolve(), "controller_workspace")]
+    configured = os.environ.get("MATERIAL_STUDIO_MCP_WORKSPACE")
+    if configured:
+        candidates.append((Path(configured).expanduser().resolve(), "environment_workspace"))
+    candidates.append((_platform_default_workspace_root(), "platform_default_workspace"))
+
+    deduplicated: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    for root, trust_basis in candidates:
+        key = os.path.normcase(str(root.resolve()))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append((root.resolve(), trust_basis))
+    return deduplicated
+
+
+def _same_resolved_path(left: Path, right: Path) -> bool:
+    """Compare resolved paths using the platform's path case rules."""
+
+    return os.path.normcase(str(left.resolve())) == os.path.normcase(str(right.resolve()))
+
+
+def _path_is_inside(root: Path, path: Path) -> bool:
+    """Return whether a path resolves inside a root without raising."""
+
+    try:
+        root_resolved = root.resolve()
+        path_resolved = path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return path_resolved == root_resolved or root_resolved in path_resolved.parents
 
 
 def _ensure_inside(root: Path, path: Path) -> None:

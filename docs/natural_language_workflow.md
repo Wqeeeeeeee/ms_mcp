@@ -340,7 +340,7 @@ axis, slab thickness, vacuum thickness, and termination label for quick checks.
 
 When the user asks for a precise atom-level change, Codex should load the current project, build a `SemanticPatch`, and call `material_studio_live_modeling_request` or `material_studio_live_update_with_patch` with `execution_mode=preview` unless live hot-loading was explicitly requested.
 
-For conversation-style follow-ups such as "turn it into nitrobenzene", `material_studio_live_modeling_request` can infer the latest current project in the workspace when `project_id` is omitted. The response includes `project_resolution` so clients can show whether the project was explicit or resolved from the latest `current.json`.
+For conversation-style follow-ups such as "turn it into nitrobenzene", `material_studio_live_modeling_request` can infer the latest current project in the workspace when `project_id` is omitted. The response includes `project_resolution` so clients can show whether the project was explicit or resolved from the latest `current.json`. If the only visible Materials Studio wrapper belongs to another trusted workspace, this implicit resolution is blocked before any revision write. The response returns `workspace_context_mismatch=true`, the visible wrapper identity, and a `recommended_working_dir`; rerun preflight there and provide the visible `project_id` explicitly rather than silently changing workspace context.
 
 Explicit execution of a persisted revision is serialized. Inspect
 `execution_transaction` to confirm the immutable revision, backend, and whether

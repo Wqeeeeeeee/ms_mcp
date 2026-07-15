@@ -238,6 +238,19 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return [window for window in self.windows if window.pid == pid]
 
 
+@pytest.fixture
+def isolated_fake_gui(monkeypatch) -> FakeGuiBackend:
+    """Keep preview-only planner tests independent of a real local MS window."""
+
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    return backend
+
+
 class MinimizedGuiBackend(FakeGuiBackend):
     def __init__(self) -> None:
         super().__init__()
@@ -607,6 +620,311 @@ def test_gui_status_resolves_requested_project_revision(monkeypatch, tmp_path: P
     assert status["target_window_resolution"]["matched_project_window"] is True
     assert status["target_window_resolution"]["target_handle"] == 303
     assert status["target_window_resolution"]["fallback_used"] is False
+
+
+def test_gui_status_identifies_wrapper_from_trusted_external_workspace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    external_root = tmp_path / "external"
+    platform_root = tmp_path / "localappdata"
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_WORKSPACE", str(external_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(platform_root))
+    backend = FakeGuiBackend()
+    external_controller = MaterialsStudioGuiController(external_root, backend=backend)
+    structure = external_root / "visible_project" / "outputs" / "r004" / "visible.cif"
+    structure.parent.mkdir(parents=True, exist_ok=True)
+    structure.write_text("data_visible\n", encoding="utf-8")
+    wrapper = external_controller._create_project_wrapper(
+        structure.resolve(),
+        project_id="visible_project",
+        revision=4,
+    )
+    backend.window = WindowInfo(
+        handle=404,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    controller = MaterialsStudioGuiController(controller_root, backend=backend)
+
+    status = controller.status(project_id="controller_project", revision=0)
+
+    assert status["workspace_context_mismatch"] is True
+    assert status["status"] == "workspace_context_mismatch"
+    assert status["recommended_tool"] == "material_studio_live_session_preflight"
+    assert Path(status["recommended_working_dir"]) == external_root.resolve()
+    assert status["ready_for_next_live_edit"] is False
+    assert status["can_apply_current_revision_without_new_window"] is False
+    assert len(status["trusted_wrapper_workspace_roots"]) == 3
+    window = status["windows"][0]
+    assert window["project_id"] == "visible_project"
+    assert window["revision"] == 4
+    assert Path(window["wrapper_workspace_root"]) == external_root.resolve()
+    assert window["wrapper_workspace_scope"] == "trusted_external"
+    assert window["wrapper_workspace_matches_controller"] is False
+    assert window["external_workspace_wrapper_detected"] is True
+    assert window["wrapper_provenance_status"] == "verified_revision_wrapper"
+    assert window["project_wrapper_metadata"]["source_inside_wrapper_workspace"] is True
+    management = status["window_management"]
+    assert management["workspace_context_mismatch"] is True
+    assert management["external_wrapper_window_count"] == 1
+    assert management["workspace_context"]["visible_wrapper_project_id"] == "visible_project"
+    assert management["workspace_context"]["visible_wrapper_revision"] == 4
+    assert management["workspace_context"]["automatic_workspace_adoption_allowed"] is False
+    assert "gui_wrapper_workspace_mismatch" in management["warnings"]
+    resolution = status["target_window_resolution"]
+    assert resolution["matched_project_window"] is False
+    assert resolution["fallback_used"] is True
+    assert Path(resolution["target_wrapper_workspace_root"]) == external_root.resolve()
+    assert resolution["target_wrapper_workspace_matches_controller"] is False
+
+
+def test_gui_wrapper_provenance_does_not_scan_untrusted_workspace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    environment_root = tmp_path / "environment"
+    platform_base = tmp_path / "localappdata"
+    untrusted_root = tmp_path / "untrusted"
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_WORKSPACE", str(environment_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(platform_base))
+    project_name = "msmcp_r002_untrusted"
+    metadata_path = untrusted_root / "gui_projects" / project_name / "metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "project_id": "untrusted_project",
+                "revision": 2,
+                "project_name": project_name,
+                "source_path": str(untrusted_root / "untrusted.cif"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    backend = FakeGuiBackend()
+    backend.window = WindowInfo(
+        handle=405,
+        title=f"{project_name} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    controller = MaterialsStudioGuiController(controller_root, backend=backend)
+
+    status = controller.status()
+
+    assert status["workspace_context_mismatch"] is False
+    assert status["windows"][0].get("project_wrapper_metadata") is None
+    assert status["window_management"]["unmatched_mcp_title_window_count"] == 1
+    assert "mcp_wrapper_window_metadata_missing" in status["window_management"]["warnings"]
+    trusted_roots = {
+        Path(item["workspace_root"])
+        for item in status["trusted_wrapper_workspace_roots"]
+    }
+    assert untrusted_root.resolve() not in trusted_roots
+
+
+def test_gui_wrapper_provenance_blocks_ambiguous_trusted_workspace_match(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    external_root = tmp_path / "external"
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_WORKSPACE", str(external_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    project_name = "msmcp_r003_ambiguous"
+    for root, project_id in (
+        (controller_root, "controller_project"),
+        (external_root, "external_project"),
+    ):
+        source = root / project_id / "outputs" / "r003" / "model.cif"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("data_model\n", encoding="utf-8")
+        metadata_path = root / "gui_projects" / project_name / "metadata.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "project_id": project_id,
+                    "revision": 3,
+                    "project_name": project_name,
+                    "source_path": str(source),
+                }
+            ),
+            encoding="utf-8",
+        )
+    backend = FakeGuiBackend()
+    backend.window = WindowInfo(
+        handle=407,
+        title=f"{project_name} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    controller = MaterialsStudioGuiController(controller_root, backend=backend)
+
+    status = controller.status()
+
+    window = status["windows"][0]
+    assert window["wrapper_provenance_status"] == "ambiguous_across_trusted_workspaces"
+    assert window.get("project_id") is None
+    assert status["workspace_context_mismatch"] is True
+    assert status["recommended_working_dir"] is None
+    assert status["ready_for_next_live_edit"] is False
+    management = status["window_management"]
+    assert management["ambiguous_wrapper_window_count"] == 1
+    assert management["workspace_context"]["visible_wrapper_identity_trusted"] is False
+    assert "selected_wrapper_workspace_provenance_ambiguous" in management["workspace_context"][
+        "mismatch_reasons"
+    ]
+    assert "mcp_wrapper_workspace_provenance_ambiguous" in management["warnings"]
+    assert "gui_wrapper_workspace_mismatch" in management["warnings"]
+
+
+def test_gui_wrapper_provenance_does_not_recommend_unscoped_source_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    external_root = tmp_path / "external"
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_WORKSPACE", str(external_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    project_name = "msmcp_r005_external_source"
+    metadata_path = external_root / "gui_projects" / project_name / "metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "project_id": "external_project",
+                "revision": 5,
+                "project_name": project_name,
+                "source_path": str(tmp_path / "outside" / "model.cif"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    backend = FakeGuiBackend()
+    backend.window = WindowInfo(
+        handle=408,
+        title=f"{project_name} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+    )
+    controller = MaterialsStudioGuiController(controller_root, backend=backend)
+
+    status = controller.status()
+
+    window = status["windows"][0]
+    assert window["wrapper_provenance_status"] == "source_outside_wrapper_workspace"
+    assert status["workspace_context_mismatch"] is True
+    context = status["workspace_context"]
+    assert context["visible_wrapper_identity_trusted"] is False
+    assert context["visible_wrapper_project_id"] == "external_project"
+    assert context["recommended_project_id"] is None
+    assert context["recommended_revision"] is None
+    assert status["window_management"]["payload_hint"].get("project_id") is None
+
+
+def test_live_preflight_blocks_implicit_followup_across_workspace_contexts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    external_root = tmp_path / "external"
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_WORKSPACE", str(external_root))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    backend = FakeGuiBackend()
+    external_controller = MaterialsStudioGuiController(external_root, backend=backend)
+    visible_structure = external_root / "visible_project" / "outputs" / "r004" / "visible.cif"
+    visible_structure.parent.mkdir(parents=True, exist_ok=True)
+    visible_structure.write_text("data_visible\n", encoding="utf-8")
+    wrapper = external_controller._create_project_wrapper(
+        visible_structure.resolve(),
+        project_id="visible_project",
+        revision=4,
+    )
+    backend.window = WindowInfo(
+        handle=406,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    controller = MaterialsStudioGuiController(controller_root, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(controller_root),
+    )
+    assert created["ok"] is True
+    assert created["revision"] == 0
+
+    preflight = server.material_studio_live_session_preflight(
+        working_dir=str(controller_root),
+        include_latest_project=True,
+        include_gui_status=True,
+    )
+    assert preflight["ok"] is True
+    assert preflight["state"] == "preview_ready_gui_workspace_context_mismatch"
+    assert preflight["workspace_context_mismatch"] is True
+    assert Path(preflight["recommended_working_dir"]) == external_root.resolve()
+    assert preflight["readiness"]["gui_workspace_context_ready"] is False
+    assert preflight["readiness"]["live_hotload_ready"] is False
+    assert "gui_wrapper_workspace_context_mismatch" in preflight["review_reasons"]
+    assert preflight["next_action_plan"]["action_id"] == "align_mcp_workspace_with_visible_gui_wrapper"
+    assert Path(preflight["next_action_plan"]["payload_hint"]["working_dir"]) == external_root.resolve()
+    assert preflight["mcp_client_readiness"]["workspace_context_mismatch"] is True
+
+    project_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(controller_root),
+    )
+    assert project_status["live_hotload_preflight"]["model_ready_for_hotload"] is True
+    assert project_status["live_hotload_preflight"]["workspace_context_mismatch"] is True
+    assert project_status["live_hotload_preflight"]["safe_to_attempt_hotload"] is False
+    assert project_status["mcp_model_ready_for_hotload"] is True
+    assert project_status["mcp_same_window_hotload_ready"] is False
+
+    blocked = server.material_studio_live_modeling_request(
+        "make 2x1x1 supercell",
+        working_dir=str(controller_root),
+    )
+    assert blocked["ok"] is False
+    assert blocked["workspace_context_mismatch"] is True
+    assert blocked["implicit_project_resolution_blocked"] is True
+    assert blocked["revision_created"] is False
+    assert blocked["write_attempted"] is False
+    assert blocked["visible_gui_context"]["visible_wrapper_project_id"] == "visible_project"
+    assert blocked["visible_gui_context"]["visible_wrapper_revision"] == 4
+    assert Path(blocked["recommended_working_dir"]) == external_root.resolve()
+    contract = blocked["live_modeling_contract"]
+    assert contract["status"] == "workspace_context_mismatch"
+    assert contract["next_action"]["recommended_action"] == (
+        "rerun_request_with_visible_wrapper_workspace_and_explicit_project_id"
+    )
+    current = server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(controller_root),
+    )
+    assert current["revision"] == 0
+
+    explicit = server.material_studio_live_modeling_request(
+        "make 2x1x1 supercell",
+        project_id=created["project_id"],
+        execution_mode="preview",
+        working_dir=str(controller_root),
+    )
+    assert explicit["ok"] is True
+    assert explicit["new_revision"] == 1
 
 
 def test_gui_status_without_project_resolves_latest_current_window(monkeypatch, tmp_path: Path) -> None:
@@ -14302,7 +14620,10 @@ def test_live_modeling_request_hotloads_chinese_metal_semiconductor_contact_diag
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
 
-def test_live_modeling_request_infers_gate_stack_thickness_followup(tmp_path: Path) -> None:
+def test_live_modeling_request_infers_gate_stack_thickness_followup(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build a TiN/HfO2/Si high-k MOS capacitor.",
         working_dir=str(tmp_path),
@@ -14341,7 +14662,10 @@ def test_live_modeling_request_infers_gate_stack_thickness_followup(tmp_path: Pa
     assert current["spec"]["metadata"]["oxide_thickness_angstrom"] == 6.72
 
 
-def test_live_modeling_request_infers_multiple_gate_stack_thickness_followup(tmp_path: Path) -> None:
+def test_live_modeling_request_infers_multiple_gate_stack_thickness_followup(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build a TiN/HfO2/Si high-k MOS capacitor.",
         working_dir=str(tmp_path),
@@ -14372,7 +14696,10 @@ def test_live_modeling_request_infers_multiple_gate_stack_thickness_followup(tmp
     assert gate_stack["declared_gate_thickness_angstrom"] == 2.0
 
 
-def test_live_modeling_request_infers_chinese_gate_stack_thickness_followup(tmp_path: Path) -> None:
+def test_live_modeling_request_infers_chinese_gate_stack_thickness_followup(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build a TiN/HfO2/Si high-k MOS capacitor.",
         working_dir=str(tmp_path),
@@ -15351,7 +15678,10 @@ def test_live_modeling_request_marks_alloy_composition_preflight_diagnostic_focu
     assert band_result["requested_diagnostic_focus_ok"] is True
 
 
-def test_live_modeling_request_marks_dopant_site_preflight_without_junction_false_negative(tmp_path: Path) -> None:
+def test_live_modeling_request_marks_dopant_site_preflight_without_junction_false_negative(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build MoS2 monolayer semiconductor.",
         working_dir=str(tmp_path),
@@ -15413,7 +15743,10 @@ def test_live_modeling_request_marks_dopant_site_preflight_without_junction_fals
     assert "dopant_site_preflight" not in pn["requested_diagnostic_focuses"]
 
 
-def test_live_modeling_request_marks_defect_diagnostic_focus(tmp_path: Path) -> None:
+def test_live_modeling_request_marks_defect_diagnostic_focus(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build silicon crystal as a 2x1x1 supercell.",
         working_dir=str(tmp_path),
@@ -16215,7 +16548,10 @@ def test_live_modeling_request_marks_surface_slab_polarity_diagnostic_focus(tmp_
     assert gan["requested_diagnostic_focus_ok"] is True
 
 
-def test_live_modeling_request_marks_current_gate_stack_diagnostic_focus(tmp_path: Path) -> None:
+def test_live_modeling_request_marks_current_gate_stack_diagnostic_focus(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
     created = server.material_studio_live_modeling_request(
         "Build a TiN/HfO2/Si high-k MOS capacitor.",
         working_dir=str(tmp_path),

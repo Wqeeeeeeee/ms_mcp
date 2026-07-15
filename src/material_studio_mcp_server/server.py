@@ -6373,6 +6373,22 @@ def _live_session_preflight_payload(
         if isinstance(gui_status, dict) and isinstance(gui_status.get("window_management"), dict)
         else {}
     )
+    gui_workspace_context = (
+        gui_window_management.get("workspace_context")
+        if isinstance(gui_window_management.get("workspace_context"), dict)
+        else gui_status.get("workspace_context")
+        if isinstance(gui_status, dict) and isinstance(gui_status.get("workspace_context"), dict)
+        else {}
+    )
+    gui_workspace_context_mismatch = bool(
+        gui_window_management.get("workspace_context_mismatch")
+        or (isinstance(gui_status, dict) and gui_status.get("workspace_context_mismatch"))
+    )
+    gui_recommended_working_dir = _first_not_none(
+        gui_window_management.get("recommended_working_dir"),
+        gui_status.get("recommended_working_dir") if isinstance(gui_status, dict) else None,
+        gui_workspace_context.get("recommended_working_dir"),
+    )
     gui_single_window_policy_ok = (
         gui_status.get("single_window_policy_ok")
         if isinstance(gui_status, dict) and "single_window_policy_ok" in gui_status
@@ -6409,7 +6425,12 @@ def _live_session_preflight_payload(
     preview_ready = True
     semiconductor_template_ready = bool(supported_semiconductor_template_ids())
     single_window_ready = gui_single_window_policy_ok is not False
-    live_hotload_ready = bool(runner_ready and gui_can_open and single_window_ready) if include_gui_status else runner_ready
+    gui_workspace_context_ready = not gui_workspace_context_mismatch
+    live_hotload_ready = (
+        bool(runner_ready and gui_can_open and single_window_ready and gui_workspace_context_ready)
+        if include_gui_status
+        else runner_ready
+    )
     crystal_cif_hotload_ready = bool(gui_can_open and single_window_ready) if include_gui_status else None
     if include_gui_status and latest_available and isinstance(latest_project, dict):
         latest_project_gui = _latest_project_gui_preflight_summary(latest_project, gui_status)
@@ -6467,6 +6488,8 @@ def _live_session_preflight_payload(
         if gui_single_window_policy_ok is False:
             review_reasons.append("single_window_policy_violation")
             review_reasons.extend(f"single_window:{reason}" for reason in gui_single_window_violation_reasons)
+        if gui_workspace_context_mismatch:
+            review_reasons.append("gui_wrapper_workspace_context_mismatch")
     if latest_project and latest_project.get("available") and not latest_project.get("script_exists"):
         review_reasons.append("latest_project_preview_script_missing")
     if latest_project_gui and latest_project_gui.get("evaluation_active"):
@@ -6503,6 +6526,10 @@ def _live_session_preflight_payload(
         state = "preview_ready_gui_single_window_policy_review"
         recommended_tool = "material_studio_gui_status"
         recommended_action = "close_save_extra_matstudio_windows_or_activate_target_window_then_retry_live_session_preflight"
+    elif include_gui_status and gui_window_found and gui_workspace_context_mismatch:
+        state = "preview_ready_gui_workspace_context_mismatch"
+        recommended_tool = "material_studio_live_session_preflight"
+        recommended_action = "rerun_preflight_with_visible_wrapper_workspace_before_implicit_followup"
     elif include_gui_status and gui_window_found and not gui_can_open:
         state = "preview_ready_gui_open_same_window_open_unavailable"
         recommended_tool = "material_studio_gui_copy_script_assist"
@@ -6533,6 +6560,9 @@ def _live_session_preflight_payload(
         "gui_status": gui_status,
         "latest_project": latest_project,
         "latest_project_gui": latest_project_gui,
+        "workspace_context": gui_workspace_context or None,
+        "workspace_context_mismatch": gui_workspace_context_mismatch,
+        "recommended_working_dir": gui_recommended_working_dir,
         "readiness": {
             "preview_ready": preview_ready,
             "semiconductor_templates_ready": semiconductor_template_ready,
@@ -6562,6 +6592,9 @@ def _live_session_preflight_payload(
             "gui_auto_launch_during_hotload_allowed": False,
             "gui_single_window_policy_ok": gui_single_window_policy_ok,
             "gui_single_window_violation_reasons": gui_single_window_violation_reasons,
+            "gui_workspace_context_mismatch": gui_workspace_context_mismatch,
+            "gui_workspace_context_ready": gui_workspace_context_ready,
+            "gui_recommended_working_dir": gui_recommended_working_dir,
             "live_hotload_ready": live_hotload_ready,
             "crystal_cif_hotload_ready": crystal_cif_hotload_ready,
             "latest_project_available": latest_available,
@@ -6629,6 +6662,8 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
             "must_reuse_existing_gui_window": client.get("must_reuse_existing_gui_window"),
             "auto_launch_during_hotload_allowed": client.get("auto_launch_during_hotload_allowed"),
             "single_window_policy_ok": client.get("single_window_policy_ok"),
+            "workspace_context_mismatch": client.get("workspace_context_mismatch"),
+            "recommended_working_dir": client.get("recommended_working_dir"),
             "gui_process_count": client.get("gui_process_count"),
             "gui_window_count": client.get("gui_window_count"),
             "gui_target_window_handle": client.get("gui_target_window_handle"),
@@ -6654,6 +6689,8 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
                 "mcp_must_reuse_existing_gui_window": contract.get("must_reuse_existing_gui_window"),
                 "mcp_auto_launch_during_hotload_allowed": contract.get("auto_launch_during_hotload_allowed"),
                 "mcp_single_window_policy_ok": contract.get("single_window_policy_ok"),
+                "mcp_workspace_context_mismatch": contract.get("workspace_context_mismatch"),
+                "mcp_recommended_working_dir": contract.get("recommended_working_dir"),
             }
         )
     )
@@ -6692,6 +6729,8 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         hotload_blocking_reasons.extend(
             f"single_window:{reason}" for reason in readiness.get("gui_single_window_violation_reasons") or []
         )
+    if readiness.get("gui_workspace_context_mismatch") is True:
+        hotload_blocking_reasons.append("gui_wrapper_workspace_context_mismatch")
     if not readiness.get("runner_ready"):
         hotload_blocking_reasons.append("materials_script_runner_missing")
     if not readiness.get("gui_can_open_structure"):
@@ -6821,6 +6860,8 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "must_reuse_existing_gui_window": True,
             "auto_launch_during_hotload_allowed": False,
             "single_window_policy_ok": single_window_policy_ok,
+            "workspace_context_mismatch": readiness.get("gui_workspace_context_mismatch"),
+            "recommended_working_dir": readiness.get("gui_recommended_working_dir"),
             "gui_process_found": gui_process_found,
             "gui_process_count": gui_process_count,
             "gui_window_found": gui_window_found,
@@ -7354,6 +7395,23 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
             needs_user_confirmation = True
         else:
             action_id = "start_or_activate_materials_studio_gui"
+    elif (
+        recommended_tool == "material_studio_live_session_preflight"
+        and state == "preview_ready_gui_workspace_context_mismatch"
+    ):
+        action_id = "align_mcp_workspace_with_visible_gui_wrapper"
+        workspace_context = (
+            payload.get("workspace_context")
+            if isinstance(payload.get("workspace_context"), dict)
+            else {}
+        )
+        payload_hint = {
+            "working_dir": payload.get("recommended_working_dir"),
+            "include_latest_project": True,
+            "include_gui_status": True,
+            "visible_project_id": workspace_context.get("recommended_project_id"),
+            "visible_revision": workspace_context.get("recommended_revision"),
+        }
     elif recommended_tool == "material_studio_gui_activate":
         action_id = "activate_latest_project_window"
         latest = payload.get("latest_project") if isinstance(payload.get("latest_project"), dict) else {}
@@ -7520,6 +7578,9 @@ def _latest_project_gui_preflight_summary(
         "window_management_payload_hint": window_management.get("payload_hint") or {},
         "window_management_warning_count": len(window_management.get("warnings") or []),
         "window_management_warnings": window_management.get("warnings") or [],
+        "workspace_context": window_management.get("workspace_context"),
+        "workspace_context_mismatch": window_management.get("workspace_context_mismatch"),
+        "recommended_working_dir": window_management.get("recommended_working_dir"),
         "window_management_single_window_policy_ok": window_management.get("single_window_policy_ok"),
         "window_management_single_window_violation_reasons": window_management.get("single_window_violation_reasons") or [],
         "target_window_resolution": target_resolution or None,
@@ -7537,6 +7598,10 @@ def _latest_project_gui_preflight_summary(
                     "project_id",
                     "revision",
                     "source_path",
+                    "wrapper_workspace_root",
+                    "wrapper_workspace_scope",
+                    "wrapper_workspace_matches_controller",
+                    "wrapper_provenance_status",
                     "is_selected",
                     "is_visible",
                     "is_minimized",
@@ -8498,6 +8563,102 @@ def _latest_live_project(store: ProjectStore) -> tuple[ModelSpec, dict[str, Any]
         "current_pointer": current_resolution,
     }
     return spec, resolution
+
+
+def _implicit_visible_workspace_guard(
+    *,
+    store: ProjectStore,
+    current_spec: ModelSpec,
+    project_resolution: dict[str, Any] | None,
+    user_request: str,
+    workflow: str,
+) -> dict[str, Any] | None:
+    """Block an implicit follow-up when the visible wrapper belongs to another workspace."""
+
+    try:
+        gui_status = _gui_controller(str(store.workspace_root)).status(
+            project_id=current_spec.project_id,
+            revision=current_spec.revision,
+        )
+    except Exception:
+        return None
+    window_management = (
+        gui_status.get("window_management")
+        if isinstance(gui_status.get("window_management"), dict)
+        else {}
+    )
+    workspace_context = (
+        window_management.get("workspace_context")
+        if isinstance(window_management.get("workspace_context"), dict)
+        else gui_status.get("workspace_context")
+        if isinstance(gui_status.get("workspace_context"), dict)
+        else {}
+    )
+    if not (
+        window_management.get("workspace_context_mismatch") is True
+        or gui_status.get("workspace_context_mismatch") is True
+    ):
+        return None
+
+    recommended_working_dir = _first_not_none(
+        window_management.get("recommended_working_dir"),
+        gui_status.get("recommended_working_dir"),
+        workspace_context.get("recommended_working_dir"),
+    )
+    visible_project_id = workspace_context.get("recommended_project_id")
+    visible_revision = workspace_context.get("recommended_revision")
+    payload_hint = _drop_none_values(
+        {
+            "user_request": user_request,
+            "working_dir": recommended_working_dir,
+            "project_id": visible_project_id,
+            "base_revision": visible_revision,
+            "include_gui_status": True,
+        }
+    )
+    return _attach_live_failure_contract(
+        {
+            "ok": False,
+            "workflow": workflow,
+            "user_request": user_request,
+            "project_id": current_spec.project_id,
+            "revision": current_spec.revision,
+            "project_resolution": project_resolution,
+            "workspace_context_mismatch": True,
+            "implicit_project_resolution_blocked": True,
+            "revision_created": False,
+            "write_attempted": False,
+            "controller_workspace_root": str(store.workspace_root),
+            "recommended_working_dir": recommended_working_dir,
+            "visible_gui_context": workspace_context,
+            "window_management_receipt": _select_keys(
+                window_management,
+                [
+                    "status",
+                    "process_count",
+                    "window_count",
+                    "single_window_policy_ok",
+                    "workspace_context_mismatch",
+                    "recommended_working_dir",
+                    "selected_window_handle",
+                    "selected_window_title",
+                    "selected_window_project_id",
+                    "selected_window_revision",
+                    "selected_window_wrapper_workspace_root",
+                    "target_window_handle",
+                    "target_window_title",
+                    "warnings",
+                ],
+            ),
+            "error": (
+                "The implicit current-project follow-up was not applied because the visible "
+                "Materials Studio wrapper belongs to a different trusted workspace."
+            ),
+        },
+        status="workspace_context_mismatch",
+        recommended_action="rerun_request_with_visible_wrapper_workspace_and_explicit_project_id",
+        payload_hint=payload_hint,
+    )
 
 
 def _explicit_project_resolution(
@@ -17237,6 +17398,17 @@ def _gui_report_summary(
     single_window_source = gui_open if gui_open is not None else gui_status
     single_window_management = post_open_window_management or window_management
     single_window = _single_window_policy_summary(single_window_source, single_window_management)
+    workspace_context = (
+        single_window_management.get("workspace_context")
+        if isinstance(single_window_management.get("workspace_context"), dict)
+        else gui_status.get("workspace_context")
+        if isinstance(gui_status.get("workspace_context"), dict)
+        else {}
+    )
+    workspace_context_mismatch = bool(
+        single_window_management.get("workspace_context_mismatch")
+        or gui_status.get("workspace_context_mismatch")
+    )
     return {
         "status_was_probed": gui_status_was_probed,
         "window_found": gui_status.get("window_found") if gui_status else bool(window),
@@ -17247,6 +17419,13 @@ def _gui_report_summary(
         **open_identity,
         "window_management": window_management or None,
         "post_open_window_management": post_open_window_management or None,
+        "workspace_context": workspace_context or None,
+        "workspace_context_mismatch": workspace_context_mismatch,
+        "recommended_working_dir": _first_not_none(
+            single_window_management.get("recommended_working_dir"),
+            gui_status.get("recommended_working_dir"),
+            workspace_context.get("recommended_working_dir"),
+        ),
         **single_window,
         "window_management_process_count": window_management.get("process_count"),
         "window_management_window_count": window_management.get("window_count"),
@@ -17520,6 +17699,9 @@ def _gui_status_window_consistency(
             f"{prefix}_project_id": None,
             f"{prefix}_revision": None,
             f"{prefix}_structure_path": None,
+            f"{prefix}_wrapper_workspace_root": None,
+            f"{prefix}_wrapper_workspace_matches_controller": None,
+            f"{prefix}_wrapper_provenance_status": None,
             f"{prefix}_project_matches_current": None,
             f"{prefix}_revision_matches_current": None,
             f"{prefix}_structure_path_matches_current": None,
@@ -17570,6 +17752,16 @@ def _gui_status_window_consistency(
         f"{prefix}_project_id": window_project_id,
         f"{prefix}_revision": window_revision,
         f"{prefix}_structure_path": window_structure,
+        f"{prefix}_wrapper_workspace_root": window.get("wrapper_workspace_root") or metadata.get(
+            "wrapper_workspace_root"
+        ),
+        f"{prefix}_wrapper_workspace_matches_controller": _first_not_none(
+            window.get("wrapper_workspace_matches_controller"),
+            metadata.get("wrapper_workspace_matches_controller"),
+        ),
+        f"{prefix}_wrapper_provenance_status": window.get("wrapper_provenance_status") or metadata.get(
+            "wrapper_provenance_status"
+        ),
         f"{prefix}_project_matches_current": project_matches,
         f"{prefix}_revision_matches_current": revision_matches,
         f"{prefix}_structure_path_matches_current": structure_matches,
@@ -21536,6 +21728,12 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
     structure_exists = bool(structure.get("exists"))
     gui_status_was_probed = bool(gui.get("status_was_probed"))
     gui_window_found = gui.get("window_found")
+    workspace_context = gui.get("workspace_context") if isinstance(gui.get("workspace_context"), dict) else {}
+    workspace_context_mismatch = bool(gui.get("workspace_context_mismatch"))
+    recommended_working_dir = _first_not_none(
+        gui.get("recommended_working_dir"),
+        workspace_context.get("recommended_working_dir"),
+    )
     single_window_policy_ok = readiness.get("gui_single_window_policy_ok", gui.get("single_window_policy_ok"))
     if single_window_policy_ok is None:
         single_window_policy_ok = gui_current.get("single_window_policy_ok")
@@ -21568,6 +21766,8 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         blocking_reasons.append("gui_single_window_policy_violation")
     if gui_status_was_probed and gui_window_found is False:
         blocking_reasons.append("gui_window_not_found")
+    if workspace_context_mismatch:
+        blocking_reasons.append("gui_wrapper_workspace_context_mismatch")
     if execution_mode == ExecutionMode.EXECUTE.value and not structure_exists:
         blocking_reasons.append("structure_missing_after_execute")
     blocking_reasons = _dedupe_strings(blocking_reasons)
@@ -21576,11 +21776,13 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         gui_status_was_probed
         and gui_window_found is True
         and single_window_policy_ok is True
+        and not workspace_context_mismatch
     )
     model_ready_for_hotload = bool(
         (
             execution_mode == ExecutionMode.PREVIEW.value
-            and readiness.get("ready_for_hotload")
+            and report.get("ok") is not False
+            and report.get("script_valid") is not False
         )
         or (
             execution_mode == ExecutionMode.EXECUTE.value
@@ -21601,6 +21803,8 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         gui_preflight_reasons.append("gui_window_not_verified")
     if single_window_policy_ok is not True:
         gui_preflight_reasons.append("single_window_policy_not_verified")
+    if workspace_context_mismatch:
+        gui_preflight_reasons.append("gui_wrapper_workspace_context_mismatch")
     gui_preflight_reasons = _dedupe_strings(gui_preflight_reasons)
     gui_preflight_required = bool(
         model_ready_for_hotload
@@ -21614,7 +21818,15 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
     if blocking_reasons:
         status = "blocked"
         action_id = "resolve_live_hotload_block"
-        if "gui_single_window_policy_violation" in blocking_reasons or "gui_window_not_found" in blocking_reasons:
+        if "gui_wrapper_workspace_context_mismatch" in blocking_reasons:
+            recommended_tool = "material_studio_live_session_preflight"
+            recommended_action = "rerun_preflight_with_visible_wrapper_workspace_before_hotload"
+            payload_hint = {
+                "working_dir": recommended_working_dir,
+                "project_id": workspace_context.get("recommended_project_id"),
+                "revision": workspace_context.get("recommended_revision"),
+            }
+        elif "gui_single_window_policy_violation" in blocking_reasons or "gui_window_not_found" in blocking_reasons:
             recommended_tool = "material_studio_gui_status"
             recommended_action = "resolve_materials_studio_window_state_before_hotload"
             payload_hint = {"project_id": project_id, "revision": revision}
@@ -21696,6 +21908,9 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             "gui_preflight_required": gui_preflight_required,
             "gui_preflight_reasons": gui_preflight_reasons,
             "model_ready_for_hotload": model_ready_for_hotload,
+            "workspace_context_mismatch": workspace_context_mismatch,
+            "recommended_working_dir": recommended_working_dir,
+            "workspace_context": workspace_context or None,
             "single_window_execution_verified": gui_preflight_verified,
             "current_revision_loaded": current_revision_loaded,
             "needs_user_confirmation": needs_user_confirmation,
@@ -32715,6 +32930,18 @@ def material_studio_live_modeling_request(
                 "capabilities_hint": _live_capabilities_hint(),
             }, status="conflicting_structured_payloads", recommended_action="choose_one_structured_payload", payload_hint={"choose_one_of": ["spec", "patch"]})
 
+        project_context_explicit = project_id is not None
+        if isinstance(patch, dict):
+            patch_project_id = patch.get("project_id")
+            if project_id is None and isinstance(patch_project_id, str) and patch_project_id.strip():
+                project_id = patch_project_id.strip()
+                project_context_explicit = True
+            if base_revision is None and patch.get("base_revision") is not None:
+                try:
+                    base_revision = int(patch["base_revision"])
+                except (TypeError, ValueError):
+                    pass
+
         mode, execution_mode_source = _resolve_live_execution_mode(execution_mode, user_request)
         inferred_views = _requested_views_from_text(user_request)
         if views is None and inferred_views is not None:
@@ -32750,6 +32977,31 @@ def material_studio_live_modeling_request(
                     project_id = current_spec.project_id
             plan = infer_modeling_plan(user_request, project_id=explicit_project_id, current_spec=current_spec)
             nl_plan = {key: value for key, value in plan.to_dict().items() if key != "payload"}
+            if (
+                not project_context_explicit
+                and current_spec is not None
+                and plan.kind
+                in {
+                    "patch",
+                    "redo",
+                    "rollback",
+                    "continue_view_replay",
+                    "inspect_current",
+                    "show_current",
+                }
+            ):
+                workspace_guard = _implicit_visible_workspace_guard(
+                    store=store,
+                    current_spec=current_spec,
+                    project_resolution=project_resolution,
+                    user_request=user_request,
+                    workflow=plan.kind,
+                )
+                if workspace_guard is not None:
+                    workspace_guard["nl_plan"] = nl_plan
+                    workspace_guard["execution_mode"] = mode.value
+                    workspace_guard["execution_mode_source"] = execution_mode_source
+                    return finish(workspace_guard)
             if plan.kind == "spec" and plan.payload is not None:
                 spec = plan.payload
                 if execution_mode is None and mode == ExecutionMode.PREVIEW:

@@ -5523,6 +5523,18 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         == "confirm_metadata_reconciliation"
     )
     assert capabilities["dopant_metadata_reconcile_requires_explicit_confirmation"] is True
+    assert capabilities["recommended_kpoint_remediation_action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert capabilities["recommended_calculation_settings_confirmation_field"] == (
+        "confirm_recommended_calculation_settings"
+    )
+    assert (
+        capabilities[
+            "recommended_calculation_settings_requires_explicit_confirmation"
+        ]
+        is True
+    )
     assert capabilities["live_update_project_id_optional"] is True
     assert capabilities["live_update_base_revision_optional"] is True
     assert capabilities["live_update_context_resolution_order"] == [
@@ -6065,7 +6077,24 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert kpoint_remediation["tool"] == "material_studio_live_update_with_patch"
     assert kpoint_remediation["change_scope"] == "simulation_settings_only"
     assert kpoint_remediation["requires_user_confirmation"] is True
+    assert kpoint_remediation["confirmation_field"] == (
+        "confirm_recommended_calculation_settings"
+    )
+    assert kpoint_remediation["remediation_intent"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
     assert kpoint_remediation["structure_unchanged"] is True
+    recommended_kpoint_command = next(
+        command
+        for command in capabilities["natural_language"]["patch_commands"]
+        if command["template_id"]
+        == "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert recommended_kpoint_command["operations"] == ["set_castep_energy"]
+    assert recommended_kpoint_command["requires_explicit_confirmation"] is True
+    assert recommended_kpoint_command[
+        "requires_current_diagnostic_recommendation"
+    ] is True
     spin_charge = use_cases["spin_charge_preflight"]
     assert "odd electron count" in spin_charge["request_terms"]
     assert "spin polarization" in spin_charge["request_terms"]
@@ -30225,6 +30254,10 @@ def test_slab_kpoint_readiness_payload_creates_simulation_only_repair_revision(
     assert readiness["safe_to_call_without_confirmation"] is False
     payload = readiness["payload_hint"]
     assert payload["base_revision"] == 0
+    assert payload["remediation_intent"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert payload["confirm_recommended_calculation_settings"] is False
     assert payload["patch"]["operations"] == [
         {
             "type": "set_castep_energy",
@@ -30248,13 +30281,70 @@ def test_slab_kpoint_readiness_payload_creates_simulation_only_repair_revision(
     )
 
     update_payload = {**payload, "working_dir": str(tmp_path), "response_mode": "full"}
-    updated = server.material_studio_live_update_with_patch(**update_payload)
+    confirmation = server.material_studio_live_update_with_patch(**update_payload)
+
+    assert confirmation["ok"] is False
+    assert confirmation["status"] == (
+        "recommended_calculation_settings_confirmation_required"
+    )
+    assert confirmation["revision_created"] is False
+    assert confirmation["confirmation_required"] is True
+    assert confirmation["confirmation_received"] is False
+    assert confirmation["recommended_kpoints"] == [29, 29, 1]
+    assert confirmation["recommended_patch"] == payload["patch"]
+    unchanged = server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )
+    assert unchanged["revision"] == 0
+
+    confirmed_payload = {
+        **confirmation["confirmation_payload_hint"],
+        "working_dir": str(tmp_path),
+        "response_mode": "full",
+    }
+    updated = server.material_studio_live_update_with_patch(**confirmed_payload)
 
     assert updated["ok"] is True
     assert updated["base_revision"] == 0
     assert updated["new_revision"] == 1
     assert updated["execution_mode"] == "preview"
     assert updated["diff"] == ["set_castep_energy"]
+    assert updated["confirmation_required"] is True
+    assert updated["confirmation_received"] is True
+    assert updated["structure_unchanged"] is True
+    assert updated["simulation_settings_changed"] is True
+    assert updated["reciprocal_status"] == "ok"
+    assert updated["remediation_postcondition_met"] is True
+    remediation = updated["recommended_calculation_settings_remediation"]
+    assert remediation["diagnostic_reaudit_forced"] is True
+    assert remediation["gui_hotload_requested"] is False
+    assert remediation["kpoint_blocker_cleared"] is True
+    assert remediation["postcondition_met"] is True
+    persisted_report = json.loads(
+        Path(updated["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_report["remediation_intent"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert persisted_report["confirmation_required"] is True
+    assert persisted_report["confirmation_received"] is True
+    assert persisted_report["structure_unchanged"] is True
+    assert persisted_report["simulation_settings_changed"] is True
+    assert persisted_report["diagnostic_reaudit_forced"] is True
+    assert persisted_report["reciprocal_status"] == "ok"
+    assert persisted_report["remediation_postcondition_met"] is True
+    assert persisted_report["recommended_calculation_settings_remediation"][
+        "kpoint_blocker_cleared"
+    ] is True
+    assert persisted_report["recommended_calculation_settings_remediation"][
+        "postcondition_met"
+    ] is True
+    persisted_modeling_report = persisted_report["modeling_report"]
+    assert persisted_modeling_report["remediation_intent"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert persisted_modeling_report["remediation_postcondition_met"] is True
     after = server.material_studio_model_get_current(
         created["project_id"],
         working_dir=str(tmp_path),
@@ -30282,6 +30372,178 @@ def test_slab_kpoint_readiness_payload_creates_simulation_only_repair_revision(
         working_dir=str(tmp_path),
     )["history"]
     assert [entry["revision"] for entry in history] == [0, 1]
+
+
+def test_live_modeling_request_confirms_recommended_kpoint_grid_in_two_steps(
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    project_id = created["project_id"]
+    before = server.material_studio_model_get_current(
+        project_id,
+        working_dir=str(tmp_path),
+    )
+
+    confirmation = server.material_studio_live_modeling_request(
+        "Apply the recommended k-point grid.",
+        project_id=project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert confirmation["ok"] is False
+    assert confirmation["workflow"] == "apply_recommended_kpoint_grid"
+    assert confirmation["status"] == (
+        "recommended_calculation_settings_confirmation_required"
+    )
+    assert confirmation["nl_plan"]["kind"] == "apply_recommended_kpoint_grid"
+    assert confirmation["recommended_kpoints"] == [29, 29, 1]
+    assert confirmation["revision_created"] is False
+    assert confirmation["next_action_plan"]["recommended_tool"] == (
+        "material_studio_live_modeling_request"
+    )
+    assert confirmation["next_action_plan"]["needs_user_confirmation"] is True
+    high_level_payload = confirmation["high_level_confirmation_payload_hint"]
+    assert high_level_payload["base_revision"] == 0
+    assert high_level_payload["confirm_recommended_calculation_settings"] is True
+    assert high_level_payload["open_in_gui"] is False
+    assert high_level_payload["required_diagnostic_focuses"] == [
+        "electronic_structure_preflight"
+    ]
+    assert server.material_studio_model_get_current(
+        project_id,
+        working_dir=str(tmp_path),
+    )["revision"] == 0
+
+    updated = server.material_studio_live_modeling_request(
+        **high_level_payload,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+
+    assert updated["ok"] is True
+    assert updated["workflow"] == "apply_recommended_kpoint_grid"
+    assert updated["base_revision"] == 0
+    assert updated["new_revision"] == 1
+    assert updated["execution_mode"] == "preview"
+    assert updated["explicit_gui_request"] is False
+    assert updated["diagnostic_export_requested"] is True
+    assert updated["requested_diagnostic_focuses"] == [
+        "electronic_structure_preflight"
+    ]
+    assert updated["remediation_postcondition_met"] is True
+    after = server.material_studio_model_get_current(
+        project_id,
+        working_dir=str(tmp_path),
+    )
+    assert after["revision"] == 1
+    assert after["spec"]["model"] == before["spec"]["model"]
+    assert after["spec"]["simulation"]["kpoints"] == [29, 29, 1]
+
+    repeated = server.material_studio_live_modeling_request(
+        "\u5e94\u7528\u63a8\u8350\u7684 k \u70b9\u7f51\u683c\u3002",
+        project_id=project_id,
+        confirm_recommended_calculation_settings=True,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert repeated["ok"] is True
+    assert repeated["status"] == "recommended_kpoint_grid_already_satisfied"
+    assert repeated["revision"] == 1
+    assert repeated["revision_created"] is False
+    assert repeated["reciprocal_status"] == "ok"
+    assert repeated["remediation_postcondition_met"] is True
+
+
+def test_recommended_kpoint_confirmation_rejects_stale_or_modified_payload(
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a MoS2 monolayer for semiconductor calculation preflight.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+    action = created["modeling_report"]["semiconductor_calculation_readiness"]
+    payload = action["payload_hint"]
+
+    missing_intent_payload = {**payload}
+    missing_intent_payload.pop("remediation_intent")
+    missing_intent = server.material_studio_live_update_with_patch(
+        **{
+            **missing_intent_payload,
+            "confirm_recommended_calculation_settings": True,
+            "working_dir": str(tmp_path),
+            "response_mode": "full",
+        }
+    )
+    assert missing_intent["ok"] is False
+    assert missing_intent["status"] == (
+        "recommended_calculation_settings_intent_required"
+    )
+    assert missing_intent["revision_created"] is False
+
+    stale = server.material_studio_live_update_with_patch(
+        **{
+            **payload,
+            "base_revision": 1,
+            "confirm_recommended_calculation_settings": True,
+            "working_dir": str(tmp_path),
+            "response_mode": "full",
+        }
+    )
+    assert stale["ok"] is False
+    assert stale["status"] == "recommended_kpoint_payload_stale_or_mismatched"
+    assert stale["submitted_base_revision"] == 1
+    assert stale["current_revision"] == 0
+    assert stale["revision_created"] is False
+    assert stale["confirmation_payload_hint"]["base_revision"] == 0
+
+    modified_patch = {
+        **payload["patch"],
+        "operations": [
+            {
+                **payload["patch"]["operations"][0],
+                "kpoints": [28, 28, 1],
+            }
+        ],
+    }
+    modified = server.material_studio_live_update_with_patch(
+        **{
+            **payload,
+            "patch": modified_patch,
+            "confirm_recommended_calculation_settings": True,
+            "working_dir": str(tmp_path),
+            "response_mode": "full",
+        }
+    )
+    assert modified["ok"] is False
+    assert modified["status"] == "recommended_kpoint_payload_stale_or_mismatched"
+    assert modified["revision_created"] is False
+    assert modified["recommended_patch"]["operations"][0]["kpoints"] == [
+        29,
+        29,
+        1,
+    ]
+    assert server.material_studio_model_get_current(
+        created["project_id"],
+        working_dir=str(tmp_path),
+    )["revision"] == 0
 
 
 def test_modeling_report_visual_summary_allows_model_normal_with_clean_view_notes(tmp_path: Path) -> None:

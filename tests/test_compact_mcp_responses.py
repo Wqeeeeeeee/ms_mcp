@@ -21,6 +21,16 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["response_mode"] == "compact"
     assert compact["response_schema"] == "material_studio_capabilities_compact_v2"
     assert compact["full_detail_hint"]["arguments"] == {"response_mode": "full"}
+    assert compact["recommended_kpoint_remediation_action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert compact["recommended_calculation_settings_confirmation_field"] == (
+        "confirm_recommended_calculation_settings"
+    )
+    assert (
+        compact["recommended_calculation_settings_requires_explicit_confirmation"]
+        is True
+    )
     assert compact["domain_focus"]["primary"] == "semiconductor materials"
     assert compact["domain_focus"]["semiconductor_template_count"] >= 50
     assert "silicon_diamond" in compact["domain_focus"]["semiconductor_template_ids"]
@@ -31,6 +41,11 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["diagnostics"]["diagnostic_focus_profile_count"] >= 20
     assert compact["natural_language"]["patch_command_count"] == len(
         compact["natural_language"]["patch_commands"]
+    )
+    assert any(
+        command["template_id"]
+        == "apply_recommended_semiconductor_kpoint_grid"
+        for command in compact["natural_language"]["patch_commands"]
     )
     semiconductor_view_defaults = compact["natural_language"]["view_selection"][
         "semiconductor_domain_defaults"
@@ -472,6 +487,10 @@ def test_compact_slab_status_preserves_actionable_kpoint_repair(tmp_path: Path) 
     assert action["safe_to_call_without_confirmation"] is False
     assert action["payload_hint"]["open_in_gui"] is False
     assert action["payload_hint"]["execution_mode"] == "preview"
+    assert action["payload_hint"]["remediation_intent"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+    assert action["payload_hint"]["confirm_recommended_calculation_settings"] is False
     assert action["payload_hint"]["patch"] == {
         "project_id": created["project_id"],
         "base_revision": 0,

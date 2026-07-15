@@ -113,6 +113,12 @@ GUI_ARTIFACT_REPORT_LOCK_TIMEOUT_SECONDS = 30.0
 GUI_ARTIFACT_REPORT_LOCK_POLL_SECONDS = 0.05
 REVISION_EXECUTION_LOCK_TIMEOUT_SECONDS = 30.0
 REVISION_EXECUTION_LOCK_POLL_SECONDS = 0.05
+RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID = (
+    "apply_recommended_semiconductor_kpoint_grid"
+)
+RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD = (
+    "confirm_recommended_calculation_settings"
+)
 _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_gui_artifact_report_transaction",
     default=None,
@@ -1720,10 +1726,16 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "remediation_actions": [
                 {
                     "condition": "slab_or_coarse_kpoint_reciprocal_lattice_warning",
-                    "action_id": "apply_recommended_semiconductor_kpoint_grid",
+                    "action_id": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
                     "tool": "material_studio_live_update_with_patch",
                     "change_scope": "simulation_settings_only",
                     "requires_user_confirmation": True,
+                    "confirmation_field": (
+                        RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
+                    ),
+                    "remediation_intent": (
+                        RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+                    ),
                     "execution_mode": "preview",
                     "structure_unchanged": True,
                     "postcondition": "reexport_electronic_diagnostics_and_verify_reciprocal_status_ok",
@@ -3302,6 +3314,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "dopant_metadata_reconcile_operation": "reconcile_dopant_metadata",
         "dopant_metadata_reconcile_confirmation_field": "confirm_metadata_reconciliation",
         "dopant_metadata_reconcile_requires_explicit_confirmation": True,
+        "recommended_kpoint_remediation_action_id": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+        "recommended_calculation_settings_confirmation_field": (
+            RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
+        ),
+        "recommended_calculation_settings_requires_explicit_confirmation": True,
         "live_update_project_id_optional": True,
         "live_update_base_revision_optional": True,
         "live_update_context_resolution_order": ["project_id argument", "patch.project_id", "latest current project"],
@@ -17182,6 +17199,21 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "next_action_plan": response.get("next_action_plan"),
         "acceptance": response.get("acceptance"),
         "metadata_reconciliation": response.get("metadata_reconciliation"),
+        "remediation_intent": response.get("remediation_intent"),
+        "confirmation_required": response.get("confirmation_required"),
+        "confirmation_received": response.get("confirmation_received"),
+        "recommended_calculation_settings_remediation": response.get(
+            "recommended_calculation_settings_remediation"
+        ),
+        "reciprocal_status": response.get("reciprocal_status"),
+        "remediation_postcondition_met": response.get(
+            "remediation_postcondition_met"
+        ),
+        "structure_unchanged": response.get("structure_unchanged"),
+        "simulation_settings_changed": response.get(
+            "simulation_settings_changed"
+        ),
+        "diagnostic_reaudit_forced": response.get("diagnostic_reaudit_forced"),
         "state_write_transaction": response.get("state_write_transaction"),
         "state_write_deferred": response.get("state_write_deferred"),
         "project_state_transaction_error": response.get(
@@ -17419,6 +17451,21 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "next_action": health.get("next_action") or response.get("next_action"),
         "acceptance_review": acceptance_review,
         "metadata_reconciliation": response.get("metadata_reconciliation"),
+        "remediation_intent": response.get("remediation_intent"),
+        "confirmation_required": response.get("confirmation_required"),
+        "confirmation_received": response.get("confirmation_received"),
+        "recommended_calculation_settings_remediation": response.get(
+            "recommended_calculation_settings_remediation"
+        ),
+        "reciprocal_status": response.get("reciprocal_status"),
+        "remediation_postcondition_met": response.get(
+            "remediation_postcondition_met"
+        ),
+        "structure_unchanged": response.get("structure_unchanged"),
+        "simulation_settings_changed": response.get(
+            "simulation_settings_changed"
+        ),
+        "diagnostic_reaudit_forced": response.get("diagnostic_reaudit_forced"),
         "structure_artifact_validation": structure_artifact_validation,
         "revision_delta": response.get("revision_delta"),
         "change_validation": change_validation,
@@ -19165,9 +19212,11 @@ def _semiconductor_calculation_action_hint(
             "open_in_gui": False,
             "take_snapshot": False,
             "export_view_audit": True,
+            "remediation_intent": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+            RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD: False,
         }
         return {
-            "action_id": "apply_recommended_semiconductor_kpoint_grid",
+            "action_id": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
             "next_action": action,
             "recommended_tool": "material_studio_live_update_with_patch",
             "recommended_action": action,
@@ -19198,6 +19247,9 @@ def _semiconductor_calculation_action_hint(
                     "slab_axis": kpoints.get("slab_axis"),
                     "structure_unchanged": True,
                     "simulation_settings_changed": True,
+                    "confirmation_field": (
+                        RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
+                    ),
                     "resolves_blocking_reasons": [
                         "semiconductor:kpoint_reciprocal_lattice_warnings"
                     ],
@@ -20484,7 +20536,7 @@ def _live_action_summary(report: dict[str, Any]) -> dict[str, Any]:
         phase = "fix_semiconductor_surface_model"
     elif action_id == "review_semiconductor_calculation_settings":
         phase = "review_semiconductor_calculation_settings"
-    elif action_id == "apply_recommended_semiconductor_kpoint_grid":
+    elif action_id == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID:
         phase = "apply_recommended_semiconductor_kpoint_grid"
     elif action_id == "ready_for_semiconductor_calculation_preflight":
         phase = "confirm_semiconductor_calculation"
@@ -29924,6 +29976,19 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "new_revision",
             "target_revision",
             "revision_created",
+            "confirmation_required",
+            "confirmation_received",
+            "remediation_intent",
+            "recommended_kpoints",
+            "recommended_patch",
+            "confirmation_payload_hint",
+            "high_level_confirmation_payload_hint",
+            "structure_unchanged",
+            "simulation_settings_changed",
+            "diagnostic_reaudit_forced",
+            "reciprocal_status",
+            "remediation_postcondition_met",
+            "recommended_calculation_settings_remediation",
             "view_replay_continuation_requested",
             "view_replay_prepared",
             "view_replay_continuation",
@@ -30066,6 +30131,9 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_status_tool",
             "live_update_tool",
             "dopant_metadata_reconcile_tool",
+            "recommended_kpoint_remediation_action_id",
+            "recommended_calculation_settings_confirmation_field",
+            "recommended_calculation_settings_requires_explicit_confirmation",
             "default_execution_mode",
             "response_modes",
             "response_mode",
@@ -30271,6 +30339,19 @@ def _compact_live_response(
             "new_revision",
             "target_revision",
             "revision_created",
+            "confirmation_required",
+            "confirmation_received",
+            "remediation_intent",
+            "recommended_kpoints",
+            "recommended_patch",
+            "confirmation_payload_hint",
+            "high_level_confirmation_payload_hint",
+            "structure_unchanged",
+            "simulation_settings_changed",
+            "diagnostic_reaudit_forced",
+            "reciprocal_status",
+            "remediation_postcondition_met",
+            "recommended_calculation_settings_remediation",
             "view_replay_continuation_requested",
             "view_replay_prepared",
             "view_replay_continuation",
@@ -30793,6 +30874,9 @@ def _compact_capabilities_response(
             "live_status_tool",
             "live_update_tool",
             "dopant_metadata_reconcile_tool",
+            "recommended_kpoint_remediation_action_id",
+            "recommended_calculation_settings_confirmation_field",
+            "recommended_calculation_settings_requires_explicit_confirmation",
             "default_execution_mode",
             "response_modes",
             "visual_confirmation_entry",
@@ -33296,6 +33380,249 @@ def _dopant_metadata_reconciliation_confirmation_failure(
     return attached
 
 
+def _recommended_kpoint_action_from_status(
+    status: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the current revision-bound k-point remediation action, if any."""
+
+    report = (
+        status.get("modeling_report")
+        if isinstance(status.get("modeling_report"), dict)
+        else {}
+    )
+    candidates = (
+        report.get("semiconductor_calculation_readiness"),
+        status.get("semiconductor_calculation_readiness"),
+        status.get("next_action_plan"),
+    )
+    for candidate in candidates:
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("action_id")
+            == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+        ):
+            return candidate
+    return None
+
+
+def _semiconductor_reciprocal_status_from_live_status(
+    status: dict[str, Any],
+) -> str | None:
+    """Return the current reciprocal-lattice preflight status from a live receipt."""
+
+    report = (
+        status.get("modeling_report")
+        if isinstance(status.get("modeling_report"), dict)
+        else {}
+    )
+    review = (
+        report.get("semiconductor_review")
+        if isinstance(report.get("semiconductor_review"), dict)
+        else {}
+    )
+    kpoints = review.get("kpoints") if isinstance(review.get("kpoints"), dict) else {}
+    value = kpoints.get("status")
+    return str(value) if value is not None else None
+
+
+def _recommended_kpoint_patch_matches(
+    semantic_patch: SemanticPatch,
+    expected_patch: dict[str, Any],
+    *,
+    current_spec: ModelSpec,
+) -> bool:
+    """Verify that a confirmed patch exactly matches the current recommendation."""
+
+    if (
+        semantic_patch.project_id != current_spec.project_id
+        or semantic_patch.base_revision != current_spec.revision
+        or semantic_patch.force
+        or semantic_patch.run_after_apply
+        or len(semantic_patch.operations) != 1
+    ):
+        return False
+    expected_operations = expected_patch.get("operations")
+    if not isinstance(expected_operations, list) or len(expected_operations) != 1:
+        return False
+    operation = semantic_patch.operations[0]
+    actual_operation = _drop_none_values(
+        {
+            "type": operation.operation,
+            "task": getattr(operation.task, "value", operation.task),
+            "functional": operation.functional,
+            "quality": operation.quality,
+            "cutoff_energy_ev": operation.cutoff_energy_ev,
+            "kpoint_separation": operation.kpoint_separation,
+            "kpoints": list(operation.kpoints) if operation.kpoints is not None else None,
+        }
+    )
+    expected_operation = _drop_none_values(dict(expected_operations[0]))
+    return actual_operation == expected_operation
+
+
+def _recommended_kpoint_confirmation_failure(
+    *,
+    current_spec: ModelSpec,
+    project_resolution: dict[str, Any],
+    user_text: str | None,
+    action: dict[str, Any],
+    execution_mode: ExecutionMode,
+    open_in_gui: bool,
+    take_snapshot: bool,
+) -> dict[str, Any]:
+    """Return the exact non-mutating confirmation handoff for a k-point repair."""
+
+    action_payload = (
+        dict(action.get("payload_hint"))
+        if isinstance(action.get("payload_hint"), dict)
+        else {}
+    )
+    patch_payload = (
+        dict(action_payload.get("patch"))
+        if isinstance(action_payload.get("patch"), dict)
+        else {}
+    )
+    patch_payload["project_id"] = current_spec.project_id
+    patch_payload["base_revision"] = current_spec.revision
+    patch_payload["execution_mode"] = execution_mode.value
+    confirmation_payload = {
+        **action_payload,
+        "project_id": current_spec.project_id,
+        "base_revision": current_spec.revision,
+        "patch": patch_payload,
+        "user_text": user_text or action_payload.get("user_text"),
+        "execution_mode": execution_mode.value,
+        "open_in_gui": open_in_gui,
+        "take_snapshot": take_snapshot,
+        "export_view_audit": True,
+        "remediation_intent": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+        RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD: True,
+    }
+    recommended_grid = None
+    operations = patch_payload.get("operations")
+    if isinstance(operations, list) and operations and isinstance(operations[0], dict):
+        recommended_grid = operations[0].get("kpoints")
+    response = {
+        "ok": False,
+        "workflow": "apply_recommended_kpoint_grid",
+        "status": "recommended_calculation_settings_confirmation_required",
+        "error": (
+            "Explicit user confirmation is required before creating the recommended "
+            "simulation-only k-point revision."
+        ),
+        "required_next_step": (
+            "Review the exact patch, then retry with "
+            "confirm_recommended_calculation_settings=true."
+        ),
+        "user_request": user_text,
+        "project_id": current_spec.project_id,
+        "project_resolution": project_resolution,
+        "revision": current_spec.revision,
+        "base_revision": current_spec.revision,
+        "revision_created": False,
+        "confirmation_required": True,
+        "confirmation_received": False,
+        "remediation_intent": RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID,
+        "recommended_kpoints": recommended_grid,
+        "recommended_patch": patch_payload,
+        "confirmation_payload_hint": _drop_none_values(confirmation_payload),
+        "structure_unchanged": True,
+        "simulation_settings_changed": False,
+    }
+    attached = _attach_live_patch_failure_contract(
+        response,
+        status="recommended_calculation_settings_confirmation_required",
+        recommended_action="confirm_current_revision_kpoint_remediation",
+        payload_hint=_drop_none_values(confirmation_payload),
+        current_spec=current_spec,
+        project_resolution=project_resolution,
+        needs_user_confirmation=True,
+    )
+    attached["next_action_plan"] = {
+        "action_id": "confirm_recommended_semiconductor_kpoint_grid",
+        "recommended_tool": "material_studio_live_update_with_patch",
+        "recommended_action": "confirm_current_revision_kpoint_remediation",
+        "needs_user_confirmation": True,
+        "safe_to_call_without_confirmation": False,
+        "payload_hint": _drop_none_values(confirmation_payload),
+    }
+    return attached
+
+
+def _attach_recommended_kpoint_postcondition(
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach the re-audited blocker-clearance receipt after a confirmed repair."""
+
+    if (
+        response.get("remediation_intent")
+        != RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+    ):
+        return response
+    report = (
+        response.get("modeling_report")
+        if isinstance(response.get("modeling_report"), dict)
+        else {}
+    )
+    readiness = (
+        report.get("semiconductor_calculation_readiness")
+        if isinstance(report.get("semiconductor_calculation_readiness"), dict)
+        else {}
+    )
+    if readiness:
+        reciprocal_status = readiness.get("reciprocal_status")
+        blocking_reasons = [
+            str(item)
+            for item in readiness.get("semiconductor_blocking_reasons", []) or []
+        ]
+    else:
+        audit = (
+            response.get("view_audit")
+            if isinstance(response.get("view_audit"), dict)
+            else {}
+        )
+        review = _semiconductor_review_from_audit(audit)
+        kpoints = (
+            review.get("kpoints")
+            if isinstance(review.get("kpoints"), dict)
+            else {}
+        )
+        reciprocal_status = kpoints.get("status")
+        risk_flags = {
+            str(item) for item in review.get("risk_flags", []) or [] if item
+        }
+        blocking_reasons = (
+            ["semiconductor:kpoint_reciprocal_lattice_warnings"]
+            if "kpoint_reciprocal_lattice_warnings" in risk_flags
+            else []
+        )
+    blocker_cleared = (
+        "semiconductor:kpoint_reciprocal_lattice_warnings"
+        not in blocking_reasons
+    )
+    postcondition_met = reciprocal_status == "ok" and blocker_cleared
+    receipt = (
+        response.get("recommended_calculation_settings_remediation")
+        if isinstance(
+            response.get("recommended_calculation_settings_remediation"),
+            dict,
+        )
+        else {}
+    )
+    receipt.update(
+        {
+            "reciprocal_status_after": reciprocal_status,
+            "semiconductor_blocking_reasons_after": blocking_reasons,
+            "kpoint_blocker_cleared": blocker_cleared,
+            "postcondition_met": postcondition_met,
+        }
+    )
+    response["recommended_calculation_settings_remediation"] = receipt
+    response["reciprocal_status"] = reciprocal_status
+    response["remediation_postcondition_met"] = postcondition_met
+    return response
+
+
 @mcp.tool(
     name="material_studio_project_reconcile_dopant_metadata",
     annotations={
@@ -33521,6 +33848,8 @@ def material_studio_live_update_with_patch(
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full diagnostics or compact MCP change receipt.")] = McpResponseMode.FULL,
     confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation when the patch reconciles dopant metadata.")] = False,
+    remediation_intent: Annotated[str | None, Field(description="Optional action ID from a prior diagnostic remediation payload.", max_length=200)] = None,
+    confirm_recommended_calculation_settings: Annotated[bool, Field(description="Must be true after explicit user confirmation before a recommended calculation-settings revision can be written.")] = False,
 ) -> dict[str, Any]:
     """Patch current state, persist a revision, and optionally execute/open it in the GUI."""
 
@@ -33554,7 +33883,11 @@ def material_studio_live_update_with_patch(
             views = inferred_views
         diagnostic_export_requested = _diagnostic_export_requested_from_text(user_text)
         normality_check_requested = _normality_check_requested_from_text(user_text)
-        effective_export_view_audit = export_view_audit or diagnostic_export_requested
+        effective_export_view_audit = (
+            export_view_audit
+            or diagnostic_export_requested
+            or remediation_intent == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+        )
         store = _structured_store(working_dir)
         project_resolution: dict[str, Any] | None = None
         patch_project_id = patch.get("project_id") if isinstance(patch.get("project_id"), str) else None
@@ -33629,6 +33962,198 @@ def material_studio_live_update_with_patch(
                 current_spec=current,
                 project_resolution=project_resolution,
             )
+        if confirm_recommended_calculation_settings and (
+            remediation_intent != RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+        ):
+            return _compact_live_response(
+                _attach_live_patch_failure_contract(
+                    {
+                        "ok": False,
+                        "workflow": "live_patch",
+                        "status": "recommended_calculation_settings_intent_required",
+                        "user_request": user_text,
+                        "project_id": project_id,
+                        "project_resolution": project_resolution,
+                        "revision": current.revision,
+                        "base_revision": base_revision,
+                        "revision_created": False,
+                        "error": (
+                            "confirm_recommended_calculation_settings requires the exact "
+                            "diagnostic remediation_intent."
+                        ),
+                        "required_next_step": (
+                            "Refresh live status and use its revision-bound remediation payload."
+                        ),
+                    },
+                    status="recommended_calculation_settings_intent_required",
+                    recommended_action="refresh_current_diagnostic_remediation_payload",
+                    payload_hint={
+                        "project_id": project_id,
+                        "base_revision": current.revision,
+                        "remediation_intent": (
+                            RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+                        ),
+                    },
+                    current_spec=current,
+                    project_resolution=project_resolution,
+                ),
+                response_mode,
+            )
+        if remediation_intent is not None and (
+            remediation_intent != RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+        ):
+            return _compact_live_response(
+                _attach_live_patch_failure_contract(
+                    {
+                        "ok": False,
+                        "workflow": "live_patch",
+                        "status": "unsupported_remediation_intent",
+                        "user_request": user_text,
+                        "project_id": project_id,
+                        "project_resolution": project_resolution,
+                        "revision": current.revision,
+                        "base_revision": base_revision,
+                        "revision_created": False,
+                        "error": f"Unsupported remediation_intent: {remediation_intent}",
+                        "required_next_step": (
+                            "Refresh live status and use an advertised remediation action ID."
+                        ),
+                    },
+                    status="unsupported_remediation_intent",
+                    recommended_action="refresh_current_diagnostic_remediation_payload",
+                    payload_hint={
+                        "project_id": project_id,
+                        "status_tool": "material_studio_live_project_status",
+                    },
+                    current_spec=current,
+                    project_resolution=project_resolution,
+                ),
+                response_mode,
+            )
+        if remediation_intent == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID:
+            current_status = material_studio_live_project_status(
+                project_id=project_id,
+                include_gui_status=False,
+                working_dir=working_dir,
+                response_mode=McpResponseMode.FULL,
+            )
+            current_action = _recommended_kpoint_action_from_status(current_status)
+            if current_action is None:
+                reciprocal_status = _semiconductor_reciprocal_status_from_live_status(
+                    current_status
+                )
+                if current_status.get("ok") and reciprocal_status == "ok":
+                    current_status.update(
+                        {
+                            "workflow": "apply_recommended_kpoint_grid",
+                            "status": "recommended_kpoint_grid_already_satisfied",
+                            "user_request": user_text,
+                            "project_resolution": project_resolution,
+                            "revision": current.revision,
+                            "base_revision": current.revision,
+                            "revision_created": False,
+                            "confirmation_required": False,
+                            "confirmation_received": (
+                                confirm_recommended_calculation_settings
+                            ),
+                            "remediation_intent": remediation_intent,
+                            "reciprocal_status": reciprocal_status,
+                            "remediation_postcondition_met": True,
+                            "structure_unchanged": True,
+                            "simulation_settings_changed": False,
+                        }
+                    )
+                    return _compact_live_response(current_status, response_mode)
+                return _compact_live_response(
+                    _attach_live_patch_failure_contract(
+                        {
+                            "ok": False,
+                            "workflow": "apply_recommended_kpoint_grid",
+                            "status": "recommended_kpoint_remediation_unavailable",
+                            "user_request": user_text,
+                            "project_id": project_id,
+                            "project_resolution": project_resolution,
+                            "revision": current.revision,
+                            "base_revision": current.revision,
+                            "revision_created": False,
+                            "error": (
+                                "The current revision does not expose an actionable k-point "
+                                "recommendation."
+                            ),
+                            "required_next_step": (
+                                "Review the current calculation-readiness action before changing settings."
+                            ),
+                            "reciprocal_status": reciprocal_status,
+                            "current_next_action": current_status.get("next_action_plan"),
+                        },
+                        status="recommended_kpoint_remediation_unavailable",
+                        recommended_action="review_current_calculation_readiness",
+                        payload_hint={
+                            "project_id": project_id,
+                            "status_tool": "material_studio_live_project_status",
+                        },
+                        current_spec=current,
+                        project_resolution=project_resolution,
+                    ),
+                    response_mode,
+                )
+            expected_payload = (
+                current_action.get("payload_hint")
+                if isinstance(current_action.get("payload_hint"), dict)
+                else {}
+            )
+            expected_patch = (
+                expected_payload.get("patch")
+                if isinstance(expected_payload.get("patch"), dict)
+                else {}
+            )
+            stale_or_mismatched = (
+                base_revision != current.revision
+                or expected_patch.get("base_revision") != current.revision
+                or not _recommended_kpoint_patch_matches(
+                    semantic_patch,
+                    expected_patch,
+                    current_spec=current,
+                )
+            )
+            if stale_or_mismatched:
+                failure = _recommended_kpoint_confirmation_failure(
+                    current_spec=current,
+                    project_resolution=project_resolution,
+                    user_text=user_text,
+                    action=current_action,
+                    execution_mode=mode,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                )
+                failure.update(
+                    {
+                        "status": "recommended_kpoint_payload_stale_or_mismatched",
+                        "error": (
+                            "The submitted remediation payload is stale or does not exactly "
+                            "match the current revision's recommendation."
+                        ),
+                        "required_next_step": (
+                            "Review and confirm the refreshed current-revision payload."
+                        ),
+                        "submitted_base_revision": base_revision,
+                        "current_revision": current.revision,
+                    }
+                )
+                return _compact_live_response(failure, response_mode)
+            if not confirm_recommended_calculation_settings:
+                return _compact_live_response(
+                    _recommended_kpoint_confirmation_failure(
+                        current_spec=current,
+                        project_resolution=project_resolution,
+                        user_text=user_text,
+                        action=current_action,
+                        execution_mode=mode,
+                        open_in_gui=open_in_gui,
+                        take_snapshot=take_snapshot,
+                    ),
+                    response_mode,
+                )
         reconcile_operations = [
             operation
             for operation in semantic_patch.operations
@@ -33667,7 +34192,12 @@ def material_studio_live_update_with_patch(
                 project_resolution=project_resolution,
             )
             return _compact_live_response(failure, response_mode)
-        patch_workflow = "dopant_metadata_reconcile" if reconcile_operations else "live_patch"
+        if reconcile_operations:
+            patch_workflow = "dopant_metadata_reconcile"
+        elif remediation_intent == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID:
+            patch_workflow = "recommended_kpoint_remediation"
+        else:
+            patch_workflow = "live_patch"
         if patch_workflow == "dopant_metadata_reconcile":
             before = _dopant_metadata_consistency_from_audit(model_view_audit(current, views))
             if before["metadata_consistent"] and before["stale_site_count"] == 0:
@@ -33837,6 +34367,48 @@ def material_studio_live_update_with_patch(
         if patch_workflow == "dopant_metadata_reconcile":
             response["confirmation_required"] = True
             response["confirmation_received"] = confirm_metadata_reconciliation
+        if remediation_intent == RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID:
+            structure_unchanged = current.model.model_dump(mode="json") == new_spec.model.model_dump(
+                mode="json"
+            )
+            simulation_before = (
+                current.simulation.model_dump(mode="json")
+                if current.simulation is not None
+                else None
+            )
+            simulation_after = (
+                new_spec.simulation.model_dump(mode="json")
+                if new_spec.simulation is not None
+                else None
+            )
+            response.update(
+                {
+                    "remediation_intent": remediation_intent,
+                    "confirmation_required": True,
+                    "confirmation_received": (
+                        confirm_recommended_calculation_settings
+                    ),
+                    "recommended_calculation_settings_remediation": {
+                        "action_id": remediation_intent,
+                        "base_revision": current.revision,
+                        "new_revision": info.revision,
+                        "revision_created": True,
+                        "structure_unchanged": structure_unchanged,
+                        "simulation_settings_changed": (
+                            simulation_before != simulation_after
+                        ),
+                        "diagnostic_reaudit_forced": True,
+                        "gui_hotload_requested": bool(
+                            mode == ExecutionMode.EXECUTE and open_in_gui
+                        ),
+                    },
+                    "structure_unchanged": structure_unchanged,
+                    "simulation_settings_changed": (
+                        simulation_before != simulation_after
+                    ),
+                    "diagnostic_reaudit_forced": True,
+                }
+            )
         audit_artifacts: list[dict[str, Any]] = []
         if effective_export_view_audit:
             audit = model_view_audit(new_spec, views)
@@ -33849,28 +34421,44 @@ def material_studio_live_update_with_patch(
             )
             response["view_audit"] = audit
             response["view_audit_report_path"] = str(report_path)
+        _attach_recommended_kpoint_postcondition(response)
         if mode == ExecutionMode.PREVIEW:
+            attached = _attach_modeling_health(
+                response,
+                execution_mode=mode,
+                store=store,
+                spec=new_spec,
+                gui_artifacts=audit_artifacts,
+            )
             return _compact_live_response(
-                _attach_modeling_health(response, execution_mode=mode, store=store, spec=new_spec, gui_artifacts=audit_artifacts),
+                _attach_recommended_kpoint_postcondition(attached),
                 response_mode,
             )
         if not generated["executable"] and not isinstance(new_spec.model, CrystalSpec):
             response = {**response, "ok": False, "error": "Generated script is preview-only or failed validation."}
+            attached = _attach_modeling_health(
+                response,
+                execution_mode=mode,
+                store=store,
+                spec=new_spec,
+                gui_artifacts=audit_artifacts,
+            )
             return _compact_live_response(
-                _attach_modeling_health(response, execution_mode=mode, store=store, spec=new_spec, gui_artifacts=audit_artifacts),
+                _attach_recommended_kpoint_postcondition(attached),
                 response_mode,
             )
         if open_in_gui:
             blocked_response = _with_single_window_hotload_block(response, gui_status)
             if blocked_response is not response:
+                attached = _attach_modeling_health(
+                    blocked_response,
+                    execution_mode=mode,
+                    store=store,
+                    spec=new_spec,
+                    gui_artifacts=audit_artifacts,
+                )
                 return _compact_live_response(
-                    _attach_modeling_health(
-                        blocked_response,
-                        execution_mode=mode,
-                        store=store,
-                        spec=new_spec,
-                        gui_artifacts=audit_artifacts,
-                    ),
+                    _attach_recommended_kpoint_postcondition(attached),
                     response_mode,
                 )
 
@@ -33887,30 +34475,38 @@ def material_studio_live_update_with_patch(
         structure_path = Path(str(generated["planned_outputs"].get("structure", ""))).expanduser()
         if execution.get("result", {}).get("success") and open_in_gui:
             if structure_path.exists():
-                return _compact_live_response(
-                    _finalize_high_level_gui_hotload(
-                        response=response,
-                        store=store,
-                        spec=new_spec,
-                        gui=gui,
-                        structure_path=structure_path,
-                        take_snapshot=take_snapshot,
-                        audit_artifacts=audit_artifacts,
-                        execution_mode=mode,
-                        working_dir=working_dir,
-                        workflow=str(
-                            orchestration_context.get("workflow")
-                            or patch_workflow
-                        ),
-                        record_gui_open_artifact=effective_export_view_audit,
-                        refresh_view_audit_report=effective_export_view_audit,
+                finalized = _finalize_high_level_gui_hotload(
+                    response=response,
+                    store=store,
+                    spec=new_spec,
+                    gui=gui,
+                    structure_path=structure_path,
+                    take_snapshot=take_snapshot,
+                    audit_artifacts=audit_artifacts,
+                    execution_mode=mode,
+                    working_dir=working_dir,
+                    workflow=str(
+                        orchestration_context.get("workflow")
+                        or patch_workflow
                     ),
+                    record_gui_open_artifact=effective_export_view_audit,
+                    refresh_view_audit_report=effective_export_view_audit,
+                )
+                return _compact_live_response(
+                    _attach_recommended_kpoint_postcondition(finalized),
                     response_mode,
                 )
             else:
                 response["gui_open_warning"] = f"planned output structure was not found: {structure_path}"
+        attached = _attach_modeling_health(
+            response,
+            execution_mode=mode,
+            store=store,
+            spec=new_spec,
+            gui_artifacts=audit_artifacts,
+        )
         return _compact_live_response(
-            _attach_modeling_health(response, execution_mode=mode, store=store, spec=new_spec, gui_artifacts=audit_artifacts),
+            _attach_recommended_kpoint_postcondition(attached),
             response_mode,
         )
     except ValidationError as exc:
@@ -33950,6 +34546,7 @@ def material_studio_live_modeling_request(
     visual_confirmation: Annotated[dict[str, Any] | None, Field(description="Optional externally observed GUI evidence bound to the current wrapper window.")] = None,
     view_replay_confirmation: Annotated[dict[str, Any] | None, Field(description="Optional externally replayed camera/view evidence bound to the current wrapper window.")] = None,
     confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation before reconciling dopant metadata into a new revision.")] = False,
+    confirm_recommended_calculation_settings: Annotated[bool, Field(description="Must be true after explicit user confirmation before applying a current diagnostic calculation-settings recommendation.")] = False,
 ) -> dict[str, Any]:
     """One-stop structured entry point for live modeling requests."""
 
@@ -34287,6 +34884,7 @@ def material_studio_live_modeling_request(
                 and plan.kind
                 in {
                     "patch",
+                    "apply_recommended_kpoint_grid",
                     "redo",
                     "rollback",
                     "continue_view_replay",
@@ -34313,6 +34911,227 @@ def material_studio_live_modeling_request(
                     if isinstance(planned_spec.model, CrystalSpec) and _explicit_live_gui_open_requested(user_request):
                         mode = ExecutionMode.EXECUTE
                         execution_mode_source = "explicit_live_intent"
+            elif plan.kind == "apply_recommended_kpoint_grid":
+                if project_id is None or current_spec is None:
+                    return finish(
+                        _attach_live_failure_contract(
+                            {
+                                "ok": False,
+                                "workflow": "apply_recommended_kpoint_grid",
+                                "error": (
+                                    "A recommended k-point remediation was requested, but no "
+                                    "current project exists."
+                                ),
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_resolution": project_resolution,
+                            },
+                            status="missing_current_project",
+                            recommended_action="create_or_select_project",
+                            payload_hint={
+                                "project_id": "existing semiconductor project id"
+                            },
+                        )
+                    )
+                current_status = material_studio_live_project_status(
+                    project_id=project_id,
+                    include_gui_status=False,
+                    working_dir=working_dir,
+                    response_mode=McpResponseMode.FULL,
+                )
+                current_action = _recommended_kpoint_action_from_status(
+                    current_status
+                )
+                reciprocal_status = _semiconductor_reciprocal_status_from_live_status(
+                    current_status
+                )
+                if current_action is None:
+                    if current_status.get("ok") and reciprocal_status == "ok":
+                        current_status.update(
+                            {
+                                "workflow": "apply_recommended_kpoint_grid",
+                                "status": "recommended_kpoint_grid_already_satisfied",
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_resolution": project_resolution,
+                                "revision": current_spec.revision,
+                                "base_revision": current_spec.revision,
+                                "revision_created": False,
+                                "confirmation_required": False,
+                                "confirmation_received": (
+                                    confirm_recommended_calculation_settings
+                                ),
+                                "remediation_intent": (
+                                    RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+                                ),
+                                "reciprocal_status": reciprocal_status,
+                                "remediation_postcondition_met": True,
+                                "structure_unchanged": True,
+                                "simulation_settings_changed": False,
+                            }
+                        )
+                        return finish(current_status)
+                    return finish(
+                        _attach_live_failure_contract(
+                            {
+                                "ok": False,
+                                "workflow": "apply_recommended_kpoint_grid",
+                                "status": "recommended_kpoint_remediation_unavailable",
+                                "error": (
+                                    "The current revision has no actionable k-point recommendation."
+                                ),
+                                "required_next_step": (
+                                    "Review current calculation readiness before changing settings."
+                                ),
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_id": project_id,
+                                "project_resolution": project_resolution,
+                                "revision": current_spec.revision,
+                                "revision_created": False,
+                                "reciprocal_status": reciprocal_status,
+                                "current_next_action": current_status.get(
+                                    "next_action_plan"
+                                ),
+                            },
+                            status="recommended_kpoint_remediation_unavailable",
+                            recommended_action="review_current_calculation_readiness",
+                            payload_hint={
+                                "project_id": project_id,
+                                "status_tool": "material_studio_live_project_status",
+                            },
+                        )
+                    )
+                action_payload = (
+                    current_action.get("payload_hint")
+                    if isinstance(current_action.get("payload_hint"), dict)
+                    else {}
+                )
+                recommended_patch = (
+                    action_payload.get("patch")
+                    if isinstance(action_payload.get("patch"), dict)
+                    else None
+                )
+                if recommended_patch is None:
+                    return finish(
+                        _attach_live_failure_contract(
+                            {
+                                "ok": False,
+                                "workflow": "apply_recommended_kpoint_grid",
+                                "status": "recommended_kpoint_payload_missing",
+                                "error": (
+                                    "The current recommendation does not contain a SemanticPatch payload."
+                                ),
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_id": project_id,
+                                "project_resolution": project_resolution,
+                                "revision": current_spec.revision,
+                                "revision_created": False,
+                            },
+                            status="recommended_kpoint_payload_missing",
+                            recommended_action="refresh_current_calculation_readiness",
+                            payload_hint={
+                                "project_id": project_id,
+                                "status_tool": "material_studio_live_project_status",
+                            },
+                        )
+                    )
+                explicit_gui_request = _explicit_live_gui_open_requested(user_request)
+                recommended_mode = mode if explicit_gui_request else ExecutionMode.PREVIEW
+                recommended_mode_source = (
+                    execution_mode_source
+                    if explicit_gui_request
+                    else "recommended_calculation_settings_preview"
+                )
+                effective_open_in_gui = bool(open_in_gui and explicit_gui_request)
+                effective_take_snapshot = bool(
+                    take_snapshot and effective_open_in_gui
+                )
+                effective_remediation_intent = (
+                    remediation_intent
+                    or RECOMMENDED_SEMICONDUCTOR_KPOINT_ACTION_ID
+                )
+                orchestration_context = {
+                    "workflow": "apply_recommended_kpoint_grid",
+                    "user_request": user_request,
+                    "nl_plan": nl_plan,
+                    "project_resolution": project_resolution,
+                    "execution_mode_source": recommended_mode_source,
+                    "diagnostic_export_requested": True,
+                    "requested_diagnostic_focuses": _dedupe_strings(
+                        [
+                            "electronic_structure_preflight",
+                            *(requested_diagnostic_focuses or []),
+                        ]
+                    ),
+                    "remediation_intent": effective_remediation_intent,
+                    "remediation_operations": ["set_castep_energy"],
+                    "expected_result": "reciprocal_status=ok",
+                }
+                with _live_orchestration_context(orchestration_context):
+                    result = material_studio_live_update_with_patch(
+                        project_id=project_id,
+                        base_revision=(
+                            current_spec.revision
+                            if base_revision is None
+                            else base_revision
+                        ),
+                        patch=recommended_patch,
+                        user_text=user_request,
+                        execution_mode=recommended_mode,
+                        open_in_gui=effective_open_in_gui,
+                        take_snapshot=effective_take_snapshot,
+                        export_view_audit=True,
+                        views=views,
+                        working_dir=working_dir,
+                        timeout_seconds=timeout_seconds,
+                        response_mode=McpResponseMode.FULL,
+                        remediation_intent=effective_remediation_intent,
+                        confirm_recommended_calculation_settings=(
+                            confirm_recommended_calculation_settings
+                        ),
+                    )
+                result["nl_plan"] = nl_plan
+                result["project_resolution"] = (
+                    project_resolution or result.get("project_resolution")
+                )
+                result["execution_mode_source"] = recommended_mode_source
+                result["requested_execution_mode"] = mode.value
+                result["explicit_gui_request"] = explicit_gui_request
+                result["diagnostic_export_requested"] = True
+                result["remediation_intent"] = effective_remediation_intent
+                if not confirm_recommended_calculation_settings:
+                    high_level_confirmation_payload = {
+                        "user_request": user_request,
+                        "project_id": project_id,
+                        "base_revision": current_spec.revision,
+                        "execution_mode": recommended_mode.value,
+                        "open_in_gui": effective_open_in_gui,
+                        "take_snapshot": effective_take_snapshot,
+                        "export_view_audit": True,
+                        "remediation_intent": effective_remediation_intent,
+                        "remediation_operations": ["set_castep_energy"],
+                        "required_diagnostic_focuses": [
+                            "electronic_structure_preflight"
+                        ],
+                        "expected_result": "reciprocal_status=ok",
+                        RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD: True,
+                    }
+                    result["high_level_confirmation_payload_hint"] = (
+                        high_level_confirmation_payload
+                    )
+                    result["next_action_plan"] = {
+                        "action_id": "confirm_recommended_semiconductor_kpoint_grid",
+                        "recommended_tool": "material_studio_live_modeling_request",
+                        "recommended_action": (
+                            "confirm_current_revision_kpoint_remediation"
+                        ),
+                        "needs_user_confirmation": True,
+                        "safe_to_call_without_confirmation": False,
+                        "payload_hint": high_level_confirmation_payload,
+                    }
+                return finish(result)
             elif plan.kind == "patch" and plan.payload is not None:
                 if project_id is None or current_spec is None:
                     return _attach_live_failure_contract({

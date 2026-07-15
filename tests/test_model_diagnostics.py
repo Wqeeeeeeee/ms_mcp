@@ -2769,6 +2769,33 @@ def test_slab_kpoint_recommendation_clamps_surface_normal_and_clears_warning() -
     assert fixed_reciprocal["warning_count"] == 0
 
 
+def test_recommended_kpoint_natural_language_requires_explicit_apply_intent() -> None:
+    spec = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    requests = (
+        "Apply the recommended k-point grid.",
+        "Use the suggested k point settings.",
+        "\u5e94\u7528\u63a8\u8350\u7684 k \u70b9\u7f51\u683c\u3002",
+        "\u91c7\u7528\u5efa\u8bae\u7684k\u70b9\u8bbe\u7f6e\u5e76\u91cd\u65b0\u68c0\u67e5\u3002",
+    )
+
+    for request in requests:
+        plan = infer_modeling_plan(request, current_spec=spec)
+        assert plan.kind == "apply_recommended_kpoint_grid"
+        assert plan.template_id == "apply_recommended_semiconductor_kpoint_grid"
+        assert plan.payload == {
+            "project_id": spec.project_id,
+            "revision": spec.revision,
+            "action_id": "apply_recommended_semiconductor_kpoint_grid",
+            "requires_explicit_confirmation": True,
+        }
+
+    question = infer_modeling_plan(
+        "What is the recommended k-point grid?",
+        current_spec=spec,
+    )
+    assert question.kind != "apply_recommended_kpoint_grid"
+
+
 def test_model_view_audit_classifies_semiconductor_castep_property_tasks() -> None:
     spec = load_example("silicon_diamond_spec.json")
     assert spec.simulation is not None

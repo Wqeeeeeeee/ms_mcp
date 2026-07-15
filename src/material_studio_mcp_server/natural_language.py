@@ -3210,6 +3210,14 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             "pattern": "Update CASTEP task/cutoff/k-point settings without rebuilding geometry, e.g. 'set CASTEP cutoff to 600 eV and kpoint separation 0.03', 'calculate the band gap', or 'set up PDOS'.",
         },
         {
+            "template_id": "apply_recommended_semiconductor_kpoint_grid",
+            "operations": ["set_castep_energy"],
+            "requires_existing_project": True,
+            "requires_current_diagnostic_recommendation": True,
+            "requires_explicit_confirmation": True,
+            "pattern": "Apply the current revision's recommended semiconductor k-point grid after reviewing the exact confirmation payload.",
+        },
+        {
             "template_id": "crystal_strain",
             "operations": ["set_lattice", "set_metadata"],
             "requires_existing_project": True,
@@ -3275,6 +3283,12 @@ def infer_modeling_plan(
         rollback_plan = _infer_rollback_plan(text, current_spec)
         if rollback_plan is not None:
             return rollback_plan
+        recommended_kpoint_plan = _infer_recommended_kpoint_remediation_plan(
+            text,
+            current_spec,
+        )
+        if recommended_kpoint_plan is not None:
+            return recommended_kpoint_plan
         patch_plan = _infer_patch(user_request, current_spec)
         if patch_plan is not None:
             return patch_plan
@@ -3302,6 +3316,78 @@ def infer_modeling_plan(
             "Provide a ModelSpec for new structures or a SemanticPatch for modifications.",
         ],
     )
+
+
+def _infer_recommended_kpoint_remediation_plan(
+    text: str,
+    current_spec: ModelSpec,
+) -> NaturalLanguagePlan | None:
+    """Infer a request to apply the current diagnostic k-point recommendation."""
+
+    if not _looks_like_apply_recommended_kpoint_request(text):
+        return None
+    return NaturalLanguagePlan(
+        kind="apply_recommended_kpoint_grid",
+        payload={
+            "project_id": current_spec.project_id,
+            "revision": current_spec.revision,
+            "action_id": "apply_recommended_semiconductor_kpoint_grid",
+            "requires_explicit_confirmation": True,
+        },
+        confidence=0.94,
+        template_id="apply_recommended_semiconductor_kpoint_grid",
+        notes=[
+            (
+                "Resolve the exact slab-aware k-point patch from current project "
+                f"{current_spec.project_id} r{current_spec.revision:03d}."
+            ),
+            "Do not create a revision until the returned confirmation payload is explicitly approved.",
+            "Re-export electronic diagnostics after applying the simulation-only patch.",
+        ],
+    )
+
+
+def _looks_like_apply_recommended_kpoint_request(text: str) -> bool:
+    """Return whether text asks to apply, rather than merely inspect, a recommendation."""
+
+    if not text:
+        return False
+    lowered = " ".join(text.lower().split())
+    compact = re.sub(r"[\s,.;:!?()\[\]{}_-]+", "", lowered)
+    has_kpoint = bool(
+        re.search(r"\bk\s*[- ]?points?\b|\bkpoints?\s+grid\b|\bk\s+grid\b", lowered)
+    ) or any(
+        token in compact
+        for token in (
+            "k\u70b9",
+            "k\u70b9\u7f51\u683c",
+            "k\u7f51\u683c",
+        )
+    )
+    has_recommendation = bool(
+        re.search(r"\b(?:recommended|recommendation|suggested|suggestion)\b", lowered)
+    ) or any(token in compact for token in ("\u63a8\u8350", "\u5efa\u8bae"))
+    has_action = bool(
+        re.search(
+            r"\b(?:apply|accept|adopt|use|confirm|approve|set|switch|update)\b",
+            lowered,
+        )
+    ) or any(
+        token in compact
+        for token in (
+            "\u5e94\u7528",
+            "\u91c7\u7528",
+            "\u4f7f\u7528",
+            "\u63a5\u53d7",
+            "\u786e\u8ba4",
+            "\u540c\u610f",
+            "\u6267\u884c",
+            "\u8bbe\u7f6e",
+            "\u6539\u4e3a",
+            "\u66ff\u6362\u4e3a",
+        )
+    )
+    return has_kpoint and has_recommendation and has_action
 
 
 def _infer_continue_view_replay_plan(

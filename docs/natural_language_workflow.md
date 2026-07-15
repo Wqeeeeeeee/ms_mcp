@@ -688,6 +688,20 @@ preview. Applying it does not change geometry or automatically hot-load the
 unchanged structure; re-export the electronic diagnostics and require
 `reciprocal_status=ok` before clearing the blocker. This is a structural setup
 check, not a replacement for k-point convergence testing.
+
+Natural-language follow-ups such as `Apply the recommended k-point grid`,
+`Use the suggested slab-aware k-point settings`, or `应用推荐的 k 点网格` use the
+same action through `material_studio_live_modeling_request`. The first call is
+read-only with respect to revision state: it returns the exact current
+revision, grid, `SemanticPatch`, and a high-level confirmation payload without
+creating a revision. A second call with
+`confirm_recommended_calculation_settings=true` may create the simulation-only
+revision only when the base revision and patch still match the current
+diagnostic recommendation. Stale or modified confirmation payloads are
+rejected and refreshed. Repeating the request after `reciprocal_status=ok`
+returns an idempotent no-op and creates no empty revision. The persisted
+`report.json` records the confirmation receipt, geometry invariant,
+simulation-setting change, diagnostic re-audit, and postcondition result.
 Band-path preflight summaries are exported as `semiconductor_band_path.csv`
 for supported semiconductor families. Diamond-cubic and zinc-blende starts use
 a conservative fcc path, and wurtzite starts use a conservative hexagonal path.

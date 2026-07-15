@@ -298,28 +298,46 @@ review-required view names plus the next view and its camera/projection checks.
 On Materials Studio 20.1, all six face-aligned orthographic recipes are
 statically eligible when the local command registry and installed keyboard
 help are verified. They become automatic-ready only when a refreshed
-current-window accessibility observation also proves the exact named Reset
-View control is invocable, the target document is visible, and keyboard views
-have a verified empty viewport focus target. `front` targets Reset View; `back` uses
+current-window accessibility observation proves either the exact named Reset
+View control is invocable or the server derives Reset from an exact anonymous
+toolbar sequence verified against the installed registry SHA-256. The target
+document must be visible, and keyboard views require a verified empty viewport
+focus target. `front` targets Reset View; `back` uses
 Reset + `Left x4`; `right` uses Reset + `Up x2, Left x2`; `left` uses Reset +
 `Up x2, Right x2`; `top` uses Reset + `Up x2`; and `bottom` uses Reset +
 `Left x4, Down x2`. The installed help defines each arrow rotation as 45
 degrees and
 states that Shift+arrow rotates selected objects, so Shift is prohibited and
 the camera axis layout plus projection/overlap counts require a fresh visual
-postcheck. Isometric additionally requires the exact named Movement control at
-runtime before its staged recipe can become automatic-ready: Reset, `45
+postcheck. Isometric additionally requires the named Movement control or its
+server-verified anonymous toolbar target at runtime before its staged recipe
+can become automatic-ready: Reset, `45
 degrees: Up x2, Left x3`, then `35.26438968 degrees: Down`.
 It must show A left-down, B right-down, C up, restore Angle to 45 degrees,
 preserve Screen factor 2.0, and close Movement.
 
 The observation is submitted through `runtime_accessibility_evidence` and is
 persisted as `gui_view_replay_accessibility_preflight.json`. Static registry or
-help files never substitute for that live binding. If MS 20.1 exposes unnamed
-toolbar children, record null observed names and `invoke_supported=false`.
-`automation_ready` then remains false and continuation routes to reviewed
-manual or Copy Script handling; an unnamed accessibility index or blind toolbar
-coordinate is never an acceptable substitute.
+help files never substitute for that live binding. For unnamed toolbar
+children, `anonymous_toolbars` must include the full ordered direct-child tree;
+the server checks exact count, checkbox/separator roles, separator positions,
+installed registry identity and SHA-256, and target enabled state. Only the
+returned `verified_anonymous_toolbar_child` target is eligible, and its element
+index is ephemeral: refresh and re-check the same tree immediately before use.
+Recording requires the matching `accessibility_command_uses` receipt. A
+partial, stale, reordered, disabled, or client-guessed index remains blocked;
+blind toolbar coordinates are never acceptable.
+
+If that exact verified invocation later fails the visual model/camera
+postcheck, the manifest preserves the failed event and suppresses automatic
+retry of the same semantic mapping. A failed `front` Reset baseline also
+pauses `back`, `right`, `left`, `top`, `bottom`, and `isometric` recipes that
+depend on that same Reset mapping. `replay_continuation.status` becomes
+`automatic_recipe_postcheck_failed` and routes to reviewed Copy Script or
+manual GUI review. Re-preparing the manifest does not clear this gate; only
+new success evidence with verified artifact integrity can supersede it. View
+list changes preserve all replay events for the immutable revision, so
+preparing only a dependent view cannot bypass the failed baseline.
 
 `crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
 Miller Plane, Properties Explorer, and View Onto registry/help evidence is
@@ -421,8 +439,10 @@ prohibited for camera replay.
 A screenshot taken before target activation may contain an occluding Codex or
 other application window even when the requested window handle belongs to
 Materials Studio. Replay automation must activate the target, re-check the
-title/wrapper identity, and only then inspect or send input. Unnamed toolbar
-controls and blind coordinates are not an accepted replay backend.
+title/wrapper identity, and only then inspect or send input. Unverified unnamed
+toolbar controls and blind coordinates are not an accepted replay backend. The
+narrow exception is a current-window, full-sequence, installed-registry-backed
+`verified_anonymous_toolbar_child` target returned by the preparation tool.
 Snapshot and open results include BMP analysis fields such as dimensions,
 sampled color count, dominant color ratio, non-dominant ratio, and
 `likely_nonblank`; these help flag empty or failed captures. They also include

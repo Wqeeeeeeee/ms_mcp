@@ -180,6 +180,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "expected_window_handle",
             "expected_window_title",
             "native_command_id",
+            "accessibility_command_uses",
             "key_sequence",
             "reset_before_key_sequence",
             "rotation_increment_degrees",

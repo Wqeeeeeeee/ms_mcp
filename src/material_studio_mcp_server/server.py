@@ -335,6 +335,54 @@ class GuiViewRuntimeAccessibilityControlEvidenceInput(BaseModel):
     invoke_supported: bool
 
 
+class GuiViewRuntimeAccessibilityToolbarChildInput(BaseModel):
+    """One direct child observed under an allowlisted Materials Studio toolbar."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    element_index: int = Field(..., ge=0)
+    role: str = Field(..., pattern=r"^(checkbox|separator)$")
+    enabled: bool
+    observed_control_name: str | None = Field(default=None, max_length=200)
+
+
+class GuiViewRuntimeAccessibilityToolbarEvidenceInput(BaseModel):
+    """Ordered direct-child evidence for one unnamed Materials Studio toolbar."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    observed_toolbar_name: str = Field(
+        ...,
+        pattern=r"^(3D Viewer|3D Movement)$",
+    )
+    toolbar_automation_id: int = Field(..., gt=0)
+    children: list[GuiViewRuntimeAccessibilityToolbarChildInput] = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+    )
+
+
+class GuiViewReplayAccessibilityCommandUseInput(BaseModel):
+    """Observed use of one server-mapped anonymous toolbar command."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    command_id: str = Field(
+        ...,
+        pattern=r"^(cmdViewer3DResetView|cmdViewer3DMovementOptions)$",
+    )
+    toolbar_name: str = Field(..., pattern=r"^(3D Viewer|3D Movement)$")
+    toolbar_automation_id: int = Field(..., gt=0)
+    registry_toolbar_name: str = Field(..., min_length=1, max_length=120)
+    zero_based_child_index: int = Field(..., ge=0, le=31)
+    element_index: int = Field(..., ge=0)
+    registry_sha256: str = Field(..., pattern=r"^[0-9a-fA-F]{64}$")
+    semantic_mapping_sha256: str = Field(..., pattern=r"^[0-9a-fA-F]{64}$")
+    accessibility_tree_refreshed: bool
+    invocation_succeeded: bool
+
+
 class GuiViewRuntimeAccessibilityEvidenceInput(BaseModel):
     """Current-window accessibility evidence for standard GUI view replay."""
 
@@ -349,8 +397,11 @@ class GuiViewRuntimeAccessibilityEvidenceInput(BaseModel):
     empty_viewport_focus_target_observed: bool
     unnamed_toolbar_children_observed: bool
     controls: list[GuiViewRuntimeAccessibilityControlEvidenceInput] = Field(
-        ...,
-        min_length=1,
+        default_factory=list,
+        max_length=2,
+    )
+    anonymous_toolbars: list[GuiViewRuntimeAccessibilityToolbarEvidenceInput] = Field(
+        default_factory=list,
         max_length=2,
     )
     screenshot_path: str | None = Field(default=None, max_length=500)
@@ -606,6 +657,17 @@ class GuiViewReplayConfirmationInput(BaseModel):
         pattern=r"^cmdViewer3D[A-Za-z0-9_]+$",
         max_length=120,
     )
+    accessibility_command_uses: list[
+        GuiViewReplayAccessibilityCommandUseInput
+    ] | None = Field(
+        default=None,
+        description=(
+            "Exact command-use receipts required when the prepared recipe uses a "
+            "server-verified anonymous toolbar mapping."
+        ),
+        min_length=1,
+        max_length=2,
+    )
     key_sequence: list[
         Annotated[str, Field(pattern=r"^(Up|Down|Left|Right)$")]
     ] | None = Field(
@@ -616,7 +678,7 @@ class GuiViewReplayConfirmationInput(BaseModel):
     )
     reset_before_key_sequence: bool | None = Field(
         default=None,
-        description="Whether the named Reset View command was invoked before the key sequence.",
+        description="Whether the prepared Reset View accessibility target was invoked before the key sequence.",
     )
     rotation_increment_degrees: float | None = Field(
         default=None,
@@ -3264,6 +3326,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "movement_screen_factor_control_id",
                 "movement_screen_factor",
                 "movement_dialog_closed",
+                "accessibility_command_uses",
                 "miller_plane_evidence",
             ],
             "miller_plane_evidence_required_for": (
@@ -3300,6 +3363,24 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ],
             "front_native_command_id": "cmdViewer3DResetView",
             "front_accessibility_control_name": "3D Viewer Reset View",
+            "verified_anonymous_toolbar_mapping_supported": True,
+            "verified_anonymous_toolbar_names": ["3D Viewer", "3D Movement"],
+            "verified_anonymous_toolbar_registry_source": (
+                "installed_#SVViewer3d.xml"
+            ),
+            "verified_anonymous_toolbar_requires_exact_child_count_order_roles": True,
+            "verified_anonymous_toolbar_requires_registry_sha256": True,
+            "verified_anonymous_toolbar_element_index_is_ephemeral": True,
+            "verified_anonymous_toolbar_requires_fresh_tree_before_invoke": True,
+            "verified_anonymous_toolbar_record_receipt_field": (
+                "accessibility_command_uses"
+            ),
+            "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
+            "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
+            "failed_reset_baseline_suppresses_dependent_recipes": True,
+            "postcheck_failure_clear_requires_integrity_verified_success": True,
+            "client_asserted_command_to_element_mapping_allowed": False,
+            "arbitrary_unnamed_toolbar_index_or_coordinate_allowed": False,
             "standard_views_require_current_bound_runtime_accessibility_preflight": True,
             "runtime_accessibility_preflight_payload_field": (
                 "runtime_accessibility_evidence"
@@ -6100,6 +6181,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "event_journal_divergence_preserves_append_only_history": True,
                 "event_journal_divergence_requires_reverification": True,
                 "event_journal_divergence_invalidates_visual_confirmation": True,
+                "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
+                "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
+                "failed_reset_baseline_suppresses_dependent_recipes": True,
+                "postcheck_failure_clear_requires_integrity_verified_success": True,
                 "prepare_and_record_writes_serialized": True,
                 "write_transaction_lock_scope": "project_revision",
                 "write_transaction_lock_kernel_released_on_process_exit": True,
@@ -32803,6 +32888,14 @@ def material_studio_live_modeling_request(
                 expected_window_handle=replay_evidence.expected_window_handle,
                 expected_window_title=replay_evidence.expected_window_title,
                 native_command_id=replay_evidence.native_command_id,
+                accessibility_command_uses=(
+                    [
+                        item.model_dump(mode="json")
+                        for item in replay_evidence.accessibility_command_uses
+                    ]
+                    if replay_evidence.accessibility_command_uses is not None
+                    else None
+                ),
                 key_sequence=replay_evidence.key_sequence,
                 reset_before_key_sequence=replay_evidence.reset_before_key_sequence,
                 rotation_increment_degrees=replay_evidence.rotation_increment_degrees,
@@ -35262,7 +35355,7 @@ def material_studio_gui_prepare_view_replay(
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
     views: Annotated[list[str] | None, Field(description="View names to prepare, including Cartesian, crystal direction/plane, or surface/interface frame views.", min_length=1, max_length=32)] = None,
     runtime_ui_evidence: Annotated[GuiMillerPlaneRuntimeUiEvidenceInput | None, Field(description="Optional current-window Miller-plane UI observation. It is persisted only after exact project/revision/window binding succeeds.")] = None,
-    runtime_accessibility_evidence: Annotated[GuiViewRuntimeAccessibilityEvidenceInput | None, Field(description="Optional current-window named Reset/Movement accessibility observation. Static command registration alone never enables automatic standard-view replay.")] = None,
+    runtime_accessibility_evidence: Annotated[GuiViewRuntimeAccessibilityEvidenceInput | None, Field(description="Optional current-window named-control or ordered anonymous-toolbar observation. Anonymous commands are derived only from the installed registry plus an exact live child sequence; static registration alone never enables replay.")] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full replay manifest or compact MCP preparation receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
@@ -35360,6 +35453,7 @@ def material_studio_gui_record_view_replay(
     expected_window_handle: Annotated[int | None, Field(description="Optional observed Materials Studio window handle used to bind the replay evidence.", gt=0)] = None,
     expected_window_title: Annotated[str | None, Field(description="Optional observed wrapper window title used to bind the replay evidence.", min_length=1, max_length=500)] = None,
     native_command_id: Annotated[str | None, Field(description="Optional reviewed Materials Studio 2020 3D-view command used for replay.", pattern=r"^cmdViewer3D[A-Za-z0-9_]+$", max_length=120)] = None,
+    accessibility_command_uses: Annotated[list[GuiViewReplayAccessibilityCommandUseInput] | None, Field(description="Exact invocation receipts for server-mapped anonymous toolbar controls.", min_length=1, max_length=2)] = None,
     key_sequence: Annotated[list[Annotated[str, Field(pattern=r"^(Up|Down|Left|Right)$")]] | None, Field(description="Optional exact unmodified arrow-key sequence from the prepared recipe.", min_length=1, max_length=16)] = None,
     reset_before_key_sequence: Annotated[bool | None, Field(description="Whether Reset View was invoked before the key sequence.")] = None,
     rotation_increment_degrees: Annotated[float | None, Field(description="Arrow-key rotation increment in degrees.", gt=0, le=360)] = None,
@@ -35441,6 +35535,16 @@ def material_studio_gui_record_view_replay(
             expected_window_handle=expected_window_handle,
             expected_window_title=expected_window_title,
             native_command_id=native_command_id,
+            accessibility_command_uses=(
+                [
+                    GuiViewReplayAccessibilityCommandUseInput.model_validate(
+                        item
+                    ).model_dump(mode="json")
+                    for item in accessibility_command_uses
+                ]
+                if accessibility_command_uses is not None
+                else None
+            ),
             key_sequence=key_sequence,
             reset_before_key_sequence=reset_before_key_sequence,
             rotation_increment_degrees=rotation_increment_degrees,
@@ -35488,6 +35592,12 @@ def material_studio_gui_record_view_replay(
             "expected_window_handle": expected_window_handle,
             "expected_window_title": expected_window_title,
             "native_command_id": native_command_id,
+            "accessibility_command_uses": event.get(
+                "accessibility_command_uses"
+            ),
+            "accessibility_command_uses_complete": event.get(
+                "accessibility_command_uses_complete"
+            ),
             "key_sequence": event.get("key_sequence"),
             "reset_before_key_sequence": event.get("reset_before_key_sequence"),
             "rotation_increment_degrees": event.get("rotation_increment_degrees"),
@@ -35540,6 +35650,12 @@ def material_studio_gui_record_view_replay(
                 "window_binding": replay_binding,
                 "native_command_id": event.get("native_command_id"),
                 "native_command": event.get("native_command"),
+                "accessibility_command_uses": event.get(
+                    "accessibility_command_uses"
+                ),
+                "accessibility_command_uses_complete": event.get(
+                    "accessibility_command_uses_complete"
+                ),
                 "key_sequence": event.get("key_sequence"),
                 "reset_before_key_sequence": event.get("reset_before_key_sequence"),
                 "rotation_increment_degrees": event.get("rotation_increment_degrees"),

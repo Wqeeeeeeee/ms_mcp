@@ -164,11 +164,40 @@ accessibility observation to the prepare tool:
 }
 ```
 
-Observed unnamed toolbar children must instead use a null
-`observed_control_name` and `invoke_supported: false`. That evidence is useful:
-it prevents automatic replay and routes continuation to reviewed manual or
-Copy Script handling. Never replace the missing name with an element index or
-coordinate.
+MS 20.1 may expose the toolbar children without names. In that case, do not
+claim a command for an element index. Submit the complete direct-child
+observation under `anonymous_toolbars`. The observed `3D Viewer` toolbar must
+contain nine children with roles `checkbox, checkbox, checkbox, checkbox,
+separator, checkbox, checkbox, checkbox, checkbox`. For isometric replay, also
+submit the complete eight-child `3D Movement` toolbar with the separator in
+position six. Include the numeric toolbar automation ID, every fresh child
+`element_index`, canonical role, enabled state, and null observed name;
+`controls` may be empty.
+
+The server independently parses and hashes the installed `#SVViewer3d.xml`,
+checks the exact toolbar identity and full command/separator sequence, and
+derives only the allowlisted Reset and Movement targets. A successful recipe
+returns `target_kind: verified_anonymous_toolbar_child`, the zero-based child
+index, ephemeral UIA element index, registry SHA-256, and semantic mapping
+SHA-256. Refresh the accessibility tree immediately before invoking that
+returned target. If any count, role, separator, name, enabled state, index
+ordering, window binding, or hash differs, submit a new preflight. Arbitrary
+unnamed indexes and all toolbar coordinates remain prohibited.
+
+After invocation, pass the recipe-derived values back through
+`accessibility_command_uses` with `accessibility_tree_refreshed: true` and
+`invocation_succeeded: true`. The record tool rejects a mismatched mapping and
+does not accept Computer Use replay evidence when this receipt is missing.
+
+After a complete receipt, inspect the visual postcheck result before retrying.
+When `replay_continuation.status` is
+`automatic_recipe_postcheck_failed`, do not invoke the returned anonymous
+mapping again. A verified failed `front` Reset also blocks every pending recipe
+bound to the same Reset semantic hash. Follow
+`recommended_mcp_tool=material_studio_gui_copy_script_assist` and collect a
+reviewed camera path; simply preparing the same views again does not erase the
+failure receipt. Clearing the gate requires a later successful postcheck with
+artifact integrity `verified`; an unbacked boolean success is not sufficient.
 
 When the reviewed Copy Script fallback is used, submit it only as inert evidence:
 

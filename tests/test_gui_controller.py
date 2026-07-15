@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -1418,11 +1419,34 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     positioning_help_path.parent.mkdir(parents=True)
     executable.write_bytes(b"")
     registry.write_text(
-        (
-            '<commands><item name="cmdViewer3DResetView"/>'
-            '<item name="cmdViewer3DViewOnto"/>'
-            '<item name="cmdViewer3DMovementOptions"/></commands>'
-        ),
+        """
+        <COMMANDS>
+          <ITEM NAME="cmdViewer3DResetView"/>
+          <ITEM NAME="cmdViewer3DViewOnto"/>
+          <ITEM NAME="cmdViewer3DMovementOptions"/>
+          <TOOLBAR NAME="tbarViewer3D1" TITLE="3D Viewer">
+            <TOOL NAME="cmdViewer3DSelection"/>
+            <TOOL NAME="cmdViewer3DTrackball"/>
+            <TOOL NAME="cmdViewer3DZoom"/>
+            <TOOL NAME="cmdViewer3DTranslate"/>
+            <SEPARATOR/>
+            <TOOL NAME="cmdViewer3DResetView"/>
+            <TOOL NAME="cmdViewer3DRecenter"/>
+            <TOOL NAME="cmdViewer3DFitToView"/>
+            <TOOL NAME="cmdViewer3DDisplayStyle"/>
+          </TOOLBAR>
+          <TOOLBAR NAME="tbarViewer3DMovement" TITLE="3D Movement">
+            <TOOL NAME="cmdNudgeLeft"/>
+            <TOOL NAME="cmdNudgeRight"/>
+            <TOOL NAME="cmdNudgeUp"/>
+            <TOOL NAME="cmdNudgeDown"/>
+            <TOOL NAME="cmdViewer3DMovementOptions"/>
+            <SEPARATOR/>
+            <TOOL NAME="cmdSMSketcherMoveTo"/>
+            <TOOL NAME="cmdViewer3DAlignOntoView"/>
+          </TOOLBAR>
+        </COMMANDS>
+        """,
         encoding="utf-8",
     )
     symmetry_registry.write_text(
@@ -1499,6 +1523,17 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     evidence = gui_module._materials_studio_view_command_evidence()
 
     assert evidence["registry_found"] is True
+    assert evidence["registry_sha256"] == hashlib.sha256(
+        registry.read_bytes()
+    ).hexdigest()
+    assert evidence["registry_toolbar_parse_error"] is None
+    assert [
+        (item["registry_toolbar_name"], item["title"], len(item["entries"]))
+        for item in evidence["registry_toolbar_layouts"]
+    ] == [
+        ("tbarViewer3D1", "3D Viewer", 9),
+        ("tbarViewer3DMovement", "3D Movement", 8),
+    ]
     assert evidence["keyboard_help_found"] is True
     assert evidence["keyboard_help_path"] == str(help_path.resolve())
     assert evidence["unmodified_arrow_keys_rotate_view"] is True
@@ -1514,7 +1549,9 @@ def test_view_command_evidence_verifies_installed_arrow_key_help(
     assert evidence["movement_screen_factor_control_id"] == "numNudgeFactor"
     assert evidence["registered_view_command_ids"] == [
         "cmdViewer3DResetView",
+        "cmdViewer3DRecenter",
         "cmdViewer3DViewOnto",
+        "cmdViewer3DFitToView",
         "cmdViewer3DMovementOptions",
     ]
     assert evidence["miller_plane_command_registered"] is True

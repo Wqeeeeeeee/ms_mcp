@@ -19,6 +19,7 @@ import struct
 import subprocess
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,9 +36,9 @@ class GuiError(RuntimeError):
     """当本地 GUI 控制无法完成时引发。"""
 
 
-VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 4
-VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 2
-VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 2
+VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 5
+VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 3
+VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 3
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 6
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
@@ -159,6 +160,35 @@ VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS = {
     "cmdViewer3DResetView": "3D Viewer Reset View",
     "cmdViewer3DMovementOptions": "3D Movement Options",
 }
+VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS = {
+    "3D Viewer": {
+        "registry_toolbar_name": "tbarViewer3D1",
+        "entries": (
+            ("tool", "cmdViewer3DSelection"),
+            ("tool", "cmdViewer3DTrackball"),
+            ("tool", "cmdViewer3DZoom"),
+            ("tool", "cmdViewer3DTranslate"),
+            ("separator", None),
+            ("tool", "cmdViewer3DResetView"),
+            ("tool", "cmdViewer3DRecenter"),
+            ("tool", "cmdViewer3DFitToView"),
+            ("tool", "cmdViewer3DDisplayStyle"),
+        ),
+    },
+    "3D Movement": {
+        "registry_toolbar_name": "tbarViewer3DMovement",
+        "entries": (
+            ("tool", "cmdNudgeLeft"),
+            ("tool", "cmdNudgeRight"),
+            ("tool", "cmdNudgeUp"),
+            ("tool", "cmdNudgeDown"),
+            ("tool", "cmdViewer3DMovementOptions"),
+            ("separator", None),
+            ("tool", "cmdSMSketcherMoveTo"),
+            ("tool", "cmdViewer3DAlignOntoView"),
+        ),
+    },
+}
 VIEW_RUNTIME_ACCESSIBILITY_CONTROL_FIELDS = {
     "command_id",
     "observed_control_name",
@@ -182,8 +212,37 @@ VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS = {
     "empty_viewport_focus_target_observed",
     "unnamed_toolbar_children_observed",
     "controls",
+    "anonymous_toolbars",
     "screenshot_path",
     "note",
+}
+VIEW_RUNTIME_ACCESSIBILITY_OPTIONAL_EVIDENCE_FIELDS = {
+    "anonymous_toolbars",
+    "screenshot_path",
+    "note",
+}
+VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_TOOLBAR_FIELDS = {
+    "observed_toolbar_name",
+    "toolbar_automation_id",
+    "children",
+}
+VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_CHILD_FIELDS = {
+    "element_index",
+    "role",
+    "enabled",
+    "observed_control_name",
+}
+VIEW_REPLAY_ACCESSIBILITY_COMMAND_USE_FIELDS = {
+    "command_id",
+    "toolbar_name",
+    "toolbar_automation_id",
+    "registry_toolbar_name",
+    "zero_based_child_index",
+    "element_index",
+    "registry_sha256",
+    "semantic_mapping_sha256",
+    "accessibility_tree_refreshed",
+    "invocation_succeeded",
 }
 REVIEWED_COPY_SCRIPT_EVIDENCE_FIELDS = {
     "script_text",
@@ -419,10 +478,10 @@ def _normalize_view_runtime_accessibility_evidence(
             "runtime_accessibility_evidence contains unsupported fields: "
             + ", ".join(extra_fields)
         )
-    required_fields = VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS - {
-        "screenshot_path",
-        "note",
-    }
+    required_fields = (
+        VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS
+        - VIEW_RUNTIME_ACCESSIBILITY_OPTIONAL_EVIDENCE_FIELDS
+    )
     missing_fields = sorted(required_fields - set(value))
     if missing_fields:
         raise GuiError(
@@ -469,11 +528,11 @@ def _normalize_view_runtime_accessibility_evidence(
             raise GuiError(f"runtime_accessibility_evidence.{field} must be a boolean")
 
     raw_controls = normalized.get("controls")
-    if not isinstance(raw_controls, list) or not 1 <= len(raw_controls) <= len(
+    if not isinstance(raw_controls, list) or not 0 <= len(raw_controls) <= len(
         VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS
     ):
         raise GuiError(
-            "runtime_accessibility_evidence.controls must contain one or two control observations"
+            "runtime_accessibility_evidence.controls must contain at most two control observations"
         )
     controls: list[dict[str, Any]] = []
     seen_command_ids: set[str] = set()
@@ -543,12 +602,461 @@ def _normalize_view_runtime_accessibility_evidence(
         )
     normalized["controls"] = controls
 
+    raw_toolbars = normalized.get("anonymous_toolbars") or []
+    if not isinstance(raw_toolbars, list) or len(raw_toolbars) > len(
+        VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS
+    ):
+        raise GuiError(
+            "runtime_accessibility_evidence.anonymous_toolbars must contain at most "
+            "two toolbar observations"
+        )
+    anonymous_toolbars: list[dict[str, Any]] = []
+    seen_toolbar_names: set[str] = set()
+    seen_toolbar_automation_ids: set[int] = set()
+    seen_element_indices: set[int] = set()
+    for toolbar_index, raw_toolbar in enumerate(raw_toolbars, start=1):
+        if not isinstance(raw_toolbar, dict):
+            raise GuiError(
+                "runtime_accessibility_evidence.anonymous_toolbars"
+                f"[{toolbar_index}] must be a JSON object"
+            )
+        extra_toolbar_fields = sorted(
+            set(raw_toolbar) - VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_TOOLBAR_FIELDS
+        )
+        if extra_toolbar_fields:
+            raise GuiError(
+                "runtime_accessibility_evidence.anonymous_toolbars"
+                f"[{toolbar_index}] contains unsupported fields: "
+                + ", ".join(extra_toolbar_fields)
+            )
+        missing_toolbar_fields = sorted(
+            VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_TOOLBAR_FIELDS - set(raw_toolbar)
+        )
+        if missing_toolbar_fields:
+            raise GuiError(
+                "runtime_accessibility_evidence.anonymous_toolbars"
+                f"[{toolbar_index}] is missing required fields: "
+                + ", ".join(missing_toolbar_fields)
+            )
+        toolbar_name = str(raw_toolbar.get("observed_toolbar_name") or "").strip()
+        if toolbar_name not in VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS:
+            raise GuiError(
+                "runtime_accessibility_evidence anonymous toolbar name is not allowlisted"
+            )
+        if toolbar_name in seen_toolbar_names:
+            raise GuiError(
+                "runtime_accessibility_evidence contains a duplicate anonymous toolbar name"
+            )
+        seen_toolbar_names.add(toolbar_name)
+        toolbar_automation_id = raw_toolbar.get("toolbar_automation_id")
+        if (
+            not isinstance(toolbar_automation_id, int)
+            or isinstance(toolbar_automation_id, bool)
+            or toolbar_automation_id <= 0
+        ):
+            raise GuiError(
+                "runtime_accessibility_evidence anonymous toolbar automation ID must "
+                "be a positive integer"
+            )
+        if toolbar_automation_id in seen_toolbar_automation_ids:
+            raise GuiError(
+                "runtime_accessibility_evidence contains a duplicate toolbar automation ID"
+            )
+        seen_toolbar_automation_ids.add(toolbar_automation_id)
+        raw_children = raw_toolbar.get("children")
+        if not isinstance(raw_children, list) or not 1 <= len(raw_children) <= 32:
+            raise GuiError(
+                "runtime_accessibility_evidence anonymous toolbar children must contain "
+                "between 1 and 32 observations"
+            )
+        children: list[dict[str, Any]] = []
+        previous_element_index: int | None = None
+        for child_index, raw_child in enumerate(raw_children, start=1):
+            if not isinstance(raw_child, dict):
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar child "
+                    f"{child_index} must be a JSON object"
+                )
+            extra_child_fields = sorted(
+                set(raw_child) - VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_CHILD_FIELDS
+            )
+            if extra_child_fields:
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar child contains "
+                    "unsupported fields: " + ", ".join(extra_child_fields)
+                )
+            required_child_fields = (
+                VIEW_RUNTIME_ACCESSIBILITY_ANONYMOUS_CHILD_FIELDS
+                - {"observed_control_name"}
+            )
+            missing_child_fields = sorted(required_child_fields - set(raw_child))
+            if missing_child_fields:
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar child is missing "
+                    "required fields: " + ", ".join(missing_child_fields)
+                )
+            element_index = raw_child.get("element_index")
+            if (
+                not isinstance(element_index, int)
+                or isinstance(element_index, bool)
+                or element_index < 0
+            ):
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar element_index must "
+                    "be a non-negative integer"
+                )
+            if element_index in seen_element_indices:
+                raise GuiError(
+                    "runtime_accessibility_evidence contains a duplicate anonymous toolbar "
+                    "element_index"
+                )
+            if previous_element_index is not None and element_index <= previous_element_index:
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar element_index values "
+                    "must be strictly increasing within each toolbar"
+                )
+            previous_element_index = element_index
+            seen_element_indices.add(element_index)
+            role = str(raw_child.get("role") or "").strip().lower()
+            if role not in {"checkbox", "separator"}:
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar role must be "
+                    "checkbox or separator"
+                )
+            enabled = raw_child.get("enabled")
+            if not isinstance(enabled, bool):
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar enabled must be a boolean"
+                )
+            observed_name_value = raw_child.get("observed_control_name")
+            if observed_name_value is not None and not isinstance(
+                observed_name_value, str
+            ):
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar observed_control_name "
+                    "must be a string or null"
+                )
+            observed_name = (
+                observed_name_value.strip() if isinstance(observed_name_value, str) else None
+            )
+            if observed_name == "":
+                observed_name = None
+            if role == "separator" and (enabled or observed_name is not None):
+                raise GuiError(
+                    "runtime_accessibility_evidence anonymous toolbar separators must be "
+                    "disabled and unnamed"
+                )
+            children.append(
+                {
+                    "element_index": element_index,
+                    "role": role,
+                    "enabled": enabled,
+                    "observed_control_name": observed_name,
+                }
+            )
+        anonymous_toolbars.append(
+            {
+                "observed_toolbar_name": toolbar_name,
+                "toolbar_automation_id": toolbar_automation_id,
+                "children": children,
+            }
+        )
+    if anonymous_toolbars and normalized.get("unnamed_toolbar_children_observed") is not True:
+        raise GuiError(
+            "runtime_accessibility_evidence anonymous toolbar observations require "
+            "unnamed_toolbar_children_observed=true"
+        )
+    normalized["anonymous_toolbars"] = anonymous_toolbars
+
     for field in ("screenshot_path", "note"):
         item = normalized.get(field)
         if item is not None and not isinstance(item, str):
             raise GuiError(
                 f"runtime_accessibility_evidence.{field} must be a string or null"
             )
+    return normalized
+
+
+def _resolve_verified_anonymous_toolbar_mappings(
+    evidence: dict[str, Any],
+    command_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive allowlisted commands from registry order and live child order."""
+
+    observations = [
+        item
+        for item in evidence.get("anonymous_toolbars") or []
+        if isinstance(item, dict)
+    ]
+    if not observations:
+        return {
+            "attempted": False,
+            "registry_ready": False,
+            "toolbar_results": [],
+            "command_mappings": [],
+            "mapped_command_ids": [],
+            "invocation_ready_command_ids": [],
+            "block_reasons": [],
+        }
+
+    registry_path = str(command_evidence.get("registry_path") or "").strip() or None
+    registry_sha256 = str(command_evidence.get("registry_sha256") or "").lower()
+    raw_layouts = command_evidence.get("registry_toolbar_layouts")
+    registry_ready = bool(
+        command_evidence.get("registry_found") is True
+        and registry_path is not None
+        and re.fullmatch(r"[0-9a-f]{64}", registry_sha256)
+        and isinstance(raw_layouts, list)
+        and command_evidence.get("registry_toolbar_parse_error") in {None, ""}
+    )
+    layouts = [item for item in raw_layouts or [] if isinstance(item, dict)]
+    toolbar_results: list[dict[str, Any]] = []
+    command_mappings: list[dict[str, Any]] = []
+    all_block_reasons: list[str] = []
+
+    for observation in observations:
+        toolbar_name = str(observation.get("observed_toolbar_name") or "")
+        contract = VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS.get(toolbar_name)
+        reasons: list[str] = []
+        if not registry_ready:
+            reasons.append("installed_view_toolbar_registry_not_verified")
+        if contract is None:
+            reasons.append("anonymous_toolbar_contract_not_allowlisted")
+            expected_entries: tuple[tuple[str, str | None], ...] = ()
+            registry_toolbar_name = None
+        else:
+            expected_entries = contract["entries"]
+            registry_toolbar_name = str(contract["registry_toolbar_name"])
+
+        matching_layouts = [
+            layout
+            for layout in layouts
+            if layout.get("registry_toolbar_name") == registry_toolbar_name
+            and layout.get("title") == toolbar_name
+        ]
+        if len(matching_layouts) != 1:
+            reasons.append("installed_toolbar_registry_identity_not_unique")
+            installed_entries: list[tuple[str, str | None]] = []
+        else:
+            installed_entries = [
+                (
+                    str(entry.get("kind") or ""),
+                    str(entry.get("command_id"))
+                    if entry.get("command_id") is not None
+                    else None,
+                )
+                for entry in matching_layouts[0].get("entries") or []
+                if isinstance(entry, dict)
+            ]
+            if tuple(installed_entries) != tuple(expected_entries):
+                reasons.append("installed_toolbar_registry_sequence_mismatch")
+
+        children = [
+            item for item in observation.get("children") or [] if isinstance(item, dict)
+        ]
+        if len(children) != len(expected_entries):
+            reasons.append("live_toolbar_child_count_mismatch")
+        if children and any(
+            child.get("observed_control_name") is not None
+            for child in children
+            if child.get("role") != "separator"
+        ):
+            reasons.append("live_toolbar_children_not_all_unnamed")
+        if len(children) == len(expected_entries):
+            expected_roles = [
+                "separator" if kind == "separator" else "checkbox"
+                for kind, _command_id in expected_entries
+            ]
+            observed_roles = [str(child.get("role") or "") for child in children]
+            if observed_roles != expected_roles:
+                reasons.append("live_toolbar_child_role_sequence_mismatch")
+
+        reasons = _unique_strings(reasons)
+        toolbar_verified = not reasons
+        toolbar_result: dict[str, Any] = {
+            "observed_toolbar_name": toolbar_name,
+            "toolbar_automation_id": observation.get("toolbar_automation_id"),
+            "registry_toolbar_name": registry_toolbar_name,
+            "registry_path": registry_path,
+            "registry_sha256": registry_sha256 or None,
+            "expected_child_count": len(expected_entries),
+            "observed_child_count": len(children),
+            "contract_verified": toolbar_verified,
+            "block_reasons": reasons,
+        }
+        toolbar_results.append(toolbar_result)
+        all_block_reasons.extend(
+            f"{toolbar_name.replace(' ', '_').lower()}_{reason}" for reason in reasons
+        )
+        if not toolbar_verified:
+            continue
+
+        for child_index, ((kind, command_id), child) in enumerate(
+            zip(expected_entries, children)
+        ):
+            if kind != "tool" or command_id not in VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS:
+                continue
+            mapping_basis = {
+                "registry_path": registry_path,
+                "registry_sha256": registry_sha256,
+                "registry_toolbar_name": registry_toolbar_name,
+                "toolbar_name": toolbar_name,
+                "toolbar_automation_id": observation.get("toolbar_automation_id"),
+                "command_id": command_id,
+                "zero_based_child_index": child_index,
+                "element_index": child.get("element_index"),
+                "role": child.get("role"),
+            }
+            semantic_mapping_sha256 = hashlib.sha256(
+                json.dumps(
+                    mapping_basis,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            enabled = child.get("enabled") is True
+            mapping = {
+                **mapping_basis,
+                "semantic_mapping_sha256": semantic_mapping_sha256,
+                "mapping_status": (
+                    "verified_installed_registry_and_live_child_order"
+                    if enabled
+                    else "verified_mapping_target_disabled"
+                ),
+                "verified": True,
+                "invocation_ready": enabled,
+                "target_kind": "verified_anonymous_toolbar_child",
+                "invocation_method": "computer_use_accessibility_element_index",
+                "element_index_is_ephemeral": True,
+                "requires_fresh_tree_match_before_invoke": True,
+                "observed_control_name": child.get("observed_control_name"),
+            }
+            if not enabled:
+                mapping["block_reasons"] = [
+                    "mapped_anonymous_toolbar_control_not_enabled"
+                ]
+            else:
+                mapping["block_reasons"] = []
+            command_mappings.append(mapping)
+
+    return {
+        "attempted": True,
+        "registry_ready": registry_ready,
+        "registry_path": registry_path,
+        "registry_sha256": registry_sha256 or None,
+        "toolbar_results": toolbar_results,
+        "command_mappings": command_mappings,
+        "mapped_command_ids": sorted(
+            str(item["command_id"]) for item in command_mappings
+        ),
+        "invocation_ready_command_ids": sorted(
+            str(item["command_id"])
+            for item in command_mappings
+            if item.get("invocation_ready") is True
+        ),
+        "block_reasons": _unique_strings(all_block_reasons),
+    }
+
+
+def _verified_anonymous_recipe_targets(
+    execution_recipe: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Collect anonymous command targets embedded in one prepared recipe."""
+
+    targets: list[dict[str, Any]] = []
+    for field in ("accessibility_target", "movement_accessibility_target"):
+        target = execution_recipe.get(field)
+        if (
+            isinstance(target, dict)
+            and target.get("target_kind")
+            == "verified_anonymous_toolbar_child"
+        ):
+            targets.append(target)
+    return targets
+
+
+def _normalize_view_replay_accessibility_command_uses(
+    value: list[dict[str, Any]] | None,
+    *,
+    execution_recipe: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Bind actual anonymous-control invocations to prepared semantic targets."""
+
+    expected_targets = _verified_anonymous_recipe_targets(execution_recipe)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not 1 <= len(value) <= 2:
+        raise GuiError(
+            "accessibility_command_uses must contain one or two command-use receipts"
+        )
+    if not expected_targets:
+        raise GuiError(
+            "accessibility_command_uses are allowed only for a verified anonymous "
+            "toolbar recipe"
+        )
+    expected_by_command = {
+        str(target.get("command_id")): target for target in expected_targets
+    }
+    normalized: list[dict[str, Any]] = []
+    seen_command_ids: set[str] = set()
+    exact_fields = (
+        "toolbar_name",
+        "toolbar_automation_id",
+        "registry_toolbar_name",
+        "zero_based_child_index",
+        "element_index",
+        "registry_sha256",
+        "semantic_mapping_sha256",
+    )
+    for index, raw_item in enumerate(value, start=1):
+        if not isinstance(raw_item, dict):
+            raise GuiError(
+                f"accessibility_command_uses[{index}] must be a JSON object"
+            )
+        extra_fields = sorted(
+            set(raw_item) - VIEW_REPLAY_ACCESSIBILITY_COMMAND_USE_FIELDS
+        )
+        if extra_fields:
+            raise GuiError(
+                f"accessibility_command_uses[{index}] contains unsupported fields: "
+                + ", ".join(extra_fields)
+            )
+        missing_fields = sorted(
+            VIEW_REPLAY_ACCESSIBILITY_COMMAND_USE_FIELDS - set(raw_item)
+        )
+        if missing_fields:
+            raise GuiError(
+                f"accessibility_command_uses[{index}] is missing required fields: "
+                + ", ".join(missing_fields)
+            )
+        command_id = str(raw_item.get("command_id") or "").strip()
+        if command_id in seen_command_ids:
+            raise GuiError("accessibility_command_uses contains a duplicate command_id")
+        seen_command_ids.add(command_id)
+        expected = expected_by_command.get(command_id)
+        if expected is None:
+            raise GuiError(
+                f"accessibility_command_uses[{index}] command is not present in the "
+                "prepared anonymous toolbar recipe"
+            )
+        item = dict(raw_item)
+        item["registry_sha256"] = str(item.get("registry_sha256") or "").lower()
+        item["semantic_mapping_sha256"] = str(
+            item.get("semantic_mapping_sha256") or ""
+        ).lower()
+        for field in exact_fields:
+            if item.get(field) != expected.get(field):
+                raise GuiError(
+                    f"accessibility_command_uses[{index}] does not match the prepared "
+                    f"{field}"
+                )
+        for field in ("accessibility_tree_refreshed", "invocation_succeeded"):
+            if not isinstance(item.get(field), bool):
+                raise GuiError(
+                    f"accessibility_command_uses[{index}].{field} must be a boolean"
+                )
+        normalized.append(item)
     return normalized
 
 
@@ -2913,7 +3421,7 @@ class MaterialsStudioGuiController:
         )
         payload["checklist"] = [
             "Activate and reverify the exact current revision wrapper window.",
-            "Apply the prepared view without blind coordinates or unnamed controls.",
+            "Apply the prepared view without blind coordinates or unverified unnamed controls.",
             "Use Materials Studio Copy Script and capture the exact inert script text.",
             "Capture a project-scoped screenshot after visually matching the manifest camera.",
             "Submit the script and observed window evidence to material_studio_gui_record_view_replay.",
@@ -3004,6 +3512,7 @@ class MaterialsStudioGuiController:
             raise GuiError("view audit revision does not match the replay target")
 
         status = self.status(project_id=safe_project, revision=revision)
+        command_evidence = _materials_studio_view_command_evidence()
         runtime_ui_preflight = self._resolve_view_replay_runtime_ui_preflight(
             status=status,
             project_id=safe_project,
@@ -3016,6 +3525,7 @@ class MaterialsStudioGuiController:
                 project_id=safe_project,
                 revision=revision,
                 supplied_evidence=runtime_accessibility_evidence,
+                command_evidence=command_evidence,
             )
         )
         steps = [_view_replay_step(view, index=index) for index, view in enumerate(audit.get("views") or [])]
@@ -3062,7 +3572,6 @@ class MaterialsStudioGuiController:
 
         activation_required = bool(target_window) and not target_window_is_foreground
         ready_for_external_replay = not block_reasons
-        command_evidence = _materials_studio_view_command_evidence()
         for step in steps:
             step["execution_recipe"] = _view_replay_execution_recipe(
                 step,
@@ -3188,11 +3697,10 @@ class MaterialsStudioGuiController:
             prior_recipe_contract = view_replay_manifest_recipe_contract_status(
                 existing_manifest
             )
-            current_view_names = set(manifest["view_names"])
             preserved_events = [
                 event
                 for event in existing_manifest.get("replay_events") or []
-                if isinstance(event, dict) and event.get("view_name") in current_view_names
+                if isinstance(event, dict)
             ]
             manifest["replay_events"] = preserved_events
             manifest["preserved_replay_event_count"] = len(preserved_events)
@@ -3287,8 +3795,9 @@ class MaterialsStudioGuiController:
         project_id: str,
         revision: int,
         supplied_evidence: dict[str, Any] | None,
+        command_evidence: dict[str, Any],
     ) -> dict[str, Any]:
-        """Load or persist exact-window named-control accessibility evidence."""
+        """Load or persist exact-window accessibility and toolbar-order evidence."""
 
         artifact_path = self._view_replay_runtime_accessibility_preflight_path(
             project_id=project_id,
@@ -3342,16 +3851,6 @@ class MaterialsStudioGuiController:
                 .isoformat()
                 .replace("+00:00", "Z")
             )
-            artifact = {
-                "schema_version": 1,
-                "kind": "materials_studio_view_runtime_accessibility_preflight",
-                "observed_at": observed_at,
-                "project_id": project_id,
-                "revision": revision,
-                "evidence": evidence,
-                "binding_at_observation": binding,
-            }
-            _write_json_atomic(artifact_path, artifact)
         else:
             source = "persisted"
             try:
@@ -3387,12 +3886,30 @@ class MaterialsStudioGuiController:
                 evidence=evidence,
             )
 
+        anonymous_toolbar_mapping = _resolve_verified_anonymous_toolbar_mappings(
+            evidence,
+            command_evidence,
+        )
         gate_reasons = [
             f"runtime_accessibility_binding_{reason}"
             for reason in binding.get("rejection_reasons") or []
         ]
         if evidence.get("accessibility_tree_refreshed") is not True:
             gate_reasons.append("runtime_accessibility_tree_not_refreshed")
+        registry_sha256_at_observation = (
+            str(artifact.get("registry_sha256_at_observation") or "") or None
+            if source == "persisted"
+            else anonymous_toolbar_mapping.get("registry_sha256")
+        )
+        if (
+            source == "persisted"
+            and anonymous_toolbar_mapping.get("attempted") is True
+            and registry_sha256_at_observation
+            != anonymous_toolbar_mapping.get("registry_sha256")
+        ):
+            gate_reasons.append(
+                "runtime_anonymous_toolbar_registry_changed_since_observation"
+            )
         gate_reasons = _unique_strings(gate_reasons)
         base_gate_satisfied = not gate_reasons
         controls = evidence.get("controls") or []
@@ -3401,8 +3918,34 @@ class MaterialsStudioGuiController:
             for control in controls
             if isinstance(control, dict) and control.get("command_id")
         }
+        named_ready_command_ids = {
+            str(control.get("command_id"))
+            for control in controls
+            if isinstance(control, dict)
+            and control.get("command_id")
+            and control.get("named_control_observed") is True
+            and control.get("invoke_supported") is True
+        }
+        semantic_mapped_command_ids = {
+            str(item)
+            for item in anonymous_toolbar_mapping.get("mapped_command_ids") or []
+        }
+        semantic_ready_command_ids = {
+            str(item)
+            for item in anonymous_toolbar_mapping.get(
+                "invocation_ready_command_ids"
+            )
+            or []
+        }
+        resolved_observed_command_ids = (
+            observed_command_ids | semantic_mapped_command_ids
+        )
+        resolved_ready_command_ids = (
+            named_ready_command_ids | semantic_ready_command_ids
+        )
         all_standard_recipe_controls_observed = (
-            set(VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS) <= observed_command_ids
+            set(VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS)
+            <= resolved_observed_command_ids
         )
         all_observed_named_controls_invocable = bool(controls) and all(
             isinstance(control, dict)
@@ -3412,14 +3955,52 @@ class MaterialsStudioGuiController:
         )
         all_standard_recipe_controls_ready = bool(
             all_standard_recipe_controls_observed
-            and all_observed_named_controls_invocable
+            and set(VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS)
+            <= resolved_ready_command_ids
         )
         automation_gate_satisfied = bool(
             base_gate_satisfied and all_standard_recipe_controls_ready
         )
         observed_control_blocks_automation = bool(
-            controls and not all_observed_named_controls_invocable
+            (
+                controls
+                and any(
+                    str(control.get("command_id")) not in resolved_ready_command_ids
+                    for control in controls
+                    if isinstance(control, dict) and control.get("command_id")
+                )
+            )
+            or (
+                anonymous_toolbar_mapping.get("attempted") is True
+                and (
+                    not anonymous_toolbar_mapping.get("command_mappings")
+                    or not all(
+                        item.get("invocation_ready") is True
+                        for item in anonymous_toolbar_mapping.get(
+                            "command_mappings"
+                        )
+                        or []
+                    )
+                )
+            )
         )
+        if supplied_evidence is not None:
+            artifact = {
+                "schema_version": 2,
+                "kind": "materials_studio_view_runtime_accessibility_preflight",
+                "observed_at": observed_at,
+                "project_id": project_id,
+                "revision": revision,
+                "evidence": evidence,
+                "binding_at_observation": binding,
+                "registry_sha256_at_observation": (
+                    anonymous_toolbar_mapping.get("registry_sha256")
+                ),
+                "anonymous_toolbar_mapping_at_observation": (
+                    anonymous_toolbar_mapping
+                ),
+            }
+            _write_json_atomic(artifact_path, artifact)
         return {
             "status": (
                 "verified_automation_ready"
@@ -3446,12 +4027,21 @@ class MaterialsStudioGuiController:
             "all_standard_recipe_controls_ready": (
                 all_standard_recipe_controls_ready
             ),
+            "resolved_observed_command_ids": sorted(
+                resolved_observed_command_ids
+            ),
+            "resolved_ready_command_ids": sorted(resolved_ready_command_ids),
             "automation_gate_satisfied": automation_gate_satisfied,
             "artifact_path": str(artifact_path),
             "artifact_exists": artifact_path.exists(),
             "binding": binding,
             "evidence": evidence,
             "controls": controls,
+            "anonymous_toolbar_mapping": anonymous_toolbar_mapping,
+            "semantic_command_mappings": anonymous_toolbar_mapping.get(
+                "command_mappings"
+            ),
+            "registry_sha256_at_observation": registry_sha256_at_observation,
             "unnamed_toolbar_children_observed": evidence.get(
                 "unnamed_toolbar_children_observed"
             ),
@@ -3636,6 +4226,7 @@ class MaterialsStudioGuiController:
         expected_window_handle: int | None = None,
         expected_window_title: str | None = None,
         native_command_id: str | None = None,
+        accessibility_command_uses: list[dict[str, Any]] | None = None,
         key_sequence: list[str] | None = None,
         reset_before_key_sequence: bool | None = None,
         rotation_increment_degrees: float | None = None,
@@ -3741,6 +4332,12 @@ class MaterialsStudioGuiController:
                 "continue the GUI view replay to regenerate the manifest while preserving prior events"
                 + (f" ({', '.join(reasons)})" if reasons else "")
             )
+        normalized_accessibility_command_uses = (
+            _normalize_view_replay_accessibility_command_uses(
+                accessibility_command_uses,
+                execution_recipe=execution_recipe,
+            )
+        )
         if native_command_id is not None and execution_recipe:
             allowed_native_commands = {
                 str(item)
@@ -4021,6 +4618,33 @@ class MaterialsStudioGuiController:
         exact_window_binding_supplied = bool(
             expected_window_handle is not None and expected_window_title is not None
         )
+        anonymous_recipe_targets = _verified_anonymous_recipe_targets(
+            execution_recipe
+        )
+        accessibility_command_uses_required = bool(
+            source == "computer_use" and anonymous_recipe_targets
+        )
+        expected_accessibility_command_ids = {
+            str(target.get("command_id")) for target in anonymous_recipe_targets
+        }
+        observed_accessibility_command_ids = {
+            str(item.get("command_id"))
+            for item in normalized_accessibility_command_uses or []
+        }
+        accessibility_command_uses_complete = bool(
+            anonymous_recipe_targets
+            and normalized_accessibility_command_uses is not None
+            and exact_window_binding_supplied
+            and expected_accessibility_command_ids
+            == observed_accessibility_command_ids
+            and len(normalized_accessibility_command_uses)
+            == len(anonymous_recipe_targets)
+            and all(
+                item.get("accessibility_tree_refreshed") is True
+                and item.get("invocation_succeeded") is True
+                for item in normalized_accessibility_command_uses
+            )
+        )
         staged_keyboard_evidence_required = bool(staged_keyboard_recipe and source == "computer_use")
         target_wrapper_metadata = (
             target_resolution.get("target_project_wrapper_metadata")
@@ -4093,6 +4717,10 @@ class MaterialsStudioGuiController:
             and window_handle_matches
             and window_title_matches
             and (
+                not accessibility_command_uses_required
+                or accessibility_command_uses_complete
+            )
+            and (
                 not staged_keyboard_evidence_required
                 or staged_keyboard_evidence_complete
             )
@@ -4120,6 +4748,13 @@ class MaterialsStudioGuiController:
             rejection_reasons.append("observed_window_handle_mismatch")
         if not window_title_matches:
             rejection_reasons.append("observed_window_title_mismatch")
+        if (
+            accessibility_command_uses_required
+            and not accessibility_command_uses_complete
+        ):
+            rejection_reasons.append(
+                "verified_anonymous_toolbar_command_use_evidence_incomplete"
+            )
         if staged_keyboard_evidence_required and not staged_keyboard_evidence_complete:
             rejection_reasons.append("staged_keyboard_evidence_incomplete")
         if reviewed_copy_script_evidence_required:
@@ -4328,6 +4963,15 @@ class MaterialsStudioGuiController:
             "current_revision_loaded": current_revision_loaded,
             "native_command_id": native_command_id,
             "native_command": native_command,
+            "accessibility_command_uses_required": (
+                accessibility_command_uses_required
+            ),
+            "accessibility_command_uses_complete": (
+                accessibility_command_uses_complete
+            ),
+            "accessibility_command_uses": (
+                normalized_accessibility_command_uses
+            ),
             "key_sequence": normalized_key_sequence,
             "reset_before_key_sequence": reset_before_key_sequence,
             "rotation_increment_degrees": rotation_increment_degrees,
@@ -4970,6 +5614,11 @@ def _view_runtime_accessibility_gate(
         for item in evidence.get("controls") or []
         if isinstance(item, dict) and item.get("command_id")
     }
+    semantic_mappings_by_id = {
+        str(item.get("command_id")): item
+        for item in runtime.get("semantic_command_mappings") or []
+        if isinstance(item, dict) and item.get("command_id")
+    }
     command_gates: list[dict[str, Any]] = []
     missing_required_command_ids: list[str] = []
     reason_prefixes = {
@@ -4978,6 +5627,7 @@ def _view_runtime_accessibility_gate(
     }
     for command_id in required_command_ids:
         control = controls_by_id.get(command_id)
+        semantic_mapping = semantic_mappings_by_id.get(command_id)
         reason_prefix = reason_prefixes.get(command_id, command_id)
         named_control_observed = bool(
             control is not None and control.get("named_control_observed") is True
@@ -4985,13 +5635,55 @@ def _view_runtime_accessibility_gate(
         invoke_supported = bool(
             control is not None and control.get("invoke_supported") is True
         )
-        if control is None:
+        named_control_ready = bool(named_control_observed and invoke_supported)
+        semantic_mapping_ready = bool(
+            semantic_mapping is not None
+            and semantic_mapping.get("verified") is True
+            and semantic_mapping.get("invocation_ready") is True
+        )
+        resolved_invocation_ready = bool(
+            named_control_ready or semantic_mapping_ready
+        )
+        if control is None and semantic_mapping is None:
             missing_required_command_ids.append(command_id)
             reasons.append(f"runtime_{reason_prefix}_control_evidence_missing")
-        elif not named_control_observed:
-            reasons.append(f"runtime_named_{reason_prefix}_control_not_observed")
-        elif not invoke_supported:
-            reasons.append(f"runtime_named_{reason_prefix}_control_not_invocable")
+            if evidence.get("anonymous_toolbars"):
+                reasons.append(
+                    f"runtime_verified_{reason_prefix}_toolbar_mapping_not_available"
+                )
+        elif not resolved_invocation_ready:
+            if semantic_mapping is not None:
+                reasons.append(
+                    f"runtime_verified_{reason_prefix}_control_not_enabled"
+                )
+            elif not named_control_observed:
+                reasons.append(
+                    f"runtime_named_{reason_prefix}_control_not_observed"
+                )
+            else:
+                reasons.append(
+                    f"runtime_named_{reason_prefix}_control_not_invocable"
+                )
+        toolbar_name = (
+            "3D Movement"
+            if command_id == "cmdViewer3DMovementOptions"
+            else "3D Viewer"
+        )
+        accessibility_target = (
+            dict(semantic_mapping)
+            if semantic_mapping_ready
+            else {
+                "target_kind": "named_control",
+                "invocation_method": "accessibility_named_control",
+                "toolbar_name": toolbar_name,
+                "control_name": VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS.get(
+                    command_id
+                ),
+                "command_id": command_id,
+            }
+            if named_control_ready
+            else None
+        )
         command_gates.append(
             {
                 "command_id": command_id,
@@ -5003,6 +5695,18 @@ def _view_runtime_accessibility_gate(
                 ),
                 "named_control_observed": named_control_observed,
                 "invoke_supported": invoke_supported,
+                "named_control_ready": named_control_ready,
+                "semantic_mapping_ready": semantic_mapping_ready,
+                "resolved_invocation_ready": resolved_invocation_ready,
+                "control_resolution": (
+                    "named_control"
+                    if named_control_ready
+                    else "verified_anonymous_toolbar_mapping"
+                    if semantic_mapping_ready
+                    else "unresolved"
+                ),
+                "semantic_mapping": semantic_mapping,
+                "accessibility_target": accessibility_target,
             }
         )
     reasons = _unique_strings(reasons)
@@ -5014,8 +5718,7 @@ def _view_runtime_accessibility_gate(
     observed_required_control_blocks_automation = bool(
         required_control_evidence_complete
         and any(
-            item.get("named_control_observed") is not True
-            or item.get("invoke_supported") is not True
+            item.get("resolved_invocation_ready") is not True
             for item in command_gates
         )
     )
@@ -5046,7 +5749,40 @@ def _view_runtime_accessibility_gate(
             "unnamed_toolbar_children_observed"
         ),
         "command_gates": command_gates,
+        "semantic_mapping_used": any(
+            item.get("semantic_mapping_ready") is True for item in command_gates
+        ),
         "block_reasons": reasons,
+    }
+
+
+def _resolved_recipe_accessibility_target(
+    runtime_gate: dict[str, Any],
+    command_id: str,
+    named_fallback: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a server-derived semantic target or the existing named target."""
+
+    command_gate = next(
+        (
+            item
+            for item in runtime_gate.get("command_gates") or []
+            if isinstance(item, dict) and item.get("command_id") == command_id
+        ),
+        None,
+    )
+    if isinstance(command_gate, dict):
+        target = command_gate.get("accessibility_target")
+        if (
+            isinstance(target, dict)
+            and target.get("target_kind")
+            == "verified_anonymous_toolbar_child"
+        ):
+            return dict(target)
+    return {
+        "target_kind": "named_control",
+        "invocation_method": "accessibility_named_control",
+        **named_fallback,
     }
 
 
@@ -5097,6 +5833,7 @@ def _view_replay_execution_recipe(
         "post_action_record_tool": "material_studio_gui_record_view_replay",
         "requires_exact_window_binding": True,
         "requires_fresh_visual_confirmation": True,
+        "unnamed_control_invocation_allowed_only_when_verified_mapping": True,
         "local_command_registry_verified": registry_verified,
         "command_registry_path": command_evidence.get("registry_path"),
         "keyboard_help_path": command_evidence.get("keyboard_help_path"),
@@ -5151,11 +5888,15 @@ def _view_replay_execution_recipe(
             "allowed_native_command_ids": [command_id],
             "native_command_id": command_id,
             "runtime_accessibility_preflight": runtime_accessibility_gate,
-            "accessibility_target": {
-                "toolbar_name": "3D Viewer",
-                "control_name": "3D Viewer Reset View",
-                "command_id": command_id,
-            },
+            "accessibility_target": _resolved_recipe_accessibility_target(
+                runtime_accessibility_gate,
+                command_id,
+                {
+                    "toolbar_name": "3D Viewer",
+                    "control_name": "3D Viewer Reset View",
+                    "command_id": command_id,
+                },
+            ),
             "expected_axis_layout": {
                 "screen_right": "A",
                 "screen_up": "B",
@@ -5164,8 +5905,8 @@ def _view_replay_execution_recipe(
             "action_sequence": [
                 "verify_exact_current_wrapper_window",
                 "activate_target_window",
-                "refresh_accessibility_tree_and_locate_named_control",
-                "invoke_named_reset_view_control",
+                "refresh_accessibility_tree_and_verify_recipe_control_target",
+                "invoke_recipe_reset_view_accessibility_target",
                 "capture_fresh_visual_evidence",
                 "compare_against_manifest_camera_and_projection",
                 "record_view_replay_event",
@@ -5247,11 +5988,15 @@ def _view_replay_execution_recipe(
             "prohibited_modifier_keys": ["Shift"],
             "rotation_increment_user_configurable": True,
             "expected_axis_layout": dict(documented_key_recipe["expected_axis_layout"]),
-            "accessibility_target": {
-                "toolbar_name": "3D Viewer",
-                "control_name": "3D Viewer Reset View",
-                "command_id": reset_command_id,
-            },
+            "accessibility_target": _resolved_recipe_accessibility_target(
+                runtime_accessibility_gate,
+                reset_command_id,
+                {
+                    "toolbar_name": "3D Viewer",
+                    "control_name": "3D Viewer Reset View",
+                    "command_id": reset_command_id,
+                },
+            ),
             "keyboard_focus_target": "visually_verified_empty_3d_viewer_region",
             "post_action_checks": [
                 "verify_expected_axis_layout",
@@ -5261,8 +6006,8 @@ def _view_replay_execution_recipe(
             "action_sequence": [
                 "verify_exact_current_wrapper_window",
                 "activate_target_window",
-                "refresh_accessibility_tree_and_locate_named_reset_control",
-                "invoke_named_reset_view_control",
+                "refresh_accessibility_tree_and_verify_recipe_reset_target",
+                "invoke_recipe_reset_view_accessibility_target",
                 "focus_visually_verified_empty_3d_viewer_region",
                 "press_exact_unmodified_arrow_key_sequence",
                 "capture_fresh_visual_evidence",
@@ -5316,9 +6061,15 @@ def _view_replay_execution_recipe(
                     "movement_dialog_closed_after_restore"
                 ],
                 "movement_accessibility_target": {
-                    "toolbar_name": "3D Movement",
-                    "control_name": "Movement",
-                    "command_id": movement_command_id,
+                    **_resolved_recipe_accessibility_target(
+                        runtime_accessibility_gate,
+                        str(movement_command_id),
+                        {
+                            "toolbar_name": "3D Movement",
+                            "control_name": "Movement",
+                            "command_id": movement_command_id,
+                        },
+                    ),
                     "angle_control_id": documented_key_recipe["movement_angle_control_id"],
                     "screen_factor_control_id": documented_key_recipe[
                         "movement_screen_factor_control_id"
@@ -5941,6 +6692,50 @@ def _view_replay_execution_recipe(
     }
 
 
+def _parse_view_toolbar_registry(
+    registry_bytes: bytes,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Parse allowlisted toolbar order from one installed command registry."""
+
+    try:
+        root = ET.fromstring(registry_bytes)
+    except ET.ParseError as exc:
+        return [], str(exc)
+
+    layouts: list[dict[str, Any]] = []
+    allowlisted_names = {
+        str(contract["registry_toolbar_name"])
+        for contract in VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS.values()
+    }
+    for node in root.iter():
+        tag = str(node.tag).rsplit("}", 1)[-1].upper()
+        if tag != "TOOLBAR":
+            continue
+        registry_toolbar_name = str(node.attrib.get("NAME") or "").strip()
+        if registry_toolbar_name not in allowlisted_names:
+            continue
+        entries: list[dict[str, Any]] = []
+        for child in list(node):
+            child_tag = str(child.tag).rsplit("}", 1)[-1].upper()
+            if child_tag == "TOOL":
+                entries.append(
+                    {
+                        "kind": "tool",
+                        "command_id": str(child.attrib.get("NAME") or "").strip() or None,
+                    }
+                )
+            elif child_tag == "SEPARATOR":
+                entries.append({"kind": "separator", "command_id": None})
+        layouts.append(
+            {
+                "registry_toolbar_name": registry_toolbar_name,
+                "title": str(node.attrib.get("TITLE") or "").strip(),
+                "entries": entries,
+            }
+        )
+    return layouts, None
+
+
 def _materials_studio_view_command_evidence() -> dict[str, Any]:
     """Return installed command-registry evidence when Materials Studio is present."""
 
@@ -5956,6 +6751,9 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
     miller_plane_create_help_path: Path | None = None
     miller_plane_working_help_path: Path | None = None
     positioning_help_path: Path | None = None
+    registry_sha256: str | None = None
+    registry_toolbar_layouts: list[dict[str, Any]] = []
+    registry_toolbar_parse_error: str | None = None
     registered_view_command_ids: list[str] = []
     unmodified_arrow_keys_rotate_view = False
     shift_arrow_keys_rotate_selected_objects = False
@@ -5982,8 +6780,18 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         if candidate.exists() and candidate.is_file():
             registry_path = candidate
             try:
-                registry_text = candidate.read_text(encoding="utf-8", errors="replace")
+                registry_bytes = candidate.read_bytes()
             except OSError:
+                registry_bytes = b""
+            registry_sha256 = (
+                hashlib.sha256(registry_bytes).hexdigest() if registry_bytes else None
+            )
+            if registry_bytes:
+                registry_toolbar_layouts, registry_toolbar_parse_error = (
+                    _parse_view_toolbar_registry(registry_bytes)
+                )
+                registry_text = registry_bytes.decode("utf-8", errors="replace")
+            else:
                 registry_text = ""
             registered_view_command_ids = [
                 str(command["command_id"])
@@ -6267,6 +7075,9 @@ def _materials_studio_view_command_evidence() -> dict[str, Any]:
         "version_basis": "Materials Studio 2020/20.1 local installation",
         "registry_path": str(registry_path) if registry_path is not None else None,
         "registry_found": registry_path is not None,
+        "registry_sha256": registry_sha256,
+        "registry_toolbar_layouts": registry_toolbar_layouts,
+        "registry_toolbar_parse_error": registry_toolbar_parse_error,
         "commands": [dict(command) for command in MATERIALS_STUDIO_2020_VIEW_COMMANDS],
         "registered_view_command_ids": registered_view_command_ids,
         "symmetry_builder_registry_path": (
@@ -7306,6 +8117,129 @@ def view_replay_manifest_recipe_contract_status(manifest: Any) -> dict[str, Any]
     }
 
 
+def _verified_automatic_recipe_command_receipt(
+    event: dict[str, Any],
+    step: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a trusted invocation receipt for the same anonymous recipe."""
+
+    if (
+        event.get("source") != "computer_use"
+        or event.get("view_name") != step.get("view_name")
+        or event.get("accessibility_command_uses_required") is not True
+        or event.get("accessibility_command_uses_complete") is not True
+        or event.get("window_identity_verified") is not True
+        or event.get("single_window_policy_ok") is not True
+        or event.get("current_revision_loaded") is not True
+    ):
+        return None
+    window_binding = (
+        event.get("window_binding")
+        if isinstance(event.get("window_binding"), dict)
+        else {}
+    )
+    if window_binding.get("ok") is not True:
+        return None
+    integrity = (
+        event.get("evidence_integrity")
+        if isinstance(event.get("evidence_integrity"), dict)
+        else {}
+    )
+    journal = (
+        event.get("journal_consistency")
+        if isinstance(event.get("journal_consistency"), dict)
+        else {}
+    )
+    if integrity.get("status") != "verified" or journal.get("status") != "matched":
+        return None
+
+    execution_recipe = (
+        step.get("execution_recipe")
+        if isinstance(step.get("execution_recipe"), dict)
+        else {}
+    )
+    targets = _verified_anonymous_recipe_targets(execution_recipe)
+    uses = [
+        item
+        for item in event.get("accessibility_command_uses") or []
+        if isinstance(item, dict)
+    ]
+    if not targets or len(uses) != len(targets):
+        return None
+    identity_fields = (
+        "command_id",
+        "toolbar_name",
+        "toolbar_automation_id",
+        "registry_toolbar_name",
+        "zero_based_child_index",
+        "element_index",
+        "registry_sha256",
+        "semantic_mapping_sha256",
+    )
+    expected_identities = {
+        tuple(target.get(field) for field in identity_fields) for target in targets
+    }
+    observed_identities = {
+        tuple(use.get(field) for field in identity_fields) for use in uses
+    }
+    if expected_identities != observed_identities:
+        return None
+    if not all(
+        use.get("accessibility_tree_refreshed") is True
+        and use.get("invocation_succeeded") is True
+        for use in uses
+    ):
+        return None
+    return {
+        "event_id": event.get("event_id"),
+        "view_name": event.get("view_name"),
+        "recorded_at": event.get("recorded_at"),
+        "accepted": event.get("accepted") is True,
+        "rejection_reasons": sorted(
+            str(item)
+            for item in event.get("rejection_reasons") or []
+            if str(item)
+        ),
+        "command_mappings": [
+            {
+                "command_id": target.get("command_id"),
+                "semantic_mapping_sha256": target.get(
+                    "semantic_mapping_sha256"
+                ),
+            }
+            for target in targets
+        ],
+        "semantic_mapping_sha256": sorted(
+            str(target.get("semantic_mapping_sha256")) for target in targets
+        ),
+        "event_record_sha256": event.get("event_record_sha256"),
+        "evidence_integrity_status": integrity.get("status"),
+        "journal_consistency_status": journal.get("status"),
+    }
+
+
+def _verified_automatic_recipe_postcheck_failure(
+    event: dict[str, Any],
+    step: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a trusted visual failure for the same anonymous-control recipe."""
+
+    receipt = _verified_automatic_recipe_command_receipt(event, step)
+    if receipt is None or receipt.get("accepted") is True:
+        return None
+    visual_failure_reasons = set(receipt.get("rejection_reasons") or []) & {
+        "camera_does_not_match_manifest",
+        "model_not_visible",
+    }
+    if not visual_failure_reasons:
+        return None
+    return {
+        **receipt,
+        "failure_kind": "direct_visual_postcheck_failure",
+        "rejection_reasons": sorted(visual_failure_reasons),
+    }
+
+
 def _refresh_view_replay_summary(
     manifest: dict[str, Any],
     *,
@@ -7399,10 +8333,137 @@ def _refresh_view_replay_summary(
         for item in recipe_contract.get("view_contracts") or []
         if isinstance(item, dict) and item.get("current") is True
     }
+    automatic_postcheck_direct_failures: list[dict[str, Any]] = []
+    for step in pending_steps:
+        for event in reversed(replay_events):
+            failure = _verified_automatic_recipe_postcheck_failure(event, step)
+            if failure is not None:
+                automatic_postcheck_direct_failures.append(failure)
+                break
+
+    reset_baseline_resolutions: dict[str, dict[str, Any]] = {}
+    for event in reversed(replay_events):
+        if event.get("view_name") != "front":
+            continue
+        event_recipe = (
+            event.get("execution_recipe")
+            if isinstance(event.get("execution_recipe"), dict)
+            else {}
+        )
+        receipt = _verified_automatic_recipe_command_receipt(
+            event,
+            {
+                "view_name": "front",
+                "execution_recipe": event_recipe,
+            },
+        )
+        if receipt is None:
+            continue
+        visual_failure_reasons = set(receipt.get("rejection_reasons") or []) & {
+            "camera_does_not_match_manifest",
+            "model_not_visible",
+        }
+        for mapping in receipt.get("command_mappings") or []:
+            if not isinstance(mapping, dict):
+                continue
+            mapping_hash = mapping.get("semantic_mapping_sha256")
+            if (
+                mapping.get("command_id") != "cmdViewer3DResetView"
+                or not isinstance(mapping_hash, str)
+                or not mapping_hash
+                or mapping_hash in reset_baseline_resolutions
+            ):
+                continue
+            if receipt.get("accepted") is True:
+                reset_baseline_resolutions[mapping_hash] = {
+                    "status": "trusted_success",
+                    "receipt": receipt,
+                }
+            elif visual_failure_reasons:
+                reset_baseline_resolutions[mapping_hash] = {
+                    "status": "trusted_visual_postcheck_failure",
+                    "receipt": {
+                        **receipt,
+                        "failure_kind": "direct_visual_postcheck_failure",
+                        "rejection_reasons": sorted(
+                            visual_failure_reasons
+                        ),
+                    },
+                }
+
+    failed_reset_baselines = {
+        mapping_hash: resolution["receipt"]
+        for mapping_hash, resolution in reset_baseline_resolutions.items()
+        if resolution.get("status")
+        == "trusted_visual_postcheck_failure"
+    }
+
+    direct_failed_view_names = {
+        str(item.get("view_name"))
+        for item in automatic_postcheck_direct_failures
+    }
+    automatic_postcheck_dependency_failures: list[dict[str, Any]] = []
+    for step in pending_steps:
+        view_name = str(step.get("view_name"))
+        if view_name in direct_failed_view_names:
+            continue
+        execution_recipe = (
+            step.get("execution_recipe")
+            if isinstance(step.get("execution_recipe"), dict)
+            else {}
+        )
+        reset_target = next(
+            (
+                target
+                for target in _verified_anonymous_recipe_targets(
+                    execution_recipe
+                )
+                if target.get("command_id") == "cmdViewer3DResetView"
+                and target.get("semantic_mapping_sha256")
+                in failed_reset_baselines
+            ),
+            None,
+        )
+        if reset_target is None:
+            continue
+        mapping_hash = str(reset_target.get("semantic_mapping_sha256"))
+        dependency = failed_reset_baselines[mapping_hash]
+        automatic_postcheck_dependency_failures.append(
+            {
+                "failure_kind": "blocked_by_failed_reset_baseline",
+                "view_name": view_name,
+                "dependency_view_name": dependency.get("view_name"),
+                "dependency_event_id": dependency.get("event_id"),
+                "dependency_event_record_sha256": dependency.get(
+                    "event_record_sha256"
+                ),
+                "dependency_command_id": "cmdViewer3DResetView",
+                "blocking_reasons": [
+                    "verified_reset_baseline_failed_visual_postcheck"
+                ],
+                "semantic_mapping_sha256": [mapping_hash],
+                "evidence_integrity_status": dependency.get(
+                    "evidence_integrity_status"
+                ),
+                "journal_consistency_status": dependency.get(
+                    "journal_consistency_status"
+                ),
+            }
+        )
+
+    automatic_postcheck_failures = [
+        *automatic_postcheck_direct_failures,
+        *automatic_postcheck_dependency_failures,
+    ]
+    automatic_postcheck_failed_view_names = {
+        str(item.get("view_name")) for item in automatic_postcheck_failures
+    }
     automation_ready_steps = [
         item
         for item in pending_steps
         if str(item.get("view_name")) in current_recipe_view_names
+        if str(item.get("view_name"))
+        not in automatic_postcheck_failed_view_names
         if isinstance(item.get("execution_recipe"), dict)
         and item["execution_recipe"].get("automation_ready") is True
     ]
@@ -7535,6 +8596,29 @@ def _refresh_view_replay_summary(
         "pending_view_names": pending_view_names,
         "automation_ready_pending_view_count": len(automation_ready_steps),
         "automation_ready_pending_view_names": automation_ready_view_names,
+        "automatic_postcheck_failure_count": len(
+            automatic_postcheck_failures
+        ),
+        "automatic_postcheck_direct_failure_count": len(
+            automatic_postcheck_direct_failures
+        ),
+        "automatic_postcheck_direct_failure_view_names": sorted(
+            direct_failed_view_names
+        ),
+        "automatic_postcheck_dependency_blocked_count": len(
+            automatic_postcheck_dependency_failures
+        ),
+        "automatic_postcheck_dependency_blocked_view_names": sorted(
+            str(item.get("view_name"))
+            for item in automatic_postcheck_dependency_failures
+        ),
+        "automatic_postcheck_failed_view_count": len(
+            automatic_postcheck_failed_view_names
+        ),
+        "automatic_postcheck_failed_view_names": sorted(
+            automatic_postcheck_failed_view_names
+        ),
+        "automatic_postcheck_failures": automatic_postcheck_failures,
         "review_required_pending_view_count": len(review_required_steps),
         "review_required_pending_view_names": review_required_view_names,
         "all_supported_views_confirmed": all_confirmed,
@@ -7552,6 +8636,9 @@ def _refresh_view_replay_summary(
     )
     next_pending_journal_blocked = bool(
         next_pending_view_name in journal_blocked_view_names
+    )
+    next_pending_automatic_postcheck_failed = bool(
+        next_pending_view_name in automatic_postcheck_failed_view_names
     )
     next_pending_recipe = (
         next_pending_step.get("execution_recipe")
@@ -7631,6 +8718,16 @@ def _refresh_view_replay_summary(
             "recapture_and_record_view_evidence_after_event_journal_divergence"
         )
         recommended_mcp_tool = "material_studio_gui_copy_script_assist"
+    elif (
+        next_pending_automatic_postcheck_failed
+        and next_automation_step is None
+    ):
+        continuation_status = "automatic_recipe_postcheck_failed"
+        recommended_executor = "reviewed_copy_script_or_manual_gui_review"
+        recommended_action = (
+            "use_reviewed_camera_backend_after_automatic_recipe_postcheck_failure"
+        )
+        recommended_mcp_tool = "material_studio_gui_copy_script_assist"
     elif runtime_accessibility_preflight_required:
         continuation_status = "runtime_accessibility_preflight_required"
         recommended_executor = "computer_use_or_manual_review"
@@ -7664,6 +8761,8 @@ def _refresh_view_replay_summary(
             else
             "execute_documented_keyboard_recipe_then_record_view"
             if isinstance(next_recipe.get("key_sequence"), list)
+            else "execute_verified_accessibility_recipe_then_record_view"
+            if _verified_anonymous_recipe_targets(next_recipe)
             else "execute_named_accessibility_recipe_then_record_view"
         )
         recommended_mcp_tool = "material_studio_gui_record_view_replay"
@@ -7795,6 +8894,21 @@ def _refresh_view_replay_summary(
                 "Undo Reset View",
             ],
         }
+    accessibility_command_use_payload_hint = [
+        {
+            "command_id": target.get("command_id"),
+            "toolbar_name": target.get("toolbar_name"),
+            "toolbar_automation_id": target.get("toolbar_automation_id"),
+            "registry_toolbar_name": target.get("registry_toolbar_name"),
+            "zero_based_child_index": target.get("zero_based_child_index"),
+            "element_index": target.get("element_index"),
+            "registry_sha256": target.get("registry_sha256"),
+            "semantic_mapping_sha256": target.get("semantic_mapping_sha256"),
+            "accessibility_tree_refreshed": True,
+            "invocation_succeeded": True,
+        }
+        for target in _verified_anonymous_recipe_targets(selected_recipe)
+    ]
     record_payload_hint = {
         "project_id": manifest.get("project_id"),
         "revision": manifest.get("revision"),
@@ -7806,6 +8920,9 @@ def _refresh_view_replay_summary(
         "expected_window_handle": preflight_target_window.get("handle"),
         "expected_window_title": preflight_target_window.get("title"),
         "native_command_id": selected_recipe.get("native_command_id"),
+        "accessibility_command_uses": (
+            accessibility_command_use_payload_hint or None
+        ),
         "key_sequence": selected_recipe.get("key_sequence"),
         "reset_before_key_sequence": selected_recipe.get("reset_before_key_sequence"),
         "rotation_increment_degrees": selected_recipe.get("rotation_increment_degrees"),
@@ -7856,6 +8973,7 @@ def _refresh_view_replay_summary(
                     "expected_window_handle",
                     "expected_window_title",
                     "native_command_id",
+                    "accessibility_command_uses",
                     "key_sequence",
                     "reset_before_key_sequence",
                     "rotation_increment_degrees",
@@ -7907,6 +9025,22 @@ def _refresh_view_replay_summary(
                 f"Recapture reviewed view evidence for the prepared "
                 f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
                 "view because its manifest and append-only journal records diverged."
+            ),
+        }
+        continuation_high_level_payload_hint = {}
+        post_review_record_payload_template = record_payload_hint
+        post_review_high_level_payload_template = high_level_payload_hint
+    elif (
+        next_pending_automatic_postcheck_failed
+        and next_automation_step is None
+    ):
+        continuation_payload_hint = {
+            "project_id": manifest.get("project_id"),
+            "revision": manifest.get("revision"),
+            "context": (
+                f"Obtain a reviewed camera or Copy Script path for the prepared "
+                f"{selected_next_step.get('view_name') if selected_next_step else 'next'} "
+                "view because the verified automatic recipe failed its visual postcheck."
             ),
         }
         continuation_high_level_payload_hint = {}
@@ -8004,6 +9138,18 @@ def _refresh_view_replay_summary(
         ),
         "journal_consistency_status": journal_consistency_status,
         "journal_blocked_view_names": journal_blocked_view_names,
+        "automatic_recipe_postcheck_failed": bool(
+            automatic_postcheck_failed_view_names
+        ),
+        "automatic_postcheck_failed_view_names": sorted(
+            automatic_postcheck_failed_view_names
+        ),
+        "automatic_postcheck_direct_failures": (
+            automatic_postcheck_direct_failures
+        ),
+        "automatic_postcheck_dependency_failures": (
+            automatic_postcheck_dependency_failures
+        ),
         "runtime_accessibility_preflight_required": (
             runtime_accessibility_preflight_required
         ),
@@ -8048,6 +9194,7 @@ def _refresh_view_replay_summary(
             or runtime_accessibility_observation_blocks_automation
             or next_pending_integrity_blocked
             or next_pending_journal_blocked
+            or next_pending_automatic_postcheck_failed
             or record_payload_hint.get("source") == "reviewed_copy_script"
         ),
     }
@@ -8061,6 +9208,8 @@ def _refresh_view_replay_summary(
         manifest["replay_status"] = "evidence_integrity_reverification_required"
     elif journal_blocked_view_names:
         manifest["replay_status"] = "event_journal_reverification_required"
+    elif automatic_postcheck_failed_view_names:
+        manifest["replay_status"] = "automatic_recipe_postcheck_failed"
     elif accepted_views:
         manifest["replay_status"] = "partially_confirmed"
 

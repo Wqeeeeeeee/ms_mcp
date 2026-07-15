@@ -124,6 +124,30 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["view_replay_automation_policy"][
         "standard_view_static_registry_or_help_evidence_alone_is_sufficient"
     ] is False
+    assert compact["view_replay_automation_policy"][
+        "verified_anonymous_toolbar_mapping_supported"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "verified_anonymous_toolbar_requires_exact_child_count_order_roles"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "verified_anonymous_toolbar_record_receipt_field"
+    ] == "accessibility_command_uses"
+    assert compact["view_replay_automation_policy"][
+        "verified_visual_postcheck_failure_suppresses_automatic_retry"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "automatic_postcheck_suppression_requires_integrity_verified_evidence"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "failed_reset_baseline_suppresses_dependent_recipes"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "postcheck_failure_clear_requires_integrity_verified_success"
+    ] is True
+    assert compact["view_replay_automation_policy"][
+        "client_asserted_command_to_element_mapping_allowed"
+    ] is False
     assert compact["view_replay_automation_policy"]["structure_nudge_or_align_commands_allowed_for_camera_replay"] is False
     assert _json_size(compact) < server.COMPACT_RESPONSE_MAX_BYTES
     assert _json_size(compact) * 4 < _json_size(full)

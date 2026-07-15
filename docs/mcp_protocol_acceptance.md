@@ -100,9 +100,22 @@ not automatic readiness. `runtime_accessibility_evidence` must bind the current
 revision and wrapper handle/title, prove the exact named controls are invocable,
 and persist as `gui_view_replay_accessibility_preflight.json`. Protocol
 acceptance verifies that this nested schema is discoverable and strict
-(`extra="forbid"`). Unnamed toolbar children must keep automation blocked. The
+(`extra="forbid"`). Unnamed toolbar children remain blocked unless the server
+derives an allowlisted command from the installed registry SHA-256 plus an
+exact live toolbar child sequence. In that narrow path, protocol discovery must
+expose `anonymous_toolbars` and the record tool's
+`accessibility_command_uses`; mismatched mapping receipts are rejected. The
 receipt must also prove the exact key sequence or stages, Reset precondition,
 angle, no modifiers, setting restoration, and visual axis/projection match.
+Protocol acceptance also verifies that a complete, integrity-verified command
+receipt followed by a failed visual postcheck suppresses automatic retry. A
+failed `front` Reset semantic hash must block pending keyboard/isometric
+recipes that depend on the same Reset baseline, persist across manifest
+re-prepare, and return `automatic_recipe_postcheck_failed` with a reviewed
+Copy Script/manual continuation. Re-preparing a different view subset must
+preserve the immutable revision's complete replay-event history, and only a
+later integrity-verified success for the same semantic mapping may clear the
+gate.
 The record tool's nested `reviewed_copy_script_evidence` schema is also
 discoverable and strict. Selecting `source="reviewed_copy_script"` requires the
 exact inert script, completed review attestations, exact current wrapper

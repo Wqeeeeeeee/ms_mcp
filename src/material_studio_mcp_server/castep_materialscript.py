@@ -52,6 +52,9 @@ class CastepMaterialScriptPlan:
             "task": self.task.value,
             "api_object": self.api_object,
             "run_method": self.run_method,
+            "settings": [
+                {"name": name, "value": value} for name, value in self.settings
+            ],
             "property_setting": (
                 {"name": self.property_setting[0], "value": self.property_setting[1]}
                 if self.property_setting is not None

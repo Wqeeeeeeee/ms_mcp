@@ -2551,6 +2551,7 @@ def _schema_capability_paths() -> dict[str, dict[str, str]]:
 _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "structure_path",
     "structure_exists",
+    "calculation_preview_script_path",
     "gui_snapshot_path",
     "report_json_path",
     "view_audit_report_path",
@@ -7701,9 +7702,13 @@ def _latest_project_preflight_summary(store: ProjectStore) -> dict[str, Any]:
         generated = _generate_structured_script(spec, store)
         planned_structure = generated.get("planned_outputs", {}).get("structure")
         script_valid = generated.get("script_validation", {}).get("valid")
+        calculation_preview = _compact_calculation_preview(
+            _calculation_preview_receipt(generated, include_script=False)
+        )
     except Exception as exc:
         planned_structure = None
         script_valid = None
+        calculation_preview = {}
         generation_error = str(exc)
     else:
         generation_error = None
@@ -7725,6 +7730,7 @@ def _latest_project_preflight_summary(store: ProjectStore) -> dict[str, Any]:
         "script_exists": script_path.exists(),
         "script_valid": script_valid,
         "script_generation_error": generation_error,
+        "calculation_preview": calculation_preview or None,
         "planned_structure": planned_structure,
         "planned_structure_exists": bool(planned_structure and Path(str(planned_structure)).exists()),
         "report_json_path": str(report_path),
@@ -17284,6 +17290,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         if isinstance(response.get("structure_artifact_validation"), dict)
         else None
     )
+    calculation_preview = _compact_calculation_preview(
+        response.get("calculation_preview")
+    )
     gui_status = response.get("gui_status") or {}
     gui_open = response.get("gui_open") if isinstance(response.get("gui_open"), dict) else None
     bundle_files = response.get("view_bundle_files") or response.get("files") or {}
@@ -17401,6 +17410,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "revision_delta": response.get("revision_delta"),
         "change_validation": change_validation,
         "script_valid": (response.get("validation") or response.get("script_validation") or {}).get("valid"),
+        "calculation_preview": calculation_preview or None,
         "semiconductor_review": semiconductor_review,
         "view_selection": view_selection,
         "view_review": view_review,
@@ -23366,6 +23376,11 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     readiness = report.get("live_readiness") if isinstance(report.get("live_readiness"), dict) else {}
     receipt = report.get("change_receipt") if isinstance(report.get("change_receipt"), dict) else {}
     structure = report.get("structure") if isinstance(report.get("structure"), dict) else {}
+    calculation_preview = (
+        report.get("calculation_preview")
+        if isinstance(report.get("calculation_preview"), dict)
+        else {}
+    )
     structure_artifact_validation = (
         report.get("structure_artifact_validation")
         if isinstance(report.get("structure_artifact_validation"), dict)
@@ -23664,6 +23679,17 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "structure_artifact_validation_ok": structure_artifact_validation.get("ok"),
             "structure_artifact_validation_required": structure_artifact_validation.get("required"),
             "structure_artifact_sha256": structure_artifact_validation.get("sha256"),
+            "calculation_preview_available": calculation_preview.get("available"),
+            "calculation_preview_task": calculation_preview.get("task"),
+            "calculation_preview_script_path": calculation_preview.get("script_path"),
+            "calculation_preview_artifact_status": calculation_preview.get("artifact_status"),
+            "calculation_preview_trusted": calculation_preview.get("persisted_artifact_trusted"),
+            "calculation_preview_ready": calculation_preview.get("preview_ready"),
+            "calculation_preview_execution_policy": calculation_preview.get("execution_policy"),
+            "structure_materialization_executes_calculation": calculation_preview.get(
+                "structure_materialization_executes_calculation"
+            ),
+            "calculation_executed": calculation_preview.get("calculation_executed"),
             "normality_explanation": normality_explanation,
             "visual_normality_summary": visual_normality,
             "visual_normality_status": visual_normality.get("status"),
@@ -25371,6 +25397,11 @@ def _change_receipt_artifacts(
         {
             "structure_path": structure.get("path"),
             "structure_exists": structure.get("exists"),
+            "calculation_preview_script_path": (
+                response.get("calculation_preview", {}).get("script_path")
+                if isinstance(response.get("calculation_preview"), dict)
+                else None
+            ),
             "gui_snapshot_path": gui.get("snapshot_path"),
             "report_json_path": diagnostics.get("report_json_path"),
             "view_audit_report_path": diagnostics.get("view_audit_report_path"),
@@ -28981,6 +29012,44 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
 
     receipt["hard_budget_applied"] = True
     omitted_fields = receipt["omitted_fields"]
+    calculation_preview = bounded.get("calculation_preview")
+    if isinstance(calculation_preview, dict):
+        bounded["calculation_preview"] = _mapping_subset(
+            calculation_preview,
+            (
+                "available",
+                "task",
+                "script_path",
+                "artifact_status",
+                "persisted_artifact_trusted",
+                "execution_policy",
+                "calculation_executed",
+            ),
+        )
+        omitted_fields.append("calculation_preview.extended_fields")
+        if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+            return bounded
+
+        bounded.pop("calculation_preview", None)
+        live_summary = bounded.get("live_summary")
+        if isinstance(live_summary, dict):
+            live_summary = dict(live_summary)
+            for key in (
+                "calculation_preview_task",
+                "calculation_preview_trusted",
+                "calculation_executed",
+            ):
+                live_summary.pop(key, None)
+            bounded["live_summary"] = live_summary
+        artifacts = bounded.get("artifacts")
+        if isinstance(artifacts, dict):
+            artifacts = dict(artifacts)
+            artifacts.pop("calculation_preview_script_path", None)
+            bounded["artifacts"] = artifacts
+        omitted_fields.append("calculation_preview")
+        if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+            return bounded
+
     for key in (
         "normality_explanation",
         "visual_normality_summary",
@@ -29165,6 +29234,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_replay_binding",
             "view_replay",
             "gui_view_replay",
+            "gui_view_replay_status",
             "detail_retrieval",
         ),
     )
@@ -29274,6 +29344,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "events_path",
             "view_replay",
             "gui_view_replay",
+            "gui_view_replay_status",
             "detail_retrieval",
         ),
     )
@@ -29438,6 +29509,49 @@ def _compact_revision_delta(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_calculation_preview(value: Any) -> dict[str, Any]:
+    """Return a bounded CASTEP preview receipt without source text."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "available",
+            "kind",
+            "module",
+            "task",
+            "script_path",
+            "script_exists",
+            "script_matches_generated",
+            "artifact_status",
+            "persisted_artifact_trusted",
+            "preview_ready",
+            "execution_policy",
+            "execution_supported_by_structured_workflow",
+            "structure_materialization_executes_calculation",
+            "requires_explicit_separate_execution",
+            "calculation_executed",
+            "calculation_result_available",
+        ),
+    )
+    dispatch = value.get("dispatch")
+    if isinstance(dispatch, dict):
+        compact["dispatch"] = _mapping_subset(
+            dispatch,
+            (
+                "api_object",
+                "run_method",
+                "property_setting",
+                "materials_studio_api_contract",
+            ),
+        )
+    validation = value.get("validation")
+    if isinstance(validation, dict):
+        compact["validation"] = _mapping_subset(validation, ("valid",))
+    return compact
+
+
 def _compact_artifacts(response: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
     """Return stable artifact entry points without the complete file map."""
 
@@ -29451,6 +29565,7 @@ def _compact_artifacts(response: dict[str, Any], report: dict[str, Any]) -> dict
         (
             "structure_path",
             "structure_exists",
+            "calculation_preview_script_path",
             "gui_snapshot_path",
             "snapshot_path",
             "report_json_path",
@@ -29702,6 +29817,12 @@ def _compact_live_response(
     validation = response.get("validation")
     if isinstance(validation, dict):
         compact["validation"] = _mapping_subset(validation, ("valid", "errors", "warnings"))
+    calculation_preview = response.get("calculation_preview")
+    if not isinstance(calculation_preview, dict):
+        calculation_preview = report.get("calculation_preview")
+    compact_calculation_preview = _compact_calculation_preview(calculation_preview)
+    if compact_calculation_preview:
+        compact["calculation_preview"] = compact_calculation_preview
     view_replay = response.get("view_replay")
     if isinstance(view_replay, dict):
         compact_replay = _compact_view_replay(view_replay)
@@ -29768,6 +29889,9 @@ def _compact_live_response(
             "semiconductor_risk_flags",
             "structure_path",
             "structure_exists",
+            "calculation_preview_task",
+            "calculation_preview_trusted",
+            "calculation_executed",
             "gui_hot_loaded",
             "gui_loaded_current_revision",
             "gui_current_revision_status",
@@ -30084,17 +30208,110 @@ def _validation_error(exc: ValidationError) -> dict[str, Any]:
     return {"ok": False, "errors": exc.errors(), "warnings": []}
 
 
+def _calculation_preview_receipt(
+    generated: dict[str, Any],
+    *,
+    include_script: bool,
+) -> dict[str, Any] | None:
+    """Refresh the persisted binding for one generated calculation preview."""
+
+    preview = generated.get("calculation_preview")
+    script = generated.get("calculation_preview_script")
+    if not isinstance(preview, dict) or not isinstance(script, str):
+        return None
+    receipt = dict(preview)
+    script_path_value = receipt.get("script_path")
+    script_path = Path(str(script_path_value)).expanduser() if script_path_value else None
+    script_exists = bool(script_path and script_path.is_file())
+    expected_sha256 = text_sha256(script)
+    persisted_sha256: str | None = None
+    artifact_read_error: str | None = None
+    matches_generated = False
+    if script_exists and script_path is not None:
+        try:
+            persisted_script = script_path.read_text(encoding="utf-8")
+            persisted_sha256 = text_sha256(persisted_script)
+            matches_generated = persisted_script == script
+        except Exception as exc:
+            artifact_read_error = str(exc)
+    if not script_exists:
+        artifact_status = "planned_not_persisted"
+    elif artifact_read_error:
+        artifact_status = "read_failed"
+    elif matches_generated:
+        artifact_status = "matched"
+    else:
+        artifact_status = "mismatch"
+    receipt.update(
+        {
+            "script_path": str(script_path) if script_path is not None else None,
+            "script_exists": script_exists,
+            "script_expected_sha256": expected_sha256,
+            "script_persisted_sha256": persisted_sha256,
+            "script_matches_generated": matches_generated,
+            "artifact_status": artifact_status,
+            "artifact_read_error": artifact_read_error,
+            "persisted_artifact_trusted": artifact_status == "matched",
+            "preview_ready": bool(
+                (receipt.get("validation") or {}).get("valid")
+            ),
+        }
+    )
+    if include_script:
+        receipt["script"] = script
+    return receipt
+
+
 def _generate_structured_script(spec: ModelSpec, store: ProjectStore) -> dict[str, Any]:
     """生成结构化脚本。"""
     output_dir = store.project_dir(spec.project_id) / "outputs" / f"r{spec.revision:03d}"
     generated = render_model_to_perl(spec, output_dir)
-    validation = validate_generated_script(generated.script)
+    primary_validation = validate_generated_script(generated.script)
+    calculation_preview_script = generated.calculation_preview_script
+    calculation_preview_validation = (
+        validate_generated_script(calculation_preview_script)
+        if calculation_preview_script is not None
+        else None
+    )
+    validation = primary_validation
+    if calculation_preview_validation is not None:
+        validation = {
+            "valid": bool(primary_validation.get("valid"))
+            and bool(calculation_preview_validation.get("valid")),
+            "errors": list(primary_validation.get("errors", []))
+            + [
+                f"calculation_preview: {error}"
+                for error in calculation_preview_validation.get("errors", [])
+            ],
+            "warnings": list(primary_validation.get("warnings", []))
+            + [
+                f"calculation_preview: {warning}"
+                for warning in calculation_preview_validation.get("warnings", [])
+            ],
+            "primary_script": primary_validation,
+            "calculation_preview_script": calculation_preview_validation,
+        }
+    calculation_preview = None
+    if generated.calculation_preview is not None and calculation_preview_script is not None:
+        calculation_preview_path = (
+            store.project_dir(spec.project_id)
+            / "scripts"
+            / f"r{spec.revision:03d}_castep_task.pl"
+        )
+        calculation_preview = {
+            **generated.calculation_preview,
+            "script_path": str(calculation_preview_path),
+            "validation": calculation_preview_validation,
+        }
     return {
         "script": generated.script,
+        "primary_script_validation": primary_validation,
         "script_validation": validation,
         "warnings": generated.warnings + list(validation.get("warnings", [])),
         "planned_outputs": generated.planned_outputs,
         "executable": generated.executable and bool(validation.get("valid")),
+        "calculation_preview_script": calculation_preview_script,
+        "calculation_preview": calculation_preview,
     }
 
 
@@ -30687,6 +30904,7 @@ def material_studio_model_create_from_spec(
             model_spec,
             user_text=user_text,
             generated_script=generated["script"],
+            calculation_preview_script=generated["calculation_preview_script"],
             diff=["create_project"],
         )
         response = {
@@ -30699,6 +30917,10 @@ def material_studio_model_create_from_spec(
             "warnings": generated["warnings"],
             "acceptance": model_spec.acceptance.model_dump(mode="json"),
             "planned_outputs": generated["planned_outputs"],
+            "calculation_preview": _calculation_preview_receipt(
+                generated,
+                include_script=True,
+            ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
         }
@@ -30788,6 +31010,7 @@ def material_studio_model_modify_with_patch(
             user_text=user_text,
             action="patch",
             generated_script=generated["script"],
+            calculation_preview_script=generated["calculation_preview_script"],
             diff=patch_diff,
             expected_revision=current.revision,
             expected_new_revision=new_spec.revision,
@@ -30809,6 +31032,10 @@ def material_studio_model_modify_with_patch(
             "validation": generated["script_validation"],
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
+            "calculation_preview": _calculation_preview_receipt(
+                generated,
+                include_script=True,
+            ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
             "current_pointer_recovery": current_resolution,
@@ -30906,6 +31133,9 @@ def material_studio_live_project_status(
         current_path = project_dir / "current.json"
         current_payload, current_error = _read_json_file(current_path)
         script_path = project_dir / "scripts" / f"{revision_label}_build.pl"
+        calculation_preview_script_path = (
+            project_dir / "scripts" / f"{revision_label}_castep_task.pl"
+        )
         output_dir = project_dir / "outputs" / revision_label
         view_audit_path = output_dir / "view_audit.json"
         report_json_path = output_dir / "report.json"
@@ -30917,6 +31147,10 @@ def material_studio_live_project_status(
             output_dir / "gui_view_replay_accessibility_preflight.json"
         )
         generated = _generate_structured_script(spec, store)
+        calculation_preview = _calculation_preview_receipt(
+            generated,
+            include_script=False,
+        )
         planned_structure = generated["planned_outputs"].get("structure")
         planned_structure_path = Path(str(planned_structure)).expanduser() if planned_structure else None
         report_payload, report_error = _read_json_file(view_audit_path)
@@ -31108,6 +31342,7 @@ def material_studio_live_project_status(
             "project_dir": str(project_dir),
             "validation": generated["script_validation"],
             "warnings": generated["warnings"],
+            "calculation_preview": calculation_preview,
             "report_json_path": str(report_json_path),
             "view_audit_report_path": str(view_audit_path),
             "state_write_transaction": (report_json_payload or {}).get(
@@ -31180,12 +31415,27 @@ def material_studio_live_project_status(
                 "state": {
                     "spec_path": (current_payload or {}).get("spec_path"),
                     "script_path": (current_payload or {}).get("script_path"),
+                    "calculation_preview_script_path": (
+                        (current_payload or {}).get(
+                            "calculation_preview_script_path"
+                        )
+                    ),
                 },
             },
             "script": {
                 "path": str(script_path),
                 "exists": script_path.exists(),
                 "validation": generated["script_validation"],
+                "calculation_preview_path": (
+                    str(calculation_preview_script_path)
+                    if calculation_preview is not None
+                    else None
+                ),
+                "calculation_preview_exists": (
+                    calculation_preview_script_path.exists()
+                    if calculation_preview is not None
+                    else False
+                ),
             },
             "planned_outputs": {
                 **generated["planned_outputs"],
@@ -31617,6 +31867,7 @@ def material_studio_project_rollback(
             target_revision,
             user_text=user_text,
             generated_script=generated["script"],
+            calculation_preview_script=generated["calculation_preview_script"],
             expected_revision=current.revision,
             expected_new_revision=new_spec.revision,
         )
@@ -31637,6 +31888,10 @@ def material_studio_project_rollback(
                 "script": generated["script"],
                 "validation": generated["script_validation"],
                 "warnings": generated["warnings"],
+                "calculation_preview": _calculation_preview_receipt(
+                    generated,
+                    include_script=True,
+                ),
                 "state": info.to_dict(),
                 "state_write_transaction": info.state_write_transaction,
                 "current_pointer_recovery": current_pointer_before_write,
@@ -31685,6 +31940,10 @@ def material_studio_model_validate(
                     "simulation": model_spec.simulation.model_dump(mode="json") if model_spec.simulation else None,
                 },
                 "script_validation": generated["script_validation"],
+                "calculation_preview": _calculation_preview_receipt(
+                    generated,
+                    include_script=False,
+                ),
             }
         )
     except ValidationError as exc:
@@ -31726,6 +31985,10 @@ def material_studio_model_preview_script(
                 "validation": generated["script_validation"],
                 "warnings": generated["warnings"],
                 "planned_outputs": generated["planned_outputs"],
+                "calculation_preview": _calculation_preview_receipt(
+                    generated,
+                    include_script=True,
+                ),
             }
         )
     except ValidationError as exc:
@@ -32868,6 +33131,7 @@ def material_studio_live_update_with_patch(
             user_text=user_text,
             action=patch_workflow,
             generated_script=generated["script"],
+            calculation_preview_script=generated["calculation_preview_script"],
             diff=patch_diff,
             expected_revision=current.revision,
             expected_new_revision=new_spec.revision,
@@ -32901,6 +33165,10 @@ def material_studio_live_update_with_patch(
             "validation": generated["script_validation"],
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
+            "calculation_preview": _calculation_preview_receipt(
+                generated,
+                include_script=True,
+            ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
             "current_pointer_recovery": current_pointer_before_write,
@@ -33924,6 +34192,7 @@ def material_studio_live_modeling_request(
             model_spec,
             user_text=user_request,
             generated_script=generated["script"],
+            calculation_preview_script=generated["calculation_preview_script"],
             diff=["create_project"],
         )
         gui = _gui_controller(working_dir)
@@ -33944,6 +34213,10 @@ def material_studio_live_modeling_request(
             "validation": generated["script_validation"],
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
+            "calculation_preview": _calculation_preview_receipt(
+                generated,
+                include_script=True,
+            ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
             "gui_status": gui_status,
@@ -36101,6 +36374,10 @@ def material_studio_gui_apply_current_revision(
             "validation": script_validation,
             "warnings": generated["warnings"],
             "planned_outputs": generated["planned_outputs"],
+            "calculation_preview": _calculation_preview_receipt(
+                generated,
+                include_script=False,
+            ),
             "gui_status": gui.status(project_id=project_id, revision=spec.revision),
         })
         if export_view_audit:

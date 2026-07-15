@@ -791,6 +791,17 @@ band gap setup, DOS, or PDOS require reviewed settings and usually a prior
 relaxed structure. Chinese follow-ups such as `计算带隙，设置 k 点间距 0.04`
 should route through the same semantic patch path.
 
+For a crystal `ModelSpec`, the primary structured script remains the
+preview-only lattice/CIF path. A separate revision-bound
+`scripts/rNNN_castep_task.pl` companion imports the planned CIF and contains the
+reviewed CASTEP dispatch. Read `calculation_preview` to inspect the task,
+settings, validation, script path, and SHA-256 binding. Only
+`artifact_status=matched` with `persisted_artifact_trusted=true` proves that the
+persisted preview matches the current revision. `execution_mode=execute` on the
+crystal workflow still only materializes and optionally hot-loads the CIF;
+`structure_materialization_executes_calculation=false` and
+`calculation_executed=false` remain authoritative.
+
 The CASTEP renderer follows the locally installed Materials Studio 20.1
 MaterialsScript reference. Canonical tasks are `Energy`,
 `GeometryOptimization`, `BandStructure`, `DensityOfStates`,

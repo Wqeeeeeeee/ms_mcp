@@ -959,6 +959,12 @@ object in `castep_dispatch`, and never executes CASTEP itself. Custom cutoff and
 primary SCF k-point settings use the documented `EnergyCutoff` and
 `KPointDerivation` forms; separate property-grid sampling remains at the
 Materials Studio default until a dedicated reviewed schema field is supplied.
+For structured crystal revisions, inspect the separate
+`calculation_preview` receipt. Its `script_path` points to the persisted
+`scripts/rNNN_castep_task.pl` companion, while `artifact_status`, generated and
+persisted SHA-256 values, and `persisted_artifact_trusted` bind that script to
+the current revision. Compact responses omit script source but retain this
+binding and the dispatch summary.
 For slab templates, read `modeling_report.inspection.surface` and
 `modeling_report.inspection.slab_vacuum` to verify the surface orientation,
 declared vacuum thickness, atom-center extent, inferred atom-center vacuum, and
@@ -971,7 +977,8 @@ tetrahedral coordination estimate when possible; confirm the result through
 When the user explicitly requests hot-loading a crystal, execute mode writes a
 CIF artifact and opens it in the GUI. This is reported as
 `result.execution_backend="crystal_cif_materialize"`; it is not a CASTEP
-calculation and it does not require guessing MaterialsScript lattice APIs.
+calculation, it does not execute the CASTEP companion, and it does not require
+guessing MaterialsScript lattice APIs.
 
 For ongoing sessions, `material_studio_project_history` and
 `material_studio_project_rollback` may omit `project_id`; the response includes

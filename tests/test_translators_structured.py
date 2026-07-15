@@ -44,7 +44,27 @@ def test_crystal_translator_is_preview_only(tmp_path: Path) -> None:
 
     assert generated.executable is False
     assert "preview-only" in generated.script
+    assert len(generated.warnings) == 1
+    assert "Modules->CASTEP" not in generated.script
     assert generated.planned_outputs["structure"].endswith(".cif")
+    assert generated.calculation_preview_script is not None
+    assert "Documents->Import" in generated.calculation_preview_script
+    assert "Modules->CASTEP->Energy->Run" in generated.calculation_preview_script
+    assert "EnergyCutoff => 400" in generated.calculation_preview_script
+    assert "__MS_MCP_JSON_START__" in generated.calculation_preview_script
+    assert validate_generated_script(generated.calculation_preview_script)["valid"] is True
+    assert generated.calculation_preview is not None
+    assert (
+        generated.calculation_preview["input_structure"]
+        == generated.planned_outputs["structure"]
+    )
+    assert generated.calculation_preview["task"] == "Energy"
+    assert generated.calculation_preview["execution_policy"] == "preview_only"
+    assert generated.calculation_preview["calculation_executed"] is False
+    assert (
+        generated.calculation_preview["structure_materialization_executes_calculation"]
+        is False
+    )
 
 
 def test_crystal_cif_writer_materializes_fractional_structure(tmp_path: Path) -> None:

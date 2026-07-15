@@ -218,6 +218,7 @@ class RevisionInfo:
         spec_path: 规格文件路径
         current_path: 当前文件路径
         script_path: 脚本文件路径
+        calculation_preview_script_path: 计算预览脚本路径
     """
 
     project_id: str
@@ -226,6 +227,7 @@ class RevisionInfo:
     spec_path: Path
     current_path: Path
     script_path: Path | None = None
+    calculation_preview_script_path: Path | None = None
     state_write_transaction: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -237,6 +239,11 @@ class RevisionInfo:
             "spec_path": str(self.spec_path),
             "current_path": str(self.current_path),
             "script_path": str(self.script_path) if self.script_path else None,
+            "calculation_preview_script_path": (
+                str(self.calculation_preview_script_path)
+                if self.calculation_preview_script_path
+                else None
+            ),
             "state_write_transaction": self.state_write_transaction,
         }
 
@@ -559,6 +566,7 @@ class ProjectStore:
         *,
         user_text: str | None = None,
         generated_script: str | None = None,
+        calculation_preview_script: str | None = None,
         diff: list[str] | None = None,
     ) -> RevisionInfo:
         """创建项目。
@@ -593,6 +601,7 @@ class ProjectStore:
                 user_text=user_text,
                 action="create",
                 generated_script=generated_script,
+                calculation_preview_script=calculation_preview_script,
                 diff=diff or [],
                 state_write_transaction=transaction,
             )
@@ -620,6 +629,7 @@ class ProjectStore:
         user_text: str | None = None,
         action: str,
         generated_script: str | None = None,
+        calculation_preview_script: str | None = None,
         diff: list[str] | None = None,
         expected_revision: int | None = None,
         expected_new_revision: int | None = None,
@@ -678,6 +688,7 @@ class ProjectStore:
                 user_text=user_text,
                 action=action,
                 generated_script=generated_script,
+                calculation_preview_script=calculation_preview_script,
                 diff=diff if diff is not None else diff_specs(current, spec),
                 state_write_transaction=transaction,
             )
@@ -763,6 +774,7 @@ class ProjectStore:
         *,
         user_text: str | None = None,
         generated_script: str | None = None,
+        calculation_preview_script: str | None = None,
         expected_revision: int | None = None,
         expected_new_revision: int | None = None,
     ) -> RevisionInfo:
@@ -817,6 +829,7 @@ class ProjectStore:
                 user_text=user_text,
                 action=f"rollback:r{target_revision:03d}",
                 generated_script=generated_script,
+                calculation_preview_script=calculation_preview_script,
                 diff=diff_specs(current, new_spec),
                 extra={"target_revision": target_revision},
                 state_write_transaction=transaction,
@@ -859,6 +872,11 @@ class ProjectStore:
         """获取脚本路径。"""
         return self.project_dir(project_id) / "scripts" / f"r{revision:03d}_build.pl"
 
+    def _calculation_preview_script_path(self, project_id: str, revision: int) -> Path:
+        """Return the fixed CASTEP companion-preview path for one revision."""
+
+        return self.project_dir(project_id) / "scripts" / f"r{revision:03d}_castep_task.pl"
+
     def _write_revision(
         self,
         spec: ModelSpec,
@@ -866,6 +884,7 @@ class ProjectStore:
         user_text: str | None,
         action: str,
         generated_script: str | None,
+        calculation_preview_script: str | None,
         diff: list[str],
         extra: dict[str, Any] | None = None,
         state_write_transaction: dict[str, Any],
@@ -888,6 +907,11 @@ class ProjectStore:
             if generated_script is not None
             else None
         )
+        calculation_preview_script_path = (
+            self._calculation_preview_script_path(spec.project_id, spec.revision)
+            if calculation_preview_script is not None
+            else None
+        )
         if spec_path.exists():
             raise ValueError(
                 f"修订版本已存在，拒绝覆盖仅追加历史: r{spec.revision:03d}"
@@ -896,6 +920,13 @@ class ProjectStore:
             raise ValueError(
                 f"修订脚本已存在，拒绝覆盖仅追加历史: r{spec.revision:03d}"
             )
+        if (
+            calculation_preview_script_path is not None
+            and calculation_preview_script_path.exists()
+        ):
+            raise ValueError(
+                f"计算预览脚本已存在，拒绝覆盖仅追加历史: r{spec.revision:03d}"
+            )
         atomic_write_text(
             spec_path,
             json.dumps(spec.model_dump(mode="json"), indent=2, ensure_ascii=False),
@@ -903,6 +934,12 @@ class ProjectStore:
         if script_path is not None:
             assert generated_script is not None
             atomic_write_text(script_path, generated_script)
+        if calculation_preview_script_path is not None:
+            assert calculation_preview_script is not None
+            atomic_write_text(
+                calculation_preview_script_path,
+                calculation_preview_script,
+            )
 
         event = make_history_event(
             project_id=spec.project_id,
@@ -937,6 +974,11 @@ class ProjectStore:
                     "revision": spec.revision,
                     "spec_path": str(spec_path),
                     "script_path": str(script_path) if script_path else None,
+                    "calculation_preview_script_path": (
+                        str(calculation_preview_script_path)
+                        if calculation_preview_script_path
+                        else None
+                    ),
                     "spec": spec.model_dump(mode="json"),
                 },
                 indent=2,
@@ -951,5 +993,6 @@ class ProjectStore:
             spec_path=spec_path,
             current_path=current_path,
             script_path=script_path,
+            calculation_preview_script_path=calculation_preview_script_path,
             state_write_transaction=state_write_transaction,
         )

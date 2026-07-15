@@ -15,7 +15,11 @@ from material_studio_mcp_server.specs.forcite import ForciteDynamicsSpec, Forcit
 from material_studio_mcp_server.specs.molecule import MoleculeSpec
 from material_studio_mcp_server.specs.project import ImportedStructureSpec, ModelSpec
 
-from .castep_to_perl import render_castep_energy_snippet
+from .castep_to_perl import (
+    castep_calculation_preview_metadata,
+    render_castep_energy_snippet,
+    render_castep_task_script,
+)
 from .common import header, tagged_json_print
 from .crystal_to_perl import render_crystal_preview
 from .forcite_to_perl import render_forcite_dynamics_snippet, render_forcite_optimization_snippet
@@ -37,6 +41,8 @@ class GeneratedScript:
     warnings: list[str]
     planned_outputs: dict[str, str]
     executable: bool = True
+    calculation_preview_script: str | None = None
+    calculation_preview: dict[str, object] | None = None
 
 
 def planned_output_file(spec: ModelSpec, output_dir: str | Path | None = None) -> Path:
@@ -72,6 +78,8 @@ def render_model_to_perl(spec: ModelSpec, output_dir: str | Path | None = None) 
     output_file = planned_output_file(spec, output_dir)
     warnings: list[str] = []
     executable = True
+    calculation_preview_script: str | None = None
+    calculation_preview: dict[str, object] | None = None
 
     if isinstance(spec.model, MoleculeSpec):
         script = render_molecule_build(spec.model, output_file, project_id=spec.project_id, revision=spec.revision)
@@ -82,6 +90,17 @@ def render_model_to_perl(spec: ModelSpec, output_dir: str | Path | None = None) 
             "Crystal MaterialsScript lattice construction is preview-only until local Copy Script confirms the API; execute mode materializes a CIF for GUI hot-loading."
         )
         executable = False
+        if isinstance(spec.simulation, CastepEnergySpec):
+            calculation_preview_script = render_castep_task_script(
+                spec.simulation,
+                output_file,
+                project_id=spec.project_id,
+                revision=spec.revision,
+            )
+            calculation_preview = castep_calculation_preview_metadata(
+                spec.simulation,
+                output_file,
+            )
     elif isinstance(spec.model, ImportedStructureSpec):
         script = _render_imported_structure(spec, output_file)
         script = _insert_simulation_before_export(script, spec)
@@ -93,6 +112,8 @@ def render_model_to_perl(spec: ModelSpec, output_dir: str | Path | None = None) 
         warnings=warnings,
         planned_outputs={"structure": str(output_file)},
         executable=executable,
+        calculation_preview_script=calculation_preview_script,
+        calculation_preview=calculation_preview,
     )
 
 

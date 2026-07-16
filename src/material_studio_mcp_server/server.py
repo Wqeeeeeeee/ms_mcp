@@ -2705,6 +2705,11 @@ _TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS = (
     "visual_blocking_reasons",
     "visual_nonblocking_flags",
     "visual_critical_flags",
+    "trusted_clean_view_replay_status",
+    "trusted_clean_view_replay_ok",
+    "trusted_clean_view_names",
+    "resolved_visual_review_reasons",
+    "unresolved_visual_review_reasons",
     "view_selection",
     "view_parameter_summary",
     "view_parameter_status",
@@ -3654,6 +3659,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "verified_anonymous_toolbar_record_receipt_field": (
                 "accessibility_command_uses"
             ),
+            "trusted_clean_view_normality_evidence": (
+                _trusted_clean_view_replay_capability_policy()
+            ),
             "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
             "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
             "failed_reset_baseline_suppresses_dependent_recipes": True,
@@ -4396,7 +4404,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         },
         "response_model_diagnostics": {
             "top_level_shortcut_fields": list(_TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS),
-            "source": "modeling_report, live_summary, normality_gate, view_review, and change_receipt.view_check",
+            "source": "modeling_report, live_summary, normality_gate, trusted_clean_view_replay, view_review, and change_receipt.view_check",
             "available_on_tools": [
                 "material_studio_live_modeling_request",
                 "material_studio_live_update_with_patch",
@@ -6588,6 +6596,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "event_journal_divergence_preserves_append_only_history": True,
                 "event_journal_divergence_requires_reverification": True,
                 "event_journal_divergence_invalidates_visual_confirmation": True,
+                "trusted_clean_view_normality_evidence": (
+                    _trusted_clean_view_replay_capability_policy()
+                ),
                 "verified_visual_postcheck_failure_suppresses_automatic_retry": True,
                 "automatic_postcheck_suppression_requires_integrity_verified_evidence": True,
                 "failed_reset_baseline_suppresses_dependent_recipes": True,
@@ -13987,6 +13998,11 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         if isinstance(report.get("visual_normality_summary"), dict)
         else {}
     )
+    trusted_clean_view_replay = (
+        report.get("trusted_clean_view_replay")
+        if isinstance(report.get("trusted_clean_view_replay"), dict)
+        else {}
+    )
     semiconductor_calculation_readiness = (
         report.get("semiconductor_calculation_readiness")
         if isinstance(report.get("semiconductor_calculation_readiness"), dict)
@@ -14142,6 +14158,45 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "visual_clean_view_count": visual_normality.get("clean_view_count"),
         "visual_recommended_view_name": visual_normality.get("recommended_view_name"),
         "visual_blocking_reasons": _csv_json_value(visual_normality.get("blocking_reasons") or []),
+        "trusted_clean_view_replay_status": trusted_clean_view_replay.get("status"),
+        "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+        "trusted_clean_view_replay_source": trusted_clean_view_replay.get("source"),
+        "trusted_clean_view_replay_binding_verified": trusted_clean_view_replay.get(
+            "binding_verified"
+        ),
+        "trusted_clean_view_replay_project_matches": trusted_clean_view_replay.get(
+            "project_matches"
+        ),
+        "trusted_clean_view_replay_revision_matches": trusted_clean_view_replay.get(
+            "revision_matches"
+        ),
+        "trusted_clean_view_replay_view_selection_matches": trusted_clean_view_replay.get(
+            "view_selection_matches"
+        ),
+        "trusted_clean_view_replay_all_supported_views_confirmed": trusted_clean_view_replay.get(
+            "all_supported_views_confirmed"
+        ),
+        "trusted_clean_view_replay_recommended_view_confirmed": trusted_clean_view_replay.get(
+            "recommended_view_confirmed"
+        ),
+        "trusted_clean_view_replay_integrity_status": trusted_clean_view_replay.get(
+            "evidence_integrity_status"
+        ),
+        "trusted_clean_view_replay_journal_status": trusted_clean_view_replay.get(
+            "journal_consistency_status"
+        ),
+        "trusted_clean_view_names": _csv_json_value(
+            trusted_clean_view_replay.get("trusted_clean_view_names") or []
+        ),
+        "trusted_clean_view_replay_blocking_reasons": _csv_json_value(
+            trusted_clean_view_replay.get("blocking_reasons") or []
+        ),
+        "resolved_visual_review_reasons": _csv_json_value(
+            normality_gate.get("resolved_visual_review_reasons") or []
+        ),
+        "unresolved_visual_review_reasons": _csv_json_value(
+            normality_gate.get("unresolved_visual_review_reasons") or []
+        ),
         "semiconductor_normality_status": semiconductor_normality_diagnosis.get("status"),
         "semiconductor_normality_summary": semiconductor_normality_diagnosis.get("summary"),
         "semiconductor_normality_primary_reason": semiconductor_normality_diagnosis.get(
@@ -14634,6 +14689,15 @@ def _refresh_response_summaries(response: dict[str, Any]) -> None:
     response["semiconductor_normality_diagnosis"] = modeling_report["semiconductor_normality_diagnosis"]
     response["semiconductor_diagnostic_gate"] = modeling_report["semiconductor_diagnostic_gate"]
     response["diagnostic_acceptance"] = modeling_report["diagnostic_acceptance"]
+    modeling_report["visual_normality_summary"] = _visual_normality_summary(
+        modeling_report
+    )
+    response["visual_normality_summary"] = modeling_report[
+        "visual_normality_summary"
+    ]
+    response["trusted_clean_view_replay"] = modeling_report.get(
+        "trusted_clean_view_replay"
+    )
     modeling_report["view_parameter_summary"] = _view_parameter_summary(modeling_report)
     response["view_parameter_summary"] = modeling_report["view_parameter_summary"]
     modeling_report["modeling_issue_index"] = _modeling_issue_index(modeling_report)
@@ -18924,6 +18988,12 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "semiconductor_normality_diagnosis": response.get("semiconductor_normality_diagnosis"),
         "semiconductor_diagnostic_gate": response.get("semiconductor_diagnostic_gate"),
         "normality_gate": response.get("normality_gate"),
+        "trusted_clean_view_replay": response.get("trusted_clean_view_replay"),
+        "visual_normality_summary": response.get("visual_normality_summary"),
+        "gui_view_replay": response.get("gui_view_replay"),
+        "diagnostic_export_view_resolution": response.get(
+            "diagnostic_export_view_resolution"
+        ),
         "next_action_plan": response.get("next_action_plan"),
         "acceptance": response.get("acceptance"),
         "metadata_reconciliation": response.get("metadata_reconciliation"),
@@ -19089,6 +19159,11 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     acceptance_review = _acceptance_review(response.get("acceptance"), response)
     semiconductor_review = _semiconductor_review_from_audit(audit)
     view_review = _view_review_from_audit(audit, gui_summary)
+    trusted_clean_view_replay = _trusted_clean_view_replay_summary(
+        response,
+        view_review,
+    )
+    response["trusted_clean_view_replay"] = trusted_clean_view_replay
     requested_diagnostic_focuses = response.get("requested_diagnostic_focuses")
     if not isinstance(requested_diagnostic_focuses, list):
         requested_diagnostic_focuses = _requested_diagnostic_focuses_from_text(response.get("user_request"))
@@ -19207,7 +19282,11 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "calculation_preview": calculation_preview or None,
         "semiconductor_review": semiconductor_review,
         "view_selection": view_selection,
+        "diagnostic_export_view_resolution": response.get(
+            "diagnostic_export_view_resolution"
+        ),
         "view_review": view_review,
+        "trusted_clean_view_replay": trusted_clean_view_replay,
         "inspection": inspection,
         "structure": {
             "path": structure,
@@ -21449,6 +21528,211 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
     )
 
 
+_TRUSTED_REPLAY_RESOLVABLE_VISUAL_REVIEW_REASONS = frozenset(
+    {
+        "gui:viewport_capture_limitation_possible",
+        "gui:viewport_model_not_visible",
+        "view:projection_overlaps",
+        "view:view_warnings",
+    }
+)
+
+
+def _trusted_clean_view_replay_capability_policy() -> dict[str, Any]:
+    """Return the shared discovery contract for replay-derived visual evidence."""
+
+    return {
+        "summary_field": "trusted_clean_view_replay",
+        "requires_current_project_revision_binding": True,
+        "requires_diagnostic_and_replay_view_selection_match": True,
+        "requires_all_supported_views_confirmed": True,
+        "requires_recommended_clean_view_confirmed": True,
+        "requires_all_manual_review_views_confirmed": True,
+        "requires_evidence_integrity_status": "verified",
+        "requires_event_journal_consistency_status": "consistent",
+        "resolvable_visual_review_reasons": sorted(
+            _TRUSTED_REPLAY_RESOLVABLE_VISUAL_REVIEW_REASONS
+        ),
+        "preserves_visual_notes": True,
+        "may_resolve_structure_failures": False,
+        "may_resolve_semiconductor_failures": False,
+        "may_resolve_acceptance_failures": False,
+        "may_resolve_calculation_readiness_failures": False,
+        "calculation_readiness_remains_independent": True,
+    }
+
+
+def _trusted_clean_view_replay_summary(
+    response: dict[str, Any],
+    view_review: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind trusted replay evidence to the current diagnostic view selection."""
+
+    replay = (
+        response.get("gui_view_replay")
+        if isinstance(response.get("gui_view_replay"), dict)
+        else {}
+    )
+    replay_summary = (
+        replay.get("replay_summary")
+        if isinstance(replay.get("replay_summary"), dict)
+        else {}
+    )
+    if not replay or not replay_summary:
+        return {
+            "available": False,
+            "ok": False,
+            "status": "not_available",
+            "source": "current_revision_view_replay_summary",
+            "blocking_reasons": ["view_replay_summary_missing"],
+            "resolves_visual_review_reasons": False,
+            "resolvable_visual_review_reasons": [],
+        }
+
+    diagnostic_view_names = _dedupe_strings(
+        [
+            str(item)
+            for item in (
+                view_review.get("supported_view_names")
+                or view_review.get("view_names")
+                or []
+            )
+            if item
+        ]
+    )
+    replay_view_names = _dedupe_strings(
+        [str(item) for item in replay.get("view_names") or [] if item]
+    )
+    accepted_view_names = _dedupe_strings(
+        [
+            str(item)
+            for item in replay_summary.get("accepted_view_names") or []
+            if item
+        ]
+    )
+    clean_view_names = _dedupe_strings(
+        [str(item) for item in view_review.get("clean_views") or [] if item]
+    )
+    manual_review_view_names = _dedupe_strings(
+        [
+            str(item)
+            for item in view_review.get("manual_review_view_names") or []
+            if item
+        ]
+    )
+    recommended_view_name = view_review.get("recommended_view_name")
+    if recommended_view_name is not None:
+        recommended_view_name = str(recommended_view_name)
+    required_review_view_names = list(manual_review_view_names)
+    if not required_review_view_names and recommended_view_name:
+        required_review_view_names = [recommended_view_name]
+
+    diagnostic_view_set = set(diagnostic_view_names)
+    replay_view_set = set(replay_view_names)
+    accepted_view_set = set(accepted_view_names)
+    clean_view_set = set(clean_view_names)
+    trusted_clean_view_names = sorted(accepted_view_set & clean_view_set)
+    missing_required_review_view_names = sorted(
+        set(required_review_view_names) - accepted_view_set
+    )
+    binding_verified = replay.get("binding_verified") is True
+    project_matches = (
+        replay.get("project_id") is not None
+        and response.get("project_id") is not None
+        and str(replay.get("project_id")) == str(response.get("project_id"))
+    )
+    revision_matches = (
+        replay.get("revision") is not None
+        and response.get("revision") is not None
+        and str(replay.get("revision")) == str(response.get("revision"))
+    )
+    view_selection_matches = bool(diagnostic_view_set) and (
+        diagnostic_view_set == replay_view_set
+    )
+    all_diagnostic_views_confirmed = bool(diagnostic_view_set) and (
+        diagnostic_view_set <= accepted_view_set
+    )
+    all_supported_views_confirmed = (
+        replay_summary.get("all_supported_views_confirmed") is True
+        and all_diagnostic_views_confirmed
+    )
+    evidence_integrity_status = replay_summary.get("evidence_integrity_status")
+    journal_consistency_status = replay_summary.get("journal_consistency_status")
+    recommended_view_is_clean = bool(
+        recommended_view_name and recommended_view_name in clean_view_set
+    )
+    recommended_view_confirmed = bool(
+        recommended_view_name and recommended_view_name in accepted_view_set
+    )
+
+    blocking_reasons: list[str] = []
+    if not binding_verified:
+        blocking_reasons.append("view_replay_binding_not_verified")
+    if not project_matches:
+        blocking_reasons.append("view_replay_project_mismatch")
+    if not revision_matches:
+        blocking_reasons.append("view_replay_revision_mismatch")
+    if not view_selection_matches:
+        blocking_reasons.append("view_replay_view_selection_mismatch")
+    if evidence_integrity_status != "verified":
+        blocking_reasons.append("view_replay_evidence_integrity_not_verified")
+    if journal_consistency_status != "consistent":
+        blocking_reasons.append("view_replay_event_journal_not_consistent")
+    if not all_supported_views_confirmed:
+        blocking_reasons.append("view_replay_supported_views_incomplete")
+    if not trusted_clean_view_names:
+        blocking_reasons.append("trusted_accepted_clean_view_missing")
+    if not recommended_view_is_clean:
+        blocking_reasons.append("recommended_view_not_clean")
+    if not recommended_view_confirmed:
+        blocking_reasons.append("recommended_clean_view_not_confirmed")
+    if missing_required_review_view_names:
+        blocking_reasons.append("manual_review_views_not_confirmed")
+    blocking_reasons = _dedupe_strings(blocking_reasons)
+    ok = not blocking_reasons
+
+    return {
+        "available": True,
+        "ok": ok,
+        "status": (
+            "trusted_clean_view_replay_complete"
+            if ok
+            else "untrusted_or_incomplete"
+        ),
+        "source": "current_revision_view_replay_summary",
+        "project_id": response.get("project_id"),
+        "revision": response.get("revision"),
+        "binding_verified": binding_verified,
+        "project_matches": project_matches,
+        "revision_matches": revision_matches,
+        "view_selection_matches": view_selection_matches,
+        "diagnostic_view_names": diagnostic_view_names,
+        "replay_view_names": replay_view_names,
+        "trusted_accepted_view_names": sorted(accepted_view_set),
+        "clean_view_names": clean_view_names,
+        "trusted_clean_view_names": trusted_clean_view_names,
+        "recommended_view_name": recommended_view_name,
+        "recommended_view_is_clean": recommended_view_is_clean,
+        "recommended_view_confirmed": recommended_view_confirmed,
+        "required_review_view_names": required_review_view_names,
+        "missing_required_review_view_names": missing_required_review_view_names,
+        "all_diagnostic_views_confirmed": all_diagnostic_views_confirmed,
+        "all_supported_views_confirmed": all_supported_views_confirmed,
+        "trusted_accepted_event_count": replay_summary.get(
+            "trusted_accepted_event_count"
+        ),
+        "evidence_integrity_status": evidence_integrity_status,
+        "journal_consistency_status": journal_consistency_status,
+        "blocking_reasons": blocking_reasons,
+        "resolves_visual_review_reasons": ok,
+        "resolvable_visual_review_reasons": (
+            sorted(_TRUSTED_REPLAY_RESOLVABLE_VISUAL_REVIEW_REASONS)
+            if ok
+            else []
+        ),
+    }
+
+
 def _visual_normality_summary(report: dict[str, Any]) -> dict[str, Any]:
     """Summarize visual normality so @mcp clients can report clean-view status safely."""
 
@@ -21461,6 +21745,11 @@ def _visual_normality_summary(report: dict[str, Any]) -> dict[str, Any]:
     )
     gui = report.get("gui") if isinstance(report.get("gui"), dict) else {}
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
+    trusted_clean_view_replay = (
+        report.get("trusted_clean_view_replay")
+        if isinstance(report.get("trusted_clean_view_replay"), dict)
+        else {}
+    )
     if not view_review or view_review.get("available") is False:
         return {
             "available": False,
@@ -21547,6 +21836,23 @@ def _visual_normality_summary(report: dict[str, Any]) -> dict[str, Any]:
             "live_gui_loaded_current_revision": gui_current.get("loaded_current_revision"),
             "live_gui_status": gui_current.get("status"),
             "gui_visual_validation": gui.get("visual_validation"),
+            "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+            "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
+                "status"
+            ),
+            "trusted_clean_view_names": trusted_clean_view_replay.get(
+                "trusted_clean_view_names"
+            )
+            or [],
+            "trusted_clean_view_replay": trusted_clean_view_replay,
+            "resolved_visual_review_reasons": normality_gate.get(
+                "resolved_visual_review_reasons"
+            )
+            or [],
+            "unresolved_visual_review_reasons": normality_gate.get(
+                "unresolved_visual_review_reasons"
+            )
+            or [],
             "clean_view_available": clean_view_available,
             "clean_view_count": clean_view_count,
             "clean_views": view_review.get("clean_views") or [],
@@ -22046,6 +22352,34 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
             if _is_calculation_only_normality_review(reason)
         ]
     )
+    trusted_clean_view_replay = (
+        report.get("trusted_clean_view_replay")
+        if isinstance(report.get("trusted_clean_view_replay"), dict)
+        else {}
+    )
+    replay_resolvable_visual_reasons = set(
+        str(item)
+        for item in trusted_clean_view_replay.get(
+            "resolvable_visual_review_reasons"
+        )
+        or []
+        if item
+    )
+    resolved_visual_review_reasons = (
+        [
+            reason
+            for reason in visual_review_reasons
+            if reason in replay_resolvable_visual_reasons
+        ]
+        if trusted_clean_view_replay.get("ok") is True
+        else []
+    )
+    resolved_visual_review_reason_set = set(resolved_visual_review_reasons)
+    unresolved_visual_review_reasons = [
+        reason
+        for reason in visual_review_reasons
+        if reason not in resolved_visual_review_reason_set
+    ]
 
     execution_mode = report.get("execution_mode")
     normality = report.get("normality")
@@ -22064,7 +22398,7 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     model_must_not_claim.extend(model_review_reasons)
     model_must_not_claim.extend(model_calculation_blocking_reasons)
     gui_must_not_claim = []
-    gui_must_not_claim.extend(visual_review_reasons)
+    gui_must_not_claim.extend(unresolved_visual_review_reasons)
     if execution_mode == ExecutionMode.PREVIEW.value:
         model_must_not_claim.append("preview_not_hot_loaded")
     elif not hot_loaded:
@@ -22166,6 +22500,16 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         "blocking_reasons": blocking_reasons,
         "review_reasons": review_reasons,
         "visual_review_reasons": visual_review_reasons,
+        "resolved_visual_review_reasons": resolved_visual_review_reasons,
+        "unresolved_visual_review_reasons": unresolved_visual_review_reasons,
+        "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+        "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
+            "status"
+        ),
+        "trusted_clean_view_names": trusted_clean_view_replay.get(
+            "trusted_clean_view_names"
+        )
+        or [],
         "calculation_blocking_reasons": calculation_blocking_reasons,
         "calculation_only_review_reasons": calculation_only_review_reasons,
         "ready_for_next_edit": readiness.get("ready_for_next_edit"),
@@ -25409,6 +25753,11 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("visual_normality_summary"), dict)
         else {}
     )
+    trusted_clean_view_replay = (
+        report.get("trusted_clean_view_replay")
+        if isinstance(report.get("trusted_clean_view_replay"), dict)
+        else {}
+    )
     semiconductor_calculation_readiness = (
         report.get("semiconductor_calculation_readiness")
         if isinstance(report.get("semiconductor_calculation_readiness"), dict)
@@ -25688,6 +26037,22 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "visual_blocking_reasons": visual_normality.get("blocking_reasons") or [],
             "visual_nonblocking_flags": visual_normality.get("nonblocking_visual_flags") or [],
             "visual_critical_flags": visual_normality.get("critical_flags") or [],
+            "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
+                "status"
+            ),
+            "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+            "trusted_clean_view_names": trusted_clean_view_replay.get(
+                "trusted_clean_view_names"
+            )
+            or [],
+            "resolved_visual_review_reasons": normality_gate.get(
+                "resolved_visual_review_reasons"
+            )
+            or [],
+            "unresolved_visual_review_reasons": normality_gate.get(
+                "unresolved_visual_review_reasons"
+            )
+            or [],
             "mcp_visual_normality_status": visual_normality.get("status"),
             "mcp_visual_can_report_model_normal": visual_normality.get("can_report_model_normal"),
             "mcp_visual_clean_view_available": visual_normality.get("clean_view_available"),
@@ -30363,10 +30728,14 @@ def _compact_normality_gate(value: Any) -> dict[str, Any] | None:
         value,
         tuple(key for key in value if key != "evidence"),
     )
+    if compact.pop("trusted_clean_view_names", None) is not None:
+        compact["trusted_clean_view_replay_ref"] = "trusted_clean_view_replay"
     for key in (
         "must_not_claim_normal_reasons",
         "blocking_reasons",
         "gui_single_window_violation_reasons",
+        "resolved_visual_review_reasons",
+        "unresolved_visual_review_reasons",
     ):
         if compact.get(key) == []:
             compact.pop(key, None)
@@ -30385,6 +30754,82 @@ def _compact_normality_gate(value: Any) -> dict[str, Any] | None:
         compact["requested_diagnostic_focus_status_ref"] = (
             "requested_diagnostic_focus_status"
         )
+    return compact
+
+
+def _compact_trusted_clean_view_replay(value: Any) -> dict[str, Any] | None:
+    """Return the trusted replay decision without repeated full view lists."""
+
+    if not isinstance(value, dict):
+        return None
+    compact = _mapping_subset(
+        value,
+        (
+            "available",
+            "ok",
+            "status",
+            "source",
+            "binding_verified",
+            "project_matches",
+            "revision_matches",
+            "view_selection_matches",
+            "trusted_clean_view_names",
+            "recommended_view_name",
+            "recommended_view_is_clean",
+            "recommended_view_confirmed",
+            "missing_required_review_view_names",
+            "all_diagnostic_views_confirmed",
+            "all_supported_views_confirmed",
+            "trusted_accepted_event_count",
+            "evidence_integrity_status",
+            "journal_consistency_status",
+            "blocking_reasons",
+            "resolves_visual_review_reasons",
+        ),
+    )
+    for source_key, count_key in (
+        ("diagnostic_view_names", "diagnostic_view_count"),
+        ("replay_view_names", "replay_view_count"),
+        ("trusted_accepted_view_names", "trusted_accepted_view_count"),
+        ("required_review_view_names", "required_review_view_count"),
+    ):
+        items = value.get(source_key)
+        if isinstance(items, list):
+            compact[count_key] = len(items)
+    for key in (
+        "trusted_clean_view_names",
+        "missing_required_review_view_names",
+        "blocking_reasons",
+    ):
+        if compact.get(key) == []:
+            compact.pop(key, None)
+    return compact
+
+
+def _compact_diagnostic_export_view_resolution(
+    value: Any,
+) -> dict[str, Any] | None:
+    """Return the diagnostic view source without duplicating the view list."""
+
+    if not isinstance(value, dict):
+        return None
+    compact = _mapping_subset(
+        value,
+        (
+            "source",
+            "explicit_views_requested",
+            "preserved_current_revision_view_selection",
+            "replay_manifest_available",
+            "replay_manifest_binding_verified",
+            "replay_manifest_binding_reasons",
+            "persisted_view_audit_matches_current",
+            "persisted_view_audit_mismatch_reasons",
+        ),
+    )
+    resolved = value.get("resolved_view_names")
+    if isinstance(resolved, list):
+        compact["resolved_view_count"] = len(resolved)
+        compact["resolved_view_names_ref"] = "live_summary.view_names"
     return compact
 
 
@@ -30407,9 +30852,13 @@ def _compact_visual_normality_summary(value: Any) -> dict[str, Any] | None:
         tuple(
             key
             for key in value
-            if key != "payload_hint" and key not in camera_keys
+            if key not in {"payload_hint", "trusted_clean_view_replay"}
+            and key not in camera_keys
         ),
     )
+    if isinstance(value.get("trusted_clean_view_replay"), dict):
+        compact["trusted_clean_view_replay_ref"] = "trusted_clean_view_replay"
+    compact.pop("trusted_clean_view_names", None)
     if any(value.get(key) is not None for key in camera_keys):
         compact["recommended_view_parameters_ref"] = (
             "view_parameter_summary.recommended_view"
@@ -30423,6 +30872,8 @@ def _compact_visual_normality_summary(value: Any) -> dict[str, Any] | None:
         "views_with_overlaps",
         "views_with_warnings",
         "visual_note_reasons",
+        "resolved_visual_review_reasons",
+        "unresolved_visual_review_reasons",
     ):
         if compact.get(key) == []:
             compact.pop(key, None)
@@ -32874,6 +33325,11 @@ def _compact_live_response(
             "mcp_same_window_hotload_payload_hint",
             "visual_clean_view_available",
             "visual_clean_view_count",
+            "trusted_clean_view_replay_status",
+            "trusted_clean_view_replay_ok",
+            "trusted_clean_view_names",
+            "resolved_visual_review_reasons",
+            "unresolved_visual_review_reasons",
             "structure_artifact_validation_status",
             "structure_artifact_validation_ok",
             "view_bundle_manifest_path",
@@ -33113,6 +33569,11 @@ def _compact_live_response(
             "view_request_requested",
             "view_request_matches_export",
             "view_recommended_view_name",
+            "trusted_clean_view_replay_status",
+            "trusted_clean_view_replay_ok",
+            "trusted_clean_view_names",
+            "resolved_visual_review_reasons",
+            "unresolved_visual_review_reasons",
             "requested_diagnostic_focus_ok",
             "diagnostic_export_manifest_status",
             "change_verification_ok",
@@ -33182,6 +33643,10 @@ def _compact_live_response(
         "semiconductor_normality_diagnosis": _compact_semiconductor_normality_diagnosis,
         "gui_current_revision": _compact_gui_current_revision,
         "live_gui_acceptance": _compact_live_gui_acceptance,
+        "trusted_clean_view_replay": _compact_trusted_clean_view_replay,
+        "diagnostic_export_view_resolution": (
+            _compact_diagnostic_export_view_resolution
+        ),
         "visual_normality_summary": _compact_visual_normality_summary,
         "view_parameter_summary": _compact_view_parameter_summary,
         "diagnostic_focus_plan": _compact_diagnostic_focus_plan,
@@ -33196,6 +33661,8 @@ def _compact_live_response(
         "gui_current_revision",
         "live_gui_acceptance",
         "gui_view_replay",
+        "trusted_clean_view_replay",
+        "diagnostic_export_view_resolution",
         "visual_normality_summary",
         "view_parameter_summary",
         "diagnostic_focus_plan",
@@ -35031,6 +35498,142 @@ def _persisted_auto_completed_diagnostic_focuses(
     return []
 
 
+def _diagnostic_export_replay_context(
+    store: ProjectStore,
+    spec: ModelSpec,
+    *,
+    current_spec_fingerprint: str | None,
+) -> dict[str, Any]:
+    """Return current revision replay evidence for a diagnostic re-export."""
+
+    output_dir = store.outputs_dir(spec.project_id, spec.revision)
+    manifest_path = output_dir / "gui_view_replay_manifest.json"
+    events_path = output_dir / "gui_view_replay_events.jsonl"
+    manifest, manifest_error = _read_json_file(manifest_path)
+    if isinstance(manifest, dict):
+        _refresh_view_replay_summary(
+            manifest,
+            workspace_root=store.workspace_root,
+            events_path=events_path,
+        )
+    context = {
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest_path.exists(),
+        "manifest_read_error": manifest_error,
+        "events_path": str(events_path),
+        "events_exist": events_path.exists(),
+        "replay_status": (manifest or {}).get("replay_status"),
+        "view_selection": (manifest or {}).get("view_selection"),
+        "view_names": list((manifest or {}).get("view_names") or []),
+        "requested_view_count": (manifest or {}).get("requested_view_count"),
+        "supported_view_count": (manifest or {}).get("supported_view_count"),
+        "preflight": (manifest or {}).get("preflight"),
+        "replay_summary": (manifest or {}).get("replay_summary"),
+        "replay_continuation": (manifest or {}).get("replay_continuation"),
+        "event_journal": (manifest or {}).get("event_journal"),
+        "recipe_contract": (manifest or {}).get("recipe_contract"),
+        "recipe_migration": (manifest or {}).get("recipe_migration"),
+        "last_replay_event": (manifest or {}).get("last_replay_event"),
+        "next_action": (manifest or {}).get("next_action"),
+        "next_action_resolution": (manifest or {}).get(
+            "next_action_resolution"
+        ),
+    }
+    context.update(
+        _view_replay_manifest_binding_summary(
+            manifest,
+            project_id=spec.project_id,
+            revision=spec.revision,
+            current_spec_fingerprint=current_spec_fingerprint,
+        )
+    )
+    return context
+
+
+def _diagnostic_export_audit(
+    store: ProjectStore,
+    spec: ModelSpec,
+    requested_views: list[str] | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Resolve a stable diagnostic view set without invalidating replay evidence."""
+
+    default_audit = model_view_audit(spec)
+    replay_context = _diagnostic_export_replay_context(
+        store,
+        spec,
+        current_spec_fingerprint=default_audit.get("spec_fingerprint"),
+    )
+    persisted_audit_path = (
+        store.outputs_dir(spec.project_id, spec.revision) / "view_audit.json"
+    )
+    persisted_audit, persisted_audit_error = _read_json_file(persisted_audit_path)
+    persisted_matches, persisted_mismatch_reasons = _persisted_view_audit_binding(
+        persisted_audit,
+        spec=spec,
+        computed_audit=default_audit,
+    )
+    persisted_view_names = (
+        [
+            str(view.get("name"))
+            for view in persisted_audit.get("views") or []
+            if isinstance(view, dict) and view.get("name")
+        ]
+        if persisted_matches and isinstance(persisted_audit, dict)
+        else []
+    )
+    replay_view_names = [
+        str(item) for item in replay_context.get("view_names") or [] if item
+    ]
+
+    if requested_views is not None:
+        resolved_views: list[str] | None = list(requested_views)
+        source = "explicit_request"
+    elif replay_context.get("binding_verified") is True and replay_view_names:
+        resolved_views = replay_view_names
+        source = "current_revision_view_replay_manifest"
+    elif persisted_view_names:
+        resolved_views = persisted_view_names
+        source = "current_revision_persisted_view_audit"
+    else:
+        resolved_views = None
+        source = "domain_default_views"
+
+    audit = (
+        default_audit
+        if resolved_views is None
+        else model_view_audit(spec, views=resolved_views)
+    )
+    resolved_view_names = [
+        str(view.get("name"))
+        for view in audit.get("views") or []
+        if isinstance(view, dict) and view.get("name")
+    ]
+    resolution = {
+        "source": source,
+        "explicit_views_requested": requested_views is not None,
+        "requested_view_names": list(requested_views or []),
+        "resolved_view_names": resolved_view_names,
+        "preserved_current_revision_view_selection": source
+        in {
+            "current_revision_view_replay_manifest",
+            "current_revision_persisted_view_audit",
+        },
+        "replay_manifest_available": replay_context.get("manifest_exists"),
+        "replay_manifest_binding_verified": replay_context.get(
+            "binding_verified"
+        ),
+        "replay_manifest_binding_reasons": replay_context.get(
+            "binding_reasons"
+        )
+        or [],
+        "persisted_view_audit_path": str(persisted_audit_path),
+        "persisted_view_audit_read_error": persisted_audit_error,
+        "persisted_view_audit_matches_current": persisted_matches,
+        "persisted_view_audit_mismatch_reasons": persisted_mismatch_reasons,
+    }
+    return audit, replay_context, resolution
+
+
 def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> dict[str, Any]:
     """Return prior execution/GUI context so diagnostic exports do not erase live state."""
 
@@ -35704,7 +36307,10 @@ def material_studio_model_export_view_audit(
             if revision_block is not None:
                 return revision_block
 
-            audit = model_view_audit(model_spec, views)
+            audit, gui_view_replay, diagnostic_export_view_resolution = (
+                _diagnostic_export_audit(store, model_spec, views)
+            )
+            generated = _generate_structured_script(model_spec, store)
             gui = _gui_controller(working_dir)
             gui_status = gui.status(
                 project_id=model_spec.project_id,
@@ -35741,8 +36347,15 @@ def material_studio_model_export_view_audit(
                 "project_id": model_spec.project_id,
                 "project_resolution": project_resolution,
                 "revision": model_spec.revision,
+                "validation": generated["script_validation"],
+                "warnings": generated["warnings"],
+                "planned_outputs": generated["planned_outputs"],
                 "audit": audit,
                 "view_audit": audit,
+                "gui_view_replay": gui_view_replay,
+                "diagnostic_export_view_resolution": (
+                    diagnostic_export_view_resolution
+                ),
                 "gui_status": gui_status,
                 "gui_artifacts": artifacts,
             }
@@ -35830,7 +36443,9 @@ def material_studio_model_export_view_bundle(
             if revision_block is not None:
                 return _compact_live_response(revision_block, response_mode)
 
-            audit = model_view_audit(model_spec, views)
+            audit, gui_view_replay, diagnostic_export_view_resolution = (
+                _diagnostic_export_audit(store, model_spec, views)
+            )
             generated = _generate_structured_script(model_spec, store)
             gui = _gui_controller(working_dir)
             gui_status = gui.status(
@@ -35873,6 +36488,10 @@ def material_studio_model_export_view_bundle(
                 "planned_outputs": generated["planned_outputs"],
                 "audit": audit,
                 "view_audit": audit,
+                "gui_view_replay": gui_view_replay,
+                "diagnostic_export_view_resolution": (
+                    diagnostic_export_view_resolution
+                ),
                 "gui_status": gui_status,
                 "gui_artifacts": artifacts,
             }

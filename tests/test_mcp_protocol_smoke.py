@@ -68,6 +68,12 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["view_bundle_files_missing_count"] == 0
     assert calls["view_bundle_file_index_compacted"] is True
     assert calls["view_bundle_file_index_complete_in_response"] is False
+    assert calls["trusted_clean_view_policy_summary_field"] == (
+        "trusted_clean_view_replay"
+    )
+    assert calls["trusted_clean_view_policy_requires_view_selection_match"] is True
+    assert calls["trusted_clean_view_policy_requires_all_views_confirmed"] is True
+    assert calls["trusted_clean_view_policy_calculation_independent"] is True
     assert calls["history_count"] == 1
     assert calls["visual_diagnostics_binding_verified"] is True
     assert calls["visual_diagnostics_action_id"]

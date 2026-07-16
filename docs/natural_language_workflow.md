@@ -441,6 +441,28 @@ null. After a recipe-schema upgrade, an old accepted event stays in history but
 the view remains pending while
 `current_camera_evidence_reverification_view_names` contains it.
 
+After all prepared views have been reviewed, read
+`trusted_clean_view_replay` from live status before reporting the current GUI
+model as visually normal. `ok=true` means the current revision has a complete,
+integrity-verified, journal-consistent replay for the exact diagnostic view set,
+including the recommended clean view and every manual-review view. The normality
+gate then moves only the allowlisted nonblocking visual reasons into
+`resolved_visual_review_reasons`; it preserves them as visual notes and leaves
+unknown visual reasons unresolved. Structural and semiconductor trust gates and
+`ready_for_calculation` are unchanged. For example, a TMD model can become
+`can_claim_live_gui_normal=true` while an unconfirmed reciprocal-lattice k-point
+recommendation still keeps `ready_for_calculation=false`.
+The exported `modeling_report_summary.csv` carries the same replay status,
+binding/view-set checks, integrity and journal states, trusted clean view names,
+and resolved versus unresolved visual-review reasons so the decision remains
+auditable outside the in-band MCP response.
+When a later view-bundle export omits `views`, it preserves the current
+revision's bound replay view set. If no bound replay exists, it preserves the
+current valid persisted audit selection before using domain defaults. Read
+`diagnostic_export_view_resolution` for this source; supplying an explicit
+`views` list intentionally replaces the set and may require fresh replay
+evidence.
+
 When the next automatic view is `crystal_plane_*`, the recipe instead uses a
 temporary Miller Plane, a verified semantic selection profile, Properties
 Explorer verification, and the named View Onto command. Object Tree before/after

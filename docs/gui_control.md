@@ -179,6 +179,19 @@ duplicate, or divergent copies set `event_journal_reverification_required` and
 invalidate replay-derived visual confirmation. Read-only status reports but does
 not reconcile files automatically; a new real observation is the recovery path.
 
+`material_studio_live_project_status` converts a fully verified replay into the
+separate `trusted_clean_view_replay` receipt. This receipt is positive only when
+the current project/revision binding is verified, replay and diagnostic view
+sets match exactly, all supported views are confirmed under current recipes,
+the recommended clean view and every manual-review view are confirmed, artifact
+integrity is `verified`, and event-journal consistency is `consistent`. A
+positive receipt may resolve the known nonblocking projection, view-warning,
+viewport-visibility, and capture-limitation review reasons. The original flags
+remain visible as notes through `resolved_visual_review_reasons`; unknown reasons
+remain in `unresolved_visual_review_reasons` and continue to block a live-GUI
+normality claim. Replay evidence never repairs structural, semiconductor,
+acceptance, single-window, or calculation-readiness failures.
+
 `prepare_view_replay` and `record_view_replay` share a project/revision-scoped
 kernel file lock. The lock covers each complete manifest mutation, including
 evidence persistence and journal publication. Concurrent callers are serialized;

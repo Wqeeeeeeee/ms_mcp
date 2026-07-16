@@ -560,6 +560,50 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_non_collinear_direction_boundary_missing"
             )
+        trusted_clean_view_policy = replay_policy.get(
+            "trusted_clean_view_normality_evidence"
+        )
+        if not isinstance(trusted_clean_view_policy, dict):
+            validation_errors.append(
+                "capabilities_trusted_clean_view_policy_missing"
+            )
+            trusted_clean_view_policy = {}
+        if trusted_clean_view_policy.get("summary_field") != (
+            "trusted_clean_view_replay"
+        ):
+            validation_errors.append(
+                "capabilities_trusted_clean_view_summary_field_mismatch"
+            )
+        if trusted_clean_view_policy.get(
+            "requires_diagnostic_and_replay_view_selection_match"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_trusted_clean_view_selection_gate_missing"
+            )
+        if trusted_clean_view_policy.get(
+            "requires_all_supported_views_confirmed"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_trusted_clean_view_completion_gate_missing"
+            )
+        if trusted_clean_view_policy.get(
+            "requires_evidence_integrity_status"
+        ) != "verified":
+            validation_errors.append(
+                "capabilities_trusted_clean_view_integrity_gate_missing"
+            )
+        if trusted_clean_view_policy.get(
+            "requires_event_journal_consistency_status"
+        ) != "consistent":
+            validation_errors.append(
+                "capabilities_trusted_clean_view_journal_gate_missing"
+            )
+        if trusted_clean_view_policy.get(
+            "may_resolve_calculation_readiness_failures"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_trusted_clean_view_calculation_boundary_missing"
+            )
         runner_status = capabilities.get("runner_status")
         if not isinstance(runner_status, dict):
             validation_errors.append("capabilities_compact_runner_status_missing")
@@ -764,6 +808,24 @@ async def _run_preview_calls(
                 ),
                 "view_bundle_file_index_complete_in_response": exported.get(
                     "view_bundle_file_index_complete_in_response"
+                ),
+                "trusted_clean_view_policy_summary_field": (
+                    trusted_clean_view_policy.get("summary_field")
+                ),
+                "trusted_clean_view_policy_requires_view_selection_match": (
+                    trusted_clean_view_policy.get(
+                        "requires_diagnostic_and_replay_view_selection_match"
+                    )
+                ),
+                "trusted_clean_view_policy_requires_all_views_confirmed": (
+                    trusted_clean_view_policy.get(
+                        "requires_all_supported_views_confirmed"
+                    )
+                ),
+                "trusted_clean_view_policy_calculation_independent": (
+                    trusted_clean_view_policy.get(
+                        "calculation_readiness_remains_independent"
+                    )
                 ),
                 "history_count": len(history.get("history") or []),
                 "preflight_state": preflight.get("state"),

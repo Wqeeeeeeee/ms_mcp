@@ -127,6 +127,21 @@ derives an allowlisted command from the installed registry SHA-256 plus an
 exact live toolbar child sequence. In that narrow path, protocol discovery must
 expose `anonymous_toolbars` and the record tool's
 `accessibility_command_uses`; mismatched mapping receipts are rejected. The
+capability policy also exposes `trusted_clean_view_normality_evidence`.
+Acceptance must prove that a current, complete, integrity-verified,
+journal-consistent replay can resolve only allowlisted nonblocking visual
+reasons, while revision/view-set mismatch, incomplete accepted views, artifact
+drift, journal divergence, or an unknown visual reason leaves the live-GUI
+normality gate closed. Calculation readiness must remain unchanged by visual
+replay evidence. The
+one-row `modeling_report_summary.csv` receipt must persist the trusted replay
+decision, project/revision and view-set gates, integrity/journal states, clean
+view names, and resolved/unresolved visual reasons. Compact responses may
+reference the top-level trusted receipt instead of repeating its view list. The
+diagnostic export path must preserve a bound replay view set when `views` is
+omitted and expose the selected source through
+`diagnostic_export_view_resolution`; an explicit view list remains
+authoritative and may close the replay trust gate until revalidated. The
 receipt must also prove the exact key sequence or stages, Reset precondition,
 angle, no modifiers, setting restoration, and visual axis/projection match.
 Protocol acceptance also verifies that a complete, integrity-verified command

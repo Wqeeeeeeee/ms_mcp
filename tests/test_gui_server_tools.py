@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -8275,9 +8276,39 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy["requires_exactly_one_matstudio_process"] is True
     assert view_replay_policy["pre_activation_screenshot_may_capture_occluding_window"] is True
     assert view_replay_policy["blind_toolbar_or_coordinate_actions_allowed"] is False
+    trusted_visual_policy = view_replay_policy[
+        "trusted_clean_view_normality_evidence"
+    ]
+    assert trusted_visual_policy["summary_field"] == "trusted_clean_view_replay"
+    assert trusted_visual_policy["requires_current_project_revision_binding"] is True
+    assert trusted_visual_policy[
+        "requires_diagnostic_and_replay_view_selection_match"
+    ] is True
+    assert trusted_visual_policy["requires_all_supported_views_confirmed"] is True
+    assert trusted_visual_policy["requires_recommended_clean_view_confirmed"] is True
+    assert trusted_visual_policy["requires_all_manual_review_views_confirmed"] is True
+    assert trusted_visual_policy["requires_evidence_integrity_status"] == "verified"
+    assert trusted_visual_policy[
+        "requires_event_journal_consistency_status"
+    ] == "consistent"
+    assert trusted_visual_policy["resolvable_visual_review_reasons"] == sorted(
+        server._TRUSTED_REPLAY_RESOLVABLE_VISUAL_REVIEW_REASONS
+    )
+    assert trusted_visual_policy["may_resolve_structure_failures"] is False
+    assert trusted_visual_policy["may_resolve_semiconductor_failures"] is False
+    assert trusted_visual_policy["may_resolve_calculation_readiness_failures"] is False
+    assert trusted_visual_policy["calculation_readiness_remains_independent"] is True
     assert "crystal_100" in view_replay_policy["supports_crystal_direction_views"]
     assert "crystal_plane_110" in view_replay_policy["supports_crystal_plane_views"]
     assert "surface_normal" in view_replay_policy["supports_oriented_frame_views"]
+    diagnostic_shortcuts = capabilities["response_model_diagnostics"][
+        "top_level_shortcut_fields"
+    ]
+    assert "trusted_clean_view_replay_status" in diagnostic_shortcuts
+    assert "trusted_clean_view_replay_ok" in diagnostic_shortcuts
+    assert "trusted_clean_view_names" in diagnostic_shortcuts
+    assert "resolved_visual_review_reasons" in diagnostic_shortcuts
+    assert "unresolved_visual_review_reasons" in diagnostic_shortcuts
     assert "material_studio_live_modeling_request" in capabilities["gui"]["hotload_entrypoints"]
     single_window_policy = capabilities["gui"]["single_window_session_policy"]
     assert single_window_policy["enabled"] is True
@@ -11760,6 +11791,194 @@ def test_model_export_view_bundle_writes_tables(monkeypatch, tmp_path: Path) -> 
     assert summary_rows[0]["ready_for_hotload"] == "True"
 
 
+def test_model_export_view_bundle_preserves_current_view_selection_when_omitted(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    spec_payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "molybdenum_disulfide_2d_mos2_monolayer_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    spec_payload["project_id"] = "mos2_preserve_export_views"
+    created = server.material_studio_model_create_from_spec(
+        spec_payload,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    selected_views = ["front", "top", "isometric", "crystal_plane_0001"]
+
+    first = server.material_studio_model_export_view_bundle(
+        project_id=spec_payload["project_id"],
+        views=selected_views,
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    audit_export = server.material_studio_model_export_view_audit(
+        project_id=spec_payload["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    second = server.material_studio_model_export_view_bundle(
+        project_id=spec_payload["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert first["diagnostic_export_view_resolution"]["source"] == (
+        "explicit_request"
+    )
+    assert audit_export["diagnostic_export_view_resolution"]["source"] == (
+        "current_revision_persisted_view_audit"
+    )
+    assert audit_export["diagnostic_export_view_resolution"][
+        "preserved_current_revision_view_selection"
+    ] is True
+    assert audit_export["diagnostic_export_view_resolution"][
+        "resolved_view_names"
+    ] == selected_views
+    assert [view["name"] for view in audit_export["view_audit"]["views"]] == (
+        selected_views
+    )
+    assert second["diagnostic_export_view_resolution"]["source"] == (
+        "current_revision_persisted_view_audit"
+    )
+    assert second["diagnostic_export_view_resolution"][
+        "preserved_current_revision_view_selection"
+    ] is True
+    assert second["diagnostic_export_view_resolution"]["resolved_view_names"] == (
+        selected_views
+    )
+    assert [view["name"] for view in second["view_audit"]["views"]] == (
+        selected_views
+    )
+
+
+def test_model_export_view_bundle_preserves_bound_trusted_replay_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+    monkeypatch.setattr(
+        server,
+        "_refresh_view_replay_summary",
+        lambda *args, **kwargs: None,
+    )
+    spec_payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "molybdenum_disulfide_2d_mos2_monolayer_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    spec_payload["project_id"] = "mos2_preserve_trusted_replay"
+    spec = ModelSpec.model_validate(spec_payload)
+    created = server.material_studio_model_create_from_spec(
+        spec_payload,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    replay_views = [
+        "front",
+        "crystal_plane_0001",
+        "top",
+        "isometric",
+        "crystal_100",
+        "crystal_plane_001",
+    ]
+    fingerprint = model_view_audit(spec)["spec_fingerprint"]
+    store = store_module.ProjectStore(tmp_path)
+    output_dir = store.outputs_dir(spec.project_id, spec.revision)
+    replay_manifest_path = output_dir / "gui_view_replay_manifest.json"
+    replay_manifest_path.write_text(
+        json.dumps(
+            {
+                "project_id": spec.project_id,
+                "revision": spec.revision,
+                "spec_fingerprint": fingerprint,
+                "replay_status": "complete",
+                "view_names": replay_views,
+                "requested_view_count": len(replay_views),
+                "supported_view_count": len(replay_views),
+                "replay_summary": {
+                    "trusted_accepted_event_count": len(replay_views),
+                    "accepted_view_count": len(replay_views),
+                    "accepted_view_names": replay_views,
+                    "evidence_integrity_status": "verified",
+                    "journal_consistency_status": "consistent",
+                    "all_supported_views_confirmed": True,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    exported = server.material_studio_model_export_view_bundle(
+        project_id=spec.project_id,
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    resolution = exported["diagnostic_export_view_resolution"]
+    assert resolution["source"] == "current_revision_view_replay_manifest"
+    assert resolution["replay_manifest_binding_verified"] is True
+    assert resolution["resolved_view_names"] == replay_views
+    assert [view["name"] for view in exported["view_audit"]["views"]] == (
+        replay_views
+    )
+    trusted = exported["trusted_clean_view_replay"]
+    assert trusted["ok"] is True
+    assert trusted["view_selection_matches"] is True
+    assert trusted["all_supported_views_confirmed"] is True
+    summary_rows = list(
+        csv.DictReader(
+            Path(
+                exported["view_bundle_files"]["modeling_report_summary_csv"]
+            ).open(encoding="utf-8")
+        )
+    )
+    assert summary_rows[0]["trusted_clean_view_replay_ok"] == "True"
+    assert summary_rows[0]["trusted_clean_view_replay_status"] == (
+        "trusted_clean_view_replay_complete"
+    )
+    assert json.loads(summary_rows[0]["trusted_clean_view_names"])
+    persisted_report = json.loads(
+        Path(exported["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted_report["gui_view_replay"]["binding_verified"] is True
+    assert persisted_report["trusted_clean_view_replay"]["ok"] is True
+    assert persisted_report["diagnostic_export_view_resolution"]["source"] == (
+        "current_revision_view_replay_manifest"
+    )
+    compact = server._compact_live_response(exported, "compact")
+    compact_resolution = compact["diagnostic_export_view_resolution"]
+    assert compact_resolution["source"] == (
+        "current_revision_view_replay_manifest"
+    )
+    assert compact_resolution["preserved_current_revision_view_selection"] is True
+    assert compact_resolution["replay_manifest_binding_verified"] is True
+    assert compact_resolution["resolved_view_count"] == len(replay_views)
+    assert compact_resolution["resolved_view_names_ref"] == "live_summary.view_names"
+
+
 def test_model_export_view_bundle_reports_gui_snapshot_summary(monkeypatch, tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
@@ -12147,6 +12366,21 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert status["next_action_plan"]["recommended_tool"] == "material_studio_live_modeling_request"
     assert status["next_action_plan"]["needs_user_confirmation"] is False
     assert status["next_action_plan"]["payload_hint"]["project_id"] == "gui_execute_proj"
+
+    audited_after_hotload = server.material_studio_model_export_view_audit(
+        project_id="gui_execute_proj",
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert audited_after_hotload["ok"] is True
+    assert audited_after_hotload["execution_mode"] == "execute"
+    assert audited_after_hotload["modeling_health"]["verdict"] != "failed"
+    assert audited_after_hotload["planned_outputs"]["structure"]
+    audit_gate_reasons = audited_after_hotload["normality_gate"][
+        "all_must_not_claim_reasons"
+    ]
+    assert "response_not_ok" not in audit_gate_reasons
+    assert "executed_structure_missing" not in audit_gate_reasons
 
     exported_after_hotload = server.material_studio_model_export_view_bundle(
         project_id="gui_execute_proj",
@@ -31737,6 +31971,310 @@ def test_modeling_report_visual_summary_allows_model_normal_with_clean_view_note
     assert summary_row["current_revision_loaded_in_gui"] is True
     assert summary_row["loaded_current_revision"] is True
     assert json.loads(summary_row["visual_blocking_reasons"]) == []
+
+
+def _trusted_clean_view_replay_payload(
+    *,
+    project_id: str,
+    revision: int,
+    view_names: list[str],
+) -> dict:
+    return {
+        "project_id": project_id,
+        "revision": revision,
+        "binding_verified": True,
+        "view_names": list(view_names),
+        "replay_summary": {
+            "trusted_accepted_event_count": len(view_names),
+            "accepted_view_count": len(view_names),
+            "accepted_view_names": list(view_names),
+            "evidence_integrity_status": "verified",
+            "journal_consistency_status": "consistent",
+            "all_supported_views_confirmed": True,
+        },
+    }
+
+
+def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
+    tmp_path: Path,
+) -> None:
+    spec_payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "molybdenum_disulfide_2d_mos2_monolayer_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    spec_payload["project_id"] = "mos2_trusted_clean_replay"
+    spec = ModelSpec.model_validate(spec_payload)
+    audit = model_view_audit(spec)
+    structure = tmp_path / "structure_r000.cif"
+    structure.write_text("data_mos2_trusted_clean_replay\n", encoding="utf-8")
+    response = {
+        "ok": True,
+        "project_id": spec.project_id,
+        "revision": 0,
+        "workflow": "gui_view_replay_confirmation",
+        "execution_mode": "execute",
+        "result": {"success": True, "execution_backend": "crystal_cif_materialize"},
+        "validation": {"valid": True},
+        "planned_outputs": {"structure": str(structure)},
+        "warnings": [
+            "Crystal MaterialsScript lattice construction is preview-only until local Copy Script confirms the API; execute mode materializes a CIF for GUI hot-loading."
+        ],
+        "acceptance": spec.acceptance.model_dump(mode="json"),
+        "view_audit": audit,
+        "gui_status": {
+            "window_found": True,
+            "window": {
+                "handle": 200,
+                "title": "msmcp_r000_trusted - Materials Studio",
+            },
+            "windows": [
+                {
+                    "handle": 200,
+                    "title": "msmcp_r000_trusted - Materials Studio",
+                    "is_selected": True,
+                    "is_foreground": True,
+                    "project_id": spec.project_id,
+                    "revision": 0,
+                    "source_path": str(structure),
+                    "project_wrapper_metadata": {
+                        "project_id": spec.project_id,
+                        "revision": 0,
+                        "source_path": str(structure),
+                    },
+                }
+            ],
+        },
+        "gui_open": {
+            "project_id": spec.project_id,
+            "revision": 0,
+            "structure_path": str(structure),
+            "activated_opened_window": True,
+            "window": {
+                "handle": 200,
+                "title": "msmcp_r000_trusted - Materials Studio",
+            },
+            "project_wrapper": {"source_path": str(structure)},
+            "open_result": {"method": "fake", "path": str(structure)},
+            "snapshot": {
+                "screenshot_path": str(tmp_path / "snap_trusted.bmp"),
+                "analysis": {"readable": True, "likely_nonblank": True},
+            },
+        },
+    }
+    response["modeling_health"] = build_modeling_health(
+        response,
+        execution_mode="execute",
+    )
+    baseline_report = server._build_modeling_report(dict(response))
+    view_names = list(baseline_report["view_review"]["supported_view_names"])
+    response["gui_view_replay"] = _trusted_clean_view_replay_payload(
+        project_id=spec.project_id,
+        revision=0,
+        view_names=view_names,
+    )
+
+    report = server._build_modeling_report(response)
+
+    trusted = report["trusted_clean_view_replay"]
+    assert trusted["status"] == "trusted_clean_view_replay_complete"
+    assert trusted["ok"] is True
+    assert trusted["binding_verified"] is True
+    assert trusted["view_selection_matches"] is True
+    assert trusted["all_supported_views_confirmed"] is True
+    assert trusted["recommended_view_confirmed"] is True
+    assert trusted["missing_required_review_view_names"] == []
+    assert trusted["trusted_clean_view_names"]
+
+    gate = report["normality_gate"]
+    assert gate["status"] == "claimable_with_calculation_review"
+    assert gate["can_claim_model_normal"] is True
+    assert gate["can_claim_live_gui_normal"] is True
+    assert gate["must_not_claim_live_gui_normal_reasons"] == []
+    assert gate["resolved_visual_review_reasons"] == [
+        "view:projection_overlaps",
+        "view:view_warnings",
+    ]
+    assert gate["unresolved_visual_review_reasons"] == []
+    assert gate["calculation_blocking_reasons"] == [
+        "semiconductor:kpoint_reciprocal_lattice_warnings"
+    ]
+    assert gate["ready_for_calculation"] is False
+
+    visual = report["visual_normality_summary"]
+    assert visual["status"] == "model_normal_with_visual_notes"
+    assert visual["can_report_model_normal"] is True
+    assert visual["can_claim_live_gui_normal"] is True
+    assert visual["trusted_clean_view_replay_ok"] is True
+    assert visual["resolved_visual_review_reasons"] == [
+        "view:projection_overlaps",
+        "view:view_warnings",
+    ]
+    assert report["live_summary"]["trusted_clean_view_replay_ok"] is True
+    assert report["live_summary"]["can_claim_live_gui_normal"] is True
+    assert report["live_summary"]["ready_for_calculation"] is False
+    assert report["next_action_plan"]["action_id"] == (
+        "apply_recommended_semiconductor_kpoint_grid"
+    )
+
+    report["visual_normality_summary"] = {
+        "status": "stale_before_refresh",
+        "can_report_model_normal": False,
+    }
+    response["modeling_report"] = report
+    server._refresh_response_summaries(response)
+    assert response["visual_normality_summary"]["status"] == (
+        "model_normal_with_visual_notes"
+    )
+    assert response["visual_normality_summary"]["can_report_model_normal"] is True
+
+    summary_row = server._modeling_report_summary_row(response, report)
+    assert summary_row["trusted_clean_view_replay_status"] == (
+        "trusted_clean_view_replay_complete"
+    )
+    assert summary_row["trusted_clean_view_replay_ok"] is True
+    assert summary_row["trusted_clean_view_replay_binding_verified"] is True
+    assert summary_row["trusted_clean_view_replay_project_matches"] is True
+    assert summary_row["trusted_clean_view_replay_revision_matches"] is True
+    assert summary_row["trusted_clean_view_replay_view_selection_matches"] is True
+    assert summary_row[
+        "trusted_clean_view_replay_all_supported_views_confirmed"
+    ] is True
+    assert summary_row["trusted_clean_view_replay_recommended_view_confirmed"] is True
+    assert summary_row["trusted_clean_view_replay_integrity_status"] == "verified"
+    assert summary_row["trusted_clean_view_replay_journal_status"] == "consistent"
+    assert json.loads(summary_row["trusted_clean_view_names"]) == trusted[
+        "trusted_clean_view_names"
+    ]
+    assert json.loads(summary_row["trusted_clean_view_replay_blocking_reasons"]) == []
+    assert json.loads(summary_row["resolved_visual_review_reasons"]) == [
+        "view:projection_overlaps",
+        "view:view_warnings",
+    ]
+    assert json.loads(summary_row["unresolved_visual_review_reasons"]) == []
+
+    compact = server._compact_live_response(response, "compact")
+    assert compact["trusted_clean_view_replay"]["ok"] is True
+    assert compact["trusted_clean_view_replay"]["view_selection_matches"] is True
+    assert compact["normality_gate"]["can_claim_live_gui_normal"] is True
+    assert compact["normality_gate"]["trusted_clean_view_replay_ref"] == (
+        "trusted_clean_view_replay"
+    )
+    assert "trusted_clean_view_names" not in compact["normality_gate"]
+    assert compact["visual_normality_summary"]["can_report_model_normal"] is True
+    assert compact["visual_normality_summary"]["trusted_clean_view_replay_ref"] == (
+        "trusted_clean_view_replay"
+    )
+    assert "trusted_clean_view_names" not in compact["visual_normality_summary"]
+    assert compact["live_summary"]["trusted_clean_view_replay_ok"] is True
+    assert len(json.dumps(compact, ensure_ascii=False).encode("utf-8")) < (
+        server.COMPACT_RESPONSE_MAX_BYTES
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("revision", "view_replay_revision_mismatch"),
+        ("view_selection", "view_replay_view_selection_mismatch"),
+        ("integrity", "view_replay_evidence_integrity_not_verified"),
+        ("journal", "view_replay_event_journal_not_consistent"),
+        ("accepted_views", "view_replay_supported_views_incomplete"),
+    ],
+)
+def test_trusted_clean_view_replay_rejects_unbound_or_incomplete_evidence(
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    view_review = {
+        "supported_view_names": ["front", "isometric", "crystal_100"],
+        "clean_views": ["front", "isometric"],
+        "manual_review_view_names": ["isometric"],
+        "recommended_view_name": "isometric",
+    }
+    response = {
+        "project_id": "trusted_replay_negative",
+        "revision": 4,
+        "gui_view_replay": _trusted_clean_view_replay_payload(
+            project_id="trusted_replay_negative",
+            revision=4,
+            view_names=["front", "isometric", "crystal_100"],
+        ),
+    }
+    candidate = copy.deepcopy(response)
+    replay = candidate["gui_view_replay"]
+    replay_summary = replay["replay_summary"]
+    if mutation == "revision":
+        replay["revision"] = 3
+    elif mutation == "view_selection":
+        replay["view_names"] = ["front", "isometric"]
+    elif mutation == "integrity":
+        replay_summary["evidence_integrity_status"] = "blocked"
+    elif mutation == "journal":
+        replay_summary["journal_consistency_status"] = (
+            "consistent_with_historical_divergence"
+        )
+    elif mutation == "accepted_views":
+        replay_summary["accepted_view_names"] = ["front", "crystal_100"]
+        replay_summary["all_supported_views_confirmed"] = False
+
+    summary = server._trusted_clean_view_replay_summary(candidate, view_review)
+
+    assert summary["ok"] is False
+    assert summary["status"] == "untrusted_or_incomplete"
+    assert summary["resolves_visual_review_reasons"] is False
+    assert summary["resolvable_visual_review_reasons"] == []
+    assert expected_reason in summary["blocking_reasons"]
+
+
+def test_trusted_clean_view_replay_does_not_resolve_unknown_visual_reason() -> None:
+    gate = server._normality_gate(
+        {
+            "ok": True,
+            "health_ok": True,
+            "normality": "hot_loaded_and_passed",
+            "execution_mode": "execute",
+            "live_readiness": {
+                "blocking_reasons": [],
+                "review_reasons": [],
+                "visual_review_reasons": [
+                    "view:projection_overlaps",
+                    "view:unclassified_visual_warning",
+                ],
+                "calculation_blocking_reasons": [],
+                "ready_for_next_edit": True,
+                "ready_for_calculation": True,
+            },
+            "gui": {
+                "hot_loaded": True,
+                "loaded_current_revision": True,
+                "visual_validation": "passed",
+                "single_window_policy_ok": True,
+            },
+            "gui_current_revision": {"loaded_current_revision": True},
+            "trusted_clean_view_replay": {
+                "ok": True,
+                "status": "trusted_clean_view_replay_complete",
+                "trusted_clean_view_names": ["isometric"],
+                "resolvable_visual_review_reasons": sorted(
+                    server._TRUSTED_REPLAY_RESOLVABLE_VISUAL_REVIEW_REASONS
+                ),
+            },
+        }
+    )
+
+    assert gate["can_claim_model_normal"] is True
+    assert gate["can_claim_live_gui_normal"] is False
+    assert gate["resolved_visual_review_reasons"] == [
+        "view:projection_overlaps"
+    ]
+    assert gate["unresolved_visual_review_reasons"] == [
+        "view:unclassified_visual_warning"
+    ]
+    assert gate["must_not_claim_live_gui_normal_reasons"] == [
+        "view:unclassified_visual_warning"
+    ]
 
 
 def test_diagnostic_acceptance_promotes_model_normality_fields() -> None:

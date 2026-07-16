@@ -108,15 +108,28 @@ or calculation-readiness failures.
 The installed Materials Studio 20.1 help and `#SVViewer3d.xml` command registry
 confirm Reset View, Recenter, View Onto, View Across, and Fit-to-View. They do
 not document a public MaterialsScript API that accepts an arbitrary camera
-direction/up vector. Therefore view replay is deliberately split into two
+direction/up vector. Therefore view replay is deliberately split into three
 auditable phases:
 
 1. `material_studio_gui_prepare_view_replay` persists exact camera, framing,
    crystallographic metadata, expected projection bounds, target-window
    identity, and single-window preflight state without touching the GUI.
-2. Computer Use or locally reviewed Copy Script output activates and verifies
-   the exact wrapper window, applies the view, captures fresh visual evidence,
-   and calls `material_studio_gui_record_view_replay` for that view.
+2. When the continuation is `automatic_recipe_ready`, Computer Use activates
+   and re-verifies the exact wrapper, then executes only the returned
+   `execution_action`. This phase may issue GUI input but cannot write replay
+   evidence, mutate the structure, or create a revision.
+3. After the action, Computer Use or a reviewer captures a fresh screenshot and
+   current accessibility/camera observations, fills the null fields in
+   `post_action_record_payload_template`, and calls
+   `material_studio_gui_record_view_replay` for that view.
+
+The pre-action `payload_hint` is deliberately marked
+`payload_hint_is_directly_callable=false`. Command targets and expected window
+identity are instructions, not success receipts. In particular,
+`accessibility_tree_refreshed`, `invocation_succeeded`, camera-match fields,
+Miller-plane cleanup fields, and reviewed Copy Script attestations remain null
+until they are observed after the GUI action. `record_call_ready=false` remains
+in the continuation and preflight safety receipt until that observation exists.
 
 For a reviewed Copy Script path, the record call also supplies the exact script
 text and review attestations in `reviewed_copy_script_evidence`. The server

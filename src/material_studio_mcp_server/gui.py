@@ -8690,13 +8690,49 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
         else {}
     )
     continuation_status = str(continuation.get("status") or "unknown")
+    execution_action = (
+        continuation.get("execution_action")
+        if isinstance(continuation.get("execution_action"), dict)
+        else {}
+    )
+    recipe_contract = (
+        manifest.get("recipe_contract")
+        if isinstance(manifest.get("recipe_contract"), dict)
+        else {}
+    )
+    preflight = (
+        manifest.get("preflight")
+        if isinstance(manifest.get("preflight"), dict)
+        else {}
+    )
+    automatic_replay_gate_open = bool(
+        continuation_status == "automatic_recipe_ready"
+        and continuation.get("automatic_replay_ready") is True
+        and recipe_contract.get("current") is True
+        and preflight.get("ready_for_external_replay") is True
+        and preflight.get("activation_required") is not True
+    )
+    external_execution_ready = bool(
+        automatic_replay_gate_open
+        and execution_action.get("executor") == "computer_use"
+        and isinstance(execution_action.get("payload_hint"), dict)
+        and execution_action.get("gui_input_required") is True
+        and execution_action.get("post_action_observation_required") is True
+    )
     continuation_overrides = (
         continuation_status in _VIEW_REPLAY_CONTINUATION_ACTION_OVERRIDE_STATUSES
+        or external_execution_ready
     )
-    recommended_tool = continuation.get("recommended_mcp_tool")
-    recommended_action = continuation.get("recommended_action")
-    continuation_payload = continuation.get("payload_hint")
-    high_level_payload = continuation.get("high_level_payload_hint")
+    if external_execution_ready:
+        recommended_tool = execution_action.get("executor")
+        recommended_action = execution_action.get("action")
+        continuation_payload = execution_action.get("payload_hint")
+        high_level_payload: Any = None
+    else:
+        recommended_tool = continuation.get("recommended_mcp_tool")
+        recommended_action = continuation.get("recommended_action")
+        continuation_payload = continuation.get("payload_hint")
+        high_level_payload = continuation.get("high_level_payload_hint")
 
     if continuation_status == "complete":
         resolved_payload: dict[str, Any] = {
@@ -8723,6 +8759,20 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
                 "payload_hint_is_directly_callable"
             )
             is True,
+            **(
+                {
+                    "gui_input_required": True,
+                    "post_action_observation_required": True,
+                    "post_action_record_tool": execution_action.get(
+                        "post_action_record_tool"
+                    ),
+                    "post_action_record_payload_template_ref": (
+                        "replay_continuation.post_action_record_payload_template"
+                    ),
+                }
+                if external_execution_ready
+                else {}
+            ),
             "source": "replay_continuation",
         }
     else:
@@ -8741,23 +8791,7 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
     incoming_action_overridden = bool(
         continuation_overrides and incoming_identity != resolved_identity
     )
-    recipe_contract = (
-        manifest.get("recipe_contract")
-        if isinstance(manifest.get("recipe_contract"), dict)
-        else {}
-    )
-    preflight = (
-        manifest.get("preflight")
-        if isinstance(manifest.get("preflight"), dict)
-        else {}
-    )
-    automatic_replay_allowed = bool(
-        continuation_status == "automatic_recipe_ready"
-        and continuation.get("automatic_replay_ready") is True
-        and recipe_contract.get("current") is True
-        and preflight.get("ready_for_external_replay") is True
-        and preflight.get("activation_required") is not True
-    )
+    automatic_replay_allowed = automatic_replay_gate_open
     stale_recipe_execution_blocked = bool(
         continuation_status == "recipe_upgrade_required"
         or continuation.get("recipe_upgrade_required") is True
@@ -8772,6 +8806,10 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
     if continuation_overrides:
         reason_codes.append(
             "replay_continuation_safety_state_precedes_prepared_gui_action"
+        )
+    if external_execution_ready:
+        reason_codes.append(
+            "gui_recipe_execution_and_fresh_observation_precede_evidence_recording"
         )
     if stale_recipe_execution_blocked:
         reason_codes.append("current_safety_recipe_required_before_gui_replay")
@@ -8803,6 +8841,10 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
             "automatic_replay_allowed": automatic_replay_allowed,
             "stale_recipe_execution_blocked": stale_recipe_execution_blocked,
             "external_review_required": external_review_required,
+            "gui_input_required": external_execution_ready,
+            "post_action_observation_required": external_execution_ready,
+            "metadata_write_allowed_before_observation": False,
+            "record_tool_call_ready": False,
             "activation_required_before_gui_input": preflight.get(
                 "activation_required"
             )
@@ -9408,7 +9450,7 @@ def _refresh_view_replay_summary(
             if _verified_anonymous_recipe_targets(next_recipe)
             else "execute_named_accessibility_recipe_then_record_view"
         )
-        recommended_mcp_tool = "material_studio_gui_record_view_replay"
+        recommended_mcp_tool = None
     elif next_actionable_pending_step is not None:
         continuation_status = (
             "runtime_accessibility_blocks_automatic_replay"
@@ -9454,7 +9496,7 @@ def _refresh_view_replay_summary(
         else {}
     )
     selected_keyboard_stages = selected_recipe.get("keyboard_stages")
-    keyboard_stage_payload_hint = (
+    keyboard_execution_stages = (
         [
             {
                 key: stage.get(key)
@@ -9466,17 +9508,19 @@ def _refresh_view_replay_summary(
         if isinstance(selected_keyboard_stages, list)
         else None
     )
-    crystal_camera_payload_hint: dict[str, Any] | None = None
+    crystal_camera_record_template: dict[str, Any] | None = None
     if selected_recipe.get("recipe_kind") == CRYSTAL_STANDARD_VIEW_RECIPE_KIND:
-        crystal_camera_payload_hint = {
+        crystal_camera_record_template = {
             "camera_match_scope": (
                 selected_recipe.get("camera_match_contract") or {}
             ).get("scope"),
-            "view_direction_matches_manifest": True,
+            "view_direction_matches_manifest": None,
             "analytic_in_plane_basis_matches_manifest": None,
-            "native_in_plane_roll_observed": True,
+            "native_in_plane_roll_observed": None,
         }
-    miller_plane_payload_hint: dict[str, Any] | None = None
+    miller_plane_record_template: dict[str, Any] | None = None
+    miller_structure_artifact_path: str | None = None
+    miller_structure_artifact_sha256: str | None = None
     if selected_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS:
         target_resolution = (
             preflight.get("target_window_resolution")
@@ -9498,32 +9542,30 @@ def _refresh_view_replay_summary(
                     artifact_path_text = str(artifact_path)
             except OSError:
                 artifact_hash = None
-        miller_plane_payload_hint = {
+        miller_structure_artifact_path = artifact_path_text
+        miller_structure_artifact_sha256 = artifact_hash
+        miller_plane_record_template = {
             "miller_plane_indices": selected_recipe.get("miller_plane_indices"),
             "dialog_miller_indices": selected_recipe.get("dialog_miller_indices"),
-            "dialog_miller_indices_text_before_create": selected_recipe.get(
-                "dialog_miller_indices_text"
-            ),
-            "dialog_miller_indices_value_source": (
-                "fresh_modeless_child_accessibility_value"
-            ),
-            "dialog_miller_indices_verified_before_create": True,
-            "created_plane_count": 1,
-            "selected_plane_count": 1,
-            "miller_plane_count_before": 0,
-            "miller_plane_count_after_create": 1,
-            "miller_plane_count_after_cleanup": 0,
+            "dialog_miller_indices_text_before_create": None,
+            "dialog_miller_indices_value_source": None,
+            "dialog_miller_indices_verified_before_create": None,
+            "created_plane_count": None,
+            "selected_plane_count": None,
+            "miller_plane_count_before": None,
+            "miller_plane_count_after_create": None,
+            "miller_plane_count_after_cleanup": None,
             "selection_method": selected_recipe.get("selection_method"),
             "object_tree_path_suffix": selected_recipe.get("selection_path_suffix"),
             **(
                 {
                     "viewport_hit_test_basis": MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
-                    "fresh_before_after_screenshots_observed": True,
-                    "unique_transient_plane_region_observed": True,
-                    "properties_selection_verified": True,
-                    "view_onto_popup_menu_observed": True,
-                    "dialog_show_set_of_parallel_planes": False,
-                    "dialog_show_symmetry_images": False,
+                    "fresh_before_after_screenshots_observed": None,
+                    "unique_transient_plane_region_observed": None,
+                    "properties_selection_verified": None,
+                    "view_onto_popup_menu_observed": None,
+                    "dialog_show_set_of_parallel_planes": None,
+                    "dialog_show_symmetry_images": None,
                 }
                 if selected_recipe.get("selection_method")
                 == MILLER_PLANE_VIEWPORT_SELECTION_METHOD
@@ -9536,32 +9578,28 @@ def _refresh_view_replay_summary(
             "camera_match_scope": (
                 selected_recipe.get("camera_match_contract") or {}
             ).get("scope"),
-            "plane_normal_matches_manifest": True,
+            "plane_normal_matches_manifest": None,
             **(
-                {"direct_lattice_direction_matches_manifest": True}
+                {"direct_lattice_direction_matches_manifest": None}
                 if selected_recipe.get("recipe_kind")
                 == "crystal_direction_via_collinear_miller_plane_view_onto"
                 else {}
             ),
             "analytic_in_plane_basis_matches_manifest": None,
-            "native_in_plane_roll_policy_observed": True,
-            "reset_view_before_alignment": True,
-            "screenshot_captured_before_cleanup": True,
-            "document_was_clean_before_replay": True,
-            "temporary_miller_plane_cleanup_verified": True,
-            "no_temporary_miller_nodes_remaining": True,
-            "document_clean_after_replay": True,
-            "post_replay_view_restored": True,
+            "native_in_plane_roll_policy_observed": None,
+            "reset_view_before_alignment": None,
+            "screenshot_captured_before_cleanup": None,
+            "document_was_clean_before_replay": None,
+            "temporary_miller_plane_cleanup_verified": None,
+            "no_temporary_miller_nodes_remaining": None,
+            "document_clean_after_replay": None,
+            "post_replay_view_restored": None,
             "structure_artifact_path": artifact_path_text,
-            "structure_artifact_sha256_before": artifact_hash,
-            "structure_artifact_sha256_after": artifact_hash,
-            "undo_labels_applied": [
-                "Undo View Onto Miller Plane",
-                "Undo Create Miller Plane",
-                "Undo Reset View",
-            ],
+            "structure_artifact_sha256_before": None,
+            "structure_artifact_sha256_after": None,
+            "undo_labels_applied": None,
         }
-    accessibility_command_use_payload_hint = [
+    accessibility_command_targets = [
         {
             "command_id": target.get("command_id"),
             "toolbar_name": target.get("toolbar_name"),
@@ -9571,30 +9609,35 @@ def _refresh_view_replay_summary(
             "element_index": target.get("element_index"),
             "registry_sha256": target.get("registry_sha256"),
             "semantic_mapping_sha256": target.get("semantic_mapping_sha256"),
-            "accessibility_tree_refreshed": True,
-            "invocation_succeeded": True,
         }
         for target in _verified_anonymous_recipe_targets(selected_recipe)
     ]
-    record_payload_hint = {
+    accessibility_command_use_record_template = [
+        {
+            **target,
+            "accessibility_tree_refreshed": None,
+            "invocation_succeeded": None,
+        }
+        for target in accessibility_command_targets
+    ]
+    execution_payload_hint = {
         "project_id": manifest.get("project_id"),
         "revision": manifest.get("revision"),
         "view_name": selected_next_step.get("view_name") if selected_next_step is not None else None,
-        "source": "computer_use" if next_automation_step is not None else "reviewed_copy_script",
-        "model_visible": True,
-        "camera_matches_manifest": True,
-        "expected_revision": manifest.get("revision"),
-        "expected_window_handle": preflight_target_window.get("handle"),
-        "expected_window_title": preflight_target_window.get("title"),
+        "execution_recipe_ref": "replay_continuation.next_view.execution_recipe",
+        "recipe_kind": selected_recipe.get("recipe_kind"),
+        "expected_window_binding": {
+            "expected_revision": manifest.get("revision"),
+            "expected_window_handle": preflight_target_window.get("handle"),
+            "expected_window_title": preflight_target_window.get("title"),
+        },
         "native_command_id": selected_recipe.get("native_command_id"),
-        "accessibility_command_uses": (
-            accessibility_command_use_payload_hint or None
-        ),
+        "accessibility_command_targets": accessibility_command_targets or None,
         "key_sequence": selected_recipe.get("key_sequence"),
         "reset_before_key_sequence": selected_recipe.get("reset_before_key_sequence"),
         "rotation_increment_degrees": selected_recipe.get("rotation_increment_degrees"),
         "modifier_keys": selected_recipe.get("modifier_keys"),
-        "keyboard_stages": keyboard_stage_payload_hint,
+        "keyboard_stages": keyboard_execution_stages,
         "rotation_increment_restored_degrees": selected_recipe.get(
             "restore_rotation_increment_degrees"
         ),
@@ -9603,76 +9646,200 @@ def _refresh_view_replay_summary(
         "movement_screen_factor_control_id": selected_recipe.get(
             "movement_screen_factor_control_id"
         ),
-        "movement_screen_factor": selected_recipe.get("movement_screen_factor_expected"),
-        "movement_dialog_closed": selected_recipe.get("movement_dialog_closed_after_restore"),
-        "crystal_camera_evidence": crystal_camera_payload_hint,
-        "miller_plane_evidence": miller_plane_payload_hint,
-    }
-    if record_payload_hint["source"] == "reviewed_copy_script":
-        record_payload_hint.update(
+        "movement_screen_factor_expected": selected_recipe.get(
+            "movement_screen_factor_expected"
+        ),
+        "movement_dialog_closed_after_restore": selected_recipe.get(
+            "movement_dialog_closed_after_restore"
+        ),
+        "expected_structure_artifact": (
             {
-                "screenshot_path": "<observed workspace screenshot path>",
+                "path": miller_structure_artifact_path,
+                "sha256": miller_structure_artifact_sha256,
+            }
+            if miller_plane_record_template is not None
+            else None
+        ),
+    }
+    record_payload_template = {
+        "project_id": manifest.get("project_id"),
+        "revision": manifest.get("revision"),
+        "view_name": selected_next_step.get("view_name") if selected_next_step is not None else None,
+        "source": "computer_use" if next_automation_step is not None else "reviewed_copy_script",
+        "model_visible": None,
+        "camera_matches_manifest": None,
+        "screenshot_path": None,
+        "expected_window_handle": preflight_target_window.get("handle"),
+        "expected_window_title": preflight_target_window.get("title"),
+        "native_command_id": selected_recipe.get("native_command_id"),
+        "accessibility_command_uses": (
+            accessibility_command_use_record_template or None
+        ),
+        "key_sequence": None,
+        "reset_before_key_sequence": None,
+        "rotation_increment_degrees": None,
+        "modifier_keys": None,
+        "keyboard_stages": None,
+        "rotation_increment_restored_degrees": None,
+        "movement_options_command_id": selected_recipe.get("movement_options_command_id"),
+        "movement_angle_control_id": selected_recipe.get("movement_angle_control_id"),
+        "movement_screen_factor_control_id": selected_recipe.get(
+            "movement_screen_factor_control_id"
+        ),
+        "movement_screen_factor": None,
+        "movement_dialog_closed": None,
+        "crystal_camera_evidence": crystal_camera_record_template,
+        "miller_plane_evidence": miller_plane_record_template,
+    }
+    if record_payload_template["source"] == "reviewed_copy_script":
+        record_payload_template.update(
+            {
                 "reviewed_copy_script_evidence": {
-                    "script_text": "<exact Materials Studio Copy Script text>",
-                    "capture_method": "materials_studio_copy_script",
-                    "reviewer": "<computer_use or human_review>",
-                    "copy_script_command_observed": True,
-                    "review_completed": True,
-                    "view_action_matches_manifest": True,
-                    "structure_unchanged_observed": True,
-                    "note": "<observed review note>",
+                    "script_text": None,
+                    "capture_method": None,
+                    "reviewer": None,
+                    "copy_script_command_observed": None,
+                    "review_completed": None,
+                    "view_action_matches_manifest": None,
+                    "structure_unchanged_observed": None,
+                    "note": None,
                 },
             }
         )
-    high_level_payload_hint = (
+    post_action_high_level_record_payload_template = (
         {
             "user_request": f"Record the verified {selected_next_step.get('view_name')} GUI view replay.",
             "project_id": manifest.get("project_id"),
             "view_replay_confirmation": {
-                key: record_payload_hint.get(key)
-                for key in (
-                    "view_name",
-                    "source",
-                    "model_visible",
-                    "camera_matches_manifest",
-                    "screenshot_path",
-                    "reviewed_copy_script_evidence",
-                    "expected_revision",
-                    "expected_window_handle",
-                    "expected_window_title",
-                    "native_command_id",
-                    "accessibility_command_uses",
-                    "key_sequence",
-                    "reset_before_key_sequence",
-                    "rotation_increment_degrees",
-                    "modifier_keys",
-                    "keyboard_stages",
-                    "rotation_increment_restored_degrees",
-                    "movement_options_command_id",
-                    "movement_angle_control_id",
-                    "movement_screen_factor_control_id",
-                    "movement_screen_factor",
-                    "movement_dialog_closed",
-                    "crystal_camera_evidence",
-                    "miller_plane_evidence",
-                )
-                if record_payload_hint.get(key) is not None
+                "expected_revision": manifest.get("revision"),
+                **{
+                    key: record_payload_template.get(key)
+                    for key in (
+                        "view_name",
+                        "source",
+                        "model_visible",
+                        "camera_matches_manifest",
+                        "screenshot_path",
+                        "reviewed_copy_script_evidence",
+                        "expected_window_handle",
+                        "expected_window_title",
+                        "native_command_id",
+                        "accessibility_command_uses",
+                        "key_sequence",
+                        "reset_before_key_sequence",
+                        "rotation_increment_degrees",
+                        "modifier_keys",
+                        "keyboard_stages",
+                        "rotation_increment_restored_degrees",
+                        "movement_options_command_id",
+                        "movement_angle_control_id",
+                        "movement_screen_factor_control_id",
+                        "movement_screen_factor",
+                        "movement_dialog_closed",
+                        "crystal_camera_evidence",
+                        "miller_plane_evidence",
+                    )
+                    if key in record_payload_template
+                },
             },
         }
         if selected_next_step is not None
         else {}
     )
-    continuation_payload_hint = record_payload_hint
-    continuation_high_level_payload_hint = high_level_payload_hint
+    required_post_action_observation_fields = [
+        "model_visible",
+        "camera_matches_manifest",
+    ]
+    if accessibility_command_targets:
+        required_post_action_observation_fields.extend(
+            [
+                "accessibility_command_uses[*].accessibility_tree_refreshed",
+                "accessibility_command_uses[*].invocation_succeeded",
+            ]
+        )
+    if selected_recipe.get("key_sequence") is not None:
+        required_post_action_observation_fields.extend(
+            [
+                "key_sequence",
+                "reset_before_key_sequence",
+                "rotation_increment_degrees",
+                "modifier_keys",
+            ]
+        )
+    if selected_recipe.get("keyboard_stages") is not None:
+        required_post_action_observation_fields.extend(
+            [
+                "keyboard_stages",
+                "rotation_increment_restored_degrees",
+                "movement_screen_factor",
+                "movement_dialog_closed",
+            ]
+        )
+    if crystal_camera_record_template is not None:
+        required_post_action_observation_fields.extend(
+            [
+                "screenshot_path",
+                "crystal_camera_evidence.view_direction_matches_manifest",
+                "crystal_camera_evidence.native_in_plane_roll_observed",
+            ]
+        )
+    if miller_plane_record_template is not None:
+        required_post_action_observation_fields.extend(
+            [
+                "screenshot_path",
+                "modifier_keys",
+                "miller_plane_evidence",
+            ]
+        )
+    if record_payload_template["source"] == "reviewed_copy_script":
+        required_post_action_observation_fields.extend(
+            [
+                "screenshot_path",
+                "reviewed_copy_script_evidence",
+            ]
+        )
+    required_post_action_observation_fields = list(
+        dict.fromkeys(required_post_action_observation_fields)
+    )
+    execution_action = (
+        {
+            "phase": "gui_recipe_execution",
+            "executor": "computer_use",
+            "action": recommended_action,
+            "payload_hint": execution_payload_hint,
+            "payload_hint_is_directly_callable": False,
+            "gui_input_required": True,
+            "metadata_write_allowed": False,
+            "structure_mutation_allowed": False,
+            "revision_creation_allowed": False,
+            "post_action_observation_required": True,
+            "post_action_record_tool": "material_studio_gui_record_view_replay",
+        }
+        if next_automation_step is not None
+        else None
+    )
+    continuation_payload_hint = (
+        execution_payload_hint if execution_action is not None else record_payload_template
+    )
+    continuation_high_level_payload_hint: dict[str, Any] = {}
+    post_action_record_payload_template = (
+        record_payload_template if execution_action is not None else None
+    )
+    post_action_high_level_payload_template = (
+        post_action_high_level_record_payload_template
+        if execution_action is not None
+        else None
+    )
     post_review_record_payload_template: dict[str, Any] | None = None
     post_review_high_level_payload_template: dict[str, Any] | None = None
-    payload_hint_is_directly_callable = True
+    payload_hint_is_directly_callable = False
     if pending_recipe_upgrade_required:
         continuation_payload_hint = {
             "user_request": "Continue GUI view replay using the current safety recipe.",
             "project_id": manifest.get("project_id"),
         }
         continuation_high_level_payload_hint = dict(continuation_payload_hint)
+        payload_hint_is_directly_callable = True
     elif next_action_integrity_blocked and next_automation_step is None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -9684,8 +9851,11 @@ def _refresh_view_replay_summary(
             ),
         }
         continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
+        post_review_record_payload_template = record_payload_template
+        post_review_high_level_payload_template = (
+            post_action_high_level_record_payload_template
+        )
+        payload_hint_is_directly_callable = True
     elif next_action_journal_blocked and next_automation_step is None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -9697,8 +9867,11 @@ def _refresh_view_replay_summary(
             ),
         }
         continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
+        post_review_record_payload_template = record_payload_template
+        post_review_high_level_payload_template = (
+            post_action_high_level_record_payload_template
+        )
+        payload_hint_is_directly_callable = True
     elif runtime_accessibility_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -9737,8 +9910,11 @@ def _refresh_view_replay_summary(
             ),
         }
         continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
+        post_review_record_payload_template = record_payload_template
+        post_review_high_level_payload_template = (
+            post_action_high_level_record_payload_template
+        )
+        payload_hint_is_directly_callable = True
     elif runtime_ui_preflight_required:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -9778,8 +9954,11 @@ def _refresh_view_replay_summary(
             ),
         }
         continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
+        post_review_record_payload_template = record_payload_template
+        post_review_high_level_payload_template = (
+            post_action_high_level_record_payload_template
+        )
+        payload_hint_is_directly_callable = True
     elif next_automation_step is None and next_actionable_pending_step is not None:
         continuation_payload_hint = {
             "project_id": manifest.get("project_id"),
@@ -9791,8 +9970,18 @@ def _refresh_view_replay_summary(
             ),
         }
         continuation_high_level_payload_hint = {}
-        post_review_record_payload_template = record_payload_hint
-        post_review_high_level_payload_template = high_level_payload_hint
+        post_review_record_payload_template = record_payload_template
+        post_review_high_level_payload_template = (
+            post_action_high_level_record_payload_template
+        )
+        payload_hint_is_directly_callable = True
+    resolved_post_action_record_payload_template = (
+        post_action_record_payload_template or post_review_record_payload_template
+    )
+    resolved_post_action_high_level_payload_template = (
+        post_action_high_level_payload_template
+        or post_review_high_level_payload_template
+    )
     manifest["replay_continuation"] = {
         "status": continuation_status,
         "automatic_replay_ready": next_automation_step is not None,
@@ -9837,6 +10026,15 @@ def _refresh_view_replay_summary(
         "recommended_executor": recommended_executor,
         "recommended_action": recommended_action,
         "recommended_mcp_tool": recommended_mcp_tool,
+        "execution_action": execution_action,
+        "execution_recipe_ref": (
+            "replay_continuation.next_view.execution_recipe"
+            if execution_action is not None
+            else None
+        ),
+        "gui_input_required": execution_action is not None,
+        "post_action_observation_required": execution_action is not None,
+        "record_call_ready": False,
         "record_tool": "material_studio_gui_record_view_replay",
         "high_level_record_tool": "material_studio_live_modeling_request",
         "next_pending_view_name": (
@@ -9860,19 +10058,33 @@ def _refresh_view_replay_summary(
         "payload_hint": continuation_payload_hint,
         "payload_hint_is_directly_callable": payload_hint_is_directly_callable,
         "high_level_payload_hint": continuation_high_level_payload_hint,
+        "post_action_record_payload_template": (
+            resolved_post_action_record_payload_template
+        ),
+        "post_action_record_payload_template_is_directly_callable": False,
+        "post_action_high_level_payload_template": (
+            resolved_post_action_high_level_payload_template
+        ),
+        "post_action_required_observation_fields": (
+            required_post_action_observation_fields
+            if resolved_post_action_record_payload_template is not None
+            else []
+        ),
         "post_review_record_payload_template": post_review_record_payload_template,
         "post_review_record_payload_template_is_directly_callable": False,
         "post_review_high_level_payload_template": (
             post_review_high_level_payload_template
         ),
         "evidence_values_must_be_observed_not_assumed": bool(
-            crystal_camera_payload_hint
-            or miller_plane_payload_hint
+            crystal_camera_record_template
+            or miller_plane_record_template
+            or accessibility_command_targets
+            or execution_action
             or runtime_accessibility_observation_blocks_automation
             or next_action_integrity_blocked
             or next_action_journal_blocked
             or next_pending_automatic_postcheck_failed
-            or record_payload_hint.get("source") == "reviewed_copy_script"
+            or record_payload_template.get("source") == "reviewed_copy_script"
         ),
     }
     _reconcile_view_replay_next_action(manifest)

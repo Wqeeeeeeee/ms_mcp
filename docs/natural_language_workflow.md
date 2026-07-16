@@ -402,6 +402,14 @@ source of truth for each exact sequence and signed axis layout. Keyboard
 events must persist `modifier_keys=[]`; Shift+arrow is a structure-editing
 operation and is never a camera replay action.
 
+An automation-ready continuation is still pre-action state, not accepted
+evidence. Its `execution_action` is the only GUI-input instruction, while its
+`post_action_record_payload_template` is non-callable and contains null values
+for observations that do not yet exist. After Computer Use completes the exact
+recipe, re-query the bound window, capture the viewport, populate the required
+observation fields, call the record tool, and re-query status again. A client
+must never prefill invocation success or camera-match evidence from the recipe.
+
 For crystal standard views, do not compare the screenshot against the audit's
 analytic in-plane basis as an exact equality test. Confirm the requested view
 direction, observe the Materials Studio native in-plane roll, capture a fresh

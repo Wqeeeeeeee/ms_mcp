@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from material_studio_mcp_server import server
 from material_studio_mcp_server import gui as gui_module
@@ -297,6 +298,21 @@ def _crystal_view_screenshot(workspace: Path, name: str = "crystal_view.bmp") ->
     screenshot.parent.mkdir(parents=True, exist_ok=True)
     screenshot.write_bytes(_tiny_bmp())
     return str(screenshot)
+
+
+def _observed_accessibility_command_uses(
+    replay_continuation: dict,
+) -> list[dict]:
+    template = replay_continuation["post_action_record_payload_template"][
+        "accessibility_command_uses"
+    ]
+    command_uses = json.loads(json.dumps(template))
+    for item in command_uses:
+        assert item["accessibility_tree_refreshed"] is None
+        assert item["invocation_succeeded"] is None
+        item["accessibility_tree_refreshed"] = True
+        item["invocation_succeeded"] = True
+    return command_uses
 
 
 def _complete_miller_plane_replay_evidence(structure_path: Path) -> dict:
@@ -1990,15 +2006,25 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     ]
     assert recorded["view_replay"]["replay_continuation"]["payload_hint"]["modifier_keys"] == []
     high_level_hint = recorded["view_replay"]["replay_continuation"]["high_level_payload_hint"]
-    assert high_level_hint["project_id"] == created["project_id"]
-    assert high_level_hint["view_replay_confirmation"]["expected_window_handle"] == 303
-    assert high_level_hint["view_replay_confirmation"]["expected_window_title"] == target_window.title
-    assert high_level_hint["view_replay_confirmation"]["key_sequence"] == [
-        "Up",
-        "Up",
-        "Left",
-        "Left",
+    assert high_level_hint == {}
+    post_action_template = recorded["view_replay"]["replay_continuation"][
+        "post_action_high_level_payload_template"
     ]
+    assert post_action_template["project_id"] == created["project_id"]
+    confirmation_template = post_action_template["view_replay_confirmation"]
+    assert confirmation_template["expected_revision"] == created["revision"]
+    assert confirmation_template["expected_window_handle"] == 303
+    assert confirmation_template["expected_window_title"] == target_window.title
+    assert confirmation_template["key_sequence"] is None
+    assert confirmation_template["model_visible"] is None
+    assert confirmation_template["camera_matches_manifest"] is None
+    with pytest.raises(ValidationError):
+        server.GuiViewReplayConfirmationInput.model_validate(
+            confirmation_template
+        )
+    assert recorded["view_replay"]["replay_continuation"][
+        "post_action_record_payload_template_is_directly_callable"
+    ] is False
     assert recorded["view_replay"]["replay_summary"]["automation_ready_pending_view_names"] == [
         "right",
         "top",
@@ -2632,7 +2658,15 @@ def test_gui_view_replay_runtime_accessibility_gate_blocks_unnamed_controls(
         "post_review_record_payload_template"
     ]
     assert "reviewed_copy_script_evidence" in post_review_template
-    assert post_review_template["screenshot_path"].startswith("<observed")
+    assert post_review_template["screenshot_path"] is None
+    assert post_review_template["model_visible"] is None
+    assert post_review_template["camera_matches_manifest"] is None
+    assert post_review_template["reviewed_copy_script_evidence"][
+        "review_completed"
+    ] is None
+    assert blocked["replay_continuation"][
+        "post_action_record_payload_template"
+    ] == post_review_template
     assert blocked["replay_continuation"][
         "evidence_values_must_be_observed_not_assumed"
     ] is True
@@ -2722,6 +2756,15 @@ def test_gui_view_replay_maps_verified_anonymous_toolbar_children_and_audits_use
     )
     project_id = created["project_id"]
     revision = created["revision"]
+    backend.window = WindowInfo(
+        handle=backend.window.handle,
+        title=backend.window.title,
+        pid=backend.window.pid,
+        rect=backend.window.rect,
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
     prepared = server.material_studio_gui_prepare_view_replay(
         project_id=project_id,
         revision=revision,
@@ -2771,10 +2814,64 @@ def test_gui_view_replay_maps_verified_anonymous_toolbar_children_and_audits_use
     isometric_recipe = views["isometric"]["execution_recipe"]
     assert isometric_recipe["automation_ready"] is True
     assert isometric_recipe["movement_accessibility_target"]["element_index"] == 31
-    assert prepared["replay_continuation"]["status"] == "automatic_recipe_ready"
-    command_uses = prepared["replay_continuation"]["payload_hint"][
-        "accessibility_command_uses"
+    continuation = prepared["replay_continuation"]
+    assert continuation["status"] == "automatic_recipe_ready"
+    assert continuation["recommended_executor"] == "computer_use"
+    assert continuation["recommended_mcp_tool"] is None
+    assert continuation["gui_input_required"] is True
+    assert continuation["post_action_observation_required"] is True
+    assert continuation["record_call_ready"] is False
+    assert continuation["payload_hint_is_directly_callable"] is False
+    execution_action = continuation["execution_action"]
+    assert execution_action["phase"] == "gui_recipe_execution"
+    assert execution_action["executor"] == "computer_use"
+    assert execution_action["metadata_write_allowed"] is False
+    assert execution_action["post_action_observation_required"] is True
+    execution_target = execution_action["payload_hint"][
+        "accessibility_command_targets"
+    ][0]
+    assert execution_target["element_index"] == 110
+    assert "accessibility_tree_refreshed" not in execution_target
+    assert "invocation_succeeded" not in execution_target
+    record_template = continuation["post_action_record_payload_template"]
+    assert record_template["model_visible"] is None
+    assert record_template["camera_matches_manifest"] is None
+    assert record_template["screenshot_path"] is None
+    assert record_template["crystal_camera_evidence"] == {
+        "camera_match_scope": (
+            "crystal_view_direction_with_observed_native_in_plane_roll"
+        ),
+        "view_direction_matches_manifest": None,
+        "analytic_in_plane_basis_matches_manifest": None,
+        "native_in_plane_roll_observed": None,
+    }
+    assert continuation[
+        "post_action_record_payload_template_is_directly_callable"
+    ] is False
+    assert continuation["post_action_required_observation_fields"] == [
+        "model_visible",
+        "camera_matches_manifest",
+        "accessibility_command_uses[*].accessibility_tree_refreshed",
+        "accessibility_command_uses[*].invocation_succeeded",
+        "screenshot_path",
+        "crystal_camera_evidence.view_direction_matches_manifest",
+        "crystal_camera_evidence.native_in_plane_roll_observed",
     ]
+    next_action = prepared["manifest"]["next_action"]
+    assert next_action["recommended_tool"] == "computer_use"
+    assert next_action["gui_input_required"] is True
+    assert next_action["post_action_observation_required"] is True
+    assert next_action["payload_hint_is_directly_callable"] is False
+    assert next_action["post_action_record_tool"] == (
+        "material_studio_gui_record_view_replay"
+    )
+    safety_gate = prepared["manifest"]["next_action_resolution"]["safety_gate"]
+    assert safety_gate["automatic_replay_allowed"] is True
+    assert safety_gate["metadata_write_allowed_before_observation"] is False
+    assert safety_gate["record_tool_call_ready"] is False
+    command_uses = _observed_accessibility_command_uses(
+        continuation
+    )
     assert len(command_uses) == 1
     assert command_uses[0]["element_index"] == 110
 
@@ -2838,20 +2935,21 @@ def test_gui_view_replay_maps_verified_anonymous_toolbar_children_and_audits_use
         "automatic_postcheck_failed_view_names"
     ] == []
 
+    observed_record_payload = json.loads(json.dumps(record_template))
+    observed_record_payload.update(
+        {
+            "model_visible": True,
+            "camera_matches_manifest": True,
+            "accessibility_command_uses": command_uses,
+            "screenshot_path": _crystal_view_screenshot(
+                tmp_path,
+                "front_anonymous_toolbar.bmp",
+            ),
+            "crystal_camera_evidence": _complete_crystal_camera_evidence(),
+        }
+    )
     recorded = server.material_studio_gui_record_view_replay(
-        view_name="front",
-        project_id=project_id,
-        revision=revision,
-        source="computer_use",
-        expected_window_handle=backend.window.handle,
-        expected_window_title=backend.window.title,
-        native_command_id="cmdViewer3DResetView",
-        accessibility_command_uses=command_uses,
-        screenshot_path=_crystal_view_screenshot(
-            tmp_path,
-            "front_anonymous_toolbar.bmp",
-        ),
-        crystal_camera_evidence=_complete_crystal_camera_evidence(),
+        **observed_record_payload,
         working_dir=str(tmp_path),
     )
     assert recorded["ok"] is True
@@ -2910,9 +3008,9 @@ def test_gui_view_replay_suppresses_failed_verified_reset_recipe_and_dependents(
         ),
         working_dir=str(tmp_path),
     )
-    command_uses = prepared["replay_continuation"]["payload_hint"][
-        "accessibility_command_uses"
-    ]
+    command_uses = _observed_accessibility_command_uses(
+        prepared["replay_continuation"]
+    )
     screenshot = tmp_path / "screenshots" / "front_reset_postcheck.bmp"
     screenshot.parent.mkdir(parents=True, exist_ok=True)
     screenshot.write_bytes(_tiny_bmp())
@@ -3014,10 +3112,8 @@ def test_gui_view_replay_suppresses_failed_verified_reset_recipe_and_dependents(
         expected_window_handle=backend.window.handle,
         expected_window_title=backend.window.title,
         native_command_id="cmdViewer3DResetView",
-        accessibility_command_uses=(
-            prepared_front["replay_continuation"][
-                "post_review_record_payload_template"
-            ]["accessibility_command_uses"]
+        accessibility_command_uses=_observed_accessibility_command_uses(
+            prepared_front["replay_continuation"]
         ),
         crystal_camera_evidence=_complete_crystal_camera_evidence(),
         working_dir=str(tmp_path),
@@ -3298,9 +3394,9 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
         "semantic_mapping_sha256"
     ] == front_recipe["accessibility_target"]["semantic_mapping_sha256"]
 
-    front_command_uses = prepared_without_ui["replay_continuation"]["payload_hint"][
-        "accessibility_command_uses"
-    ]
+    front_command_uses = _observed_accessibility_command_uses(
+        prepared_without_ui["replay_continuation"]
+    )
     screenshot = tmp_path / "screenshots" / "front_reset_mismatch.bmp"
     screenshot.parent.mkdir(parents=True, exist_ok=True)
     screenshot.write_bytes(_tiny_bmp())
@@ -3373,9 +3469,7 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
     assert continuation["recommended_action"] == (
         "execute_documented_miller_plane_view_onto_recipe_cleanup_then_record_view"
     )
-    plane_command_uses = continuation["payload_hint"][
-        "accessibility_command_uses"
-    ]
+    plane_command_uses = _observed_accessibility_command_uses(continuation)
     assert len(plane_command_uses) == 1
     assert plane_command_uses[0]["command_id"] == "cmdViewer3DResetView"
     assert plane_command_uses[0]["semantic_mapping_sha256"] == (
@@ -9907,6 +10001,86 @@ def test_latest_project_modeling_preflight_rejects_revision_binding_mismatch(
     assert summary["binding_reasons"] == ["revision_mismatch"]
     assert summary["action_available"] is False
     assert summary["next_action_plan"] == {}
+
+
+def test_latest_project_visual_preflight_separates_gui_execution_from_recording() -> None:
+    project_id = "visual_execution_project"
+    revision = 4
+    execution_payload = {
+        "project_id": project_id,
+        "revision": revision,
+        "view_name": "top",
+        "execution_recipe_ref": "replay_continuation.next_view.execution_recipe",
+    }
+    current_status = {
+        "gui_view_replay": {
+            "manifest_exists": True,
+            "binding_verified": True,
+            "binding_reasons": [],
+            "replay_status": "partially_confirmed",
+            "requested_view_count": 6,
+            "replay_summary": {"pending_view_count": 5},
+            "replay_continuation": {
+                "status": "automatic_recipe_ready",
+                "next_pending_view_name": "crystal_plane_0001",
+                "next_actionable_pending_view_name": "top",
+                "post_action_observation_required": True,
+            },
+            "next_action": {
+                "recommended_tool": "computer_use",
+                "recommended_action": (
+                    "execute_documented_keyboard_recipe_then_record_view"
+                ),
+                "payload_hint": execution_payload,
+                "payload_hint_is_directly_callable": False,
+                "gui_input_required": True,
+                "post_action_observation_required": True,
+                "post_action_record_tool": (
+                    "material_studio_gui_record_view_replay"
+                ),
+                "post_action_record_payload_template_ref": (
+                    "replay_continuation.post_action_record_payload_template"
+                ),
+            },
+            "next_action_resolution": {
+                "safety_gate": {
+                    "automatic_replay_allowed": True,
+                    "structure_mutation_allowed": False,
+                    "revision_creation_allowed": False,
+                    "metadata_write_allowed_before_observation": False,
+                    "record_tool_call_ready": False,
+                }
+            },
+        }
+    }
+
+    summary = server._latest_project_visual_diagnostics_preflight_summary(
+        current_status,
+        project_id=project_id,
+        revision=revision,
+        current_status_binding_verified=True,
+    )
+
+    assert summary["status"] == "visual_diagnostics_action_ready"
+    assert summary["action_available"] is True
+    plan = summary["next_action_plan"]
+    assert plan["action_id"] == (
+        "execute_gui_view_replay_then_record_observation"
+    )
+    assert plan["recommended_tool"] == "computer_use"
+    assert plan["issues_gui_input"] is True
+    assert plan["metadata_write_possible"] is False
+    assert plan["metadata_write_phase"] == "post_action_record_only"
+    assert plan["post_action_observation_required"] is True
+    assert plan["post_action_record_tool"] == (
+        "material_studio_gui_record_view_replay"
+    )
+    assert plan["record_call_ready"] is False
+    assert plan["payload_hint_is_directly_callable"] is False
+    assert plan["requires_requery_after_call"] is True
+    assert plan["requires_requery_after_record"] is True
+    assert plan["mutates_structure"] is False
+    assert plan["creates_revision"] is False
 
 
 def test_latest_project_visual_preflight_rejects_stale_manifest_binding(

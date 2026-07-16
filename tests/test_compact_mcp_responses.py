@@ -729,6 +729,27 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
                 "next_pending_view_name": "front",
                 "next_actionable_pending_view_name": "right",
                 "next_automation_ready_view_name": "right",
+                "execution_recipe_ref": (
+                    "replay_continuation.next_view.execution_recipe"
+                ),
+                "gui_input_required": True,
+                "post_action_observation_required": True,
+                "record_call_ready": False,
+                "record_tool": "material_studio_gui_record_view_replay",
+                "payload_hint_is_directly_callable": False,
+                "post_action_record_payload_template": {
+                    "project_id": "project",
+                    "revision": 4,
+                    "view_name": "right",
+                    "model_visible": None,
+                    "camera_matches_manifest": None,
+                },
+                "post_action_record_payload_template_is_directly_callable": False,
+                "post_action_required_observation_fields": [
+                    "model_visible",
+                    "camera_matches_manifest",
+                ],
+                "evidence_values_must_be_observed_not_assumed": True,
                 "next_view": {
                     "view_name": "crystal_plane_100",
                     "execution_recipe": {
@@ -767,6 +788,33 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
         == "right"
     )
     assert compact["view_replay_continuation"]["next_automation_ready_view_name"] == "right"
+    compact_gui = server._compact_gui_view_replay(response["gui_view_replay"])
+    compact_continuation = compact_gui["replay_continuation"]
+    assert compact_continuation["gui_input_required"] is True
+    assert compact_continuation["post_action_observation_required"] is True
+    assert compact_continuation["record_call_ready"] is False
+    assert compact_continuation["payload_hint_is_directly_callable"] is False
+    assert compact_continuation["post_action_record_payload_template"] == {
+        "project_id": "project",
+        "revision": 4,
+        "view_name": "right",
+        "model_visible": None,
+        "camera_matches_manifest": None,
+    }
+    assert compact_continuation[
+        "post_action_record_payload_template_is_directly_callable"
+    ] is False
+    nested_continuation = compact["gui_view_replay"]["replay_continuation"]
+    assert nested_continuation["gui_input_required"] is True
+    assert nested_continuation["post_action_observation_required"] is True
+    assert nested_continuation["record_call_ready"] is False
+    assert nested_continuation["payload_hint_is_directly_callable"] is False
+    assert nested_continuation["continuation_detail_ref"] == (
+        "view_replay_continuation"
+    )
+    assert nested_continuation["post_action_record_payload_template_ref"] == (
+        "view_replay_continuation.post_action_record_payload_template"
+    )
     recipe = compact["view_replay_continuation"]["next_view"][
         "execution_recipe"
     ]

@@ -273,6 +273,15 @@ kernel lock. A `view replay write transaction is busy` error means another write
 is active; retry the same observed payload after it completes, without deleting
 the lock file or editing the manifest/journal.
 
+For `automatic_recipe_ready`, do not pass `replay_continuation.payload_hint` to
+the record tool. It is a non-callable GUI execution description, and
+`next_action.recommended_tool=computer_use` is emitted only after the current
+recipe, revision, single-window, and foreground gates pass. Execute the recipe,
+refresh the exact window and accessibility state, capture a new screenshot, and
+then fill `post_action_record_payload_template`. Its null observation fields are
+mandatory placeholders, not defaults; only the completed post-action payload
+may be sent to `material_studio_gui_record_view_replay`.
+
 Structured revision writes have an independent project-scoped
 `project_state.lock`. Successful create, patch, rollback, redo, restore, and
 metadata-repair responses expose `state_write_transaction`; its `coverage`

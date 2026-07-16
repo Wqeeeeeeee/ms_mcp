@@ -271,6 +271,12 @@ Conversation-style requests such as `continue the next GUI view replay` or
 needed and returns its continuation receipt without issuing GUI input or
 creating a structural revision.
 
+An automation-ready receipt separates GUI execution from evidence recording.
+`execution_action` describes the exact Computer Use operation, while
+`post_action_record_payload_template` remains non-callable with null observation
+fields until the action, fresh screenshot, and current-window postcheck have
+completed. Prepared values never count as accepted replay evidence.
+
 ## GUI 控制层
 
 Open-GUI 工作流是可选的。结构化的 `ModelSpec`/`SemanticPatch` 工作流仍然是事实来源；

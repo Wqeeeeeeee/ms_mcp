@@ -8189,8 +8189,15 @@ def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
             "creates_revision",
             "issues_gui_input",
             "metadata_write_possible",
+            "metadata_write_phase",
             "automatic_replay_allowed",
+            "payload_hint_is_directly_callable",
+            "post_action_observation_required",
+            "post_action_record_tool",
+            "post_action_record_payload_template_ref",
+            "record_call_ready",
             "requires_requery_after_call",
+            "requires_requery_after_record",
             "payload_hint",
             "blocking_reasons",
             "review_reasons",
@@ -8304,6 +8311,8 @@ def _view_replay_preflight_action_id(
         return "prepare_gui_view_replay"
     if recommended_tool == "material_studio_gui_record_view_replay":
         return "record_gui_view_replay_evidence"
+    if recommended_tool == "computer_use":
+        return "execute_gui_view_replay_then_record_observation"
     if (
         recommended_tool == "material_studio_live_modeling_request"
         or "view_replay" in recommended_action
@@ -8370,6 +8379,17 @@ def _latest_project_visual_diagnostics_preflight_summary(
         else {}
     )
     directly_callable = next_action.get("payload_hint_is_directly_callable") is True
+    issues_gui_input = bool(
+        next_action.get("gui_input_required") is True
+        or recommended_tool == "computer_use"
+    )
+    post_action_observation_required = bool(
+        next_action.get("post_action_observation_required") is True
+    )
+    post_action_record_tool = next_action.get("post_action_record_tool")
+    post_action_record_payload_template_ref = next_action.get(
+        "post_action_record_payload_template_ref"
+    )
     nonmutating_gate = bool(
         safety_gate.get("structure_mutation_allowed") is False
         and safety_gate.get("revision_creation_allowed") is False
@@ -8407,19 +8427,34 @@ def _latest_project_visual_diagnostics_preflight_summary(
             "binding_verified": not binding_reasons,
             "mutates_structure": safety_gate.get("structure_mutation_allowed"),
             "creates_revision": safety_gate.get("revision_creation_allowed"),
-            "issues_gui_input": recommended_tool in {
-                "material_studio_gui_activate",
-                "material_studio_gui_record_view_replay",
-            },
-            "metadata_write_possible": recommended_tool in {
-                "material_studio_live_modeling_request",
-                "material_studio_gui_prepare_view_replay",
-                "material_studio_gui_record_view_replay",
-            },
+            "issues_gui_input": issues_gui_input,
+            "metadata_write_possible": (
+                False
+                if issues_gui_input and post_action_observation_required
+                else recommended_tool
+                in {
+                    "material_studio_live_modeling_request",
+                    "material_studio_gui_prepare_view_replay",
+                    "material_studio_gui_record_view_replay",
+                }
+            ),
+            "metadata_write_phase": (
+                "post_action_record_only"
+                if issues_gui_input and post_action_observation_required
+                else "recommended_tool_call"
+            ),
             "automatic_replay_allowed": safety_gate.get(
                 "automatic_replay_allowed"
             ),
+            "payload_hint_is_directly_callable": directly_callable,
+            "post_action_observation_required": post_action_observation_required,
+            "post_action_record_tool": post_action_record_tool,
+            "post_action_record_payload_template_ref": (
+                post_action_record_payload_template_ref
+            ),
+            "record_call_ready": safety_gate.get("record_tool_call_ready"),
             "requires_requery_after_call": True,
+            "requires_requery_after_record": post_action_observation_required,
             "payload_hint": payload_hint,
             "blocking_reasons": binding_reasons,
             "review_reasons": _dedupe_strings(
@@ -30870,6 +30905,12 @@ def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
             "recommended_mcp_tool",
             "recommended_executor",
             "automatic_replay_ready",
+            "execution_recipe_ref",
+            "gui_input_required",
+            "post_action_observation_required",
+            "record_call_ready",
+            "record_tool",
+            "high_level_record_tool",
             "recipe_upgrade_required",
             "current_camera_evidence_reverification_required",
             "evidence_integrity_reverification_required",
@@ -30880,6 +30921,12 @@ def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
             "runtime_accessibility_observation_blocks_automation",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
+            "payload_hint_is_directly_callable",
+            "post_action_record_payload_template",
+            "post_action_record_payload_template_is_directly_callable",
+            "post_action_high_level_payload_template",
+            "post_action_required_observation_fields",
+            "evidence_values_must_be_observed_not_assumed",
         ),
     )
     for nullable_key in (
@@ -30907,7 +30954,7 @@ def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
 
 
 def _compact_view_replay_next_action(value: Any) -> dict[str, Any]:
-    """Keep the resolved replay action callable without copying full recipes."""
+    """Keep the resolved replay action and its post-observation boundary."""
 
     if not isinstance(value, dict):
         return {}
@@ -30919,6 +30966,10 @@ def _compact_view_replay_next_action(value: Any) -> dict[str, Any]:
             "recommended_action",
             "payload_hint",
             "payload_hint_is_directly_callable",
+            "gui_input_required",
+            "post_action_observation_required",
+            "post_action_record_tool",
+            "post_action_record_payload_template_ref",
             "source",
         ),
     )
@@ -31179,6 +31230,12 @@ def _compact_view_replay_continuation(
             "recommended_tool",
             "recommended_executor",
             "automatic_replay_ready",
+            "execution_action",
+            "execution_recipe_ref",
+            "gui_input_required",
+            "post_action_observation_required",
+            "record_call_ready",
+            "record_tool",
             "recipe_upgrade_required",
             "current_camera_evidence_reverification_required",
             "current_camera_evidence_reverification_view_names",
@@ -31195,6 +31252,10 @@ def _compact_view_replay_continuation(
             "payload_hint",
             "payload_hint_is_directly_callable",
             "high_level_payload_hint",
+            "post_action_record_payload_template",
+            "post_action_record_payload_template_is_directly_callable",
+            "post_action_high_level_payload_template",
+            "post_action_required_observation_fields",
             "post_review_record_payload_template",
             "post_review_record_payload_template_is_directly_callable",
             "post_review_high_level_payload_template",
@@ -31541,7 +31602,7 @@ def _deduplicate_compact_gui_view_replay(
             nested_continuation.get(key) == top_level_continuation.get(key)
             for key in identity_keys
         ):
-            compact["replay_continuation"] = _mapping_subset(
+            deduplicated_continuation = _mapping_subset(
                 nested_continuation,
                 (
                     "status",
@@ -31551,6 +31612,11 @@ def _deduplicate_compact_gui_view_replay(
                     "recommended_action",
                     "recommended_mcp_tool",
                     "automatic_replay_ready",
+                    "execution_recipe_ref",
+                    "gui_input_required",
+                    "post_action_observation_required",
+                    "record_call_ready",
+                    "record_tool",
                     "recipe_upgrade_required",
                     "current_camera_evidence_reverification_required",
                     "evidence_integrity_reverification_required",
@@ -31561,8 +31627,24 @@ def _deduplicate_compact_gui_view_replay(
                     "runtime_accessibility_observation_blocks_automation",
                     "needs_user_confirmation",
                     "safe_to_call_without_confirmation",
+                    "payload_hint_is_directly_callable",
+                    "post_action_required_observation_fields",
+                    "evidence_values_must_be_observed_not_assumed",
                 ),
             )
+            deduplicated_continuation["continuation_detail_ref"] = (
+                "view_replay_continuation"
+            )
+            if isinstance(
+                top_level_continuation.get("post_action_record_payload_template"),
+                dict,
+            ):
+                deduplicated_continuation[
+                    "post_action_record_payload_template_ref"
+                ] = (
+                    "view_replay_continuation.post_action_record_payload_template"
+                )
+            compact["replay_continuation"] = deduplicated_continuation
 
     event_journal = compact.get("event_journal")
     if isinstance(event_journal, dict) and event_journal.get("path") == compact.get(

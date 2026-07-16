@@ -109,6 +109,7 @@ def _complete_miller_runtime_ui_evidence(*, revision: int, window: WindowInfo) -
         "tree_explorer_menu_observed": True,
         "properties_explorer_menu_observed": True,
         "view_onto_control_observed": True,
+        "view_onto_native_command_mapping_verified": True,
         "pointer_menu_click_through_risk_observed": True,
         "unexpected_plane_created_during_probe": True,
         "unexpected_plane_cleanup_verified": True,
@@ -224,6 +225,7 @@ def _complete_miller_viewport_runtime_ui_evidence(
         "viewport_plane_selection_observed": True,
         "properties_selection_verified": True,
         "view_onto_popup_menu_observed": True,
+        "view_onto_native_command_mapping_verified": True,
         "hit_test_basis": (
             "fresh_before_after_screenshot_unique_transient_plane_region"
         ),
@@ -231,9 +233,7 @@ def _complete_miller_viewport_runtime_ui_evidence(
         "properties_miller_label": "(100)",
         "view_onto_command_id": "cmdViewer3DViewOnto",
         "undo_labels_observed": [
-            "Undo Reset View",
             "Undo View Onto Miller Plane",
-            "Undo Recenter",
             "Undo Create Miller Plane",
         ],
         "structure_artifact_path": str(structure_path),
@@ -344,7 +344,9 @@ def _complete_miller_plane_replay_evidence(structure_path: Path) -> dict:
         "plane_normal_matches_manifest": True,
         "analytic_in_plane_basis_matches_manifest": False,
         "native_in_plane_roll_policy_observed": True,
-        "reset_view_before_alignment": True,
+        "pre_action_view_baseline_captured": True,
+        "reset_view_before_alignment": False,
+        "view_onto_native_command_mapping_verified": True,
         "screenshot_captured_before_cleanup": True,
         "document_was_clean_before_replay": True,
         "temporary_miller_plane_cleanup_verified": True,
@@ -356,9 +358,7 @@ def _complete_miller_plane_replay_evidence(structure_path: Path) -> dict:
         "structure_artifact_sha256_after": artifact_hash,
         "undo_labels_applied": [
             "Undo View Onto Miller Plane",
-            "Undo Recenter",
             "Undo Create Miller Plane",
-            "Undo Reset View",
         ],
     }
 
@@ -1927,10 +1927,15 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
 
     crystal_recipe = view_by_name["crystal_100"]["execution_recipe"]
     assert crystal_recipe["status"] == (
-        "documented_crystal_direction_via_miller_plane_view_onto_recipe_unverified"
+        "documented_crystal_direction_via_miller_plane_view_onto_recipe_ready"
     )
-    assert crystal_recipe["automation_ready"] is False
-    assert "runtime_miller_plane_ui_preflight_missing" in crystal_recipe["block_reasons"]
+    assert crystal_recipe["automation_ready"] is True
+    assert crystal_recipe["block_reasons"] == []
+    assert crystal_recipe["runtime_ui_preflight"]["status"] == (
+        "transactional_verification_required"
+    )
+    assert crystal_recipe["pre_action_view_baseline_required"] is True
+    assert crystal_recipe["reset_view_allowed"] is False
     assert crystal_recipe["miller_planes_dialog_invocation"]["key_sequence"] == [
         "Alt+T",
         "M",
@@ -2032,6 +2037,7 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "left",
         "bottom",
         "isometric",
+        "crystal_100",
     ]
 
 
@@ -2162,10 +2168,8 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
         "key_sequence": ["Down"],
         "modifier_keys": [],
     }
-    assert bottom_recorded["view_replay"]["replay_summary"]["automation_ready_pending_view_count"] == 1
-    assert recorded["view_replay"]["replay_summary"]["review_required_pending_view_names"] == [
-        "crystal_100"
-    ]
+    assert bottom_recorded["view_replay"]["replay_summary"]["automation_ready_pending_view_count"] == 2
+    assert recorded["view_replay"]["replay_summary"]["review_required_pending_view_names"] == []
 
     incomplete_isometric = server.material_studio_gui_record_view_replay(
         view_name="isometric",
@@ -2219,7 +2223,7 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert isometric_event["movement_screen_factor"] == 2.0
     assert isometric_event["movement_dialog_closed"] is True
     assert isometric_recorded["view_replay"]["replay_continuation"]["status"] == (
-        "runtime_ui_preflight_required"
+        "automatic_recipe_ready"
     )
     assert isometric_recorded["view_replay"]["replay_continuation"][
         "next_pending_view_name"
@@ -2227,25 +2231,38 @@ def test_gui_view_replay_recipe_supports_all_verified_standard_views(
     assert isometric_recorded["view_replay"]["replay_continuation"][
         "recommended_action"
     ] == (
-        "observe_current_window_miller_plane_controls_then_submit_bound_runtime_ui_evidence"
+        "preview_transactional_miller_plane_view_replay_before_explicit_execute"
     )
+    assert isometric_recorded["view_replay"]["replay_continuation"][
+        "recommended_mcp_tool"
+    ] == "material_studio_gui_execute_view_replay"
     assert (
         isometric_recorded["view_replay"]["replay_continuation"][
             "next_automation_ready_view_name"
         ]
-        is None
+        == "crystal_100"
     )
-    runtime_hint = isometric_recorded["view_replay"]["replay_continuation"][
+    execution_hint = isometric_recorded["view_replay"]["replay_continuation"][
         "payload_hint"
     ]
-    assert runtime_hint["runtime_ui_evidence_required"] is True
-    assert runtime_hint["observed_values_must_not_be_copied_from_record_payload_examples"] is True
-    assert "miller_plane_evidence" not in runtime_hint
+    assert execution_hint == {
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "view_name": "crystal_100",
+        "execution_mode": "preview",
+    }
+    next_recipe = isometric_recorded["view_replay"]["replay_continuation"][
+        "next_view"
+    ]["execution_recipe"]
+    assert next_recipe["recipe_kind"] == (
+        "crystal_direction_via_collinear_miller_plane_view_onto"
+    )
+    assert next_recipe["native_command_id"] == "cmdViewer3DViewOnto"
     assert (
         isometric_recorded["view_replay"]["replay_continuation"][
             "payload_hint_is_directly_callable"
         ]
-        is False
+        is True
     )
     assert len(json.dumps(isometric_recorded, ensure_ascii=False).encode("utf-8")) < (
         server.COMPACT_RESPONSE_MAX_BYTES
@@ -3385,14 +3402,11 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
     plane_recipe = recipes["crystal_plane_100"]
     assert front_recipe["automation_ready"] is True
     assert front_recipe["camera_result_depends_on_reset_baseline"] is True
-    assert plane_recipe["automation_ready"] is False
+    assert plane_recipe["automation_ready"] is True
     assert plane_recipe["camera_result_depends_on_reset_baseline"] is False
-    assert plane_recipe["accessibility_target"]["target_kind"] == (
-        "verified_anonymous_toolbar_child"
-    )
-    assert plane_recipe["accessibility_target"][
-        "semantic_mapping_sha256"
-    ] == front_recipe["accessibility_target"]["semantic_mapping_sha256"]
+    assert plane_recipe["accessibility_target"] is None
+    assert plane_recipe["pre_action_view_baseline_required"] is True
+    assert plane_recipe["reset_view_allowed"] is False
 
     front_command_uses = _observed_accessibility_command_uses(
         prepared_without_ui["replay_continuation"]
@@ -3420,18 +3434,30 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
         "front"
     ]
     assert summary["automatic_postcheck_dependency_blocked_view_names"] == []
-    assert summary["automation_ready_pending_view_names"] == []
+    assert summary["automation_ready_pending_view_names"] == [
+        "crystal_plane_100"
+    ]
     continuation = failed_front["replay_continuation"]
-    assert continuation["status"] == "runtime_ui_preflight_required"
+    assert continuation["status"] == "automatic_recipe_ready"
     assert continuation["next_pending_view_name"] == "front"
     assert continuation["next_actionable_pending_view_name"] == (
         "crystal_plane_100"
     )
     assert continuation["next_view"]["view_name"] == "crystal_plane_100"
-    assert continuation["payload_hint"]["views"] == ["crystal_plane_100"]
-    assert continuation["recommended_mcp_tool"] == (
-        "material_studio_gui_prepare_view_replay"
+    assert continuation["execution_action"]["phase"] == (
+        "local_uia_recipe_preview"
     )
+    assert continuation["recommended_mcp_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
+    assert continuation["payload_hint"] == {
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "view_name": "crystal_plane_100",
+        "execution_mode": "preview",
+    }
+    assert continuation["payload_hint_is_directly_callable"] is True
+    assert continuation["gui_input_required"] is False
 
     prepared = server.material_studio_gui_prepare_view_replay(
         project_id=created["project_id"],
@@ -3469,35 +3495,14 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
     assert continuation["recommended_action"] == (
         "execute_documented_miller_plane_view_onto_recipe_cleanup_then_record_view"
     )
-    plane_command_uses = _observed_accessibility_command_uses(continuation)
-    assert len(plane_command_uses) == 1
-    assert plane_command_uses[0]["command_id"] == "cmdViewer3DResetView"
-    assert plane_command_uses[0]["semantic_mapping_sha256"] == (
-        plane_recipe["accessibility_target"]["semantic_mapping_sha256"]
+    assert continuation["recommended_mcp_tool"] is None
+    assert continuation["local_miller_preview_supported"] is False
+    assert "prepared_miller_viewport_selection_contract_missing" in (
+        continuation["local_miller_preview_block_reasons"]
     )
-
     plane_screenshot = tmp_path / "screenshots" / "crystal_plane_100.bmp"
     plane_screenshot.write_bytes(_tiny_bmp())
     miller_evidence = _complete_miller_plane_replay_evidence(structure_path)
-    missing_reset_receipt = server.material_studio_gui_record_view_replay(
-        view_name="crystal_plane_100",
-        project_id=created["project_id"],
-        revision=created["revision"],
-        source="computer_use",
-        screenshot_path=str(plane_screenshot),
-        expected_window_handle=target_window.handle,
-        expected_window_title=target_window.title,
-        native_command_id="cmdViewer3DViewOnto",
-        modifier_keys=[],
-        miller_plane_evidence=miller_evidence,
-        working_dir=str(tmp_path),
-    )
-    assert missing_reset_receipt["accepted"] is False
-    assert (
-        "verified_anonymous_toolbar_command_use_evidence_incomplete"
-        in missing_reset_receipt["rejection_reasons"]
-    )
-
     recorded_plane = server.material_studio_gui_record_view_replay(
         view_name="crystal_plane_100",
         project_id=created["project_id"],
@@ -3507,13 +3512,13 @@ def test_verified_reset_failure_does_not_block_miller_view_onto_final_camera(
         expected_window_handle=target_window.handle,
         expected_window_title=target_window.title,
         native_command_id="cmdViewer3DViewOnto",
-        accessibility_command_uses=plane_command_uses,
         modifier_keys=[],
         miller_plane_evidence=miller_evidence,
         working_dir=str(tmp_path),
     )
     assert recorded_plane["accepted"] is True
-    assert recorded_plane["event"]["accessibility_command_uses_complete"] is True
+    assert recorded_plane["event"]["accessibility_command_uses_required"] is False
+    assert recorded_plane["event"]["accessibility_command_uses_complete"] is False
     assert recorded_plane["event"]["miller_plane_evidence_complete"] is True
     assert recorded_plane["replay_summary"]["accepted_view_names"] == [
         "crystal_plane_100"
@@ -3608,11 +3613,14 @@ def test_miller_runtime_ui_preflight_is_bound_persisted_and_revalidated(
         "runtime_tree_explorer_menu_not_observed"
         in prepared["runtime_ui_preflight"]["block_reasons"]
     )
-    assert prepared["replay_continuation"]["status"] == "runtime_ui_preflight_required"
+    assert prepared["replay_continuation"]["status"] == "automatic_recipe_ready"
     assert prepared["replay_continuation"]["recommended_mcp_tool"] == (
-        "material_studio_gui_prepare_view_replay"
+        "material_studio_gui_execute_view_replay"
     )
-    assert prepared["replay_continuation"]["payload_hint_is_directly_callable"] is False
+    assert prepared["replay_continuation"]["payload_hint_is_directly_callable"] is True
+    assert prepared["replay_continuation"]["execution_action"]["phase"] == (
+        "local_uia_recipe_preview"
+    )
     assert "miller_plane_evidence" not in prepared["replay_continuation"]["payload_hint"]
     artifact_path = Path(prepared["runtime_ui_preflight_path"])
     assert artifact_path.exists()
@@ -3641,7 +3649,7 @@ def test_miller_runtime_ui_preflight_is_bound_persisted_and_revalidated(
         "verified_incomplete"
     )
     assert live_status["gui_view_replay"]["replay_continuation"]["status"] == (
-        "runtime_ui_preflight_required"
+        "automatic_recipe_ready"
     )
 
     mismatched = dict(incomplete_evidence)
@@ -3831,7 +3839,6 @@ def test_miller_viewport_properties_probe_unblocks_ms20_without_tree_explorer(
     assert recipe["transient_change_contract"]["required_undo_labels"] == [
         "Undo View Onto Miller Plane",
         "Undo Create Miller Plane",
-        "Undo Reset View",
     ]
     artifact = json.loads(
         Path(prepared["runtime_ui_preflight_path"]).read_text(encoding="utf-8")
@@ -4037,7 +4044,7 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert plane_recipe["unexpected_plane_guard"]["continue_after_cleanup"] is False
     assert Path(prepared["runtime_ui_preflight_path"]).exists()
     assert plane_recipe["dialog_miller_indices"] == [1, 0, 0]
-    assert plane_recipe["schema_version"] == 7
+    assert plane_recipe["schema_version"] == 8
     assert plane_recipe["camera_result_depends_on_reset_baseline"] is False
     assert plane_recipe["camera_result_established_by"] == (
         "native_miller_plane_view_onto"
@@ -4046,14 +4053,21 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         "cmdViewer3DViewOnto"
     )
     assert plane_recipe["reset_view_role"] == (
-        "native_in_plane_roll_baseline_only"
+        "forbidden_because_ms_20_1_reset_is_not_reliably_undoable"
     )
+    assert plane_recipe["pre_action_view_baseline_required"] is True
+    assert plane_recipe["reset_view_allowed"] is False
     assert plane_recipe["runtime_accessibility_preflight"][
         "automation_gate_satisfied"
     ] is True
-    assert plane_recipe["accessibility_target"]["target_kind"] == (
-        "named_control"
-    )
+    assert plane_recipe["accessibility_target"] is None
+    assert plane_recipe["transient_change_contract"]["required_undo_labels"] == [
+        "Undo View Onto Miller Plane",
+        "Undo Create Miller Plane",
+    ]
+    assert plane_recipe["transient_change_contract"][
+        "require_exact_viewport_pixel_restoration"
+    ] is True
     assert prepared["recipe_contract"]["status"] == "current"
     assert prepared["recipe_contract"]["pending_recipe_upgrade_required"] is False
     assert plane_recipe["dialog_index_entry_contract"] == {
@@ -4145,7 +4159,9 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         "required_plane_normal_match": True,
         "required_analytic_camera_up_match": False,
         "required_analytic_camera_right_match": False,
-        "in_plane_roll_policy": "materials_studio_native_smallest_acute_angle_from_reset",
+        "in_plane_roll_policy": (
+            "materials_studio_native_smallest_acute_angle_from_pre_action_view_baseline"
+        ),
         "native_roll_must_be_reported_separately": True,
         "camera_matches_manifest_interpretation": (
             "plane_normal_and_native_roll_contract_match_not_exact_analytic_camera_basis"
@@ -4160,7 +4176,7 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     )
 
     prior_reset_contract_recipe = json.loads(json.dumps(plane_recipe))
-    prior_reset_contract_recipe["schema_version"] = 6
+    prior_reset_contract_recipe["schema_version"] = 7
     prior_reset_contract_recipe.pop("camera_result_depends_on_reset_baseline")
     prior_reset_contract_recipe.pop("camera_result_established_by")
     prior_reset_contract_recipe.pop(
@@ -4172,19 +4188,15 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
         prior_reset_contract_recipe
     )
     assert prior_reset_contract["recording_allowed"] is False
-    assert prior_reset_contract["actual_schema_version"] == 6
-    assert prior_reset_contract["expected_schema_version"] == 7
+    assert prior_reset_contract["actual_schema_version"] == 7
+    assert prior_reset_contract["expected_schema_version"] == 8
     assert "execution_recipe_schema_outdated" in prior_reset_contract["reasons"]
     assert (
         "miller_view_onto_reset_camera_dependency_contract_missing"
         in prior_reset_contract["reasons"]
     )
     assert (
-        "miller_view_onto_reset_accessibility_preflight_missing"
-        in prior_reset_contract["reasons"]
-    )
-    assert (
-        "miller_view_onto_reset_accessibility_target_missing"
+        "miller_view_onto_accessibility_preflight_missing"
         in prior_reset_contract["reasons"]
     )
 
@@ -4205,7 +4217,7 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     assert legacy_contract["status"] == "upgrade_required"
     assert legacy_contract["recording_allowed"] is False
     assert legacy_contract["actual_schema_version"] == 5
-    assert legacy_contract["expected_schema_version"] == 7
+    assert legacy_contract["expected_schema_version"] == 8
     assert "execution_recipe_schema_outdated" in legacy_contract["reasons"]
     assert "miller_dialog_keyboard_timing_contract_outdated" in legacy_contract["reasons"]
     assert "miller_dialog_keyboard_timing_actions_missing" in legacy_contract["reasons"]
@@ -4232,7 +4244,7 @@ def test_miller_plane_view_onto_recipe_records_only_complete_cleanup_evidence(
     compact_recipe = compact_prepared["replay_continuation"]["next_view"][
         "execution_recipe"
     ]
-    assert compact_recipe["schema_version"] == 7
+    assert compact_recipe["schema_version"] == 8
     compact_correction = compact_recipe["dialog_index_entry_contract"][
         "keyboard_correction_contract"
     ]
@@ -4479,6 +4491,7 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
         "unique_transient_plane_region_observed": True,
         "properties_selection_verified": True,
         "view_onto_popup_menu_observed": True,
+        "view_onto_native_command_mapping_verified": True,
         "dialog_show_set_of_parallel_planes": False,
         "dialog_show_symmetry_images": False,
         "properties_filter": "Miller Plane",
@@ -4487,7 +4500,8 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
         "plane_normal_matches_manifest": True,
         "analytic_in_plane_basis_matches_manifest": None,
         "native_in_plane_roll_policy_observed": True,
-        "reset_view_before_alignment": True,
+        "pre_action_view_baseline_captured": True,
+        "reset_view_before_alignment": False,
         "screenshot_captured_before_cleanup": True,
         "document_was_clean_before_replay": True,
         "temporary_miller_plane_cleanup_verified": True,
@@ -4499,9 +4513,7 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
         "structure_artifact_sha256_after": artifact_hash,
         "undo_labels_applied": [
             "Undo View Onto Miller Plane",
-            "Undo Recenter",
             "Undo Create Miller Plane",
-            "Undo Reset View",
         ],
     }
 
@@ -4570,7 +4582,10 @@ def test_viewport_selected_miller_plane_replay_requires_properties_and_reset_cle
     assert normalized["dialog_miller_indices_text_before_create"] == "1 0 0"
     assert normalized["dialog_miller_indices_verified_before_create"] is True
     assert normalized["undo_labels_match_contract"] is True
-    assert "Undo Recenter" in normalized["undo_labels_applied"]
+    assert normalized["undo_labels_applied"] == [
+        "Undo View Onto Miller Plane",
+        "Undo Create Miller Plane",
+    ]
     assert normalized["analytic_in_plane_basis_matches_manifest"] is None
 
     live_recorded = server.material_studio_live_modeling_request(
@@ -4704,7 +4719,9 @@ def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidenc
         "plane_normal_matches_manifest": True,
         "analytic_in_plane_basis_matches_manifest": False,
         "native_in_plane_roll_policy_observed": True,
-        "reset_view_before_alignment": True,
+        "pre_action_view_baseline_captured": True,
+        "reset_view_before_alignment": False,
+        "view_onto_native_command_mapping_verified": True,
         "screenshot_captured_before_cleanup": True,
         "document_was_clean_before_replay": True,
         "temporary_miller_plane_cleanup_verified": True,
@@ -4717,7 +4734,6 @@ def test_crystal_direction_via_collinear_miller_plane_requires_direction_evidenc
         "undo_labels_applied": [
             "Undo View Onto Miller Plane",
             "Undo Create Miller Plane",
-            "Undo Reset View",
         ],
     }
     missing_direction = server.material_studio_gui_record_view_replay(
@@ -8126,9 +8142,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ] is True
     assert view_replay_policy[
         "miller_view_onto_requires_bound_reset_accessibility_preflight"
-    ] is True
+    ] is False
     assert view_replay_policy[
         "miller_view_onto_accepts_verified_anonymous_reset_target"
+    ] is False
+    assert view_replay_policy["miller_view_onto_requires_pre_action_view_baseline"] is True
+    assert view_replay_policy["miller_view_onto_reset_view_allowed"] is False
+    assert view_replay_policy[
+        "miller_view_onto_transactional_runtime_ui_verification"
     ] is True
     assert view_replay_policy[
         "miller_view_onto_final_camera_depends_on_reset_orientation"
@@ -8137,7 +8158,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "cmdViewer3DViewOnto"
     )
     assert view_replay_policy["arbitrary_camera_materialscript_api_verified"] is False
-    assert view_replay_policy["local_mcp_backend"] == "manifest_only"
+    assert view_replay_policy["local_mcp_backend"] == (
+        "standard_isometric_and_transactional_miller_plane_uia"
+    )
     assert view_replay_policy["automatic_view_names"] == [
         "front",
         "back",
@@ -8187,6 +8210,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "requires_miller_plane_evidence": True,
         "requires_current_bound_runtime_ui_preflight": True,
         "runtime_registry_or_help_evidence_alone_is_sufficient": False,
+        "runtime_ui_preflight_may_be_verified_inside_transaction": True,
+        "reset_view_allowed": False,
+        "pre_action_view_baseline_required": True,
         "miller_planes_dialog_invocation": ["Alt+T", "M"],
         "pointer_or_accessibility_menu_click_allowed": False,
         "modeless_dialog_targeting_surface": "fresh_modeless_child_window_state",
@@ -8200,8 +8226,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "required_undo_labels": [
             "Undo View Onto Miller Plane",
             "Undo Create Miller Plane",
-            "Undo Reset View",
         ],
+        "exact_viewport_pixel_restoration_required": True,
         "optional_observed_undo_labels": ["Undo Recenter"],
         "structure_artifact_sha256_must_remain_unchanged": True,
         "exact_analytic_in_plane_roll_required": False,
@@ -10083,6 +10109,71 @@ def test_latest_project_visual_preflight_separates_gui_execution_from_recording(
     assert plan["payload_hint_is_directly_callable"] is False
     assert plan["requires_requery_after_call"] is True
     assert plan["requires_requery_after_record"] is True
+    assert plan["mutates_structure"] is False
+    assert plan["creates_revision"] is False
+
+
+def test_latest_project_visual_preflight_allows_direct_local_miller_preview() -> None:
+    project_id = "visual_miller_preview_project"
+    revision = 4
+    preview_payload = {
+        "project_id": project_id,
+        "revision": revision,
+        "view_name": "crystal_plane_001",
+        "execution_mode": "preview",
+    }
+    current_status = {
+        "gui_view_replay": {
+            "manifest_exists": True,
+            "binding_verified": True,
+            "binding_reasons": [],
+            "replay_status": "partially_confirmed",
+            "replay_continuation": {
+                "status": "automatic_recipe_ready",
+                "next_pending_view_name": "crystal_plane_001",
+                "post_action_observation_required": False,
+            },
+            "next_action": {
+                "recommended_tool": "material_studio_gui_execute_view_replay",
+                "recommended_action": (
+                    "preview_transactional_miller_plane_view_replay_before_explicit_execute"
+                ),
+                "payload_hint": preview_payload,
+                "payload_hint_is_directly_callable": True,
+                "gui_input_required": False,
+                "post_action_observation_required": False,
+            },
+            "next_action_resolution": {
+                "safety_gate": {
+                    "automatic_replay_allowed": True,
+                    "structure_mutation_allowed": False,
+                    "revision_creation_allowed": False,
+                    "metadata_write_allowed_before_observation": False,
+                    "record_tool_call_ready": False,
+                }
+            },
+        }
+    }
+
+    summary = server._latest_project_visual_diagnostics_preflight_summary(
+        current_status,
+        project_id=project_id,
+        revision=revision,
+        current_status_binding_verified=True,
+    )
+
+    assert summary["status"] == "visual_diagnostics_action_ready"
+    plan = summary["next_action_plan"]
+    assert plan["action_id"] == "preview_gui_view_replay"
+    assert plan["recommended_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
+    assert plan["payload_hint"] == preview_payload
+    assert plan["payload_hint_is_directly_callable"] is True
+    assert plan["safe_to_call_without_confirmation"] is True
+    assert plan["needs_user_confirmation"] is False
+    assert plan["issues_gui_input"] is False
+    assert plan["metadata_write_possible"] is False
     assert plan["mutates_structure"] is False
     assert plan["creates_revision"] is False
 

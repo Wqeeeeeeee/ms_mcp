@@ -27,7 +27,7 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_apply_current_revision`: validates the saved revision script, exports the current revision's `view_audit.json`/`modeling_health` by default, previews by default, may omit `project_id` for the latest current project, and only executes when `execution_mode="execute"`.
 - `material_studio_gui_copy_script_assist`: returns a checklist plus a non-callable reviewed-evidence payload template for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied. The template explicitly requires exact window binding and a workspace screenshot and never authorizes script execution.
 - `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_accessibility_evidence` records named Reset/Movement observations in `gui_view_replay_accessibility_preflight.json`; optional `runtime_ui_evidence` records the separate Miller-plane probe in `gui_view_replay_runtime_preflight.json`. Either artifact is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
-- `material_studio_gui_execute_view_replay`: performs a read-only local UIA probe by default. With explicit `execution_mode="execute"`, it executes exactly one pending front/back/right/left/top/bottom or reviewed isometric recipe in the existing verified window. Reset and Movement Options use UIA `InvokePattern`; arrows are sent only after the unique enabled/visible `CViewer3DCtrl` accepts semantic keyboard focus. Isometric additionally binds the exact owned Movement window, writes only `numNudgeAngle` through ValuePattern, verifies `numNudgeFactor=2.0` and disabled `cmdNudge*` buttons, closes Movement before each keyboard stage, and restores 45 degrees on success or partial failure. The tool never uses coordinates or viewport modifiers, never supports Miller recipes, and never records visual acceptance. It persists the refreshed preflight, a post-action BMP, structure SHA-256 comparison, and a deliberately incomplete record template.
+- `material_studio_gui_execute_view_replay`: performs a read-only local UIA probe by default. With explicit `execution_mode="execute"`, it executes exactly one pending front/back/right/left/top/bottom, reviewed isometric, or automation-ready Miller-plane recipe in the existing verified window. Reset and Movement Options use UIA `InvokePattern`; arrows are sent only after the unique enabled/visible `CViewer3DCtrl` accepts semantic keyboard focus. Isometric additionally binds the exact owned Movement window, writes only `numNudgeAngle` through ValuePattern, verifies `numNudgeFactor=2.0` and disabled `cmdNudge*` buttons, closes Movement before each keyboard stage, and restores 45 degrees on success or partial failure. Miller execution is a separate transaction: it captures the pre-action viewport without Reset, verifies the modeless Miller dialog and Properties selection, derives one click from fresh pixel differences, invokes the live-mapped native View Onto command, captures the aligned view, then undoes exactly View Onto and Create Plane and verifies byte-exact viewport restoration. The tool never uses blind/stale coordinates or viewport modifiers and never records visual acceptance. It persists the refreshed preflight, aligned or post-action BMP, structure SHA-256 comparison, and a deliberately incomplete record template.
 - `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. For `source="reviewed_copy_script"`, `reviewed_copy_script_evidence`, exact handle/title binding, and a workspace screenshot are mandatory. The script is archived only as inert evidence after static safety checks and is never executed.
 - `material_studio_gui_record_visual_confirmation`: persists Computer Use or manual viewport evidence after verifying the current project/revision, exact wrapper title and handle, wrapper metadata, and single-window state. The same path is available through `material_studio_live_modeling_request.visual_confirmation` for restricted MCP allowlists. In an ongoing session, either entry may omit `project_id`; the supplied observed revision must match the latest current project's revision before window binding is evaluated.
 
@@ -117,20 +117,27 @@ auditable phases:
    identity, and single-window preflight state without touching the GUI.
 2. When the continuation is `automatic_recipe_ready`, use
    `material_studio_gui_execute_view_replay` for one of the six standard face
-   views or the exact reviewed isometric recipe, first in preview and then with
-   explicit execute. The local backend uses pywinauto UIA `InvokePattern`,
-   exact Movement ValuePattern readback where required, semantic viewport focus,
-   and exact unmodified arrows. Use Computer Use for Miller-plane or other
-   reviewed recipes. This phase may issue GUI input but cannot write accepted
-   replay evidence, mutate the structure, or create a revision.
+   views, the exact reviewed isometric recipe, or a transactional Miller-plane
+   recipe, first in preview and then with explicit execute. The local backend
+   uses pywinauto UIA, exact Movement ValuePattern readback where required,
+   semantic viewport focus, and bounded native commands. The Miller path may use
+   only a screenshot-derived transient-plane hit target and must restore the
+   exact pre-action viewport after capturing the aligned evidence. This phase
+   may issue GUI input and persist mechanical receipts, but cannot write
+   accepted replay evidence, mutate the structure, or create a revision.
 3. After the action, Computer Use or a reviewer captures a fresh screenshot and
    current accessibility/camera observations, fills the null fields in
    `post_action_record_payload_template`, and calls
    `material_studio_gui_record_view_replay` for that view.
 
-The pre-action `payload_hint` is deliberately marked
-`payload_hint_is_directly_callable=false`. Command targets and expected window
-identity are instructions, not success receipts. In particular,
+For an externally executed recipe, the pre-action `payload_hint` is deliberately
+marked `payload_hint_is_directly_callable=false`: command targets and expected
+window identity are instructions, not success receipts. A locally supported
+transactional Miller recipe instead resolves the continuation to a directly
+callable `material_studio_gui_execute_view_replay` payload with
+`execution_mode=preview` and `gui_input_required=false`. That call only performs
+the read-only preflight; explicit execute intent is still required for the
+confirmation action it returns. In particular,
 `accessibility_tree_refreshed`, `invocation_succeeded`, camera-match fields,
 Miller-plane cleanup fields, and reviewed Copy Script attestations remain null
 until they are observed after the GUI action. `record_call_ready=false` remains
@@ -138,11 +145,13 @@ in the continuation and preflight safety receipt until that observation exists.
 
 The local executor serializes one action per project/revision and rechecks the
 single-process, single-window, foreground, and wrapper binding immediately
-before input and again afterward. A failure after Reset may leave a partial
-camera orientation, but no acceptance event is written; retrying the same
-recipe starts from Reset again. The post-action screenshot and mechanical
-receipt are evidence to review, not proof that the requested camera or native
-crystal roll is visually correct.
+before input and again afterward. A standard-view failure after Reset may leave
+a partial camera orientation, but no acceptance event is written; retrying the
+same recipe starts from Reset again. Miller execution instead requires its
+bounded cleanup to restore the exact pre-action viewport or reports failure.
+The post-action/aligned screenshot and mechanical receipt are evidence to
+review, not proof that the requested camera or native crystal roll is visually
+correct.
 
 For a reviewed Copy Script path, the record call also supplies the exact script
 text and review attestations in `reviewed_copy_script_evidence`. The server
@@ -382,28 +391,22 @@ preparing only a dependent view cannot bypass the failed baseline.
 
 `crystal_plane_*` views have a separate documented MS 20.1 recipe. Installed
 Miller Plane, Properties Explorer, and View Onto registry/help evidence is
-necessary but not sufficient. Automatic replay requires both a current bound
-`gui_view_replay_accessibility_preflight.json` proving an invocable Reset
-target and a current
-`gui_view_replay_runtime_preflight.json` observation whose revision, wrapper
-handle/title, and single-window binding still match. The observation must prove
-that Reset View, Tools > Miller Planes, the `Miller Planes` dialog,
-`MillerPlanesCtl`, `TxtHKL`, `CmdCreate`, Properties Explorer, View Onto, and
-one supported semantic plane-selection profile are present at runtime. Missing,
-incomplete, or stale evidence returns `runtime_ui_preflight_required` and keeps
-`automation_ready=false`.
-In that state, `replay_continuation.payload_hint_is_directly_callable=false`;
-the hint identifies the evidence schema and window binding but deliberately
-omits example `miller_plane_evidence` values.
+necessary but not sufficient. The local transactional path can become
+automation-ready from a current bound semantic viewport preflight plus the
+installed registry/help contract; it then verifies and persists the Miller UI
+evidence inside the transaction before Create. An externally driven path still
+requires a current `gui_view_replay_runtime_preflight.json` whose revision,
+wrapper handle/title, single-window binding, and semantic selection profile all
+match. Missing, incomplete, or stale external evidence returns
+`runtime_ui_preflight_required` and keeps that external path blocked. The
+continuation hint identifies the evidence schema and window binding but never
+supplies example observed values.
 
-The Reset target may be the exact named control or the server-derived
-`verified_anonymous_toolbar_child`; anonymous use must be returned in
-`accessibility_command_uses`. For Miller recipes, Reset establishes only the
-native in-plane roll baseline and `cmdViewer3DViewOnto` establishes the final
-plane-normal camera. Consequently a verified generic front Reset orientation
-failure suppresses Reset-dependent standard views but does not suppress an
-otherwise-ready Miller recipe with
-`camera_result_depends_on_reset_baseline=false`.
+Miller replay does not invoke Reset. It captures a fresh pre-action viewport,
+and `cmdViewer3DViewOnto` establishes the temporary aligned plane-normal view.
+Consequently a verified generic front Reset orientation failure suppresses only
+Reset-dependent standard views; it does not suppress an otherwise-ready Miller
+transaction whose `camera_result_depends_on_reset_baseline=false`.
 
 Open Tools > Miller Planes only through the verified keyboard menu path
 `Alt+T`, then `M`. Do not invoke that menu item with a pointer or accessibility
@@ -465,8 +468,8 @@ exact named `Undo Create Miller Plane`, verify a clean document, no temporary
 node, and an unchanged structure hash, then abort the replay attempt and run
 the preflight again.
 
-After that gate passes, the recipe resets the view and creates exactly one
-temporary plane with the requested three-index dialog values. On an installation
+After that gate passes, the recipe captures the current viewport and creates
+exactly one temporary plane with the requested three-index dialog values. On an installation
 that exposes Object Tree, it may isolate the exact new
 `<Miller Family>/<Miller Parallel Planes>/<Miller Plane>` leaf by before/after
 diff and select its semantic item rectangle. The local MS 20.1 installation
@@ -476,12 +479,29 @@ supported `viewport_unique_plane_properties_verified` profile captures fresh
 screenshots before and after creation, derives one unique newly rendered plane
 region, selects only that fresh region with no modifiers, and verifies
 `Filter=Miller Plane` plus the expected Miller label in Properties Explorer.
-Only then may it invoke the named 3D Viewer Recenter > View Onto item. It
-captures the aligned view before cleanup, then accepts only observed whitelisted
-View Onto/Create Miller Plane/Reset View undo labels (plus Recenter when present)
-and requires the document to be clean, no temporary plane to remain, the reset
-view baseline to be restored, and the wrapper source structure SHA-256 to be
-unchanged. These observations are submitted in `miller_plane_evidence`.
+Only then may it invoke View Onto after live toolbar inspection verifies the
+installed `Selection=33288`, `Recenter=33296`, `View Onto=33297`, and
+`Fit=33299` numeric mapping. It captures the aligned view before cleanup, then
+must observe and invoke exactly `Undo View Onto Miller Plane` followed by
+`Undo Create Miller Plane`. Reset, Recenter, and any additional cleanup command
+are forbidden. Success requires a clean document, no temporary plane, exact
+pixel restoration of the pre-action viewport, and unchanged wrapper source
+structure SHA-256. These observations are submitted in
+`miller_plane_evidence`; local execution still requires later visual acceptance.
+
+The verified MS 20.1 runtime has several accessibility details that are part of
+the safety contract. The dirty marker appears on the internal viewer document
+title (`model_*.cif *`), while the outer wrapper title may remain unchanged.
+The owner-drawn View/Explorers/Properties Explorer menu can expose blank submenu
+labels; the fallback accepts that shape only for the exact live command ID
+`33439`. Properties uses a virtualized `vGridControl`, so the unique
+`MillerIndex Record 0` `DataItem` can report `is_visible=false`; this is accepted
+only when the Properties pane and grid are visible and its exact value is the
+prepared label such as `(001)`. A viewer on a negative-coordinate secondary
+monitor may extend below its wrapper window, so screenshots use the visible
+viewport/window intersection and reject intersections smaller than the bounded
+minimum. None of these exceptions relax exact window, revision, label, undo, or
+hash verification.
 
 Native View Onto guarantees the requested reciprocal-plane normal, but local
 help documents that its in-plane roll uses the smallest acute angle from the

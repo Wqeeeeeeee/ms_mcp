@@ -1,12 +1,62 @@
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
+from pathlib import Path
+
+import pytest
 
 from material_studio_mcp_server.gui import (
     VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS,
     VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS,
 )
-from material_studio_mcp_server.gui_uia import PywinautoViewReplayBackend
+from material_studio_mcp_server.gui_uia import (
+    PywinautoViewReplayBackend,
+    UiaReplayError,
+    analyze_miller_plane_bmp_diff,
+    compare_bmp_region,
+)
+
+
+def _write_rgb_bmp(
+    path: Path,
+    *,
+    width: int,
+    height: int,
+    pixels: dict[tuple[int, int], tuple[int, int, int]],
+) -> None:
+    row_stride = ((width * 24 + 31) // 32) * 4
+    rows = bytearray(row_stride * height)
+    for y in range(height):
+        for x in range(width):
+            red, green, blue = pixels.get((x, y), (248, 248, 248))
+            offset = y * row_stride + x * 3
+            rows[offset : offset + 3] = bytes((blue, green, red))
+    pixel_offset = 54
+    image_size = len(rows)
+    header = struct.pack(
+        "<2sIHHI",
+        b"BM",
+        pixel_offset + image_size,
+        0,
+        0,
+        pixel_offset,
+    )
+    dib = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        -height,
+        1,
+        24,
+        0,
+        image_size,
+        0,
+        0,
+        0,
+        0,
+    )
+    path.write_bytes(header + dib + rows)
 
 
 @dataclass
@@ -32,6 +82,22 @@ class _FakeElementInfo:
         self.automation_id = automation_id
         self.class_name = class_name
         self.element = _FakeElement((runtime_id,))
+
+
+@dataclass
+class _FakeRectangle:
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+
+class _FakeRectWrapper:
+    def __init__(self, rect: tuple[int, int, int, int]) -> None:
+        self._rect = _FakeRectangle(*rect)
+
+    def rectangle(self) -> _FakeRectangle:
+        return self._rect
 
 
 class _FakeValuePattern:
@@ -354,6 +420,203 @@ def _backend(
         sleep_fn=lambda _seconds: None,
         platform_supported=True,
     )
+
+
+def test_viewport_capture_bounds_clips_uia_child_to_negative_monitor_window() -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        window_rect_getter=lambda _handle: (-1444, 89, -4, 842),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+    bounds = backend._viewport_capture_bounds(
+        window_handle=9001,
+        viewport_wrapper=_FakeRectWrapper((-1266, 229, -82, 890)),
+    )
+
+    assert bounds == (178, 140, 1362, 753)
+
+
+def test_viewport_capture_bounds_rejects_tiny_visible_intersection() -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        window_rect_getter=lambda _handle: (0, 0, 800, 600),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+    with pytest.raises(UiaReplayError, match="visible intersection"):
+        backend._viewport_capture_bounds(
+            window_handle=9001,
+            viewport_wrapper=_FakeRectWrapper((790, 590, 1000, 900)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "label", "expected_verification"),
+    [
+        (
+            ["View", "Explorers", "Properties Explorer"],
+            "Properties Explorer",
+            "readable_native_menu_labels",
+        ),
+        (
+            ["View", "", ""],
+            "",
+            "ms20_owner_drawn_submenu_labels_unavailable_exact_command_id",
+        ),
+    ],
+)
+def test_properties_explorer_accepts_only_reviewed_native_menu_shapes(
+    path: list[str],
+    label: str,
+    expected_verification: str,
+) -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        native_menu_reader=lambda _handle: [
+            {
+                "path": path,
+                "label": label,
+                "command_id": 33439,
+                "enabled": True,
+            }
+        ],
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+    entry = backend._properties_explorer_menu_entry(9001)
+
+    assert entry["command_id_verified"] is True
+    assert entry["path_verification"] == expected_verification
+
+
+def test_properties_explorer_rejects_unreviewed_native_menu_shape() -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        native_menu_reader=lambda _handle: [
+            {
+                "path": ["Tools", "Unknown"],
+                "label": "Unknown",
+                "command_id": 33439,
+                "enabled": True,
+            }
+        ],
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+    with pytest.raises(UiaReplayError, match="outside the reviewed View menu shape"):
+        backend._properties_explorer_menu_entry(9001)
+
+
+def test_viewer_document_title_binds_window_that_owns_viewport() -> None:
+    top = _FakeWrapper(
+        runtime_id=1,
+        name="project - Materials Studio",
+        control_type="Window",
+    )
+    document = top.add_child(
+        _FakeWrapper(
+            runtime_id=2,
+            name="model.cif",
+            control_type="Window",
+        )
+    )
+    document.add_child(
+        _FakeWrapper(
+            runtime_id=3,
+            control_type="Pane",
+            class_name="CViewer3DCtrl",
+        )
+    )
+    top.add_child(
+        _FakeWrapper(
+            runtime_id=4,
+            name="unrelated dialog",
+            control_type="Window",
+        )
+    )
+
+    assert PywinautoViewReplayBackend._viewer_document_title(top) == "model.cif"
+
+
+def test_dirty_document_title_requires_exact_single_marker_transition() -> None:
+    PywinautoViewReplayBackend._require_expected_dirty_title(
+        "model.cif*",
+        expected_window_title="model.cif",
+    )
+    PywinautoViewReplayBackend._require_expected_dirty_title(
+        "model.cif *",
+        expected_window_title="model.cif",
+    )
+
+    with pytest.raises(UiaReplayError, match="viewer-document title transition"):
+        PywinautoViewReplayBackend._require_expected_dirty_title(
+            "*model.cif",
+            expected_window_title="model.cif",
+        )
+
+
+def test_miller_properties_accepts_unique_virtualized_grid_record() -> None:
+    top = _FakeWrapper(runtime_id=1, control_type="Window")
+    properties = top.add_child(
+        _FakeWrapper(
+            runtime_id=2,
+            control_type="Pane",
+            automation_id="GenPropEdit",
+        )
+    )
+    properties.add_child(
+        _FakeWrapper(
+            runtime_id=3,
+            name="Filter:",
+            control_type="ComboBox",
+            automation_id="cbObjectType",
+            value="Miller Plane",
+        )
+    )
+    grid = properties.add_child(
+        _FakeWrapper(
+            runtime_id=4,
+            control_type="DataGrid",
+            automation_id="vGridControl",
+        )
+    )
+    grid.add_child(
+        _FakeWrapper(
+            runtime_id=5,
+            name="MillerIndex Record 0",
+            control_type="DataItem",
+            visible=False,
+            value="(001)",
+        )
+    )
+
+    result = PywinautoViewReplayBackend._verify_miller_properties(
+        PywinautoViewReplayBackend(platform_supported=False),
+        top,
+        expected_label="(001)",
+    )
+
+    assert result["properties_filter"] == "Miller Plane"
+    assert result["properties_miller_label"] == "(001)"
+    assert result["miller_record_visible"] is False
+    assert result["miller_record_virtualized_visibility_allowed"] is True
 
 
 def _top_recipe() -> dict:
@@ -789,3 +1052,82 @@ def test_execute_closes_movement_when_dialog_contract_probe_fails() -> None:
     assert top.movement_dialog.close_count == 2
     assert top._movement_open is False
     assert sent_keys == []
+
+
+def test_miller_bmp_diff_bridges_cell_line_and_selects_dense_interior(
+    tmp_path: Path,
+) -> None:
+    before = tmp_path / "before.bmp"
+    after = tmp_path / "after.bmp"
+    _write_rgb_bmp(before, width=120, height=90, pixels={})
+    plane_pixels = {
+        (x, y): (203, 136, 0)
+        for y in range(25, 66)
+        for x in range(30, 91)
+        if x not in {59, 60}
+    }
+    _write_rgb_bmp(after, width=120, height=90, pixels=plane_pixels)
+
+    result = analyze_miller_plane_bmp_diff(
+        before,
+        after,
+        viewport_bounds=(10, 10, 110, 80),
+    )
+
+    assert result["significant_component_count"] == 1
+    assert result["region_bbox"] == [30, 25, 91, 66]
+    candidate_x, candidate_y = result["candidate_window_pixel"]
+    assert 35 <= candidate_x <= 85
+    assert 30 <= candidate_y <= 60
+    assert result["candidate_after_rgb"] == [203, 136, 0]
+
+
+def test_miller_bmp_diff_rejects_two_significant_regions(tmp_path: Path) -> None:
+    before = tmp_path / "before.bmp"
+    after = tmp_path / "after.bmp"
+    _write_rgb_bmp(before, width=120, height=90, pixels={})
+    changed = {
+        (x, y): (203, 136, 0)
+        for left, top in ((15, 15), (75, 50))
+        for y in range(top, top + 15)
+        for x in range(left, left + 20)
+    }
+    _write_rgb_bmp(after, width=120, height=90, pixels=changed)
+
+    with pytest.raises(UiaReplayError, match="exactly one significant"):
+        analyze_miller_plane_bmp_diff(
+            before,
+            after,
+            viewport_bounds=(0, 0, 120, 90),
+        )
+
+
+def test_compare_bmp_region_requires_exact_restoration(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.bmp"
+    restored = tmp_path / "restored.bmp"
+    changed = tmp_path / "changed.bmp"
+    _write_rgb_bmp(baseline, width=40, height=30, pixels={})
+    _write_rgb_bmp(restored, width=40, height=30, pixels={})
+    _write_rgb_bmp(
+        changed,
+        width=40,
+        height=30,
+        pixels={(20, 15): (247, 248, 248)},
+    )
+
+    exact = compare_bmp_region(
+        baseline,
+        restored,
+        bounds=(5, 5, 35, 25),
+    )
+    mismatch = compare_bmp_region(
+        baseline,
+        changed,
+        bounds=(5, 5, 35, 25),
+    )
+
+    assert exact["exact_match"] is True
+    assert exact["changed_pixel_count"] == 0
+    assert mismatch["exact_match"] is False
+    assert mismatch["changed_pixel_count"] == 1
+    assert mismatch["peak_channel_delta"] == 1

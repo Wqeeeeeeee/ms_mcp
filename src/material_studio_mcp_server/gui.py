@@ -47,7 +47,7 @@ VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 5
 VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 4
 VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
 CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION = 5
-MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 7
+MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 8
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -334,6 +334,7 @@ MILLER_PLANE_REPLAY_EVIDENCE_FIELDS = {
     "unique_transient_plane_region_observed",
     "properties_selection_verified",
     "view_onto_popup_menu_observed",
+    "view_onto_native_command_mapping_verified",
     "dialog_show_set_of_parallel_planes",
     "dialog_show_symmetry_images",
     "properties_filter",
@@ -342,6 +343,7 @@ MILLER_PLANE_REPLAY_EVIDENCE_FIELDS = {
     "plane_normal_matches_manifest",
     "analytic_in_plane_basis_matches_manifest",
     "native_in_plane_roll_policy_observed",
+    "pre_action_view_baseline_captured",
     "reset_view_before_alignment",
     "screenshot_captured_before_cleanup",
     "document_was_clean_before_replay",
@@ -363,6 +365,7 @@ MILLER_PLANE_OPTIONAL_REPLAY_EVIDENCE_FIELDS = {
     "unique_transient_plane_region_observed",
     "properties_selection_verified",
     "view_onto_popup_menu_observed",
+    "reset_view_before_alignment",
     "dialog_show_set_of_parallel_planes",
     "dialog_show_symmetry_images",
 }
@@ -370,7 +373,8 @@ MILLER_PLANE_REQUIRED_TRUE_EVIDENCE_FIELDS = (
     "dialog_miller_indices_verified_before_create",
     "plane_normal_matches_manifest",
     "native_in_plane_roll_policy_observed",
-    "reset_view_before_alignment",
+    "pre_action_view_baseline_captured",
+    "view_onto_native_command_mapping_verified",
     "screenshot_captured_before_cleanup",
     "document_was_clean_before_replay",
     "temporary_miller_plane_cleanup_verified",
@@ -394,6 +398,7 @@ MILLER_RUNTIME_UI_BOOLEAN_FIELDS = (
     "tree_explorer_menu_observed",
     "properties_explorer_menu_observed",
     "view_onto_control_observed",
+    "view_onto_native_command_mapping_verified",
     "pointer_menu_click_through_risk_observed",
     "unexpected_plane_created_during_probe",
     "unexpected_plane_cleanup_verified",
@@ -401,7 +406,6 @@ MILLER_RUNTIME_UI_BOOLEAN_FIELDS = (
     "document_clean_after_probe",
 )
 MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS = (
-    "reset_view_control_observed",
     "tools_miller_planes_menu_observed",
     "miller_planes_keyboard_menu_path_verified",
     "miller_planes_dialog_observed",
@@ -409,6 +413,7 @@ MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS = (
     "create_button_observed",
     "properties_explorer_menu_observed",
     "view_onto_control_observed",
+    "view_onto_native_command_mapping_verified",
     "document_clean_before_probe",
     "document_clean_after_probe",
 )
@@ -416,13 +421,14 @@ MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS = (
     "unique_transient_plane_visual_target_observed",
     "viewport_plane_selection_observed",
     "properties_selection_verified",
-    "view_onto_popup_menu_observed",
 )
 MILLER_RUNTIME_VIEWPORT_PROBE_FIELDS = {
     "selection_method",
     "probe_miller_indices",
     "dialog_miller_indices",
     *MILLER_RUNTIME_VIEWPORT_PROBE_TRUE_FIELDS,
+    "view_onto_popup_menu_observed",
+    "view_onto_native_command_mapping_verified",
     "hit_test_basis",
     "properties_filter",
     "properties_miller_label",
@@ -470,7 +476,6 @@ MILLER_RUNTIME_UI_EXPECTED_IDENTIFIERS = {
 }
 MILLER_RUNTIME_UI_REQUIRED_KEY_SEQUENCE = ["Alt+T", "M"]
 MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
-    "reset_view_control_observed": "runtime_reset_view_control_not_observed",
     "tools_miller_planes_menu_observed": "runtime_tools_miller_planes_menu_not_observed",
     "miller_planes_keyboard_menu_path_verified": (
         "runtime_miller_planes_keyboard_menu_path_not_verified"
@@ -480,6 +485,9 @@ MILLER_RUNTIME_UI_BLOCK_REASON_BY_FIELD = {
     "create_button_observed": "runtime_miller_plane_create_button_not_observed",
     "properties_explorer_menu_observed": "runtime_properties_explorer_menu_not_observed",
     "view_onto_control_observed": "runtime_view_onto_control_not_observed",
+    "view_onto_native_command_mapping_verified": (
+        "runtime_view_onto_native_command_mapping_not_verified"
+    ),
     "document_clean_before_probe": "runtime_document_not_clean_before_probe",
     "document_clean_after_probe": "runtime_document_not_clean_after_probe",
 }
@@ -1187,6 +1195,15 @@ def _normalize_miller_runtime_viewport_selection_probe(
                 f"runtime_ui_evidence.viewport_selection_probe.{field} must be a boolean"
             )
 
+    for field in (
+        "view_onto_popup_menu_observed",
+        "view_onto_native_command_mapping_verified",
+    ):
+        if not isinstance(normalized.get(field), bool):
+            raise GuiError(
+                f"runtime_ui_evidence.viewport_selection_probe.{field} must be a boolean"
+            )
+
     probe_indices = _normalize_miller_plane_indices(
         normalized.get("probe_miller_indices"),
         field_name="runtime_ui_evidence.viewport_selection_probe.probe_miller_indices",
@@ -1271,6 +1288,11 @@ def _normalize_miller_runtime_viewport_selection_probe(
         block_reasons.append("runtime_viewport_properties_miller_label_mismatch")
     if normalized["view_onto_command_id"] != "cmdViewer3DViewOnto":
         block_reasons.append("runtime_viewport_view_onto_command_id_mismatch")
+    if not (
+        normalized["view_onto_popup_menu_observed"] is True
+        or normalized["view_onto_native_command_mapping_verified"] is True
+    ):
+        block_reasons.append("runtime_viewport_view_onto_target_not_verified")
     if before_hash != after_hash:
         block_reasons.append("runtime_viewport_structure_artifact_hash_changed")
     if after_hash != current_hash:
@@ -1316,7 +1338,7 @@ def _normalize_miller_runtime_ui_evidence(
 
     normalized = dict(value)
     source = str(normalized.get("source") or "").strip()
-    if source not in {"computer_use", "manual_review"}:
+    if source not in {"computer_use", "manual_review", "local_uia"}:
         raise GuiError("unsupported runtime_ui_evidence source")
     normalized["source"] = source
     try:
@@ -1856,7 +1878,10 @@ def _normalize_miller_plane_replay_evidence(
             and viewport_fields["fresh_before_after_screenshots_observed"] is True
             and viewport_fields["unique_transient_plane_region_observed"] is True
             and viewport_fields["properties_selection_verified"] is True
-            and viewport_fields["view_onto_popup_menu_observed"] is True
+            and (
+                viewport_fields["view_onto_popup_menu_observed"] is True
+                or evidence.get("view_onto_native_command_mapping_verified") is True
+            )
             and viewport_fields["dialog_show_set_of_parallel_planes"] is False
             and viewport_fields["dialog_show_symmetry_images"] is False
         )
@@ -1889,6 +1914,13 @@ def _normalize_miller_plane_replay_evidence(
             raise GuiError(f"miller_plane_evidence.{field_name} must be a boolean")
         booleans[field_name] = value
     booleans.setdefault("direct_lattice_direction_matches_manifest", None)
+    reset_view_before_alignment = evidence.get("reset_view_before_alignment")
+    if reset_view_before_alignment is not None and not isinstance(
+        reset_view_before_alignment, bool
+    ):
+        raise GuiError(
+            "miller_plane_evidence.reset_view_before_alignment must be a boolean or null"
+        )
 
     artifact_path = Path(str(evidence["structure_artifact_path"])).expanduser().resolve()
     _ensure_inside(workspace_root, artifact_path)
@@ -1903,8 +1935,8 @@ def _normalize_miller_plane_replay_evidence(
     current_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
 
     raw_undo_labels = evidence["undo_labels_applied"]
-    if not isinstance(raw_undo_labels, list) or not 3 <= len(raw_undo_labels) <= 16:
-        raise GuiError("miller_plane_evidence.undo_labels_applied must contain 3 to 16 labels")
+    if not isinstance(raw_undo_labels, list) or not 2 <= len(raw_undo_labels) <= 16:
+        raise GuiError("miller_plane_evidence.undo_labels_applied must contain 2 to 16 labels")
     undo_labels = [str(value).strip() for value in raw_undo_labels]
     if any(
         not any(pattern.fullmatch(label) for pattern in MILLER_PLANE_UNDO_LABEL_PATTERNS)
@@ -1913,7 +1945,6 @@ def _normalize_miller_plane_replay_evidence(
         raise GuiError("miller_plane_evidence.undo_labels_applied contains a non-whitelisted undo")
     view_onto_undo_present = any(label.startswith("Undo View Onto ") for label in undo_labels)
     create_plane_undo_present = "Undo Create Miller Plane" in undo_labels
-    reset_view_undo_present = "Undo Reset View" in undo_labels
 
     counts_match_contract = bool(
         counts["created_plane_count"] == 1
@@ -1933,7 +1964,7 @@ def _normalize_miller_plane_replay_evidence(
     structure_artifact_hash_unchanged = before_hash == after_hash
     structure_artifact_hash_matches_current = after_hash == current_hash
     undo_labels_match_contract = bool(
-        view_onto_undo_present and create_plane_undo_present and reset_view_undo_present
+        view_onto_undo_present and create_plane_undo_present
     )
 
     return {
@@ -1949,6 +1980,7 @@ def _normalize_miller_plane_replay_evidence(
         "properties_miller_label": properties_miller_label,
         "camera_match_scope": camera_match_scope,
         **booleans,
+        "reset_view_before_alignment": reset_view_before_alignment,
         "structure_artifact_path": str(artifact_path),
         "structure_artifact_sha256_before": before_hash,
         "structure_artifact_sha256_after": after_hash,
@@ -2767,7 +2799,9 @@ class MaterialsStudioGuiController:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.trusted_wrapper_workspace_roots = _trusted_wrapper_workspace_roots(self.workspace_root)
         self.backend = backend or (WindowsGuiBackend() if os.name == "nt" else NullGuiBackend())
-        self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend()
+        self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend(
+            window_capture_fn=_capture_window_bmp,
+        )
 
     def status(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
         """返回状态。"""
@@ -2890,6 +2924,13 @@ class MaterialsStudioGuiController:
             "local_uia_view_replay_view_names": sorted(
                 SAFE_LOCAL_VIEW_NAMES
             ),
+            "local_uia_miller_plane_transaction_supported": bool(
+                getattr(
+                    self.view_replay_backend,
+                    "miller_plane_transaction_supported",
+                    False,
+                )
+            ),
             "capabilities": [
                 "detect_matstudio_window",
                 "list_matstudio_windows",
@@ -2903,6 +2944,15 @@ class MaterialsStudioGuiController:
                     [
                         "execute_standard_view_replay_with_local_uia",
                         "execute_staged_isometric_view_replay_with_local_uia",
+                        *(
+                            ["execute_transactional_miller_plane_view_replay_with_local_uia"]
+                            if getattr(
+                                self.view_replay_backend,
+                                "miller_plane_transaction_supported",
+                                False,
+                            )
+                            else []
+                        ),
                     ]
                     if self.view_replay_backend.supported
                     else []
@@ -3716,6 +3766,12 @@ class MaterialsStudioGuiController:
             and binding.get("ok") is True
             and not probe["block_reasons"]
         )
+        probe["safe_for_miller_plane_transaction"] = bool(
+            probe.get("safe_for_miller_plane_transaction") is True
+            and isinstance(binding, dict)
+            and binding.get("ok") is True
+            and not probe["block_reasons"]
+        )
         return {
             "project_id": safe_project,
             "revision": revision,
@@ -3779,7 +3835,16 @@ class MaterialsStudioGuiController:
             "requested_view_name": requested_view_name,
             "execution_ready": plan.get("execution_ready"),
             "execution_supported_view_names": sorted(
-                SAFE_LOCAL_VIEW_NAMES
+                {
+                    *SAFE_LOCAL_VIEW_NAMES,
+                    *(
+                        str(item.get("view_name"))
+                        for item in plan.get("candidate_views") or []
+                        if isinstance(item, dict)
+                        and item.get("local_execution_supported") is True
+                        and item.get("view_name")
+                    ),
+                }
             ),
             "plan": plan,
             "local_uia_probe": initial_probe,
@@ -3955,23 +4020,95 @@ class MaterialsStudioGuiController:
                     structure_path
                 )
 
+            miller_transaction = str(
+                execution_recipe.get("recipe_kind") or ""
+            ) in MILLER_VIEW_ONTO_RECIPE_KINDS
+            evidence_dir = (
+                self.workspace_root
+                / "screenshots"
+                / safe_project
+                / f"r{revision:03d}"
+                / "view_replay_transactions"
+                / (
+                    re.sub(r"[^A-Za-z0-9_.-]+", "_", selected_view_name).strip("._")
+                    + "_"
+                    + uuid.uuid4().hex[:12]
+                )
+            ).resolve()
+            _ensure_inside(self.workspace_root, evidence_dir)
+            evidence_dir.mkdir(parents=True, exist_ok=False)
             action_receipt = self.view_replay_backend.execute_standard_recipe(
                 window_handle=int(target_window["handle"]),
                 expected_window_title=str(target_window["title"]),
                 execution_recipe=execution_recipe,
                 toolbar_contracts=VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS,
                 command_labels=VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS,
+                structure_path=structure_path,
+                evidence_dir=evidence_dir,
+                expected_revision=revision,
             )
             snapshot_result: dict[str, Any] | None = None
             snapshot_error: str | None = None
-            try:
-                snapshot_result = self.snapshot(
-                    label=f"view_replay_{selected_view_name}_executed",
-                    project_id=safe_project,
-                    revision=revision,
-                )
-            except Exception as exc:
-                snapshot_error = str(exc)
+            if miller_transaction:
+                if action_receipt.get("execution_succeeded") is True:
+                    aligned_path_raw = action_receipt.get(
+                        "aligned_screenshot_path"
+                    )
+                    try:
+                        if not aligned_path_raw:
+                            raise GuiError(
+                                "transactional Miller aligned screenshot path is missing"
+                            )
+                        aligned_path = Path(
+                            str(aligned_path_raw)
+                        ).expanduser().resolve()
+                        _ensure_inside(self.workspace_root, aligned_path)
+                        if not aligned_path.exists() or not aligned_path.is_file():
+                            raise GuiError(
+                                "transactional Miller aligned screenshot is unavailable"
+                            )
+                        snapshot_result = {
+                            "project_id": safe_project,
+                            "revision": revision,
+                            "screenshot_path": str(aligned_path),
+                            "capture_phase": "aligned_before_transaction_cleanup",
+                            "analysis": _analyze_bmp_snapshot(aligned_path),
+                        }
+                    except Exception as exc:
+                        snapshot_error = str(exc)
+                else:
+                    snapshot_error = (
+                        "transactional Miller execution failed before an aligned "
+                        "screenshot was available"
+                    )
+            else:
+                try:
+                    snapshot_result = self.snapshot(
+                        label=f"view_replay_{selected_view_name}_executed",
+                        project_id=safe_project,
+                        revision=revision,
+                    )
+                except Exception as exc:
+                    snapshot_error = str(exc)
+
+            transaction_runtime_preflight_persisted = not miller_transaction
+            transaction_runtime_preflight_error: str | None = None
+            if (
+                miller_transaction
+                and action_receipt.get("execution_succeeded") is True
+                and isinstance(action_receipt.get("runtime_ui_evidence"), dict)
+            ):
+                try:
+                    prepared = self.prepare_view_replay(
+                        audit,
+                        project_id=safe_project,
+                        revision=revision,
+                        runtime_ui_evidence=action_receipt["runtime_ui_evidence"],
+                        runtime_accessibility_evidence=fresh_probe.get("evidence"),
+                    )
+                    transaction_runtime_preflight_persisted = True
+                except Exception as exc:
+                    transaction_runtime_preflight_error = str(exc)
 
             structure_sha256_after = None
             structure_size_after = None
@@ -3995,6 +4132,7 @@ class MaterialsStudioGuiController:
                 action_receipt.get("execution_succeeded") is True
                 and not post_action_reasons
                 and structure_unchanged
+                and transaction_runtime_preflight_persisted
                 and isinstance(snapshot_result, dict)
                 and snapshot_result.get("analysis", {}).get("readable") is True
             )
@@ -4020,6 +4158,13 @@ class MaterialsStudioGuiController:
                 "action_receipt": action_receipt,
                 "snapshot": snapshot_result,
                 "snapshot_error": snapshot_error,
+                "transaction_runtime_preflight_persisted": (
+                    transaction_runtime_preflight_persisted
+                ),
+                "transaction_runtime_preflight_error": (
+                    transaction_runtime_preflight_error
+                ),
+                "transaction_evidence_dir": str(evidence_dir),
                 "structure_path": str(structure_path)
                 if structure_path is not None
                 else None,
@@ -4056,11 +4201,16 @@ class MaterialsStudioGuiController:
                     ),
                     "execution_ready": True,
                     "gui_input_performed": bool(
+                        action_receipt.get("gui_input_performed") is True
+                        or action_receipt.get("pointer_input_used") is True
+                        or action_receipt.get("view_onto_native_command_mapping")
+                        or
                         action_receipt.get("reset_invocation_succeeded") is True
                         or action_receipt.get("key_sequence_sent")
                     ),
                     "gui_modified": bool(
-                        action_receipt.get("reset_invocation_succeeded") is True
+                        action_receipt.get("gui_transiently_modified") is True
+                        or action_receipt.get("reset_invocation_succeeded") is True
                     ),
                     "structure_modified": not structure_unchanged,
                     "manifest_modified": True,
@@ -4072,12 +4222,20 @@ class MaterialsStudioGuiController:
                         "tool": "material_studio_gui_record_view_replay",
                         "payload_template": post_action_template,
                         "payload_template_is_directly_callable": False,
-                        "required_observations": [
-                            "model_visible",
-                            "camera_matches_manifest",
-                            "crystal_camera_evidence.view_direction_matches_manifest",
-                            "crystal_camera_evidence.native_in_plane_roll_observed",
-                        ],
+                        "required_observations": (
+                            [
+                                "model_visible",
+                                "camera_matches_manifest",
+                                "confirm_aligned_screenshot_shows_expected_plane_normal",
+                            ]
+                            if miller_transaction
+                            else [
+                                "model_visible",
+                                "camera_matches_manifest",
+                                "crystal_camera_evidence.view_direction_matches_manifest",
+                                "crystal_camera_evidence.native_in_plane_roll_observed",
+                            ]
+                        ),
                     },
                 }
             )
@@ -4128,6 +4286,13 @@ class MaterialsStudioGuiController:
                 model_type=str(audit.get("model_type") or "") or None,
                 runtime_ui_preflight=None,
                 runtime_accessibility_preflight=runtime_preflight,
+                local_miller_transaction_supported=bool(
+                    getattr(
+                        self.view_replay_backend,
+                        "miller_plane_transaction_supported",
+                        False,
+                    )
+                ),
             )
 
         accepted_view_names = self._existing_view_replay_accepted_names(
@@ -4161,9 +4326,28 @@ class MaterialsStudioGuiController:
             if locally_supported and selected is None:
                 selected = step
 
+        selected_recipe = (
+            selected.get("execution_recipe")
+            if isinstance(selected, dict)
+            and isinstance(selected.get("execution_recipe"), dict)
+            else None
+        )
+        selected_is_miller = bool(
+            isinstance(selected_recipe, dict)
+            and selected_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS
+        )
         block_reasons = list(probe.get("block_reasons") or [])
-        if probe.get("safe_for_standard_view_replay") is not True:
-            block_reasons.append("local_uia_probe_not_safe")
+        required_probe_gate = (
+            "safe_for_miller_plane_transaction"
+            if selected_is_miller
+            else "safe_for_standard_view_replay"
+        )
+        if probe.get(required_probe_gate) is not True:
+            block_reasons.append(
+                "local_uia_miller_transaction_probe_not_safe"
+                if selected_is_miller
+                else "local_uia_probe_not_safe"
+            )
         if requested_view_name is not None and not any(
             row["view_name"] == requested_view_name for row in candidate_rows
         ):
@@ -4176,12 +4360,6 @@ class MaterialsStudioGuiController:
         if selected is None:
             block_reasons.append("no_pending_local_uia_view_ready")
         block_reasons = _unique_strings(str(item) for item in block_reasons)
-        selected_recipe = (
-            selected.get("execution_recipe")
-            if isinstance(selected, dict)
-            and isinstance(selected.get("execution_recipe"), dict)
-            else None
-        )
         return {
             "project_id": project_id,
             "revision": revision,
@@ -4338,6 +4516,13 @@ class MaterialsStudioGuiController:
                 model_type=str(audit.get("model_type") or "") or None,
                 runtime_ui_preflight=runtime_ui_preflight,
                 runtime_accessibility_preflight=runtime_accessibility_preflight,
+                local_miller_transaction_supported=bool(
+                    getattr(
+                        self.view_replay_backend,
+                        "miller_plane_transaction_supported",
+                        False,
+                    )
+                ),
             )
         next_tool = status.get("recommended_tool")
         next_action = status.get("recommended_action")
@@ -4383,7 +4568,9 @@ class MaterialsStudioGuiController:
                 "target_window_resolution": target_resolution or None,
             },
             "viewport_control": {
-                "local_mcp_backend": "manifest_only",
+                "local_mcp_backend": (
+                    "standard_isometric_and_transactional_miller_plane_uia"
+                ),
                 "arbitrary_camera_materialscript_api": "not_verified_for_materials_studio_2020",
                 "computer_use": "external_orchestrator_required",
                 "reviewed_copy_script": "accepted_only_after_local_api_review",
@@ -6259,7 +6446,9 @@ def _local_uia_recipe_support(
 
     reasons: list[str] = []
     view_name = str(execution_recipe.get("view_name") or "")
-    if view_name not in SAFE_LOCAL_VIEW_NAMES:
+    recipe_kind = str(execution_recipe.get("recipe_kind") or "")
+    miller_recipe = recipe_kind in MILLER_VIEW_ONTO_RECIPE_KINDS
+    if not miller_recipe and view_name not in SAFE_LOCAL_VIEW_NAMES:
         reasons.append("local_uia_view_name_not_allowlisted")
     if execution_recipe.get("automation_ready") is not True:
         reasons.append("prepared_recipe_not_automation_ready")
@@ -6269,6 +6458,47 @@ def _local_uia_recipe_support(
         reasons.append("prepared_recipe_process_launch_not_prohibited")
     if execution_recipe.get("blind_coordinate_action_allowed") is not False:
         reasons.append("prepared_recipe_blind_coordinates_not_prohibited")
+    if miller_recipe:
+        if execution_recipe.get("native_command_id") != "cmdViewer3DViewOnto":
+            reasons.append("prepared_miller_view_onto_command_mismatch")
+        if execution_recipe.get("selection_method") != (
+            MILLER_PLANE_VIEWPORT_SELECTION_METHOD
+        ):
+            reasons.append("prepared_miller_viewport_selection_contract_missing")
+        if execution_recipe.get("pre_action_view_baseline_required") is not True:
+            reasons.append("prepared_miller_pre_action_baseline_missing")
+        if execution_recipe.get("reset_view_allowed") is not False:
+            reasons.append("prepared_miller_reset_view_not_forbidden")
+        if execution_recipe.get("accessibility_target") is not None:
+            reasons.append("prepared_miller_reset_target_must_be_absent")
+        if list(execution_recipe.get("modifier_keys") or []) != []:
+            reasons.append("prepared_miller_modifier_keys_not_empty")
+        transient = execution_recipe.get("transient_change_contract")
+        if not isinstance(transient, dict) or transient.get(
+            "required_undo_labels"
+        ) != ["Undo View Onto Miller Plane", "Undo Create Miller Plane"]:
+            reasons.append("prepared_miller_two_step_cleanup_contract_missing")
+        invocation = execution_recipe.get("view_command_invocation")
+        expected_numeric_mapping = {
+            "selection_numeric_command_id": 33288,
+            "recenter_numeric_command_id": 33296,
+            "view_onto_numeric_command_id": 33297,
+            "fit_numeric_command_id": 33299,
+            "recenter_button_style": 10,
+            "installed_registry_order_verified": True,
+        }
+        if not isinstance(invocation, dict) or any(
+            invocation.get(field) != expected
+            for field, expected in expected_numeric_mapping.items()
+        ):
+            reasons.append("prepared_miller_native_command_mapping_missing")
+        runtime_ui = execution_recipe.get("runtime_ui_preflight")
+        if not isinstance(runtime_ui, dict) or runtime_ui.get(
+            "automation_gate_satisfied"
+        ) is not True:
+            reasons.append("prepared_miller_runtime_transaction_gate_missing")
+        reasons = _unique_strings(reasons)
+        return not reasons, reasons
     if execution_recipe.get("native_command_id") != "cmdViewer3DResetView":
         reasons.append("prepared_recipe_reset_command_mismatch")
     target = execution_recipe.get("accessibility_target")
@@ -6508,6 +6738,11 @@ def _local_view_replay_record_template(
             "analytic_in_plane_basis_matches_manifest": None,
             "native_in_plane_roll_observed": None,
         }
+    miller_plane_evidence = (
+        dict(action_receipt["miller_plane_evidence"])
+        if isinstance(action_receipt.get("miller_plane_evidence"), dict)
+        else None
+    )
     return {
         "project_id": project_id,
         "revision": revision,
@@ -6531,7 +6766,12 @@ def _local_view_replay_record_template(
             if key_sequence and keyboard_stages is None
             else None
         ),
-        "modifier_keys": [] if key_sequence and keyboard_stages is None else None,
+        "modifier_keys": (
+            []
+            if miller_plane_evidence is not None
+            or (key_sequence and keyboard_stages is None)
+            else None
+        ),
         "keyboard_stages": keyboard_stages,
         "rotation_increment_restored_degrees": action_receipt.get(
             "rotation_increment_restored_degrees"
@@ -6552,7 +6792,7 @@ def _local_view_replay_record_template(
             "movement_dialog_closed"
         ),
         "crystal_camera_evidence": crystal_camera_evidence,
-        "miller_plane_evidence": None,
+        "miller_plane_evidence": miller_plane_evidence,
     }
 
 
@@ -6967,6 +7207,7 @@ def _view_replay_execution_recipe(
     model_type: str | None = None,
     runtime_ui_preflight: dict[str, Any] | None = None,
     runtime_accessibility_preflight: dict[str, Any] | None = None,
+    local_miller_transaction_supported: bool = False,
 ) -> dict[str, Any]:
     """Return a conservative machine-readable recipe for one prepared view."""
 
@@ -7344,18 +7585,22 @@ def _view_replay_execution_recipe(
             plane_indices = []
             dialog_indices = []
             index_error = str(exc)
-        reset_command_id = "cmdViewer3DResetView"
         view_onto_command_id = "cmdViewer3DViewOnto"
-        reset_command_available = reset_command_id in command_ids
         view_onto_command_available = view_onto_command_id in command_ids
         runtime_accessibility_gate = _view_runtime_accessibility_gate(
             runtime_accessibility_preflight,
-            required_command_ids=[reset_command_id],
+            required_command_ids=[],
             require_viewer_document=True,
             require_empty_viewport_focus_target=False,
         )
         runtime_preflight = runtime_ui_preflight if isinstance(runtime_ui_preflight, dict) else {}
         selection_profile = runtime_preflight.get("selection_profile")
+        transactional_runtime_verification = bool(
+            local_miller_transaction_supported
+            and runtime_accessibility_gate["automation_gate_satisfied"]
+        )
+        if selection_profile is None and transactional_runtime_verification:
+            selection_profile = "viewport_unique_plane_properties_verified"
         evidence_requirements = {
             "symmetry_builder_registry_found": command_evidence.get(
                 "symmetry_builder_registry_found"
@@ -7421,7 +7666,10 @@ def _view_replay_execution_recipe(
                 )
                 is True
             )
-        runtime_gate_satisfied = runtime_preflight.get("automation_gate_satisfied") is True
+        runtime_gate_satisfied = bool(
+            runtime_preflight.get("automation_gate_satisfied") is True
+            or transactional_runtime_verification
+        )
         selection_profile_verified = selection_profile in {
             "object_tree_exact_item",
             "viewport_unique_plane_properties_verified",
@@ -7431,11 +7679,12 @@ def _view_replay_execution_recipe(
             for item in runtime_preflight.get("block_reasons") or []
             if str(item)
         ]
-        if not runtime_preflight:
+        if not runtime_preflight and not transactional_runtime_verification:
             runtime_block_reasons = ["runtime_miller_plane_ui_preflight_missing"]
+        elif transactional_runtime_verification:
+            runtime_block_reasons = []
         automation_ready = bool(
             registry_verified
-            and reset_command_available
             and view_onto_command_available
             and index_error is None
             and all(evidence_requirements.values())
@@ -7446,8 +7695,6 @@ def _view_replay_execution_recipe(
         block_reasons: list[str] = []
         if not registry_verified:
             block_reasons.append("local_view_command_registry_not_verified")
-        if not reset_command_available:
-            block_reasons.append("reset_view_command_not_registered")
         if not view_onto_command_available:
             block_reasons.append("view_onto_command_not_registered")
         block_reasons.extend(runtime_accessibility_gate["block_reasons"])
@@ -7470,9 +7717,9 @@ def _view_replay_execution_recipe(
             else MILLER_PLANE_SELECTION_METHOD
         )
         supporting_native_command_ids = [
-            reset_command_id,
             "cmdSymmetryBuilderMillerPlanes",
             "cmdGPEToggleExplorer",
+            "cmdViewer3DSelection",
         ]
         if not viewport_selection_profile:
             supporting_native_command_ids.append("cmdTEToggleExplorer")
@@ -7502,7 +7749,9 @@ def _view_replay_execution_recipe(
             "automation_ready": automation_ready,
             "camera_result_depends_on_reset_baseline": False,
             "camera_result_established_by": "native_miller_plane_view_onto",
-            "reset_view_role": "native_in_plane_roll_baseline_only",
+            "pre_action_view_baseline_required": True,
+            "reset_view_allowed": False,
+            "reset_view_role": "forbidden_because_ms_20_1_reset_is_not_reliably_undoable",
             "final_camera_established_by_native_command_id": (
                 view_onto_command_id
             ),
@@ -7512,21 +7761,26 @@ def _view_replay_execution_recipe(
             "prohibited_modifier_keys": ["Shift", "Ctrl", "Alt", "Win"],
             "supporting_native_command_ids": supporting_native_command_ids,
             "runtime_accessibility_preflight": runtime_accessibility_gate,
-            "accessibility_target": _resolved_recipe_accessibility_target(
-                runtime_accessibility_gate,
-                reset_command_id,
-                {
-                    "toolbar_name": "3D Viewer",
-                    "control_name": "3D Viewer Reset View",
-                    "command_id": reset_command_id,
-                },
-            ),
+            "accessibility_target": None,
             "runtime_ui_preflight": {
                 "required": True,
-                "status": runtime_preflight.get("status") or "missing",
+                "status": (
+                    "transactional_verification_required"
+                    if transactional_runtime_verification
+                    and runtime_preflight.get("automation_gate_satisfied") is not True
+                    else runtime_preflight.get("status") or "missing"
+                ),
                 "automation_gate_satisfied": runtime_gate_satisfied,
+                "verification_timing": (
+                    "during_local_transaction_before_plane_create"
+                    if transactional_runtime_verification
+                    else "persisted_preflight"
+                ),
                 "artifact_path": runtime_preflight.get("artifact_path"),
-                "binding_verified": runtime_preflight.get("binding_verified") is True,
+                "binding_verified": bool(
+                    runtime_preflight.get("binding_verified") is True
+                    or transactional_runtime_verification
+                ),
                 "block_reasons": runtime_block_reasons,
                 "selection_profile": selection_profile,
                 "required_true_fields": list(MILLER_RUNTIME_UI_REQUIRED_TRUE_FIELDS),
@@ -7655,7 +7909,15 @@ def _view_replay_execution_recipe(
                 "dropdown_control_name": "3D Viewer Recenter",
                 "menu_item_name": "View Onto",
                 "command_id": view_onto_command_id,
-                "semantic_targeting": "named_toolbar_and_native_popup_menu_item_rect",
+                "selection_numeric_command_id": 33288,
+                "recenter_numeric_command_id": 33296,
+                "view_onto_numeric_command_id": 33297,
+                "fit_numeric_command_id": 33299,
+                "recenter_button_style": 10,
+                "installed_registry_order_verified": registry_verified,
+                "semantic_targeting": (
+                    "wm_command_after_live_toolbar_numeric_mapping_and_installed_registry_order_verification"
+                ),
             },
             "miller_planes_dialog_invocation": {
                 "method": "keyboard_menu_mnemonic",
@@ -7713,7 +7975,9 @@ def _view_replay_execution_recipe(
                 ),
                 "required_analytic_camera_up_match": False,
                 "required_analytic_camera_right_match": False,
-                "in_plane_roll_policy": "materials_studio_native_smallest_acute_angle_from_reset",
+                "in_plane_roll_policy": (
+                    "materials_studio_native_smallest_acute_angle_from_pre_action_view_baseline"
+                ),
                 "native_roll_must_be_reported_separately": True,
                 "camera_matches_manifest_interpretation": (
                     "direct_lattice_direction_and_collinear_plane_normal_match_with_native_roll"
@@ -7731,7 +7995,6 @@ def _view_replay_execution_recipe(
                 "required_undo_labels": [
                     "Undo View Onto Miller Plane",
                     "Undo Create Miller Plane",
-                    "Undo Reset View",
                 ],
                 "require_exactly_one_new_miller_plane": True,
                 "require_selected_plane_count": 1,
@@ -7739,6 +8002,8 @@ def _view_replay_execution_recipe(
                 "require_no_temporary_miller_nodes_after_cleanup": True,
                 "require_structure_artifact_sha256_unchanged": True,
                 "restore_initial_view_via_whitelisted_undo": True,
+                "require_exact_viewport_pixel_restoration": True,
+                "reset_view_forbidden": True,
                 "unexpected_dialog_click_through_requires_exact_undo_and_abort": True,
             },
             "required_record_evidence": {
@@ -7759,8 +8024,8 @@ def _view_replay_execution_recipe(
                 "activate_target_window_and_verify_foreground",
                 "verify_current_bound_runtime_ui_preflight_gate",
                 "record_clean_document_state_and_structure_artifact_sha256",
-                "refresh_accessibility_tree_and_verify_recipe_reset_target",
-                "invoke_recipe_reset_view_accessibility_target",
+                "capture_pre_action_view_baseline_with_properties_explorer_open",
+                "verify_3d_viewer_selection_mode_is_active",
                 "invoke_tools_miller_planes_with_alt_t_then_m_keyboard_mnemonics",
                 "verify_miller_planes_dialog_and_exact_control_ids",
                 "capture_fresh_modeless_dialog_child_window_state",
@@ -7792,7 +8057,8 @@ def _view_replay_execution_recipe(
                     ]
                 ),
                 "verify_properties_filter_and_miller_label",
-                "invoke_named_3d_viewer_recenter_popup_view_onto_item",
+                "verify_live_recenter_view_onto_fit_numeric_mapping_against_installed_registry_order",
+                "invoke_view_onto_by_verified_native_wm_command",
                 "capture_fresh_screenshot_before_cleanup",
                 *(
                     ["verify_direct_lattice_direction_matches_collinear_plane_normal"]
@@ -7800,8 +8066,8 @@ def _view_replay_execution_recipe(
                     else []
                 ),
                 "verify_plane_normal_and_report_native_in_plane_roll_separately",
-                "undo_only_whitelisted_view_onto_create_miller_plane_and_reset_view_actions",
-                "verify_document_clean_tree_restored_view_restored_and_sha256_unchanged",
+                "undo_only_whitelisted_view_onto_then_create_miller_plane_actions",
+                "verify_document_clean_viewport_pixel_exactly_restored_and_sha256_unchanged",
                 "record_view_replay_event_with_miller_plane_evidence",
             ],
             "safety_notes": [
@@ -7811,6 +8077,7 @@ def _view_replay_execution_recipe(
                     else "Do not use blind viewport coordinates; derive the click rectangle from the exact Object Tree item."
                 ),
                 "Do not click Tools > Miller Planes with a pointer or accessibility click; use Alt+T then M.",
+                "Do not invoke Reset View. Materials Studio 20.1 did not expose a reliable Undo Reset View for the verified live document; restore the pre-action camera only by undoing View Onto.",
                 "Target CmdCreate and the dialog close control only from a fresh modeless child-window state; reject parent-window coordinates and accessibility elements outside the child bounds.",
                 "Do not assume Ctrl+A replaced TxtHKL. Prefer exact set_value. From any fresh readback, first repair a verified affix relation, a differing suffix, or preserve the longest common contiguous substring while deleting only the prefix before it. Wait the recipe navigation delay after Home or End, never batch repeated Backspace/Delete events, and wait the recipe interpress delay between them. Wait the post-mutation delay before each fresh readback and replan after every mutation. Use at most one observed-count full replacement; after it, only relation-based repairs remain allowed and an unrelated value must abort. Invoke Create only when the trimmed text exactly matches dialog_miller_indices_text.",
                 "If a default plane is created during dialog invocation, use only the exact named Undo Create Miller Plane action, verify cleanup, and abort this replay attempt.",
@@ -7823,7 +8090,7 @@ def _view_replay_execution_recipe(
                     if direction_via_miller_plane
                     else []
                 ),
-                "Undo View Onto, Create Miller Plane, and Reset View in exact stack order; stop before any label outside the explicit whitelist.",
+                "Undo View Onto and Create Miller Plane in exact stack order; stop before any label outside the explicit whitelist and require exact viewport-pixel restoration.",
             ],
             "installed_evidence": {
                 **evidence_requirements,
@@ -8538,11 +8805,6 @@ def _view_replay_recipe_contract_status(
             if isinstance(recipe.get("runtime_accessibility_preflight"), dict)
             else {}
         )
-        reset_target = (
-            recipe.get("accessibility_target")
-            if isinstance(recipe.get("accessibility_target"), dict)
-            else {}
-        )
         if recipe.get("camera_result_depends_on_reset_baseline") is not False:
             reasons.append("miller_view_onto_reset_camera_dependency_contract_missing")
         if recipe.get("camera_result_established_by") != (
@@ -8554,9 +8816,43 @@ def _view_replay_recipe_contract_status(
         ):
             reasons.append("miller_view_onto_final_camera_command_mismatch")
         if runtime_accessibility.get("required") is not True:
-            reasons.append("miller_view_onto_reset_accessibility_preflight_missing")
-        if reset_target.get("command_id") != "cmdViewer3DResetView":
-            reasons.append("miller_view_onto_reset_accessibility_target_missing")
+            reasons.append("miller_view_onto_accessibility_preflight_missing")
+        if recipe.get("pre_action_view_baseline_required") is not True:
+            reasons.append("miller_view_onto_pre_action_baseline_contract_missing")
+        if recipe.get("reset_view_allowed") is not False:
+            reasons.append("miller_view_onto_reset_forbidden_contract_missing")
+        if recipe.get("accessibility_target") is not None:
+            reasons.append("miller_view_onto_reset_target_must_be_absent")
+        transient_contract = (
+            recipe.get("transient_change_contract")
+            if isinstance(recipe.get("transient_change_contract"), dict)
+            else {}
+        )
+        if transient_contract.get("required_undo_labels") != [
+            "Undo View Onto Miller Plane",
+            "Undo Create Miller Plane",
+        ]:
+            reasons.append("miller_view_onto_two_step_cleanup_contract_missing")
+        if transient_contract.get("require_exact_viewport_pixel_restoration") is not True:
+            reasons.append("miller_view_onto_exact_restoration_contract_missing")
+        invocation = (
+            recipe.get("view_command_invocation")
+            if isinstance(recipe.get("view_command_invocation"), dict)
+            else {}
+        )
+        expected_numeric_mapping = {
+            "selection_numeric_command_id": 33288,
+            "recenter_numeric_command_id": 33296,
+            "view_onto_numeric_command_id": 33297,
+            "fit_numeric_command_id": 33299,
+            "recenter_button_style": 10,
+            "installed_registry_order_verified": True,
+        }
+        if any(
+            invocation.get(field) != expected
+            for field, expected in expected_numeric_mapping.items()
+        ):
+            reasons.append("miller_view_onto_native_command_mapping_contract_missing")
     else:
         timing_mismatches = []
         missing_timing_actions = []
@@ -9718,11 +10014,22 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
         and execution_action.get("gui_input_required") is True
         and execution_action.get("post_action_observation_required") is True
     )
+    local_preview_ready = bool(
+        automatic_replay_gate_open
+        and execution_action.get("executor")
+        == "material_studio_gui_execute_view_replay"
+        and execution_action.get("payload_hint_is_directly_callable") is True
+        and execution_action.get("gui_input_required") is False
+        and execution_action.get("post_action_observation_required") is False
+        and isinstance(execution_action.get("payload_hint"), dict)
+        and execution_action["payload_hint"].get("execution_mode") == "preview"
+    )
     continuation_overrides = (
         continuation_status in _VIEW_REPLAY_CONTINUATION_ACTION_OVERRIDE_STATUSES
         or external_execution_ready
+        or local_preview_ready
     )
-    if external_execution_ready:
+    if external_execution_ready or local_preview_ready:
         recommended_tool = execution_action.get("executor")
         recommended_action = execution_action.get("action")
         continuation_payload = execution_action.get("payload_hint")
@@ -9772,6 +10079,14 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
                 if external_execution_ready
                 else {}
             ),
+            **(
+                {
+                    "gui_input_required": False,
+                    "post_action_observation_required": False,
+                }
+                if local_preview_ready
+                else {}
+            ),
             "source": "replay_continuation",
         }
     else:
@@ -9810,6 +10125,10 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
         reason_codes.append(
             "gui_recipe_execution_and_fresh_observation_precede_evidence_recording"
         )
+    if local_preview_ready:
+        reason_codes.append(
+            "local_uia_preview_precedes_explicit_gui_execution_confirmation"
+        )
     if stale_recipe_execution_blocked:
         reason_codes.append("current_safety_recipe_required_before_gui_replay")
     if external_review_required:
@@ -9840,8 +10159,16 @@ def _reconcile_view_replay_next_action(manifest: dict[str, Any]) -> None:
             "automatic_replay_allowed": automatic_replay_allowed,
             "stale_recipe_execution_blocked": stale_recipe_execution_blocked,
             "external_review_required": external_review_required,
-            "gui_input_required": external_execution_ready,
-            "post_action_observation_required": external_execution_ready,
+            "gui_input_required": bool(
+                execution_action.get("gui_input_required") is True
+                if external_execution_ready or local_preview_ready
+                else False
+            ),
+            "post_action_observation_required": bool(
+                execution_action.get("post_action_observation_required") is True
+                if external_execution_ready or local_preview_ready
+                else False
+            ),
             "metadata_write_allowed_before_observation": False,
             "record_tool_call_ready": False,
             "activation_required_before_gui_input": preflight.get(
@@ -10381,6 +10708,16 @@ def _refresh_view_replay_summary(
     pending_recipe_upgrade_required = bool(
         recipe_contract.get("pending_recipe_upgrade_required") is True
     )
+    local_miller_preview_supported = False
+    local_miller_preview_block_reasons: list[str] = []
+    if (
+        next_automation_step is not None
+        and next_action_recipe.get("recipe_kind") in MILLER_VIEW_ONTO_RECIPE_KINDS
+    ):
+        (
+            local_miller_preview_supported,
+            local_miller_preview_block_reasons,
+        ) = _local_uia_recipe_support(next_action_recipe)
     if all_confirmed:
         continuation_status = "complete"
         recommended_executor = None
@@ -10428,14 +10765,20 @@ def _refresh_view_replay_summary(
         recommended_mcp_tool = "material_studio_gui_prepare_view_replay"
     elif next_automation_step is not None:
         continuation_status = "automatic_recipe_ready"
-        recommended_executor = "computer_use"
+        recommended_executor = (
+            "local_uia_preview"
+            if local_miller_preview_supported
+            else "computer_use"
+        )
         next_recipe = (
             next_automation_step.get("execution_recipe")
             if isinstance(next_automation_step.get("execution_recipe"), dict)
             else {}
         )
         recommended_action = (
-            "execute_documented_direction_via_collinear_miller_plane_view_onto_recipe_cleanup_then_record_view"
+            "preview_transactional_miller_plane_view_replay_before_explicit_execute"
+            if local_miller_preview_supported
+            else "execute_documented_direction_via_collinear_miller_plane_view_onto_recipe_cleanup_then_record_view"
             if next_recipe.get("recipe_kind")
             == "crystal_direction_via_collinear_miller_plane_view_onto"
             else "execute_documented_miller_plane_view_onto_recipe_cleanup_then_record_view"
@@ -10449,7 +10792,11 @@ def _refresh_view_replay_summary(
             if _verified_anonymous_recipe_targets(next_recipe)
             else "execute_named_accessibility_recipe_then_record_view"
         )
-        recommended_mcp_tool = None
+        recommended_mcp_tool = (
+            "material_studio_gui_execute_view_replay"
+            if local_miller_preview_supported
+            else None
+        )
     elif next_actionable_pending_step is not None:
         continuation_status = (
             "runtime_accessibility_blocks_automatic_replay"
@@ -10563,6 +10910,7 @@ def _refresh_view_replay_summary(
                     "unique_transient_plane_region_observed": None,
                     "properties_selection_verified": None,
                     "view_onto_popup_menu_observed": None,
+                    "view_onto_native_command_mapping_verified": None,
                     "dialog_show_set_of_parallel_planes": None,
                     "dialog_show_symmetry_images": None,
                 }
@@ -10586,6 +10934,7 @@ def _refresh_view_replay_summary(
             ),
             "analytic_in_plane_basis_matches_manifest": None,
             "native_in_plane_roll_policy_observed": None,
+            "pre_action_view_baseline_captured": None,
             "reset_view_before_alignment": None,
             "screenshot_captured_before_cleanup": None,
             "document_was_clean_before_replay": None,
@@ -10659,6 +11008,16 @@ def _refresh_view_replay_summary(
             if miller_plane_record_template is not None
             else None
         ),
+    }
+    local_miller_preview_payload_hint = {
+        "project_id": manifest.get("project_id"),
+        "revision": manifest.get("revision"),
+        "view_name": (
+            selected_next_step.get("view_name")
+            if selected_next_step is not None
+            else None
+        ),
+        "execution_mode": "preview",
     }
     record_payload_template = {
         "project_id": manifest.get("project_id"),
@@ -10800,38 +11159,61 @@ def _refresh_view_replay_summary(
     required_post_action_observation_fields = list(
         dict.fromkeys(required_post_action_observation_fields)
     )
-    execution_action = (
-        {
-            "phase": "gui_recipe_execution",
-            "executor": "computer_use",
-            "action": recommended_action,
-            "payload_hint": execution_payload_hint,
-            "payload_hint_is_directly_callable": False,
-            "gui_input_required": True,
-            "metadata_write_allowed": False,
-            "structure_mutation_allowed": False,
-            "revision_creation_allowed": False,
-            "post_action_observation_required": True,
-            "post_action_record_tool": "material_studio_gui_record_view_replay",
-        }
-        if next_automation_step is not None
-        else None
-    )
+    execution_action: dict[str, Any] | None = None
+    if next_automation_step is not None:
+        if local_miller_preview_supported:
+            execution_action = {
+                "phase": "local_uia_recipe_preview",
+                "executor": "material_studio_gui_execute_view_replay",
+                "action": recommended_action,
+                "payload_hint": local_miller_preview_payload_hint,
+                "payload_hint_is_directly_callable": True,
+                "gui_input_required": False,
+                "metadata_write_allowed": False,
+                "structure_mutation_allowed": False,
+                "revision_creation_allowed": False,
+                "post_action_observation_required": False,
+                "explicit_execute_confirmation_required_after_preview": True,
+            }
+        else:
+            execution_action = {
+                "phase": "gui_recipe_execution",
+                "executor": "computer_use",
+                "action": recommended_action,
+                "payload_hint": execution_payload_hint,
+                "payload_hint_is_directly_callable": False,
+                "gui_input_required": True,
+                "metadata_write_allowed": False,
+                "structure_mutation_allowed": False,
+                "revision_creation_allowed": False,
+                "post_action_observation_required": True,
+                "post_action_record_tool": "material_studio_gui_record_view_replay",
+            }
+
     continuation_payload_hint = (
         execution_payload_hint if execution_action is not None else record_payload_template
     )
+    if local_miller_preview_supported:
+        continuation_payload_hint = local_miller_preview_payload_hint
     continuation_high_level_payload_hint: dict[str, Any] = {}
     post_action_record_payload_template = (
-        record_payload_template if execution_action is not None else None
+        record_payload_template
+        if execution_action is not None
+        and execution_action.get("post_action_observation_required") is True
+        else None
     )
     post_action_high_level_payload_template = (
         post_action_high_level_record_payload_template
         if execution_action is not None
+        and execution_action.get("post_action_observation_required") is True
         else None
     )
     post_review_record_payload_template: dict[str, Any] | None = None
     post_review_high_level_payload_template: dict[str, Any] | None = None
-    payload_hint_is_directly_callable = False
+    payload_hint_is_directly_callable = bool(
+        execution_action is not None
+        and execution_action.get("payload_hint_is_directly_callable") is True
+    )
     if pending_recipe_upgrade_required:
         continuation_payload_hint = {
             "user_request": "Continue GUI view replay using the current safety recipe.",
@@ -11022,6 +11404,8 @@ def _refresh_view_replay_summary(
         "runtime_accessibility_preflight": runtime_accessibility_recipe,
         "runtime_ui_preflight_required": runtime_ui_preflight_required,
         "runtime_ui_preflight": selected_recipe.get("runtime_ui_preflight"),
+        "local_miller_preview_supported": local_miller_preview_supported,
+        "local_miller_preview_block_reasons": local_miller_preview_block_reasons,
         "recommended_executor": recommended_executor,
         "recommended_action": recommended_action,
         "recommended_mcp_tool": recommended_mcp_tool,
@@ -11031,8 +11415,14 @@ def _refresh_view_replay_summary(
             if execution_action is not None
             else None
         ),
-        "gui_input_required": execution_action is not None,
-        "post_action_observation_required": execution_action is not None,
+        "gui_input_required": bool(
+            execution_action is not None
+            and execution_action.get("gui_input_required") is True
+        ),
+        "post_action_observation_required": bool(
+            execution_action is not None
+            and execution_action.get("post_action_observation_required") is True
+        ),
         "record_call_ready": False,
         "record_tool": "material_studio_gui_record_view_replay",
         "high_level_record_tool": "material_studio_live_modeling_request",

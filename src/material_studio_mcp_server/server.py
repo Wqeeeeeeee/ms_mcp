@@ -471,6 +471,7 @@ class GuiMillerPlaneViewportSelectionProbeInput(BaseModel):
     viewport_plane_selection_observed: bool
     properties_selection_verified: bool
     view_onto_popup_menu_observed: bool
+    view_onto_native_command_mapping_verified: bool = False
     hit_test_basis: str = Field(
         ...,
         pattern=r"^fresh_before_after_screenshot_unique_transient_plane_region$",
@@ -498,7 +499,10 @@ class GuiMillerPlaneRuntimeUiEvidenceInput(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    source: str = Field(default="computer_use", pattern=r"^(computer_use|manual_review)$")
+    source: str = Field(
+        default="computer_use",
+        pattern=r"^(computer_use|manual_review|local_uia)$",
+    )
     expected_revision: int = Field(..., ge=0)
     expected_window_handle: int = Field(..., gt=0)
     expected_window_title: str = Field(..., min_length=1, max_length=500)
@@ -511,6 +515,7 @@ class GuiMillerPlaneRuntimeUiEvidenceInput(BaseModel):
     tree_explorer_menu_observed: bool
     properties_explorer_menu_observed: bool
     view_onto_control_observed: bool
+    view_onto_native_command_mapping_verified: bool = False
     pointer_menu_click_through_risk_observed: bool
     unexpected_plane_created_during_probe: bool
     unexpected_plane_cleanup_verified: bool
@@ -624,6 +629,7 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     unique_transient_plane_region_observed: bool | None = None
     properties_selection_verified: bool | None = None
     view_onto_popup_menu_observed: bool | None = None
+    view_onto_native_command_mapping_verified: bool
     dialog_show_set_of_parallel_planes: bool | None = None
     dialog_show_symmetry_images: bool | None = None
     properties_filter: str = Field(..., min_length=1, max_length=120)
@@ -639,7 +645,8 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
     direct_lattice_direction_matches_manifest: bool | None = None
     analytic_in_plane_basis_matches_manifest: bool | None
     native_in_plane_roll_policy_observed: bool
-    reset_view_before_alignment: bool
+    pre_action_view_baseline_captured: bool
+    reset_view_before_alignment: bool | None = None
     screenshot_captured_before_cleanup: bool
     document_was_clean_before_replay: bool
     temporary_miller_plane_cleanup_verified: bool
@@ -659,7 +666,7 @@ class GuiMillerPlaneReplayEvidenceInput(BaseModel):
                 )
             ),
         ]
-    ] = Field(..., min_length=3, max_length=16)
+    ] = Field(..., min_length=2, max_length=16)
 
 
 def _dump_miller_plane_replay_evidence(
@@ -3560,8 +3567,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "failed_reset_baseline_suppresses_dependent_recipes": True,
             "failed_reset_baseline_only_blocks_final_camera_dependencies": True,
             "postcheck_failure_clear_requires_integrity_verified_success": True,
-            "miller_view_onto_requires_bound_reset_accessibility_preflight": True,
-            "miller_view_onto_accepts_verified_anonymous_reset_target": True,
+            "miller_view_onto_requires_bound_reset_accessibility_preflight": False,
+            "miller_view_onto_accepts_verified_anonymous_reset_target": False,
+            "miller_view_onto_requires_pre_action_view_baseline": True,
+            "miller_view_onto_reset_view_allowed": False,
+            "miller_view_onto_transactional_runtime_ui_verification": True,
+            "miller_view_onto_exact_viewport_restoration_required": True,
             "miller_view_onto_final_camera_depends_on_reset_orientation": False,
             "miller_view_onto_final_camera_command_id": "cmdViewer3DViewOnto",
             "client_asserted_command_to_element_mapping_allowed": False,
@@ -6488,8 +6499,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "failed_reset_baseline_suppresses_dependent_recipes": True,
                 "failed_reset_baseline_only_blocks_final_camera_dependencies": True,
                 "postcheck_failure_clear_requires_integrity_verified_success": True,
-                "miller_view_onto_requires_bound_reset_accessibility_preflight": True,
-                "miller_view_onto_accepts_verified_anonymous_reset_target": True,
+                "miller_view_onto_requires_bound_reset_accessibility_preflight": False,
+                "miller_view_onto_accepts_verified_anonymous_reset_target": False,
+                "miller_view_onto_requires_pre_action_view_baseline": True,
+                "miller_view_onto_reset_view_allowed": False,
+                "miller_view_onto_transactional_runtime_ui_verification": True,
+                "miller_view_onto_exact_viewport_restoration_required": True,
                 "miller_view_onto_final_camera_depends_on_reset_orientation": False,
                 "miller_view_onto_final_camera_command_id": (
                     "cmdViewer3DViewOnto"
@@ -6505,7 +6520,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "supports_crystal_plane_views": sorted(CRYSTAL_PLANE_VIEW_INDICES),
                 "supports_oriented_frame_views": sorted(ORIENTED_FRAME_VIEW_SPECS),
                 "arbitrary_camera_materialscript_api_verified": False,
-                "local_mcp_backend": "manifest_only",
+                "local_mcp_backend": (
+                    "standard_isometric_and_transactional_miller_plane_uia"
+                ),
                 "external_replay_backends": [
                     "computer_use",
                     "local_gui_fallback",
@@ -6610,6 +6627,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "requires_miller_plane_evidence": True,
                     "requires_current_bound_runtime_ui_preflight": True,
                     "runtime_registry_or_help_evidence_alone_is_sufficient": False,
+                    "runtime_ui_preflight_may_be_verified_inside_transaction": True,
+                    "reset_view_allowed": False,
+                    "pre_action_view_baseline_required": True,
                     "miller_planes_dialog_invocation": ["Alt+T", "M"],
                     "pointer_or_accessibility_menu_click_allowed": False,
                     "modeless_dialog_targeting_surface": (
@@ -6627,8 +6647,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "required_undo_labels": [
                         "Undo View Onto Miller Plane",
                         "Undo Create Miller Plane",
-                        "Undo Reset View",
                     ],
+                    "exact_viewport_pixel_restoration_required": True,
                     "optional_observed_undo_labels": ["Undo Recenter"],
                     "structure_artifact_sha256_must_remain_unchanged": True,
                     "exact_analytic_in_plane_roll_required": False,
@@ -8355,6 +8375,8 @@ def _view_replay_preflight_action_id(
         return "prepare_gui_view_replay"
     if recommended_tool == "material_studio_gui_record_view_replay":
         return "record_gui_view_replay_evidence"
+    if recommended_tool == "material_studio_gui_execute_view_replay":
+        return "preview_gui_view_replay"
     if recommended_tool == "computer_use":
         return "execute_gui_view_replay_then_record_observation"
     if (
@@ -8447,8 +8469,15 @@ def _latest_project_visual_diagnostics_preflight_summary(
         and nonmutating_gate
         and recommended_tool == "material_studio_live_modeling_request"
     )
+    safe_local_preview = bool(
+        directly_callable
+        and nonmutating_gate
+        and not issues_gui_input
+        and recommended_tool == "material_studio_gui_execute_view_replay"
+        and payload_hint.get("execution_mode") == "preview"
+    )
     safe_to_call_without_confirmation = bool(
-        safe_session_tool or safe_metadata_continuation
+        safe_session_tool or safe_metadata_continuation or safe_local_preview
     )
     action_plan = _drop_none_values(
         {
@@ -30685,6 +30714,8 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "camera_result_depends_on_reset_baseline",
             "camera_result_established_by",
             "reset_view_role",
+            "pre_action_view_baseline_required",
+            "reset_view_allowed",
             "final_camera_established_by_native_command_id",
             "reset_before_key_sequence",
             "key_sequence",
@@ -30702,6 +30733,8 @@ def _compact_view_replay_execution_recipe(value: Any) -> dict[str, Any]:
             "selection_method",
             "selection_path_suffix",
             "viewport_selection_contract",
+            "view_command_invocation",
+            "transient_change_contract",
             "miller_plane_indices",
             "dialog_miller_indices",
             "dialog_miller_indices_text",
@@ -31728,6 +31761,78 @@ def _deduplicate_compact_gui_view_replay(
     return compact
 
 
+def _compact_view_replay_continuation_ref(
+    value: Any,
+    *,
+    detail_ref: str,
+) -> dict[str, Any]:
+    """Keep the replay decision while referring duplicated recipe detail elsewhere."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "next_pending_view_name",
+            "next_actionable_pending_view_name",
+            "next_automation_ready_view_name",
+            "recommended_action",
+            "recommended_mcp_tool",
+            "recommended_tool",
+            "recommended_executor",
+            "automatic_replay_ready",
+            "gui_input_required",
+            "post_action_observation_required",
+            "record_call_ready",
+            "record_tool",
+            "recipe_upgrade_required",
+            "current_camera_evidence_reverification_required",
+            "evidence_integrity_reverification_required",
+            "event_journal_reverification_required",
+            "runtime_ui_preflight_required",
+            "runtime_accessibility_preflight_required",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint_is_directly_callable",
+        ),
+    )
+    compact["continuation_detail_ref"] = detail_ref
+    return compact
+
+
+def _deduplicate_compact_view_replay_for_budget(
+    compact: dict[str, Any],
+) -> list[str]:
+    """Replace exact top-level replay duplicates with stable nested references."""
+
+    replay = compact.get("view_replay")
+    if not isinstance(replay, dict):
+        return []
+
+    omitted: list[str] = []
+    nested_continuation = replay.get("replay_continuation")
+    if isinstance(nested_continuation, dict):
+        for key in ("view_replay_continuation", "replay_continuation"):
+            top_level = compact.get(key)
+            if not isinstance(top_level, dict) or top_level != nested_continuation:
+                continue
+            compact[key] = _compact_view_replay_continuation_ref(
+                top_level,
+                detail_ref="view_replay.replay_continuation",
+            )
+            omitted.append(f"{key}.duplicated_recipe_detail")
+
+    for key in ("replay_summary", "recipe_contract", "event_journal"):
+        top_level = compact.get(key)
+        nested = replay.get(key)
+        if not isinstance(top_level, dict) or top_level != nested:
+            continue
+        compact[key] = {f"{key}_detail_ref": f"view_replay.{key}"}
+        omitted.append(f"{key}.duplicated_detail")
+    return omitted
+
+
 def _compact_json_size_bytes(value: Any) -> int:
     """Return the protocol test size for a JSON-compatible value."""
 
@@ -31856,6 +31961,14 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
 
     receipt["hard_budget_applied"] = True
     omitted_fields = receipt["omitted_fields"]
+    omitted_fields.extend(_deduplicate_compact_view_replay_for_budget(bounded))
+    if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+        return _finalize_live_compact_response(
+            bounded,
+            receipt,
+            semantic_core_fields,
+        )
+
     calculation_preview = bounded.get("calculation_preview")
     if isinstance(calculation_preview, dict):
         bounded["calculation_preview"] = _mapping_subset(
@@ -39697,11 +39810,11 @@ def material_studio_gui_prepare_view_replay(
 def material_studio_gui_execute_view_replay(
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
-    view_name: Annotated[str | None, Field(description="Optional prepared standard view. Omitted selects the next pending locally executable view.", min_length=1, max_length=80)] = None,
-    execution_mode: Annotated[ExecutionMode, Field(description="preview performs only a read-only UIA preflight; execute performs one Reset plus allowlisted unmodified-arrow recipe.")] = ExecutionMode.PREVIEW,
+    view_name: Annotated[str | None, Field(description="Optional prepared standard, isometric, or crystallographic Miller view. Omitted selects the next pending locally executable view.", min_length=1, max_length=80)] = None,
+    execution_mode: Annotated[ExecutionMode, Field(description="preview performs only a read-only UIA preflight; execute runs either a Reset/arrow camera recipe or a transactional Miller-plane View Onto recipe that captures then exactly restores the prior view.")] = ExecutionMode.PREVIEW,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
 ) -> dict[str, Any]:
-    """Run one standard GUI view recipe without recording visual acceptance."""
+    """Run one locally allowlisted GUI view recipe without recording acceptance."""
 
     try:
         context = _resolve_gui_action_context(

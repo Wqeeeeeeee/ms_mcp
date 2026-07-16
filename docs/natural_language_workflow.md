@@ -425,8 +425,11 @@ After inspecting the exact window/UIA gate, an explicit
 in the already open wrapper. The result remains
 `awaiting_visual_confirmation`: inspect the returned BMP with Computer Use or a
 human reviewer, fill the null visibility/camera/native-roll observations, and
-only then record the replay. Isometric and crystallographic plane/direction
-recipes remain on their reviewed Computer Use paths.
+only then record the replay. A Miller plane/direction recipe that matches the
+verified local screenshot-difference/Properties profile follows the same
+preview-first tool path and performs a bounded create/View Onto/undo transaction
+only after explicit execute intent. Unsupported Miller selection profiles and
+other reviewed camera backends remain on their Computer Use paths.
 
 For crystal standard views, do not compare the screenshot against the audit's
 analytic in-plane basis as an exact equality test. Confirm the requested view
@@ -447,9 +450,12 @@ region; a no-modifier selection must then make Properties Explorer report
 `Filter=Miller Plane` and the exact label. Project Explorer is not accepted as
 Object Tree. A successful record requires `miller_plane_evidence` showing one
 created/selected plane, fresh screenshot-derived selection, a pre-cleanup
-screenshot, unchanged structure SHA-256, whitelisted View Onto/Create/Reset
-undo labels, no remaining temporary plane, a clean document, and restoration
-of the reset view baseline. Its camera contract verifies the reciprocal-plane
+screenshot, unchanged structure SHA-256, a captured pre-action viewport with
+no Reset, live numeric View Onto mapping, exactly `Undo View Onto Miller Plane`
+then `Undo Create Miller Plane`, no remaining temporary plane, a clean document,
+and pixel-identical restoration of the pre-action view. The local transactional
+executor can produce this mechanical evidence only after explicit execute
+intent; visual acceptance remains separate. Its camera contract verifies the reciprocal-plane
 normal and the MS native smallest-acute-angle roll separately; it does not assert exact analytic
 up/right agreement. A `crystal_*` lattice-direction view is automatic-ready
 only when its direct-space vector has an exact bounded integer reciprocal-plane

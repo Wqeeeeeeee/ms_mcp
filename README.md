@@ -208,13 +208,15 @@ before acceptance. Submit externally collected live observations as
 `runtime_accessibility_evidence`; it is persisted in
 `gui_view_replay_accessibility_preflight.json` only after revision, wrapper
 handle/title, and single-window binding pass. Static registry/help evidence is
-not an automation grant. When MS exposes only unnamed toolbar children, the
-recipe stays review-gated and unnamed element indexes or coordinates are
-prohibited. `crystal_plane_*` views can also become
-automatic-ready when the installed Miller Plane/Properties/View Onto evidence
-is complete, a supported semantic selection profile is verified, and a
-current-window `runtime_ui_evidence` probe is bound to the exact revision and
-wrapper handle/title. Static registry/help evidence alone is insufficient. The
+not an automation grant. When MS exposes only unnamed toolbar children, their
+mapping must come from the server's exact live toolbar/registry verification;
+client-guessed indexes or coordinates are prohibited. `crystal_plane_*` views
+can also become automatic-ready when the installed Miller
+Plane/Properties/View Onto evidence is complete and the local transactional
+executor can verify one supported semantic selection profile. External replay
+still requires a current-window `runtime_ui_evidence` probe bound to the exact
+revision and wrapper handle/title. Static registry/help evidence alone is
+insufficient. The
 dialog must be opened with `Alt+T`, then `M`; pointer/accessibility menu clicks
 are prohibited because they can click through and create a default plane. Any
 dialog control must then be targeted from a fresh modeless child-window state:
@@ -232,8 +234,12 @@ transient-plane region from fresh before/after screenshots, selects it without
 modifiers, and requires Properties Explorer to show `Filter=Miller Plane` and
 the exact Miller label before the named View Onto action. Project Explorer is
 not an Object Tree substitute, and old viewport coordinates are never reused.
-The recipe records strict `miller_plane_evidence` proving exact cleanup, Reset
-View restoration, and an unchanged structure hash. The
+The recipe records strict `miller_plane_evidence` proving a pre-action viewport
+baseline, no Reset, live `View Onto=33297` mapping, exactly the View Onto/Create
+Plane undo sequence, pixel-identical viewport restoration, and an unchanged
+structure hash. `material_studio_gui_execute_view_replay` can perform this
+bounded transaction after explicit execute intent; its aligned screenshot and
+mechanical receipt still require visual review before acceptance. The
 camera receipt verifies the reciprocal-plane normal plus MS native in-plane
 roll; it does not misreport exact analytic up/right agreement. A lattice
 direction `crystal_*` view can use the same transient-plane workflow only when

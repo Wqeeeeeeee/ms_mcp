@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -204,6 +205,168 @@ class _ReplayBackend:
         }
 
 
+class _MillerReplayBackend(_ReplayBackend):
+    miller_plane_transaction_supported = True
+
+    def probe(self, **kwargs: object) -> dict:
+        result = super().probe(**kwargs)
+        result["safe_for_standard_view_replay"] = False
+        result["safe_for_miller_plane_transaction"] = True
+        return result
+
+    def execute_standard_recipe(self, **kwargs: object) -> dict:
+        self.execute_calls.append(dict(kwargs))
+        recipe = kwargs["execution_recipe"]
+        assert isinstance(recipe, dict)
+        assert recipe["recipe_kind"] == "miller_plane_view_onto"
+        assert recipe["reset_view_allowed"] is False
+
+        structure_path = Path(str(kwargs["structure_path"])).resolve()
+        artifact_hash = hashlib.sha256(structure_path.read_bytes()).hexdigest()
+        evidence_dir = Path(str(kwargs["evidence_dir"])).resolve()
+        aligned_path = evidence_dir / "aligned_before_cleanup.bmp"
+        aligned_path.write_bytes(_tiny_bmp())
+        dialog_indices = list(recipe["dialog_miller_indices"])
+        plane_indices = list(recipe["miller_plane_indices"])
+        properties_label = str(recipe["properties_miller_label"])
+        undo_labels = [
+            "Undo View Onto Miller Plane",
+            "Undo Create Miller Plane",
+        ]
+        viewport_probe = {
+            "selection_method": gui_module.MILLER_PLANE_VIEWPORT_SELECTION_METHOD,
+            "probe_miller_indices": plane_indices,
+            "dialog_miller_indices": dialog_indices,
+            "unique_transient_plane_visual_target_observed": True,
+            "viewport_plane_selection_observed": True,
+            "properties_selection_verified": True,
+            "view_onto_popup_menu_observed": False,
+            "view_onto_native_command_mapping_verified": True,
+            "hit_test_basis": gui_module.MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
+            "properties_filter": "Miller Plane",
+            "properties_miller_label": properties_label,
+            "view_onto_command_id": "cmdViewer3DViewOnto",
+            "undo_labels_observed": undo_labels,
+            "structure_artifact_path": str(structure_path),
+            "structure_artifact_sha256_before": artifact_hash,
+            "structure_artifact_sha256_after": artifact_hash,
+        }
+        runtime_ui_evidence = {
+            "source": "local_uia",
+            "expected_revision": int(kwargs["expected_revision"]),
+            "expected_window_handle": int(kwargs["window_handle"]),
+            "expected_window_title": str(kwargs["expected_window_title"]),
+            "reset_view_control_observed": True,
+            "tools_miller_planes_menu_observed": True,
+            "miller_planes_keyboard_menu_path_verified": True,
+            "miller_planes_dialog_observed": True,
+            "miller_indices_control_observed": True,
+            "create_button_observed": True,
+            "tree_explorer_menu_observed": False,
+            "properties_explorer_menu_observed": True,
+            "view_onto_control_observed": True,
+            "view_onto_native_command_mapping_verified": True,
+            "pointer_menu_click_through_risk_observed": True,
+            "unexpected_plane_created_during_probe": False,
+            "unexpected_plane_cleanup_verified": True,
+            "document_clean_before_probe": True,
+            "document_clean_after_probe": True,
+            "miller_planes_menu_key_sequence": ["Alt+T", "M"],
+            "miller_planes_dialog_title": "Miller Planes",
+            "miller_planes_dialog_control_id": "MillerPlanesCtl",
+            "miller_indices_control_id": "TxtHKL",
+            "create_button_control_id": "CmdCreate",
+            "selection_modifier_keys": [],
+            "viewport_selection_probe": viewport_probe,
+            "screenshot_path": str(aligned_path),
+            "note": "fake transactional Miller UI evidence",
+        }
+        miller_plane_evidence = {
+            "miller_plane_indices": plane_indices,
+            "dialog_miller_indices": dialog_indices,
+            "dialog_miller_indices_text_before_create": " ".join(
+                str(item) for item in dialog_indices
+            ),
+            "dialog_miller_indices_value_source": (
+                "fresh_modeless_child_accessibility_value"
+            ),
+            "dialog_miller_indices_verified_before_create": True,
+            "created_plane_count": 1,
+            "selected_plane_count": 1,
+            "miller_plane_count_before": 0,
+            "miller_plane_count_after_create": 1,
+            "miller_plane_count_after_cleanup": 0,
+            "selection_method": gui_module.MILLER_PLANE_VIEWPORT_SELECTION_METHOD,
+            "viewport_hit_test_basis": gui_module.MILLER_PLANE_VIEWPORT_HIT_TEST_BASIS,
+            "fresh_before_after_screenshots_observed": True,
+            "unique_transient_plane_region_observed": True,
+            "properties_selection_verified": True,
+            "view_onto_popup_menu_observed": False,
+            "view_onto_native_command_mapping_verified": True,
+            "dialog_show_set_of_parallel_planes": False,
+            "dialog_show_symmetry_images": False,
+            "properties_filter": "Miller Plane",
+            "properties_miller_label": properties_label,
+            "camera_match_scope": "crystal_plane_normal_with_native_in_plane_roll",
+            "plane_normal_matches_manifest": True,
+            "analytic_in_plane_basis_matches_manifest": None,
+            "native_in_plane_roll_policy_observed": True,
+            "pre_action_view_baseline_captured": True,
+            "reset_view_before_alignment": False,
+            "screenshot_captured_before_cleanup": True,
+            "document_was_clean_before_replay": True,
+            "temporary_miller_plane_cleanup_verified": True,
+            "no_temporary_miller_nodes_remaining": True,
+            "document_clean_after_replay": True,
+            "post_replay_view_restored": True,
+            "structure_artifact_path": str(structure_path),
+            "structure_artifact_sha256_before": artifact_hash,
+            "structure_artifact_sha256_after": artifact_hash,
+            "undo_labels_applied": undo_labels,
+        }
+        return {
+            "schema_version": 1,
+            "kind": "materials_studio_local_uia_miller_plane_transaction",
+            "view_name": recipe["view_name"],
+            "execution_succeeded": True,
+            "gui_input_performed": True,
+            "gui_transiently_modified": True,
+            "coordinate_input_used": False,
+            "pointer_input_used": True,
+            "modifier_keys": [],
+            "aligned_screenshot_path": str(aligned_path),
+            "runtime_ui_evidence": runtime_ui_evidence,
+            "miller_plane_evidence": miller_plane_evidence,
+            "view_onto_native_command_mapping": {
+                "verified": True,
+                "numeric_command_id": 33297,
+            },
+            "visual_acceptance_recorded": False,
+            "post_action_observation_required": True,
+            "record_call_ready": False,
+        }
+
+
+class _FailedMillerReplayBackend(_MillerReplayBackend):
+    def execute_standard_recipe(self, **kwargs: object) -> dict:
+        self.execute_calls.append(dict(kwargs))
+        return {
+            "schema_version": 2,
+            "kind": "materials_studio_local_uia_miller_plane_transaction",
+            "view_name": "crystal_plane_001",
+            "execution_succeeded": False,
+            "failure_phase": "preflight",
+            "error": "synthetic preflight failure",
+            "gui_input_performed": False,
+            "gui_transiently_modified": False,
+            "pointer_input_used": False,
+            "cleanup_succeeded": True,
+            "manual_cleanup_required": False,
+            "visual_acceptance_recorded": False,
+            "record_call_ready": False,
+        }
+
+
 def _command_evidence() -> dict:
     return {
         "registry_found": True,
@@ -236,6 +399,31 @@ def _command_evidence() -> dict:
         "movement_dialog_angle_supported": True,
         "movement_options_command_registered": True,
     }
+
+
+def _miller_command_evidence() -> dict:
+    evidence = _command_evidence()
+    evidence.update(
+        {
+            "registered_view_command_ids": [
+                "cmdViewer3DResetView",
+                "cmdViewer3DMovementOptions",
+                "cmdViewer3DViewOnto",
+            ],
+            "symmetry_builder_registry_found": True,
+            "miller_plane_command_registered": True,
+            "properties_explorer_registry_found": True,
+            "properties_explorer_command_registered": True,
+            "miller_plane_create_help_found": True,
+            "miller_plane_create_workflow_verified": True,
+            "miller_plane_working_help_found": True,
+            "miller_plane_selection_view_onto_workflow_verified": True,
+            "viewport_miller_plane_selection_properties_workflow_verified": True,
+            "positioning_help_found": True,
+            "native_view_roll_policy_documented": True,
+        }
+    )
+    return evidence
 
 
 def _top_audit() -> dict:
@@ -287,6 +475,28 @@ def _isometric_audit() -> dict:
     audit["views"][0]["camera_direction"] = [1.0, 1.0, 1.0]
     audit["views"][0]["camera_up"] = [-1.0, -1.0, 2.0]
     audit["views"][0]["camera_right"] = [-1.0, 1.0, 0.0]
+    return audit
+
+
+def _miller_audit() -> dict:
+    audit = json.loads(json.dumps(_top_audit()))
+    view = audit["views"][0]
+    view.update(
+        {
+            "name": "crystal_plane_001",
+            "coordinate_system": "crystal_reciprocal_plane_normal",
+            "camera_direction": [0.0, 0.0, 1.0],
+            "camera_up": [0.0, 1.0, 0.0],
+            "camera_right": [1.0, 0.0, 0.0],
+            "look_at_direction": [0.0, 0.0, -1.0],
+            "crystal_plane_indices": [0, 0, 1],
+            "crystal_plane_label": "(001)",
+            "crystal_plane_normal_cartesian": [0.0, 0.0, 1.0],
+            "crystal_plane_reciprocal_vector_per_angstrom": [0.0, 0.0, 1.0],
+            "crystal_plane_reciprocal_convention": "without_2pi",
+            "crystal_plane_spacing_angstrom": 1.0,
+        }
+    )
     return audit
 
 
@@ -387,6 +597,7 @@ def test_execute_persists_mechanical_receipt_but_not_visual_acceptance(
     ] is None
     manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
     assert manifest["replay_events"] == []
+
     assert not Path(result["manifest_path"]).with_name(
         "gui_view_replay_events.jsonl"
     ).exists()
@@ -486,7 +697,6 @@ def test_isometric_execute_returns_complete_staged_mechanical_record_template(
     manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
     assert manifest["replay_events"] == []
 
-
 def test_isometric_record_template_includes_every_anonymous_command_use() -> None:
     reset_target = {
         "target_kind": "verified_anonymous_toolbar_child",
@@ -565,6 +775,152 @@ def test_isometric_record_template_includes_every_anonymous_command_use() -> Non
     assert template["keyboard_stages"] == action_receipt["keyboard_stages"]
     assert template["model_visible"] is None
     assert template["camera_matches_manifest"] is None
+
+
+def test_miller_preview_uses_transaction_gate_without_gui_input_or_persistence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller, _gui_backend, _standard_backend = _controller(tmp_path)
+    miller_backend = _MillerReplayBackend()
+    controller.view_replay_backend = miller_backend
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _miller_command_evidence,
+    )
+    output_dir = tmp_path / "view_proj" / "outputs" / "r002"
+
+    result = controller.run_view_replay(
+        _miller_audit(),
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_plane_001",
+        execution_mode="preview",
+    )
+
+    assert result["status"] == "preview_ready"
+    assert result["execution_ready"] is True
+    assert result["selected_view_name"] == "crystal_plane_001"
+    assert "crystal_plane_001" in result["execution_supported_view_names"]
+    assert result["plan"]["execution_recipe"]["reset_view_allowed"] is False
+    assert result["gui_input_performed"] is False
+    assert result["manifest_modified"] is False
+    assert miller_backend.execute_calls == []
+    assert not (output_dir / "gui_view_replay_manifest.json").exists()
+    assert not (output_dir / "gui_view_replay_runtime_preflight.json").exists()
+
+
+def test_miller_execute_uses_aligned_capture_and_persists_transaction_evidence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller, gui_backend, _standard_backend = _controller(tmp_path)
+    miller_backend = _MillerReplayBackend()
+    controller.view_replay_backend = miller_backend
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _miller_command_evidence,
+    )
+
+    result = controller.run_view_replay(
+        _miller_audit(),
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_plane_001",
+        execution_mode="execute",
+    )
+
+    assert result["status"] == "awaiting_visual_confirmation"
+    assert result["execution_succeeded"] is True
+    assert result["gui_input_performed"] is True
+    assert result["gui_modified"] is True
+    assert result["structure_modified"] is False
+    assert result["structure_unchanged"] is True
+    assert result["transaction_runtime_preflight_persisted"] is True
+    assert result["visual_acceptance_recorded"] is False
+    assert result["acceptance_event_created"] is False
+    assert len(miller_backend.execute_calls) == 1
+    assert gui_backend.captured == []
+
+    snapshot = result["snapshot"]
+    assert snapshot["capture_phase"] == "aligned_before_transaction_cleanup"
+    assert Path(snapshot["screenshot_path"]).is_file()
+    assert snapshot["analysis"]["readable"] is True
+    template = result["post_action_record_payload_template"]
+    assert template["native_command_id"] == "cmdViewer3DViewOnto"
+    assert template["model_visible"] is None
+    assert template["camera_matches_manifest"] is None
+    assert template["modifier_keys"] == []
+    assert template["miller_plane_evidence"]["pre_action_view_baseline_captured"] is True
+    assert template["miller_plane_evidence"]["reset_view_before_alignment"] is False
+    assert template["miller_plane_evidence"]["undo_labels_applied"] == [
+        "Undo View Onto Miller Plane",
+        "Undo Create Miller Plane",
+    ]
+
+    runtime_path = Path(result["manifest_path"]).with_name(
+        "gui_view_replay_runtime_preflight.json"
+    )
+    assert runtime_path.is_file()
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    viewport_probe = runtime["evidence"]["viewport_selection_probe"]
+    assert viewport_probe["complete"] is True
+    assert viewport_probe["structure_artifact_sha256_before"] == (
+        viewport_probe["structure_artifact_sha256_after"]
+    )
+    manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+    assert manifest["replay_events"] == []
+
+    recorded = controller.record_view_replay(
+        project_id=template["project_id"],
+        revision=template["revision"],
+        view_name=template["view_name"],
+        source=template["source"],
+        model_visible=True,
+        camera_matches_manifest=True,
+        screenshot_path=template["screenshot_path"],
+        expected_window_handle=template["expected_window_handle"],
+        expected_window_title=template["expected_window_title"],
+        native_command_id=template["native_command_id"],
+        modifier_keys=template["modifier_keys"],
+        miller_plane_evidence=template["miller_plane_evidence"],
+    )
+    assert recorded["event"]["accepted"] is True
+    assert recorded["event"]["rejection_reasons"] == []
+
+
+def test_miller_execute_failure_does_not_resolve_missing_aligned_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller, gui_backend, _standard_backend = _controller(tmp_path)
+    failed_backend = _FailedMillerReplayBackend()
+    controller.view_replay_backend = failed_backend
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _miller_command_evidence,
+    )
+
+    result = controller.run_view_replay(
+        _miller_audit(),
+        project_id="view_proj",
+        revision=2,
+        view_name="crystal_plane_001",
+        execution_mode="execute",
+    )
+
+    assert result["status"] == "execution_failed"
+    assert result["execution_succeeded"] is False
+    assert result["snapshot"] is None
+    assert result["snapshot_error"] == (
+        "transactional Miller execution failed before an aligned screenshot "
+        "was available"
+    )
+    assert "outside the GUI workspace" not in result["snapshot_error"]
+    assert gui_backend.captured == []
 
 
 def _tiny_bmp() -> bytes:

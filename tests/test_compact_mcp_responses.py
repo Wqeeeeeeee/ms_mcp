@@ -215,10 +215,10 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     ] is True
     assert compact["view_replay_automation_policy"][
         "miller_view_onto_requires_bound_reset_accessibility_preflight"
-    ] is True
+    ] is False
     assert compact["view_replay_automation_policy"][
         "miller_view_onto_accepts_verified_anonymous_reset_target"
-    ] is True
+    ] is False
     assert compact["view_replay_automation_policy"][
         "miller_view_onto_final_camera_depends_on_reset_orientation"
     ] is False
@@ -775,20 +775,23 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
                 "next_view": {
                     "view_name": "crystal_plane_100",
                     "execution_recipe": {
-                        "schema_version": 7,
+                        "schema_version": 8,
                         "recipe_kind": "miller_plane_view_onto",
                         "automation_ready": True,
                         "supporting_native_command_ids": [
-                            "cmdViewer3DResetView",
-                            "cmdViewer3DViewOnto",
+                            "cmdSymmetryBuilderMillerPlanes",
+                            "cmdGPEToggleExplorer",
+                            "cmdViewer3DSelection",
                         ],
                         "camera_result_depends_on_reset_baseline": False,
                         "camera_result_established_by": (
                             "native_miller_plane_view_onto"
                         ),
                         "reset_view_role": (
-                            "native_in_plane_roll_baseline_only"
+                            "forbidden_because_ms_20_1_reset_is_not_reliably_undoable"
                         ),
+                        "pre_action_view_baseline_required": True,
+                        "reset_view_allowed": False,
                         "final_camera_established_by_native_command_id": (
                             "cmdViewer3DViewOnto"
                         ),
@@ -841,14 +844,19 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
         "execution_recipe"
     ]
     assert recipe["supporting_native_command_ids"] == [
-        "cmdViewer3DResetView",
-        "cmdViewer3DViewOnto",
+        "cmdSymmetryBuilderMillerPlanes",
+        "cmdGPEToggleExplorer",
+        "cmdViewer3DSelection",
     ]
     assert recipe["camera_result_depends_on_reset_baseline"] is False
     assert recipe["camera_result_established_by"] == (
         "native_miller_plane_view_onto"
     )
-    assert recipe["reset_view_role"] == "native_in_plane_roll_baseline_only"
+    assert recipe["reset_view_role"] == (
+        "forbidden_because_ms_20_1_reset_is_not_reliably_undoable"
+    )
+    assert recipe["pre_action_view_baseline_required"] is True
+    assert recipe["reset_view_allowed"] is False
     assert recipe["final_camera_established_by_native_command_id"] == (
         "cmdViewer3DViewOnto"
     )

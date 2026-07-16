@@ -155,29 +155,37 @@ transaction per project/revision. Protocol tests require two concurrent notes to
 remain in `gui_artifacts`, a lock timeout to preserve the committed report, and
 an injected atomic-replace failure to leave valid prior `report.json` bytes with
 no temporary file residue.
-`crystal_plane_*` recipes may also be automatic-ready only when installed
-Miller Plane/Properties/View Onto evidence, one supported semantic selection
-profile, a bound Reset `runtime_accessibility_evidence` observation, and a
-current-window `runtime_ui_evidence` probe are all verified. Named Reset and
-server-derived anonymous Reset mappings are supported; anonymous invocation
-must round-trip through `accessibility_command_uses`.
+`crystal_plane_*` recipes may also be automatic-ready when installed Miller
+Plane/Properties/View Onto evidence, one supported semantic selection profile,
+and an exact current-window accessibility binding are verified. External replay
+also requires a bound `runtime_ui_evidence` probe. The local transactional
+executor may generate that UI evidence during explicit execution; it must not
+invoke Reset.
 Protocol acceptance checks that the prepare-tool field and its nested viewport
 probe are discoverable and strict (`extra="forbid"`). Runtime evidence must bind
 the exact revision and wrapper handle/title, verify the required live controls,
 and use the `Alt+T`, then `M` dialog path. Static registry/help files alone never
 satisfy this gate. The MS 20.1 viewport profile additionally requires fresh
 before/after screenshot hit testing, unique transient-plane selection,
-Properties filter/label verification, native View Onto evidence, whitelisted
-undo labels, and equal before/after/current structure hashes. Project Explorer
-is not accepted as Object Tree. The record-tool schema also exposes strict
-`miller_plane_evidence`; runtime acceptance additionally requires exact plane
-selection, pre-cleanup screenshot, whitelisted cleanup including Reset View,
-restored document/temporary-plane/view state, and an unchanged wrapper-source SHA-256. The camera
-scope is plane-normal plus native MS roll rather than exact analytic up/right.
-Protocol tests also require the Miller recipe to declare that Reset establishes
-only native roll, the final camera comes from `cmdViewer3DViewOnto`, and a
-failed generic front Reset orientation does not block the independent Miller
-final-camera path.
+Properties filter/label verification, live numeric View Onto mapping, exactly
+the View Onto/Create Plane undo labels, and equal before/after/current structure
+hashes. Project Explorer is not accepted as Object Tree. The record-tool schema
+also exposes strict `miller_plane_evidence`; runtime acceptance additionally
+requires exact plane selection, a pre-action viewport baseline, pre-cleanup
+aligned screenshot, exact two-step cleanup, restored document/temporary-plane
+state, pixel-identical viewport restoration, and an unchanged wrapper-source
+SHA-256. The camera scope is plane-normal plus native MS roll rather than exact
+analytic up/right. Protocol tests also require the Miller recipe to declare
+`reset_view_allowed=false`, no Reset accessibility target, final camera from
+`cmdViewer3DViewOnto`, and independence from failed generic front Reset
+orientation. The execute tool must expose preview-by-default semantics and
+must leave visual acceptance and replay-event creation for the record tool.
+Live MS 20.1 acceptance also covers the internal viewer-document dirty suffix,
+the exact owner-drawn Properties Explorer command ID `33439`, the virtualized
+`MillerIndex Record 0` DataItem under a visible Properties grid, and clipped
+viewport capture on negative-coordinate monitors. These runtime-specific
+allowances remain fail-closed for any other command ID, duplicate/mismatched
+property row, hidden pane/grid, or undersized visible viewport intersection.
 The same schema supports crystallographic directions only when the prepared
 recipe reports an exact direct-direction/reciprocal-normal collinearity
 mapping; it additionally requires the direction-match boolean. Directions

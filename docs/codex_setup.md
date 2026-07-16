@@ -406,12 +406,13 @@ while the request waited, so use the retry payload to resolve and export the
 new current revision. Inline-spec retry payloads carry the original `spec`, and
 an inline spec that conflicts with a stored immutable revision is rejected.
 
-Before any `crystal_plane_*` or exact-collinear `crystal_*` replay can become
-automatic-ready, observe the live controls on the exact current wrapper and
-submit them back to the prepare tool. Submit both the
-`runtime_accessibility_evidence` Reset observation described above and the
-Miller-specific `runtime_ui_evidence`; neither substitutes for the other. A
-complete Miller UI payload has this shape:
+For an external/manual `crystal_plane_*` or exact-collinear `crystal_*` replay,
+observe the live controls on the exact current wrapper and submit the
+Miller-specific `runtime_ui_evidence` to the prepare tool. The local
+transactional executor can instead generate and persist this evidence during
+explicit execution after its read-only accessibility preflight succeeds. It
+does not require or invoke Reset. A complete externally observed Miller UI
+payload has this shape:
 
 ```json
 {
@@ -432,6 +433,7 @@ complete Miller UI payload has this shape:
     "tree_explorer_menu_observed": false,
     "properties_explorer_menu_observed": true,
     "view_onto_control_observed": true,
+    "view_onto_native_command_mapping_verified": true,
     "pointer_menu_click_through_risk_observed": true,
     "unexpected_plane_created_during_probe": false,
     "unexpected_plane_cleanup_verified": false,
@@ -450,15 +452,14 @@ complete Miller UI payload has this shape:
       "unique_transient_plane_visual_target_observed": true,
       "viewport_plane_selection_observed": true,
       "properties_selection_verified": true,
-      "view_onto_popup_menu_observed": true,
+      "view_onto_popup_menu_observed": false,
+      "view_onto_native_command_mapping_verified": true,
       "hit_test_basis": "fresh_before_after_screenshot_unique_transient_plane_region",
       "properties_filter": "Miller Plane",
       "properties_miller_label": "(100)",
       "view_onto_command_id": "cmdViewer3DViewOnto",
       "undo_labels_observed": [
-        "Undo Reset View",
         "Undo View Onto Miller Plane",
-        "Undo Recenter",
         "Undo Create Miller Plane"
       ],
       "structure_artifact_path": "C:\\Users\\user\\ms-mcp-workspace\\projects\\current\\outputs\\r001\\structure_r001.cif",
@@ -482,13 +483,13 @@ The nested viewport probe is accepted only after fresh before/after screenshots
 isolate one unique new plane, a no-modifier selection is semantically verified
 in Properties Explorer, the native View Onto popup is observed, and the source
 structure hash is unchanged.
-The returned Miller recipe must expose an exact Reset `accessibility_target`,
-`camera_result_depends_on_reset_baseline=false`, and
-`final_camera_established_by_native_command_id=cmdViewer3DViewOnto`. When the
-Reset target is anonymous, include the returned Reset mapping in
-`accessibility_command_uses` after refreshing the tree and invoking it. A
-generic front Reset camera mismatch does not invalidate View Onto's final
-plane-normal camera.
+The returned Miller recipe must expose
+`pre_action_view_baseline_required=true`, `reset_view_allowed=false`, no Reset
+`accessibility_target`, `camera_result_depends_on_reset_baseline=false`, and
+`final_camera_established_by_native_command_id=cmdViewer3DViewOnto`. The
+transaction verifies the installed numeric mapping (`View Onto=33297`) before
+invocation. A generic front Reset camera mismatch does not invalidate this
+independent View Onto transaction.
 For every prepared Miller-plane replay, inspect
 `execution_recipe.dialog_index_entry_contract`. Read `TxtHKL` back from a fresh
 modeless child accessibility state after entry; never treat `Ctrl+A` as proof
@@ -534,6 +535,18 @@ from compact live status. Proceed automatically only when
 `automatic_replay_ready=true` and the selected view's
 `execution_recipe.automation_ready=true`; otherwise follow the returned review
 requirement without issuing trackball, spin, nudge, or align input.
+For a locally executable recipe, call
+`material_studio_gui_execute_view_replay` in preview first and use
+`execution_mode="execute"` only after explicit confirmation. A successful
+Miller execution returns the aligned pre-cleanup screenshot, exact two-step
+undo evidence, runtime UI preflight path, and unchanged structure hash, but it
+still does not create an accepted replay event.
+When the next Miller recipe matches the local transactional selection profile,
+the continuation exposes that preview call directly with
+`recommended_mcp_tool=material_studio_gui_execute_view_replay`,
+`payload_hint_is_directly_callable=true`, and `gui_input_required=false`.
+Unsupported Object Tree or other selection profiles continue to return the
+reviewed external path instead of being promoted to local automation.
 Also require `gui_view_replay.recipe_contract.pending_recipe_upgrade_required`
 to be false. When it is true, do not execute the persisted pending recipe and
 do not submit new replay evidence. Send a high-level `continue_view_replay`

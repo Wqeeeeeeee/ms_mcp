@@ -199,7 +199,12 @@ the replay receipt must record `modifier_keys=[]` and visual axis/projection
 checks. Isometric uses a verified staged recipe: Reset, `45 degrees: Up x2,
 Left x3`, then `35.26438968 degrees: Down x1`; it must restore the Movement
 angle to 45 degrees, preserve Screen factor 2.0, close Movement, and verify A
-left-down, B right-down, C up. Submit that live observation as
+left-down, B right-down, C up. `material_studio_gui_execute_view_replay` can
+execute that exact staged recipe locally after binding the single current
+wrapper, exact Movement window/control tree, disabled `cmdNudge*` inventory,
+ValuePattern readbacks, and unique semantic viewport; preview never opens the
+dialog or sends input, and execution still requires separate screenshot review
+before acceptance. Submit externally collected live observations as
 `runtime_accessibility_evidence`; it is persisted in
 `gui_view_replay_accessibility_preflight.json` only after revision, wrapper
 handle/title, and single-window binding pass. Static registry/help evidence is

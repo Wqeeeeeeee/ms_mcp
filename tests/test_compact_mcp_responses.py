@@ -146,7 +146,16 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         "top",
         "bottom",
     ]
-    assert compact["view_replay_automation_policy"]["local_uia_isometric_supported"] is False
+    assert compact["view_replay_automation_policy"]["local_uia_isometric_supported"] is True
+    isometric_contract = compact["view_replay_automation_policy"][
+        "local_uia_isometric_execution_contract"
+    ]
+    assert isometric_contract["keyboard_stages"][1][
+        "rotation_increment_ui_display_degrees"
+    ] == 35.264
+    assert isometric_contract["restore_rotation_increment_degrees"] == 45.0
+    assert isometric_contract["movement_screen_factor"] == 2.0
+    assert isometric_contract["movement_dialog_closed_after_restore"] is True
     assert compact["view_replay_automation_policy"]["local_uia_records_visual_acceptance"] is False
     assert compact["view_replay_automation_policy"]["documented_keyboard_sequences"]["right"] == [
         "Up",

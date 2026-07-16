@@ -577,6 +577,12 @@ async def _run_preview_calls(
             validation_errors.append("view_replay_execution_preview_sent_gui_input")
         if execution_preview.get("manifest_modified") is not False:
             validation_errors.append("view_replay_execution_preview_modified_manifest")
+        if "isometric" not in (
+            execution_preview.get("execution_supported_view_names") or []
+        ):
+            validation_errors.append(
+                "view_replay_execution_preview_missing_local_isometric_support"
+            )
         if resumed_preflight.get("ok") is not True:
             validation_errors.append("resumed_preflight_not_ok")
         visual_summary = resumed_preflight.get("latest_project_visual_diagnostics")

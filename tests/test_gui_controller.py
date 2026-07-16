@@ -339,6 +339,7 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
         "back",
         "bottom",
         "front",
+        "isometric",
         "left",
         "right",
         "top",
@@ -348,6 +349,10 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     )
     assert (
         "execute_standard_view_replay_with_local_uia" in status["capabilities"]
+    ) is bool(controller.view_replay_backend.supported)
+    assert (
+        "execute_staged_isometric_view_replay_with_local_uia"
+        in status["capabilities"]
     ) is bool(controller.view_replay_backend.supported)
 
     activated = controller.activate(project_id="gui_proj", revision=0)

@@ -30,6 +30,8 @@ from xml.sax.saxutils import escape as xml_escape
 
 from .gui_uia import (
     PywinautoViewReplayBackend,
+    SAFE_ISOMETRIC_KEYBOARD_STAGES,
+    SAFE_LOCAL_VIEW_NAMES,
     SAFE_STANDARD_VIEW_KEY_SEQUENCES,
     ViewReplayAutomationBackend,
 )
@@ -2886,7 +2888,7 @@ class MaterialsStudioGuiController:
                 self.view_replay_backend.unavailable_reason
             ),
             "local_uia_view_replay_view_names": sorted(
-                SAFE_STANDARD_VIEW_KEY_SEQUENCES
+                SAFE_LOCAL_VIEW_NAMES
             ),
             "capabilities": [
                 "detect_matstudio_window",
@@ -2898,7 +2900,10 @@ class MaterialsStudioGuiController:
                 "copy_script_assist",
                 "prepare_view_replay_manifest",
                 *(
-                    ["execute_standard_view_replay_with_local_uia"]
+                    [
+                        "execute_standard_view_replay_with_local_uia",
+                        "execute_staged_isometric_view_replay_with_local_uia",
+                    ]
                     if self.view_replay_backend.supported
                     else []
                 ),
@@ -3732,7 +3737,7 @@ class MaterialsStudioGuiController:
         view_name: str | None = None,
         execution_mode: str = "preview",
     ) -> dict[str, Any]:
-        """Preview or execute one local-UIA standard view without auto-accepting it."""
+        """Preview or execute one safe local-UIA view without auto-accepting it."""
 
         safe_project = sanitize_project_id(project_id)
         mode = str(execution_mode).strip().lower()
@@ -3774,7 +3779,7 @@ class MaterialsStudioGuiController:
             "requested_view_name": requested_view_name,
             "execution_ready": plan.get("execution_ready"),
             "execution_supported_view_names": sorted(
-                SAFE_STANDARD_VIEW_KEY_SEQUENCES
+                SAFE_LOCAL_VIEW_NAMES
             ),
             "plan": plan,
             "local_uia_probe": initial_probe,
@@ -3895,14 +3900,18 @@ class MaterialsStudioGuiController:
                     + ", ".join(support_reasons)
                 )
             current_command_evidence = _materials_studio_view_command_evidence()
-            target = execution_recipe.get("accessibility_target")
-            if isinstance(target, dict) and target.get("registry_sha256"):
-                if target.get("registry_sha256") != current_command_evidence.get(
-                    "registry_sha256"
-                ):
-                    raise GuiError(
-                        "installed Materials Studio view registry changed after prepare"
-                    )
+            for target_field in (
+                "accessibility_target",
+                "movement_accessibility_target",
+            ):
+                target = execution_recipe.get(target_field)
+                if isinstance(target, dict) and target.get("registry_sha256"):
+                    if target.get(
+                        "registry_sha256"
+                    ) != current_command_evidence.get("registry_sha256"):
+                        raise GuiError(
+                            "installed Materials Studio view registry changed after prepare"
+                        )
 
             current_status = self.status(
                 project_id=safe_project,
@@ -4165,7 +4174,7 @@ class MaterialsStudioGuiController:
         ):
             block_reasons.append("requested_view_already_accepted")
         if selected is None:
-            block_reasons.append("no_pending_local_uia_standard_view_ready")
+            block_reasons.append("no_pending_local_uia_view_ready")
         block_reasons = _unique_strings(str(item) for item in block_reasons)
         selected_recipe = (
             selected.get("execution_recipe")
@@ -6250,10 +6259,8 @@ def _local_uia_recipe_support(
 
     reasons: list[str] = []
     view_name = str(execution_recipe.get("view_name") or "")
-    expected_keys = SAFE_STANDARD_VIEW_KEY_SEQUENCES.get(view_name)
-    if expected_keys is None:
+    if view_name not in SAFE_LOCAL_VIEW_NAMES:
         reasons.append("local_uia_view_name_not_allowlisted")
-        expected_keys = []
     if execution_recipe.get("automation_ready") is not True:
         reasons.append("prepared_recipe_not_automation_ready")
     if execution_recipe.get("structure_mutation_allowed") is not False:
@@ -6262,14 +6269,6 @@ def _local_uia_recipe_support(
         reasons.append("prepared_recipe_process_launch_not_prohibited")
     if execution_recipe.get("blind_coordinate_action_allowed") is not False:
         reasons.append("prepared_recipe_blind_coordinates_not_prohibited")
-    if execution_recipe.get("keyboard_stages") is not None:
-        reasons.append("local_uia_staged_keyboard_recipe_unsupported")
-    if list(execution_recipe.get("key_sequence") or []) != expected_keys:
-        reasons.append("prepared_recipe_key_sequence_not_allowlisted")
-    if list(execution_recipe.get("modifier_keys") or []) != []:
-        reasons.append("prepared_recipe_modifier_keys_not_empty")
-    if expected_keys and execution_recipe.get("rotation_increment_degrees") != 45:
-        reasons.append("prepared_recipe_rotation_increment_not_45_degrees")
     if execution_recipe.get("native_command_id") != "cmdViewer3DResetView":
         reasons.append("prepared_recipe_reset_command_mismatch")
     target = execution_recipe.get("accessibility_target")
@@ -6283,6 +6282,86 @@ def _local_uia_recipe_support(
             reasons.append("prepared_recipe_reset_target_kind_unsupported")
         if target.get("command_id") != "cmdViewer3DResetView":
             reasons.append("prepared_recipe_reset_target_command_mismatch")
+
+    if view_name == "isometric":
+        stages = execution_recipe.get("keyboard_stages")
+        if not isinstance(stages, list) or len(stages) != len(
+            SAFE_ISOMETRIC_KEYBOARD_STAGES
+        ):
+            reasons.append("prepared_isometric_stages_not_allowlisted")
+        else:
+            for observed, expected in zip(
+                stages,
+                SAFE_ISOMETRIC_KEYBOARD_STAGES,
+            ):
+                if not isinstance(observed, dict):
+                    reasons.append("prepared_isometric_stage_not_object")
+                    continue
+                try:
+                    angle_matches = abs(
+                        float(observed.get("rotation_increment_degrees"))
+                        - float(expected["rotation_increment_degrees"])
+                    ) <= 1e-9
+                    display_matches = abs(
+                        float(
+                            observed.get(
+                                "rotation_increment_ui_display_degrees",
+                                observed.get("rotation_increment_degrees"),
+                            )
+                        )
+                        - float(
+                            expected["rotation_increment_ui_display_degrees"]
+                        )
+                    ) <= 0.0005
+                except (TypeError, ValueError):
+                    angle_matches = False
+                    display_matches = False
+                if not angle_matches or not display_matches:
+                    reasons.append("prepared_isometric_stage_angle_not_allowlisted")
+                if list(observed.get("key_sequence") or []) != list(
+                    expected["key_sequence"]
+                ):
+                    reasons.append("prepared_isometric_stage_keys_not_allowlisted")
+                if list(observed.get("modifier_keys") or []) != []:
+                    reasons.append("prepared_isometric_stage_modifiers_not_empty")
+        if execution_recipe.get("restore_rotation_increment_degrees") != 45.0:
+            reasons.append("prepared_isometric_restore_angle_mismatch")
+        if (
+            execution_recipe.get("movement_options_command_id")
+            != "cmdViewer3DMovementOptions"
+            or execution_recipe.get("movement_angle_control_id")
+            != "numNudgeAngle"
+            or execution_recipe.get("movement_screen_factor_control_id")
+            != "numNudgeFactor"
+            or execution_recipe.get("movement_screen_factor_expected") != 2.0
+            or execution_recipe.get("movement_dialog_closed_after_restore")
+            is not True
+        ):
+            reasons.append("prepared_isometric_movement_contract_mismatch")
+        movement_target = execution_recipe.get("movement_accessibility_target")
+        if not isinstance(movement_target, dict):
+            reasons.append("prepared_isometric_movement_target_missing")
+        else:
+            if movement_target.get("target_kind") not in {
+                "named_control",
+                "verified_anonymous_toolbar_child",
+            }:
+                reasons.append("prepared_isometric_movement_target_unsupported")
+            if (
+                movement_target.get("command_id")
+                != "cmdViewer3DMovementOptions"
+            ):
+                reasons.append("prepared_isometric_movement_command_mismatch")
+    else:
+        expected_keys = SAFE_STANDARD_VIEW_KEY_SEQUENCES.get(view_name, [])
+        if execution_recipe.get("keyboard_stages") is not None:
+            reasons.append("local_uia_staged_keyboard_recipe_unsupported")
+        if list(execution_recipe.get("key_sequence") or []) != expected_keys:
+            reasons.append("prepared_recipe_key_sequence_not_allowlisted")
+        if list(execution_recipe.get("modifier_keys") or []) != []:
+            reasons.append("prepared_recipe_modifier_keys_not_empty")
+        if expected_keys and execution_recipe.get("rotation_increment_degrees") != 45:
+            reasons.append("prepared_recipe_rotation_increment_not_45_degrees")
     reasons = _unique_strings(reasons)
     return not reasons, reasons
 
@@ -6363,14 +6442,18 @@ def _local_view_replay_record_template(
     """Build a deliberately incomplete post-action visual record template."""
 
     key_sequence = list(execution_recipe.get("key_sequence") or [])
-    target = (
-        execution_recipe.get("accessibility_target")
-        if isinstance(execution_recipe.get("accessibility_target"), dict)
-        else {}
-    )
-    accessibility_command_uses: list[dict[str, Any]] | None = None
-    if target.get("target_kind") == "verified_anonymous_toolbar_child":
-        accessibility_command_uses = [
+    accessibility_command_uses: list[dict[str, Any]] = []
+    for target in _verified_anonymous_recipe_targets(execution_recipe):
+        command_id = str(target.get("command_id") or "")
+        command_receipt = (
+            action_receipt.get("movement_command")
+            if command_id == "cmdViewer3DMovementOptions"
+            else action_receipt.get("reset_command")
+        )
+        command_receipt = (
+            command_receipt if isinstance(command_receipt, dict) else {}
+        )
+        accessibility_command_uses.append(
             {
                 "command_id": target.get("command_id"),
                 "toolbar_name": target.get("toolbar_name"),
@@ -6383,16 +6466,36 @@ def _local_view_replay_record_template(
                     "semantic_mapping_sha256"
                 ),
                 "accessibility_tree_refreshed": bool(
-                    action_receipt.get("reset_command", {}).get(
-                        "accessibility_tree_refreshed"
-                    )
-                    is True
+                    command_receipt.get("accessibility_tree_refreshed") is True
                 ),
                 "invocation_succeeded": bool(
-                    action_receipt.get("reset_invocation_succeeded") is True
+                    command_receipt.get("invocation_succeeded") is True
+                    or (
+                        command_id == "cmdViewer3DResetView"
+                        and action_receipt.get("reset_invocation_succeeded") is True
+                    )
                 ),
             }
+        )
+    if not accessibility_command_uses:
+        accessibility_command_uses = None
+    staged_keyboard_receipts = action_receipt.get("keyboard_stages")
+    keyboard_stages = (
+        [
+            {
+                "rotation_increment_degrees": stage.get(
+                    "rotation_increment_degrees"
+                ),
+                "key_sequence": list(stage.get("key_sequence") or []),
+                "modifier_keys": list(stage.get("modifier_keys") or []),
+            }
+            for stage in staged_keyboard_receipts
+            if isinstance(stage, dict)
         ]
+        if isinstance(staged_keyboard_receipts, list)
+        and staged_keyboard_receipts
+        else None
+    )
     crystal_camera_evidence = None
     required_record_evidence = execution_recipe.get("required_record_evidence")
     if (
@@ -6417,25 +6520,37 @@ def _local_view_replay_record_template(
         "expected_window_title": target_window.get("title"),
         "native_command_id": execution_recipe.get("native_command_id"),
         "accessibility_command_uses": accessibility_command_uses,
-        "key_sequence": key_sequence or None,
+        "key_sequence": key_sequence or None if keyboard_stages is None else None,
         "reset_before_key_sequence": (
             action_receipt.get("reset_invocation_succeeded")
-            if key_sequence
+            if key_sequence or keyboard_stages
             else None
         ),
         "rotation_increment_degrees": (
             execution_recipe.get("rotation_increment_degrees")
-            if key_sequence
+            if key_sequence and keyboard_stages is None
             else None
         ),
-        "modifier_keys": [] if key_sequence else None,
-        "keyboard_stages": None,
-        "rotation_increment_restored_degrees": None,
-        "movement_options_command_id": None,
-        "movement_angle_control_id": None,
-        "movement_screen_factor_control_id": None,
-        "movement_screen_factor": None,
-        "movement_dialog_closed": None,
+        "modifier_keys": [] if key_sequence and keyboard_stages is None else None,
+        "keyboard_stages": keyboard_stages,
+        "rotation_increment_restored_degrees": action_receipt.get(
+            "rotation_increment_restored_degrees"
+        ),
+        "movement_options_command_id": action_receipt.get(
+            "movement_options_command_id"
+        ),
+        "movement_angle_control_id": action_receipt.get(
+            "movement_angle_control_id"
+        ),
+        "movement_screen_factor_control_id": action_receipt.get(
+            "movement_screen_factor_control_id"
+        ),
+        "movement_screen_factor": action_receipt.get(
+            "movement_screen_factor"
+        ),
+        "movement_dialog_closed": action_receipt.get(
+            "movement_dialog_closed"
+        ),
         "crystal_camera_evidence": crystal_camera_evidence,
         "miller_plane_evidence": None,
     }

@@ -156,6 +156,16 @@ x2, Left x3`, followed by `35.26438968 degrees: Down x1`. Also submit
 control IDs, `movement_screen_factor: 2.0`, and
 `movement_dialog_closed: true`.
 
+The local `material_studio_gui_execute_view_replay` path now performs this
+exact staged isometric recipe after an explicit execute request. Its preview is
+input-free. Execute requires the single current wrapper, verified Reset and
+Movement targets, one owned Movement window, unique `numNudgeAngle` and
+`numNudgeFactor` controls, a disabled `cmdNudge*` inventory, exact ValuePattern
+readback, and a unique `CViewer3DCtrl`. It closes Movement before each arrow
+stage, restores 45 degrees even after a partial failure when the exact window
+remains recoverable, and still leaves visual acceptance for a fresh screenshot
+review and `material_studio_gui_record_view_replay`.
+
 Before a standard recipe can be automatic-ready, submit a fresh exact-window
 accessibility observation to the prepare tool:
 

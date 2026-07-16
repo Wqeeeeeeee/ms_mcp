@@ -402,6 +402,14 @@ source of truth for each exact sequence and signed axis layout. Keyboard
 events must persist `modifier_keys=[]`; Shift+arrow is a structure-editing
 operation and is never a camera replay action.
 
+When the returned isometric recipe is automation-ready, the optional local
+`material_studio_gui_execute_view_replay` path may execute it after explicit
+confirmation. It uses exact UIA Reset/Movement invocation, ValuePattern-only
+angle changes, screen-factor and disabled-nudge readback, closes Movement before
+viewport input, and restores 45 degrees before returning. This mechanical
+success still does not establish model visibility or camera correctness; record
+those only after reviewing the fresh workspace screenshot.
+
 An automation-ready continuation is still pre-action state, not accepted
 evidence. Its `execution_action` is the only GUI-input instruction, while its
 `post_action_record_payload_template` is non-callable and contains null values

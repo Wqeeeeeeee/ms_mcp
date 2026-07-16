@@ -3493,7 +3493,31 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "top",
                 "bottom",
             ],
-            "local_uia_isometric_supported": False,
+            "local_uia_isometric_supported": True,
+            "local_uia_isometric_execution_contract": {
+                "keyboard_stages": [
+                    {
+                        "rotation_increment_degrees": 45.0,
+                        "key_sequence": [
+                            "Up",
+                            "Up",
+                            "Left",
+                            "Left",
+                            "Left",
+                        ],
+                        "modifier_keys": [],
+                    },
+                    {
+                        "rotation_increment_degrees": 35.26438968,
+                        "rotation_increment_ui_display_degrees": 35.264,
+                        "key_sequence": ["Down"],
+                        "modifier_keys": [],
+                    },
+                ],
+                "restore_rotation_increment_degrees": 45.0,
+                "movement_screen_factor": 2.0,
+                "movement_dialog_closed_after_restore": True,
+            },
             "local_uia_miller_plane_supported": False,
             "local_uia_records_visual_acceptance": False,
             "local_uia_semantic_viewport_class": "CViewer3DCtrl",

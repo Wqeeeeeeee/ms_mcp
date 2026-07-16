@@ -129,6 +129,39 @@ class _ReplayBackend:
         self.execute_calls.append(dict(kwargs))
         recipe = kwargs["execution_recipe"]
         assert isinstance(recipe, dict)
+        keyboard_stages = recipe.get("keyboard_stages")
+        staged_receipts = (
+            [
+                {
+                    "rotation_increment_degrees": stage[
+                        "rotation_increment_degrees"
+                    ],
+                    "rotation_increment_ui_display_degrees": stage.get(
+                        "rotation_increment_ui_display_degrees",
+                        stage["rotation_increment_degrees"],
+                    ),
+                    "angle_readback_degrees": stage.get(
+                        "rotation_increment_ui_display_degrees",
+                        stage["rotation_increment_degrees"],
+                    ),
+                    "screen_factor_readback": 2.0,
+                    "key_sequence": list(stage["key_sequence"]),
+                    "modifier_keys": [],
+                }
+                for stage in keyboard_stages
+            ]
+            if isinstance(keyboard_stages, list)
+            else None
+        )
+        flattened_keys = (
+            [
+                key
+                for stage in staged_receipts or []
+                for key in stage["key_sequence"]
+            ]
+            if staged_receipts is not None
+            else list(recipe.get("key_sequence") or [])
+        )
         return {
             "schema_version": 1,
             "kind": "materials_studio_local_uia_view_replay_execution",
@@ -136,7 +169,8 @@ class _ReplayBackend:
             "execution_succeeded": True,
             "reset_invocation_succeeded": True,
             "keyboard_focus_verified": True,
-            "key_sequence_sent": list(recipe.get("key_sequence") or []),
+            "key_sequence_sent": flattened_keys,
+            "keyboard_stages": staged_receipts,
             "modifier_keys": [],
             "coordinate_input_used": False,
             "pointer_input_used": False,
@@ -145,6 +179,26 @@ class _ReplayBackend:
                 "accessibility_tree_refreshed": True,
                 "invocation_method": "local_uia_invoke_pattern",
             },
+            "movement_options_command_id": (
+                "cmdViewer3DMovementOptions"
+                if staged_receipts is not None
+                else None
+            ),
+            "movement_angle_control_id": (
+                "numNudgeAngle" if staged_receipts is not None else None
+            ),
+            "movement_screen_factor_control_id": (
+                "numNudgeFactor" if staged_receipts is not None else None
+            ),
+            "movement_screen_factor": (
+                2.0 if staged_receipts is not None else None
+            ),
+            "rotation_increment_restored_degrees": (
+                45.0 if staged_receipts is not None else None
+            ),
+            "movement_dialog_closed": (
+                True if staged_receipts is not None else None
+            ),
             "post_action_observation_required": True,
             "record_call_ready": False,
         }
@@ -225,6 +279,15 @@ def _top_audit() -> dict:
             }
         ],
     }
+
+
+def _isometric_audit() -> dict:
+    audit = json.loads(json.dumps(_top_audit()))
+    audit["views"][0]["name"] = "isometric"
+    audit["views"][0]["camera_direction"] = [1.0, 1.0, 1.0]
+    audit["views"][0]["camera_up"] = [-1.0, -1.0, 2.0]
+    audit["views"][0]["camera_right"] = [-1.0, 1.0, 0.0]
+    return audit
 
 
 def _controller(tmp_path: Path) -> tuple[
@@ -327,6 +390,181 @@ def test_execute_persists_mechanical_receipt_but_not_visual_acceptance(
     assert not Path(result["manifest_path"]).with_name(
         "gui_view_replay_events.jsonl"
     ).exists()
+
+
+def test_isometric_preview_is_ready_without_gui_input_or_persistence(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller, _gui_backend, replay_backend = _controller(tmp_path)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _command_evidence,
+    )
+    output_dir = tmp_path / "view_proj" / "outputs" / "r002"
+
+    result = controller.run_view_replay(
+        _isometric_audit(),
+        project_id="view_proj",
+        revision=2,
+        view_name="isometric",
+        execution_mode="preview",
+    )
+
+    assert result["status"] == "preview_ready"
+    assert result["selected_view_name"] == "isometric"
+    assert result["execution_ready"] is True
+    assert "isometric" in result["execution_supported_view_names"]
+    assert result["plan"]["execution_recipe"]["keyboard_stages"] == [
+        {
+            "rotation_increment_degrees": 45.0,
+            "key_sequence": ["Up", "Up", "Left", "Left", "Left"],
+            "modifier_keys": [],
+        },
+        {
+            "rotation_increment_degrees": 35.26438968,
+            "rotation_increment_ui_display_degrees": 35.264,
+            "key_sequence": ["Down"],
+            "modifier_keys": [],
+        },
+    ]
+    assert result["gui_input_performed"] is False
+    assert result["manifest_modified"] is False
+    assert replay_backend.execute_calls == []
+    assert not (output_dir / "gui_view_replay_manifest.json").exists()
+
+
+def test_isometric_execute_returns_complete_staged_mechanical_record_template(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    controller, _gui_backend, replay_backend = _controller(tmp_path)
+    monkeypatch.setattr(
+        gui_module,
+        "_materials_studio_view_command_evidence",
+        _command_evidence,
+    )
+
+    result = controller.run_view_replay(
+        _isometric_audit(),
+        project_id="view_proj",
+        revision=2,
+        view_name="isometric",
+        execution_mode="execute",
+    )
+
+    assert result["status"] == "awaiting_visual_confirmation"
+    assert result["execution_succeeded"] is True
+    assert result["structure_unchanged"] is True
+    assert result["visual_acceptance_recorded"] is False
+    assert len(replay_backend.execute_calls) == 1
+    template = result["post_action_record_payload_template"]
+    assert template["key_sequence"] is None
+    assert template["keyboard_stages"] == [
+        {
+            "rotation_increment_degrees": 45.0,
+            "key_sequence": ["Up", "Up", "Left", "Left", "Left"],
+            "modifier_keys": [],
+        },
+        {
+            "rotation_increment_degrees": 35.26438968,
+            "key_sequence": ["Down"],
+            "modifier_keys": [],
+        },
+    ]
+    assert template["rotation_increment_restored_degrees"] == 45.0
+    assert template["movement_options_command_id"] == (
+        "cmdViewer3DMovementOptions"
+    )
+    assert template["movement_angle_control_id"] == "numNudgeAngle"
+    assert template["movement_screen_factor_control_id"] == "numNudgeFactor"
+    assert template["movement_screen_factor"] == 2.0
+    assert template["movement_dialog_closed"] is True
+    assert template["model_visible"] is None
+    assert template["camera_matches_manifest"] is None
+    manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
+    assert manifest["replay_events"] == []
+
+
+def test_isometric_record_template_includes_every_anonymous_command_use() -> None:
+    reset_target = {
+        "target_kind": "verified_anonymous_toolbar_child",
+        "command_id": "cmdViewer3DResetView",
+        "toolbar_name": "3D Viewer",
+        "toolbar_automation_id": 12122,
+        "registry_toolbar_name": "tbarViewer3D1",
+        "zero_based_child_index": 5,
+        "element_index": 110,
+        "registry_sha256": "a" * 64,
+        "semantic_mapping_sha256": "b" * 64,
+    }
+    movement_target = {
+        "target_kind": "verified_anonymous_toolbar_child",
+        "command_id": "cmdViewer3DMovementOptions",
+        "toolbar_name": "3D Movement",
+        "toolbar_automation_id": 12134,
+        "registry_toolbar_name": "tbarViewer3DMovement",
+        "zero_based_child_index": 4,
+        "element_index": 31,
+        "registry_sha256": "a" * 64,
+        "semantic_mapping_sha256": "c" * 64,
+    }
+    recipe = {
+        "view_name": "isometric",
+        "accessibility_target": reset_target,
+        "movement_accessibility_target": movement_target,
+        "native_command_id": "cmdViewer3DResetView",
+        "required_record_evidence": {"field": "crystal_camera_evidence"},
+    }
+    action_receipt = {
+        "reset_invocation_succeeded": True,
+        "reset_command": {"accessibility_tree_refreshed": True},
+        "movement_command": {
+            "accessibility_tree_refreshed": True,
+            "invocation_succeeded": True,
+        },
+        "keyboard_stages": [
+            {
+                "rotation_increment_degrees": 45.0,
+                "key_sequence": ["Up", "Up", "Left", "Left", "Left"],
+                "modifier_keys": [],
+            },
+            {
+                "rotation_increment_degrees": 35.26438968,
+                "key_sequence": ["Down"],
+                "modifier_keys": [],
+            },
+        ],
+        "rotation_increment_restored_degrees": 45.0,
+        "movement_options_command_id": "cmdViewer3DMovementOptions",
+        "movement_angle_control_id": "numNudgeAngle",
+        "movement_screen_factor_control_id": "numNudgeFactor",
+        "movement_screen_factor": 2.0,
+        "movement_dialog_closed": True,
+    }
+
+    template = gui_module._local_view_replay_record_template(
+        project_id="view_proj",
+        revision=2,
+        view_name="isometric",
+        execution_recipe=recipe,
+        action_receipt=action_receipt,
+        target_window={"handle": 100, "title": "wrapper - Materials Studio"},
+        screenshot_path="C:\\workspace\\isometric.bmp",
+    )
+
+    assert [
+        item["command_id"] for item in template["accessibility_command_uses"]
+    ] == ["cmdViewer3DResetView", "cmdViewer3DMovementOptions"]
+    assert all(
+        item["accessibility_tree_refreshed"] is True
+        and item["invocation_succeeded"] is True
+        for item in template["accessibility_command_uses"]
+    )
+    assert template["keyboard_stages"] == action_receipt["keyboard_stages"]
+    assert template["model_visible"] is None
+    assert template["camera_matches_manifest"] is None
 
 
 def _tiny_bmp() -> bytes:

@@ -93,11 +93,34 @@ class _FakeRectangle:
 
 
 class _FakeRectWrapper:
-    def __init__(self, rect: tuple[int, int, int, int]) -> None:
+    def __init__(
+        self,
+        rect: tuple[int, int, int, int],
+        *,
+        parent: "_FakeRectWrapper | None" = None,
+        handle: int = 0,
+        name: str = "",
+        control_type: str = "Pane",
+        class_name: str = "",
+    ) -> None:
         self._rect = _FakeRectangle(*rect)
+        self._parent = parent
+        self.handle = handle
+        self.element_info = _FakeElementInfo(
+            runtime_id=handle or id(self),
+            name=name,
+            control_type=control_type,
+            class_name=class_name,
+        )
 
     def rectangle(self) -> _FakeRectangle:
         return self._rect
+
+    def parent(self) -> "_FakeRectWrapper | None":
+        return self._parent
+
+    def is_visible(self) -> bool:
+        return True
 
 
 class _FakeValuePattern:
@@ -433,12 +456,39 @@ def test_viewport_capture_bounds_clips_uia_child_to_negative_monitor_window() ->
         platform_supported=True,
     )
 
-    bounds = backend._viewport_capture_bounds(
+    window = _FakeRectWrapper(
+        (-1444, 89, -4, 842),
+        handle=9001,
+        control_type="Window",
+    )
+    mdi_client = _FakeRectWrapper(
+        (-1276, 196, -16, 811),
+        parent=window,
+        class_name="MDIClient",
+    )
+    document = _FakeRectWrapper(
+        (-1274, 198, -74, 898),
+        parent=mdi_client,
+        control_type="Window",
+    )
+    viewer_pane = _FakeRectWrapper((-1266, 229, -82, 890), parent=document)
+    viewport = _FakeRectWrapper((-1266, 229, -82, 890), parent=viewer_pane)
+
+    contract = backend._viewport_capture_contract(
         window_handle=9001,
-        viewport_wrapper=_FakeRectWrapper((-1266, 229, -82, 890)),
+        viewport_wrapper=viewport,
     )
 
-    assert bounds == (178, 140, 1362, 753)
+    assert contract["bounds"] == [178, 140, 1362, 722]
+    assert contract["target_window_reached"] is True
+    assert contract["mdi_client_count"] == 1
+    assert contract["mdi_client_observed"] is True
+    assert contract["status_bar_excluded_by_ancestor_clipping"] is True
+    assert len(contract["clip_chain"]) == 5
+    assert backend._viewport_capture_bounds(
+        window_handle=9001,
+        viewport_wrapper=viewport,
+    ) == (178, 140, 1362, 722)
 
 
 def test_viewport_capture_bounds_rejects_tiny_visible_intersection() -> None:
@@ -452,11 +502,113 @@ def test_viewport_capture_bounds_rejects_tiny_visible_intersection() -> None:
         platform_supported=True,
     )
 
+    window = _FakeRectWrapper((0, 0, 800, 600), handle=9001)
+    mdi_client = _FakeRectWrapper(
+        (0, 0, 800, 600),
+        parent=window,
+        class_name="MDIClient",
+    )
+    viewport = _FakeRectWrapper(
+        (790, 590, 1000, 900),
+        parent=mdi_client,
+    )
+
     with pytest.raises(UiaReplayError, match="visible intersection"):
         backend._viewport_capture_bounds(
             window_handle=9001,
-            viewport_wrapper=_FakeRectWrapper((790, 590, 1000, 900)),
+            viewport_wrapper=viewport,
         )
+
+
+def test_viewport_capture_bounds_requires_exact_target_window_ancestry() -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        window_rect_getter=lambda _handle: (0, 0, 800, 600),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+    unrelated_window = _FakeRectWrapper((0, 0, 800, 600), handle=9002)
+    mdi_client = _FakeRectWrapper(
+        (0, 0, 800, 600),
+        parent=unrelated_window,
+        class_name="MDIClient",
+    )
+    viewport = _FakeRectWrapper(
+        (100, 100, 700, 500),
+        parent=mdi_client,
+    )
+
+    with pytest.raises(UiaReplayError, match="exact target window"):
+        backend._viewport_capture_bounds(
+            window_handle=9001,
+            viewport_wrapper=viewport,
+        )
+
+
+def test_viewport_capture_bounds_requires_unique_mdi_client_ancestor() -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        window_rect_getter=lambda _handle: (0, 0, 800, 600),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    window = _FakeRectWrapper((0, 0, 800, 600), handle=9001)
+    viewport = _FakeRectWrapper((100, 100, 700, 500), parent=window)
+
+    with pytest.raises(UiaReplayError, match="exactly one visible MDIClient"):
+        backend._viewport_capture_bounds(
+            window_handle=9001,
+            viewport_wrapper=viewport,
+        )
+
+
+def test_ancestor_clipped_viewport_excludes_status_bar_rendering_noise(
+    tmp_path: Path,
+) -> None:
+    top, _viewport, _reset = _build_tree()
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: _FakeDesktop(top),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        window_rect_getter=lambda _handle: (0, 0, 200, 200),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    window = _FakeRectWrapper((0, 0, 200, 200), handle=9001)
+    mdi_client = _FakeRectWrapper(
+        (0, 0, 200, 170),
+        parent=window,
+        class_name="MDIClient",
+    )
+    document = _FakeRectWrapper((0, 0, 200, 220), parent=mdi_client)
+    viewport = _FakeRectWrapper((0, 0, 200, 220), parent=document)
+    before = tmp_path / "before.bmp"
+    after = tmp_path / "after.bmp"
+    _write_rgb_bmp(before, width=200, height=200, pixels={})
+    _write_rgb_bmp(
+        after,
+        width=200,
+        height=200,
+        pixels={(x, 185): (0, 0, 0) for x in range(40, 80)},
+    )
+
+    bounds = backend._viewport_capture_bounds(
+        window_handle=9001,
+        viewport_wrapper=viewport,
+    )
+
+    assert bounds == (0, 0, 200, 170)
+    assert compare_bmp_region(before, after, bounds=bounds)["exact_match"] is True
+    full_compare = compare_bmp_region(before, after, bounds=(0, 0, 200, 200))
+    assert full_compare["exact_match"] is False
+    assert full_compare["changed_pixel_count"] == 40
 
 
 @pytest.mark.parametrize(

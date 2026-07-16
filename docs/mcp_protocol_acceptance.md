@@ -183,9 +183,13 @@ must leave visual acceptance and replay-event creation for the record tool.
 Live MS 20.1 acceptance also covers the internal viewer-document dirty suffix,
 the exact owner-drawn Properties Explorer command ID `33439`, the virtualized
 `MillerIndex Record 0` DataItem under a visible Properties grid, and clipped
-viewport capture on negative-coordinate monitors. These runtime-specific
-allowances remain fail-closed for any other command ID, duplicate/mismatched
-property row, hidden pane/grid, or undersized visible viewport intersection.
+viewport capture on negative-coordinate monitors. The clipping receipt must
+show an unbroken visible chain from `CViewer3DCtrl` through the internal
+document and `MDIClient` to the exact target-window handle. Protocol tests keep
+zero-pixel viewport restoration while proving that mutable status-bar text
+outside that chain is excluded. These runtime-specific allowances remain
+fail-closed for any other command ID, duplicate/mismatched property row, hidden
+pane/grid/ancestor, broken target binding, or undersized visible intersection.
 The same schema supports crystallographic directions only when the prepared
 recipe reports an exact direct-direction/reciprocal-normal collinearity
 mapping; it additionally requires the direction-match boolean. Directions

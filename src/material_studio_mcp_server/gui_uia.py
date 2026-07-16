@@ -1060,12 +1060,18 @@ class PywinautoViewReplayBackend:
                     + ", ".join(snapshot["block_reasons"])
                 )
             self._require_selection_mode(snapshot)
-            pre_action_viewport_bounds = self._viewport_capture_bounds(
+            pre_action_viewport_capture = self._viewport_capture_contract(
                 window_handle=window_handle,
                 viewport_wrapper=snapshot["viewport_wrapper"],
             )
+            pre_action_viewport_bounds = tuple(
+                pre_action_viewport_capture["bounds"]
+            )
             receipt["pre_action_viewport_bounds"] = list(
                 pre_action_viewport_bounds
+            )
+            receipt["pre_action_viewport_capture_contract"] = (
+                pre_action_viewport_capture
             )
             pre_action_path = evidence_root / "pre_action.bmp"
             self._capture_window(window_handle, pre_action_path)
@@ -1114,11 +1120,13 @@ class PywinautoViewReplayBackend:
 
             baseline_undo_label = self._read_undo_label(window_handle)
             receipt["pre_action_undo_label"] = baseline_undo_label
-            viewport_bounds = self._viewport_capture_bounds(
+            viewport_capture = self._viewport_capture_contract(
                 window_handle=window_handle,
                 viewport_wrapper=snapshot["viewport_wrapper"],
             )
+            viewport_bounds = tuple(viewport_capture["bounds"])
             receipt["viewport_bounds"] = list(viewport_bounds)
+            receipt["viewport_capture_contract"] = viewport_capture
             if properties_toggled_open:
                 baseline_path = evidence_root / "transaction_baseline.bmp"
                 self._capture_window(window_handle, baseline_path)
@@ -1521,27 +1529,71 @@ class PywinautoViewReplayBackend:
             int(rectangle.bottom),
         )
 
-    def _viewport_capture_bounds(
+    def _viewport_capture_contract(
         self, *, window_handle: int, viewport_wrapper: Any
-    ) -> tuple[int, int, int, int]:
+    ) -> dict[str, Any]:
+        """Clip the viewport through its visible UIA ancestors to the target window."""
+
         window_left, window_top, window_right, window_bottom = (
             self._window_rect_getter(window_handle)
         )
-        viewport_left, viewport_top, viewport_right, viewport_bottom = (
-            self._wrapper_rect(viewport_wrapper)
+        clip_chain: list[dict[str, Any]] = []
+        current = viewport_wrapper
+        reached_target_window = False
+        for depth in range(16):
+            if _safe_call(current, "is_visible", True) is not True:
+                raise UiaReplayError(
+                    "The viewport clipping ancestry contains a hidden wrapper."
+                )
+            rect = self._wrapper_rect(current)
+            current_handle = int(_safe_call(current, "handle", 0) or 0)
+            clip_chain.append(
+                {
+                    "depth": depth,
+                    "handle": current_handle or None,
+                    "name": str(_element_value(current, "name", "") or ""),
+                    "control_type": str(
+                        _element_value(current, "control_type", "") or ""
+                    ),
+                    "class_name": str(
+                        _element_value(current, "class_name", "") or ""
+                    ),
+                    "rect": list(rect),
+                }
+            )
+            if current_handle == window_handle:
+                reached_target_window = True
+                break
+            parent = _safe_call(current, "parent", None)
+            if parent is None or parent is current:
+                break
+            current = parent
+        if not reached_target_window:
+            raise UiaReplayError(
+                "The unique viewport ancestry did not reach the exact target window."
+            )
+        mdi_client_count = sum(
+            item.get("class_name") == "MDIClient" for item in clip_chain
         )
-        visible_left = max(window_left, viewport_left)
-        visible_top = max(window_top, viewport_top)
-        visible_right = min(window_right, viewport_right)
-        visible_bottom = min(window_bottom, viewport_bottom)
+        if mdi_client_count != 1:
+            raise UiaReplayError(
+                "The unique viewport ancestry did not contain exactly one visible "
+                f"MDIClient; found {mdi_client_count}."
+            )
+
+        clip_rects = [tuple(item["rect"]) for item in clip_chain]
+        visible_left = max(window_left, *(rect[0] for rect in clip_rects))
+        visible_top = max(window_top, *(rect[1] for rect in clip_rects))
+        visible_right = min(window_right, *(rect[2] for rect in clip_rects))
+        visible_bottom = min(window_bottom, *(rect[3] for rect in clip_rects))
         visible_width = visible_right - visible_left
         visible_height = visible_bottom - visible_top
         if visible_width < 100 or visible_height < 100:
             raise UiaReplayError(
                 "The unique viewport has no sufficiently large visible intersection "
-                "with the target window: "
+                "through its target-window ancestor chain: "
                 f"window={(window_left, window_top, window_right, window_bottom)}, "
-                f"viewport={(viewport_left, viewport_top, viewport_right, viewport_bottom)}."
+                f"clip_chain={clip_chain}."
             )
         bounds = (
             visible_left - window_left,
@@ -1549,7 +1601,26 @@ class PywinautoViewReplayBackend:
             visible_right - window_left,
             visible_bottom - window_top,
         )
-        return bounds
+        return {
+            "bounds": list(bounds),
+            "window_rect": [window_left, window_top, window_right, window_bottom],
+            "clip_chain": clip_chain,
+            "target_window_reached": True,
+            "mdi_client_count": mdi_client_count,
+            "mdi_client_observed": True,
+            "status_bar_excluded_by_ancestor_clipping": bool(
+                visible_bottom < window_bottom
+            ),
+        }
+
+    def _viewport_capture_bounds(
+        self, *, window_handle: int, viewport_wrapper: Any
+    ) -> tuple[int, int, int, int]:
+        contract = self._viewport_capture_contract(
+            window_handle=window_handle,
+            viewport_wrapper=viewport_wrapper,
+        )
+        return tuple(int(value) for value in contract["bounds"])
 
     def _capture_window(self, window_handle: int, path: Path) -> None:
         if self._window_capture is None:

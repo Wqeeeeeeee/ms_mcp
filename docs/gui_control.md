@@ -498,10 +498,14 @@ labels; the fallback accepts that shape only for the exact live command ID
 `MillerIndex Record 0` `DataItem` can report `is_visible=false`; this is accepted
 only when the Properties pane and grid are visible and its exact value is the
 prepared label such as `(001)`. A viewer on a negative-coordinate secondary
-monitor may extend below its wrapper window, so screenshots use the visible
-viewport/window intersection and reject intersections smaller than the bounded
-minimum. None of these exceptions relax exact window, revision, label, undo, or
-hash verification.
+monitor may extend below its wrapper window. Capture therefore intersects the
+visible `CViewer3DCtrl`, viewer pane, internal document, `MDIClient`, and exact
+target-window rectangles, requiring that ancestry to terminate at the expected
+window handle. This excludes status-bar/help text outside the MDI client while
+retaining strict zero-pixel comparison of the actual visible viewport; a hidden
+ancestor, broken binding, or undersized intersection fails closed. None of
+these runtime details relax exact window, revision, label, undo, or hash
+verification.
 
 Native View Onto guarantees the requested reciprocal-plane normal, but local
 help documents that its in-plane roll uses the smallest acute angle from the

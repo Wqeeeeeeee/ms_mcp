@@ -90,6 +90,12 @@ Complex responses that require hard-budget fallback return
 list. The same receipt reports `semantic_core_preserved`, exact
 `response_bytes`, and remaining `headroom_bytes`. This fallback changes only the
 in-band receipt, not persisted diagnostics.
+For a GUI replay continuation with `status="complete"` and no callable action,
+compact mode returns a terminal decision receipt and paths back to the full
+continuation, preflight, event, journal, and recipe-contract detail. It omits
+only inert null payload templates and duplicate terminal evidence. Any pending,
+blocked, review-required, or automation-ready continuation must continue to
+carry its payload hint, recipe, safety gate, and required observation fields.
 Compact bundle acceptance keeps persisted artifact availability separate from
 path-index compaction. `view_bundle_files_complete` is true only when every
 path listed by the full bundle exists. `view_bundle_file_index_compacted=true`

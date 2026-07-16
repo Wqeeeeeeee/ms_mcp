@@ -31591,11 +31591,94 @@ def _compact_view_replay_event_summary(value: Any) -> dict[str, Any]:
     return event
 
 
-def _compact_view_replay_continuation_summary(value: Any) -> dict[str, Any]:
+def _view_replay_continuation_is_terminal_complete(value: Any) -> bool:
+    """Return whether replay is complete with no remaining callable action."""
+
+    if not isinstance(value, dict) or value.get("status") != "complete":
+        return False
+    if any(
+        value.get(key) is True
+        for key in (
+            "automatic_replay_ready",
+            "gui_input_required",
+            "post_action_observation_required",
+            "record_call_ready",
+            "payload_hint_is_directly_callable",
+            "post_action_record_payload_template_is_directly_callable",
+            "post_review_record_payload_template_is_directly_callable",
+        )
+    ):
+        return False
+    execution_action = value.get("execution_action")
+    if isinstance(execution_action, dict) and execution_action:
+        return False
+    next_view = value.get("next_view")
+    return not isinstance(next_view, dict) or not next_view
+
+
+def _compact_terminal_view_replay_continuation(
+    value: dict[str, Any],
+    *,
+    detail_ref: str,
+) -> dict[str, Any]:
+    """Keep a complete replay decision without inert null action templates."""
+
+    continuation = _mapping_subset(
+        value,
+        (
+            "status",
+            "recommended_action",
+            "recommended_mcp_tool",
+            "recommended_tool",
+            "recommended_executor",
+            "automatic_replay_ready",
+            "gui_input_required",
+            "post_action_observation_required",
+            "record_call_ready",
+            "recipe_upgrade_required",
+            "current_camera_evidence_reverification_required",
+            "evidence_integrity_reverification_required",
+            "event_journal_reverification_required",
+            "journal_consistency_status",
+            "runtime_ui_preflight_required",
+            "runtime_accessibility_preflight_required",
+            "runtime_accessibility_observation_blocks_automation",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint_is_directly_callable",
+            "post_action_record_payload_template_is_directly_callable",
+            "post_review_record_payload_template_is_directly_callable",
+            "evidence_values_must_be_observed_not_assumed",
+        ),
+    )
+    continuation.update(
+        {
+            "terminal_state": True,
+            "non_callable_payload_templates_omitted": True,
+            "continuation_detail_retrieval": {
+                "tool": "material_studio_live_project_status",
+                "response_mode": McpResponseMode.FULL.value,
+                "detail_ref": detail_ref,
+            },
+        }
+    )
+    return continuation
+
+
+def _compact_view_replay_continuation_summary(
+    value: Any,
+    *,
+    detail_ref: str = "full_response.gui_view_replay.replay_continuation",
+) -> dict[str, Any]:
     """Keep replay progress inside GUI status without duplicating its recipe."""
 
     if not isinstance(value, dict):
         return {}
+    if _view_replay_continuation_is_terminal_complete(value):
+        return _compact_terminal_view_replay_continuation(
+            value,
+            detail_ref=detail_ref,
+        )
     continuation = _mapping_subset(
         value,
         (
@@ -31697,6 +31780,48 @@ def _compact_view_replay_next_action_resolution(value: Any) -> dict[str, Any]:
     return compact
 
 
+def _compact_terminal_view_replay_next_action(value: Any) -> dict[str, Any]:
+    """Refer a completed replay action back to its authoritative continuation."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(value, ("continuation_status", "source"))
+    compact.update(
+        {
+            "terminal_state": True,
+            "decision_ref": "replay_continuation",
+        }
+    )
+    return compact
+
+
+def _compact_terminal_view_replay_next_action_resolution(
+    value: Any,
+) -> dict[str, Any]:
+    """Keep terminal action precedence and the no-mutation safety boundary."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "authoritative_source",
+            "continuation_status",
+            "incoming_action_overridden",
+        ),
+    )
+    compact.update(
+        {
+            "terminal_state": True,
+            "action_boundary": "no_gui_input_or_structure_revision_mutation",
+            "decision_ref": "replay_continuation",
+            "detail_ref": "full_response.gui_view_replay.next_action_resolution",
+        }
+    )
+    return compact
+
+
 def _compact_runtime_preflight_summary(value: Any) -> dict[str, Any]:
     """Keep persisted preflight status while referring control evidence to disk."""
 
@@ -31739,6 +31864,171 @@ def _compact_runtime_preflight_summary(value: Any) -> dict[str, Any]:
             ),
         )
     return compact
+
+
+def _compact_terminal_runtime_preflight_summary(
+    value: Any,
+    *,
+    detail_ref: str,
+) -> dict[str, Any]:
+    """Keep the final preflight verdict after all replay work is complete."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "binding_verified",
+            "automation_gate_satisfied",
+            "required",
+        ),
+    )
+    compact["terminal_state"] = True
+    compact["detail_ref"] = detail_ref
+    return compact
+
+
+def _compact_terminal_view_replay_selection(
+    value: Any,
+    *,
+    replay_view_names: Any,
+) -> dict[str, Any]:
+    """Keep the applied selection policy without repeating diagnostic catalogs."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "source",
+            "policy_applied",
+            "explicit_views_provided",
+            "model_type",
+            "domain",
+            "semiconductor_domain",
+            "selection_profile",
+            "lattice_family",
+            "orientation_kind",
+            "orientation_axis",
+            "view_count",
+            "reason_codes",
+            "explicit_views_override_domain_defaults",
+        ),
+    )
+    if value.get("view_names") == replay_view_names:
+        compact["view_names_ref"] = "view_names"
+    elif isinstance(value.get("view_names"), list):
+        compact["view_names"] = value["view_names"]
+    compact.update(
+        {
+            "terminal_state": True,
+            "detail_ref": "full_response.gui_view_replay.view_selection",
+        }
+    )
+    return compact
+
+
+def _compact_terminal_view_replay_summary(value: Any) -> dict[str, Any]:
+    """Keep accepted-view trust evidence after no pending replay remains."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "event_count",
+            "accepted_event_count",
+            "trusted_accepted_event_count",
+            "accepted_view_count",
+            "accepted_view_names",
+            "evidence_integrity_status",
+            "journal_consistency_status",
+            "pending_view_count",
+            "all_requested_views_accepted",
+        ),
+    )
+    compact.update(
+        {
+            "terminal_state": True,
+            "detail_ref": "full_response.gui_view_replay.replay_summary",
+        }
+    )
+    return compact
+
+
+def _compact_terminal_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
+    """Keep the current recipe-schema verdict for a completed replay."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "current",
+            "pending_recipe_upgrade_required",
+            "manifest_schema_current",
+            "actual_manifest_schema_version",
+            "expected_manifest_schema_version",
+        ),
+    )
+    compact.update(
+        {
+            "terminal_state": True,
+            "detail_ref": "full_response.gui_view_replay.recipe_contract",
+        }
+    )
+    return compact
+
+
+def _compact_terminal_view_replay_event_journal(value: Any) -> dict[str, Any]:
+    """Keep append-only journal trust counts without persisted-file metadata."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "consistency_status",
+            "exists",
+            "event_count",
+            "manifest_event_count",
+            "journal_matched_event_count",
+            "trusted_accepted_event_count",
+        ),
+    )
+    compact.update(
+        {
+            "terminal_state": True,
+            "detail_ref": "full_response.gui_view_replay.event_journal",
+        }
+    )
+    return compact
+
+
+def _compact_terminal_view_replay_event_summary(value: Any) -> dict[str, Any]:
+    """Keep the last trusted observation while referring its artifacts to disk."""
+
+    event = _compact_view_replay_event_summary(value)
+    if not event:
+        return {}
+    event.pop("screenshot_path", None)
+    if event.get("rejection_reasons") == []:
+        event.pop("rejection_reasons", None)
+    if event.get("modifier_keys") == []:
+        event.pop("modifier_keys", None)
+    event.update(
+        {
+            "terminal_state": True,
+            "screenshot_persisted": bool(
+                isinstance(value, dict) and value.get("screenshot_path")
+            ),
+            "detail_ref": "full_response.gui_view_replay.last_replay_event",
+        }
+    )
+    return event
 
 
 def _compact_view_replay_event(value: Any) -> dict[str, Any]:
@@ -31917,9 +32207,16 @@ def _compact_view_replay_continuation(
     value: Any,
     *,
     include_execution_recipe: bool = True,
+    detail_ref: str = "full_response.gui_view_replay.replay_continuation",
+    compact_terminal: bool = True,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
+    if compact_terminal and _view_replay_continuation_is_terminal_complete(value):
+        return _compact_terminal_view_replay_continuation(
+            value,
+            detail_ref=detail_ref,
+        )
     continuation = _mapping_subset(
         value,
         (
@@ -32085,7 +32382,10 @@ def _compact_view_replay(value: Any) -> dict[str, Any]:
     summary = _compact_view_replay_summary(value.get("replay_summary"))
     if summary:
         replay["replay_summary"] = summary
-    continuation = _compact_view_replay_continuation(value.get("replay_continuation"))
+    continuation = _compact_view_replay_continuation(
+        value.get("replay_continuation"),
+        compact_terminal=False,
+    )
     if continuation:
         replay["replay_continuation"] = continuation
     event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
@@ -32132,7 +32432,8 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
         ),
     )
     continuation = _compact_view_replay_continuation(
-        value.get("replay_continuation")
+        value.get("replay_continuation"),
+        compact_terminal=False,
     )
     if continuation:
         prepared["replay_continuation"] = continuation
@@ -32154,6 +32455,10 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
 def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
+    raw_continuation = value.get("replay_continuation")
+    terminal_complete = _view_replay_continuation_is_terminal_complete(
+        raw_continuation
+    )
     replay = _mapping_subset(
         value,
         (
@@ -32181,41 +32486,94 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "supported_view_count",
         ),
     )
-    summary = _compact_view_replay_summary(value.get("replay_summary"))
+    if terminal_complete:
+        view_selection = _compact_terminal_view_replay_selection(
+            value.get("view_selection"),
+            replay_view_names=replay.get("view_names"),
+        )
+        if view_selection:
+            replay["view_selection"] = view_selection
+    summary = (
+        _compact_terminal_view_replay_summary(value.get("replay_summary"))
+        if terminal_complete
+        else _compact_view_replay_summary(value.get("replay_summary"))
+    )
     if summary:
         replay["replay_summary"] = summary
     continuation = _compact_view_replay_continuation_summary(
-        value.get("replay_continuation")
+        raw_continuation
     )
     if continuation:
         replay["replay_continuation"] = continuation
-    next_action = _compact_view_replay_next_action(value.get("next_action"))
+    next_action = (
+        _compact_terminal_view_replay_next_action(value.get("next_action"))
+        if terminal_complete
+        else _compact_view_replay_next_action(value.get("next_action"))
+    )
     if next_action:
         replay["next_action"] = next_action
-    next_action_resolution = _compact_view_replay_next_action_resolution(
-        value.get("next_action_resolution")
+    next_action_resolution = (
+        _compact_terminal_view_replay_next_action_resolution(
+            value.get("next_action_resolution")
+        )
+        if terminal_complete
+        else _compact_view_replay_next_action_resolution(
+            value.get("next_action_resolution")
+        )
     )
     if next_action_resolution:
         replay["next_action_resolution"] = next_action_resolution
-    event_journal = _compact_view_replay_event_journal(value.get("event_journal"))
+    event_journal = (
+        _compact_terminal_view_replay_event_journal(value.get("event_journal"))
+        if terminal_complete
+        else _compact_view_replay_event_journal(value.get("event_journal"))
+    )
     if event_journal:
         replay["event_journal"] = event_journal
-    recipe_contract = _compact_view_replay_recipe_contract(value.get("recipe_contract"))
+    recipe_contract = (
+        _compact_terminal_view_replay_recipe_contract(
+            value.get("recipe_contract")
+        )
+        if terminal_complete
+        else _compact_view_replay_recipe_contract(value.get("recipe_contract"))
+    )
     if recipe_contract:
         replay["recipe_contract"] = recipe_contract
-    runtime_ui_preflight = _compact_runtime_preflight_summary(
-        value.get("runtime_ui_preflight")
+    runtime_ui_preflight = (
+        _compact_terminal_runtime_preflight_summary(
+            value.get("runtime_ui_preflight"),
+            detail_ref="full_response.gui_view_replay.runtime_ui_preflight",
+        )
+        if terminal_complete
+        else _compact_runtime_preflight_summary(
+            value.get("runtime_ui_preflight")
+        )
     )
     if runtime_ui_preflight:
         replay["runtime_ui_preflight"] = runtime_ui_preflight
-    runtime_accessibility_preflight = _compact_runtime_preflight_summary(
-        value.get("runtime_accessibility_preflight")
+    runtime_accessibility_preflight = (
+        _compact_terminal_runtime_preflight_summary(
+            value.get("runtime_accessibility_preflight"),
+            detail_ref=(
+                "full_response.gui_view_replay.runtime_accessibility_preflight"
+            ),
+        )
+        if terminal_complete
+        else _compact_runtime_preflight_summary(
+            value.get("runtime_accessibility_preflight")
+        )
     )
     if runtime_accessibility_preflight:
         replay["runtime_accessibility_preflight"] = (
             runtime_accessibility_preflight
         )
-    last_event = _compact_view_replay_event_summary(value.get("last_replay_event"))
+    last_event = (
+        _compact_terminal_view_replay_event_summary(
+            value.get("last_replay_event")
+        )
+        if terminal_complete
+        else _compact_view_replay_event_summary(value.get("last_replay_event"))
+    )
     if last_event:
         replay["last_replay_event"] = last_event
     return replay
@@ -32304,36 +32662,50 @@ def _deduplicate_compact_gui_view_replay(
             nested_continuation.get(key) == top_level_continuation.get(key)
             for key in identity_keys
         ):
-            deduplicated_continuation = _mapping_subset(
-                nested_continuation,
-                (
-                    "status",
-                    "next_pending_view_name",
-                    "next_actionable_pending_view_name",
-                    "next_automation_ready_view_name",
-                    "recommended_action",
-                    "recommended_mcp_tool",
-                    "automatic_replay_ready",
-                    "execution_recipe_ref",
-                    "gui_input_required",
-                    "post_action_observation_required",
-                    "record_call_ready",
-                    "record_tool",
-                    "recipe_upgrade_required",
-                    "current_camera_evidence_reverification_required",
-                    "evidence_integrity_reverification_required",
-                    "event_journal_reverification_required",
-                    "journal_consistency_status",
-                    "runtime_ui_preflight_required",
-                    "runtime_accessibility_preflight_required",
-                    "runtime_accessibility_observation_blocks_automation",
-                    "needs_user_confirmation",
-                    "safe_to_call_without_confirmation",
-                    "payload_hint_is_directly_callable",
-                    "post_action_required_observation_fields",
-                    "evidence_values_must_be_observed_not_assumed",
-                ),
-            )
+            if _view_replay_continuation_is_terminal_complete(
+                nested_continuation
+            ):
+                deduplicated_continuation = _mapping_subset(
+                    nested_continuation,
+                    (
+                        "status",
+                        "terminal_state",
+                    ),
+                )
+                deduplicated_continuation["decision_and_safety_ref"] = (
+                    "view_replay_continuation"
+                )
+            else:
+                deduplicated_continuation = _mapping_subset(
+                    nested_continuation,
+                    (
+                        "status",
+                        "next_pending_view_name",
+                        "next_actionable_pending_view_name",
+                        "next_automation_ready_view_name",
+                        "recommended_action",
+                        "recommended_mcp_tool",
+                        "automatic_replay_ready",
+                        "execution_recipe_ref",
+                        "gui_input_required",
+                        "post_action_observation_required",
+                        "record_call_ready",
+                        "record_tool",
+                        "recipe_upgrade_required",
+                        "current_camera_evidence_reverification_required",
+                        "evidence_integrity_reverification_required",
+                        "event_journal_reverification_required",
+                        "journal_consistency_status",
+                        "runtime_ui_preflight_required",
+                        "runtime_accessibility_preflight_required",
+                        "runtime_accessibility_observation_blocks_automation",
+                        "needs_user_confirmation",
+                        "safe_to_call_without_confirmation",
+                        "payload_hint_is_directly_callable",
+                        "post_action_required_observation_fields",
+                        "evidence_values_must_be_observed_not_assumed",
+                    ),
+                )
             deduplicated_continuation["continuation_detail_ref"] = (
                 "view_replay_continuation"
             )

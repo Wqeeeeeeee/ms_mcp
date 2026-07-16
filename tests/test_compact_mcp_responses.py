@@ -984,6 +984,14 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
                 "post_action_observation_required": True,
                 "record_call_ready": False,
                 "record_tool": "material_studio_gui_record_view_replay",
+                "payload_hint": {
+                    "project_id": "project",
+                    "revision": 4,
+                    "view_name": "right",
+                    "execution_recipe_ref": (
+                        "replay_continuation.next_view.execution_recipe"
+                    ),
+                },
                 "payload_hint_is_directly_callable": False,
                 "post_action_record_payload_template": {
                     "project_id": "project",
@@ -1044,6 +1052,14 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
     assert compact_continuation["gui_input_required"] is True
     assert compact_continuation["post_action_observation_required"] is True
     assert compact_continuation["record_call_ready"] is False
+    assert compact["view_replay_continuation"]["payload_hint"] == {
+        "project_id": "project",
+        "revision": 4,
+        "view_name": "right",
+        "execution_recipe_ref": (
+            "replay_continuation.next_view.execution_recipe"
+        ),
+    }
     assert compact_continuation["payload_hint_is_directly_callable"] is False
     assert compact_continuation["post_action_record_payload_template"] == {
         "project_id": "project",
@@ -1086,6 +1102,322 @@ def test_compact_live_status_surfaces_view_replay_continuation() -> None:
     assert recipe["final_camera_established_by_native_command_id"] == (
         "cmdViewer3DViewOnto"
     )
+
+
+def test_compact_completed_view_replay_omits_only_inert_action_detail() -> None:
+    terminal_continuation = {
+        "status": "complete",
+        "next_pending_view_name": None,
+        "next_actionable_pending_view_name": None,
+        "next_automation_ready_view_name": None,
+        "recommended_action": (
+            "review_current_revision_after_all_prepared_views_were_confirmed"
+        ),
+        "recommended_mcp_tool": "material_studio_live_project_status",
+        "recommended_executor": None,
+        "automatic_replay_ready": False,
+        "gui_input_required": False,
+        "post_action_observation_required": False,
+        "record_call_ready": False,
+        "recipe_upgrade_required": False,
+        "current_camera_evidence_reverification_required": False,
+        "evidence_integrity_reverification_required": False,
+        "event_journal_reverification_required": False,
+        "journal_consistency_status": "consistent",
+        "runtime_ui_preflight_required": False,
+        "runtime_accessibility_preflight_required": False,
+        "runtime_accessibility_observation_blocks_automation": False,
+        "payload_hint": {
+            "project_id": "semiconductor_project",
+            "revision": 4,
+            "view_name": None,
+            "model_visible": None,
+            "camera_matches_manifest": None,
+            "reviewed_copy_script_evidence": {
+                "script_text": None,
+                "capture_method": None,
+                "reviewer": None,
+                "copy_script_command_observed": None,
+                "review_completed": None,
+                "view_action_matches_manifest": None,
+                "structure_unchanged_observed": None,
+                "note": None,
+            },
+        },
+        "payload_hint_is_directly_callable": False,
+        "post_action_record_payload_template": {
+            "project_id": "semiconductor_project",
+            "revision": 4,
+            "view_name": None,
+            "model_visible": None,
+            "camera_matches_manifest": None,
+        },
+        "post_action_record_payload_template_is_directly_callable": False,
+        "post_action_high_level_payload_template": {},
+        "post_action_required_observation_fields": [],
+        "post_review_record_payload_template": None,
+        "post_review_record_payload_template_is_directly_callable": False,
+        "post_review_high_level_payload_template": None,
+        "evidence_values_must_be_observed_not_assumed": True,
+        "execution_action": None,
+        "next_view": None,
+    }
+    response = {
+        "ok": True,
+        "project_id": "semiconductor_project",
+        "revision": 4,
+        "gui_view_replay": {
+            "project_id": "semiconductor_project",
+            "revision": 4,
+            "replay_status": "externally_confirmed",
+            "view_names": ["front", "back", "right", "left", "top"],
+            "requested_view_count": 5,
+            "supported_view_count": 5,
+            "view_selection": {
+                "source": "explicit_request",
+                "policy_applied": False,
+                "explicit_views_provided": True,
+                "model_type": "crystal",
+                "domain": "semiconductor",
+                "semiconductor_domain": True,
+                "selection_profile": "explicit_request",
+                "lattice_family": "hexagonal",
+                "orientation_kind": "surface",
+                "orientation_axis": "c",
+                "view_names": ["front", "back", "right", "left", "top"],
+                "view_count": 5,
+                "reason_codes": ["explicit_views_preserved"],
+                "explicit_views_override_domain_defaults": True,
+                "cartesian_context_views": ["front", "top"],
+                "domain_diagnostic_views": ["surface_normal"],
+                "suggested_default_view_names": ["front", "top", "isometric"],
+            },
+            "replay_summary": {
+                "event_count": 7,
+                "accepted_event_count": 6,
+                "trusted_accepted_event_count": 6,
+                "accepted_view_count": 5,
+                "accepted_view_names": [
+                    "back",
+                    "front",
+                    "left",
+                    "right",
+                    "top",
+                ],
+                "evidence_integrity_status": "verified",
+                "journal_consistency_status": "consistent",
+                "pending_view_count": 0,
+                "pending_view_names": [],
+                "current_camera_evidence_reverification_view_count": 0,
+                "automation_ready_pending_view_count": 0,
+                "review_required_pending_view_count": 0,
+                "raw_accepted_event_count": 6,
+                "raw_accepted_view_count": 5,
+                "all_requested_views_accepted": True,
+            },
+            "replay_continuation": terminal_continuation,
+            "next_action": {
+                "continuation_status": "complete",
+                "recommended_tool": "material_studio_live_project_status",
+                "recommended_action": terminal_continuation[
+                    "recommended_action"
+                ],
+                "payload_hint": terminal_continuation["payload_hint"],
+                "payload_hint_is_directly_callable": False,
+                "gui_input_required": False,
+                "post_action_observation_required": False,
+                "source": "replay_continuation",
+            },
+            "next_action_resolution": {
+                "status": "continuation_safety_action_already_current",
+                "authoritative_source": "replay_continuation",
+                "continuation_status": "complete",
+                "incoming_action_overridden": False,
+                "resolved_recommended_tool": (
+                    "material_studio_live_project_status"
+                ),
+                "resolved_recommended_action": terminal_continuation[
+                    "recommended_action"
+                ],
+                "safety_gate": {
+                    "automatic_replay_allowed": False,
+                    "stale_recipe_execution_blocked": False,
+                    "external_review_required": False,
+                    "gui_input_required": False,
+                    "post_action_observation_required": False,
+                    "metadata_write_allowed_before_observation": False,
+                    "record_tool_call_ready": False,
+                    "activation_required_before_gui_input": False,
+                    "structure_mutation_allowed": False,
+                    "revision_creation_allowed": False,
+                },
+            },
+            "runtime_ui_preflight": {
+                "status": "verified",
+                "source": "computer_use",
+                "observation_available": True,
+                "binding_verified": True,
+                "automation_gate_satisfied": True,
+                "artifact_exists": True,
+                "required": False,
+                "binding": {
+                    "expected_window_handle": 1234,
+                    "actual_window_handle": 1234,
+                    "rejection_reasons": [],
+                },
+            },
+            "runtime_accessibility_preflight": {
+                "status": "verified",
+                "source": "computer_use",
+                "observation_available": True,
+                "binding_verified": True,
+                "automation_gate_satisfied": True,
+                "artifact_exists": True,
+                "required": False,
+                "binding": {
+                    "expected_window_handle": 1234,
+                    "actual_window_handle": 1234,
+                    "rejection_reasons": [],
+                },
+            },
+            "recipe_contract": {
+                "status": "current",
+                "current": True,
+                "pending_recipe_upgrade_required": False,
+                "manifest_schema_current": True,
+                "actual_manifest_schema_version": 5,
+                "expected_manifest_schema_version": 5,
+                "outdated_view_names": [],
+                "pending_upgrade_view_names": [],
+                "accepted_historical_view_names": [],
+                "current_evidence_reverification_view_names": [],
+                "reasons": [],
+            },
+            "event_journal": {
+                "status": "loaded",
+                "consistency_status": "consistent",
+                "exists": True,
+                "size_bytes": 167_037,
+                "event_count": 7,
+                "physical_line_count": 7,
+                "manifest_event_count": 7,
+                "journal_required_event_count": 7,
+                "journal_matched_event_count": 7,
+                "trusted_accepted_event_count": 6,
+            },
+            "last_replay_event": {
+                "event_id": "event-7",
+                "recorded_at": "2026-07-16T19:13:28Z",
+                "view_name": "top",
+                "source": "computer_use",
+                "model_visible": True,
+                "camera_matches_manifest": True,
+                "accepted": True,
+                "rejection_reasons": [],
+                "screenshot_path": "C:\\workspace\\screenshots\\top.bmp",
+                "native_command_id": "cmdViewer3DResetView",
+                "modifier_keys": [],
+                "window_binding": {
+                    "ok": True,
+                    "status": "verified_current_wrapper_window",
+                    "current_revision_loaded": True,
+                    "single_window_policy_ok": True,
+                },
+                "evidence_integrity": {
+                    "status": "verified",
+                    "trusted_for_replay": True,
+                },
+                "journal_consistency": {
+                    "status": "matched",
+                    "trusted_for_replay": True,
+                    "journal_match_count": 1,
+                },
+                "execution_recipe_contract": {
+                    "status": "current",
+                    "current": True,
+                    "recording_allowed": True,
+                    "recipe_kind": "native_reset_view",
+                },
+            },
+        },
+    }
+
+    compact = server._compact_live_response(response, "compact")
+
+    continuation = compact["view_replay_continuation"]
+    assert continuation["status"] == "complete"
+    assert continuation["terminal_state"] is True
+    assert continuation["non_callable_payload_templates_omitted"] is True
+    assert continuation["gui_input_required"] is False
+    assert continuation["record_call_ready"] is False
+    assert "payload_hint" not in continuation
+    assert "post_action_record_payload_template" not in continuation
+    assert "next_pending_view_name" not in continuation
+    assert "next_view" not in continuation
+    assert continuation["continuation_detail_retrieval"] == {
+        "tool": "material_studio_live_project_status",
+        "response_mode": "full",
+        "detail_ref": (
+            "full_response.gui_view_replay.replay_continuation"
+        ),
+    }
+
+    gui_replay = compact["gui_view_replay"]
+    assert gui_replay["view_selection"]["view_names_ref"] == "view_names"
+    assert "cartesian_context_views" not in gui_replay["view_selection"]
+    assert gui_replay["replay_summary"]["pending_view_count"] == 0
+    assert gui_replay["replay_summary"]["all_requested_views_accepted"] is True
+    assert "raw_accepted_event_count" not in gui_replay["replay_summary"]
+    assert gui_replay["replay_continuation"]["continuation_detail_ref"] == (
+        "view_replay_continuation"
+    )
+    assert gui_replay["next_action"] == {
+        "continuation_status": "complete",
+        "source": "replay_continuation",
+        "terminal_state": True,
+        "decision_ref": "replay_continuation",
+    }
+    resolution = gui_replay["next_action_resolution"]
+    assert resolution["terminal_state"] is True
+    assert resolution["decision_ref"] == "replay_continuation"
+    assert resolution["action_boundary"] == (
+        "no_gui_input_or_structure_revision_mutation"
+    )
+    assert "safety_gate" not in resolution
+    for key in ("runtime_ui_preflight", "runtime_accessibility_preflight"):
+        assert gui_replay[key]["terminal_state"] is True
+        assert gui_replay[key]["binding_verified"] is True
+        assert "binding" not in gui_replay[key]
+    assert gui_replay["recipe_contract"]["status"] == "current"
+    assert "outdated_view_names" not in gui_replay["recipe_contract"]
+    assert gui_replay["event_journal"]["consistency_status"] == "consistent"
+    assert "size_bytes" not in gui_replay["event_journal"]
+    assert gui_replay["last_replay_event"]["screenshot_persisted"] is True
+    assert "screenshot_path" not in gui_replay["last_replay_event"]
+    assert gui_replay["last_replay_event"]["window_binding"][
+        "single_window_policy_ok"
+    ] is True
+    assert gui_replay["last_replay_event"]["evidence_integrity"] == {
+        "status": "verified",
+        "trusted_for_replay": True,
+    }
+    assert compact["response_compaction"]["hard_budget_applied"] is False
+    assert compact["response_compaction"]["target_exceeded"] is False
+
+
+def test_complete_replay_with_callable_action_is_not_terminal_compacted() -> None:
+    continuation = {
+        "status": "complete",
+        "recommended_mcp_tool": "material_studio_gui_activate",
+        "payload_hint": {"project_id": "project", "revision": 4},
+        "payload_hint_is_directly_callable": True,
+    }
+
+    compact = server._compact_view_replay_continuation(continuation)
+
+    assert compact["payload_hint"] == {"project_id": "project", "revision": 4}
+    assert compact["payload_hint_is_directly_callable"] is True
+    assert "terminal_state" not in compact
 
 
 def test_compact_replay_rich_status_keeps_gates_without_hard_fallback() -> None:

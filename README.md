@@ -155,6 +155,13 @@ If a complex all-view response still reaches the hard budget, the receipt adds
 field. Check `semantic_core_preserved`, `response_bytes`, and `headroom_bytes`
 before summarizing the result; manifest paths remain the authoritative fallback.
 
+When GUI view replay is already complete and has no callable follow-up action,
+compact mode replaces inert null action templates and repeated replay evidence
+with a terminal receipt plus explicit `response_mode="full"` detail references.
+Pending, blocked, review-required, and automation-ready replay states still
+retain their callable payloads, execution recipes, observation requirements,
+and safety gates in-band.
+
 Live GUI status performs a bounded provenance lookup across the active
 workspace, `MATERIAL_STUDIO_MCP_WORKSPACE`, and the platform default user
 workspace. If the visible MCP wrapper belongs to a different workspace,

@@ -701,6 +701,16 @@ async def _run_preview_calls(
             validation_errors.append("view_bundle_response_not_compact")
         if exported.get("response_schema") != EXPECTED_LIVE_COMPACT_SCHEMA:
             validation_errors.append("view_bundle_compact_schema_mismatch")
+        if exported.get("view_bundle_files_complete") is not True:
+            validation_errors.append("view_bundle_persisted_artifacts_incomplete")
+        if exported.get("view_bundle_files_missing_count") != 0:
+            validation_errors.append("view_bundle_persisted_artifacts_missing")
+        if exported.get("view_bundle_file_index_compacted") is not True:
+            validation_errors.append("view_bundle_compact_index_not_marked_compacted")
+        if exported.get("view_bundle_file_index_complete_in_response") is not False:
+            validation_errors.append(
+                "view_bundle_compact_index_incorrectly_marked_complete"
+            )
         oversized = sorted(
             name
             for name in (
@@ -737,6 +747,24 @@ async def _run_preview_calls(
                 "view_names": view_names,
                 "view_bundle_manifest_path": exported.get("view_bundle_manifest_path"),
                 "view_bundle_row_counts": exported.get("view_bundle_row_counts"),
+                "view_bundle_files_complete": exported.get(
+                    "view_bundle_files_complete"
+                ),
+                "view_bundle_files_total_count": exported.get(
+                    "view_bundle_files_total_count"
+                ),
+                "view_bundle_files_existing_count": exported.get(
+                    "view_bundle_files_existing_count"
+                ),
+                "view_bundle_files_missing_count": exported.get(
+                    "view_bundle_files_missing_count"
+                ),
+                "view_bundle_file_index_compacted": exported.get(
+                    "view_bundle_file_index_compacted"
+                ),
+                "view_bundle_file_index_complete_in_response": exported.get(
+                    "view_bundle_file_index_complete_in_response"
+                ),
                 "history_count": len(history.get("history") or []),
                 "preflight_state": preflight.get("state"),
                 "resumed_preflight_state": resumed_preflight.get("state"),

@@ -90,6 +90,14 @@ Complex responses that require hard-budget fallback return
 list. The same receipt reports `semantic_core_preserved`, exact
 `response_bytes`, and remaining `headroom_bytes`. This fallback changes only the
 in-band receipt, not persisted diagnostics.
+Compact bundle acceptance keeps persisted artifact availability separate from
+path-index compaction. `view_bundle_files_complete` is true only when every
+path listed by the full bundle exists. `view_bundle_file_index_compacted=true`
+means the response retained only stable entry points, not that diagnostics are
+missing; `view_bundle_file_index_complete_in_response` reports the inverse
+condition and `view_bundle_manifest_path` remains the full index. Tests must
+cover both a complete persisted bundle with a compacted response index and a
+listed file that is actually missing.
 
 Protocol discovery also requires
 `material_studio_gui_record_visual_confirmation`. The high-level modeling tool

@@ -29845,6 +29845,65 @@ def _compact_view_bundle_files(value: Any) -> dict[str, Any]:
     )
 
 
+def _view_bundle_artifact_availability(value: Any) -> dict[str, Any]:
+    """Check whether every persisted path listed by a view bundle exists."""
+
+    if not isinstance(value, dict) or not value:
+        return {
+            "available": False,
+            "status": "not_available",
+            "complete": False,
+            "scope": "all_listed_persisted_paths_exist",
+            "content_integrity_validated": False,
+            "total_file_count": 0,
+            "existing_file_count": 0,
+            "missing_file_count": 0,
+            "invalid_entry_count": 0,
+            "missing_file_keys": [],
+            "invalid_entry_keys": [],
+        }
+
+    existing_keys: list[str] = []
+    missing_keys: list[str] = []
+    invalid_keys: list[str] = []
+    for key, raw_path in value.items():
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            invalid_keys.append(str(key))
+            continue
+        try:
+            exists = Path(raw_path).expanduser().is_file()
+        except OSError:
+            exists = False
+        if exists:
+            existing_keys.append(str(key))
+        else:
+            missing_keys.append(str(key))
+
+    total_count = len(value)
+    complete = bool(
+        total_count
+        and len(existing_keys) == total_count
+        and not missing_keys
+        and not invalid_keys
+    )
+    return {
+        "available": True,
+        "status": "complete" if complete else "missing_or_invalid_files",
+        "complete": complete,
+        "scope": "all_listed_persisted_paths_exist",
+        "content_integrity_validated": False,
+        "total_file_count": total_count,
+        "existing_file_count": len(existing_keys),
+        "missing_file_count": len(missing_keys),
+        "invalid_entry_count": len(invalid_keys),
+        "missing_file_keys": sorted(missing_keys),
+        "invalid_entry_keys": sorted(invalid_keys),
+        "diagnostic_export_manifest_path": value.get(
+            "diagnostic_export_manifest_json"
+        ),
+    }
+
+
 def _compact_nl_plan(value: Any) -> dict[str, Any] | None:
     """Return the decision part of an NL plan without duplicated catalogs."""
 
@@ -32148,9 +32207,20 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     bundle_files = bounded.get("view_bundle_files")
     if isinstance(bundle_files, dict):
         retained_bundle_files = _compact_view_bundle_files(bundle_files)
+        total_count = int(
+            bounded.get("view_bundle_files_total_count") or len(bundle_files)
+        )
         bounded["view_bundle_files"] = retained_bundle_files
-        bounded["view_bundle_files_complete"] = False
-        bounded.setdefault("view_bundle_files_total_count", len(bundle_files))
+        bounded["view_bundle_file_index_entry_count_in_response"] = len(
+            retained_bundle_files
+        )
+        bounded["view_bundle_file_index_complete_in_response"] = (
+            len(retained_bundle_files) == total_count
+        )
+        bounded["view_bundle_file_index_compacted"] = (
+            len(retained_bundle_files) != total_count
+        )
+        bounded.setdefault("view_bundle_files_total_count", total_count)
         omitted_fields.append("view_bundle_files.nonessential_paths")
         if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
             return _finalize_live_compact_response(
@@ -32294,6 +32364,16 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "structure_artifact_validation",
             "view_bundle_row_counts",
             "view_bundle_files",
+            "view_bundle_files_complete",
+            "view_bundle_files_complete_scope",
+            "view_bundle_files_total_count",
+            "view_bundle_files_existing_count",
+            "view_bundle_files_missing_count",
+            "view_bundle_files_missing_keys",
+            "view_bundle_file_index_entry_count_in_response",
+            "view_bundle_file_index_complete_in_response",
+            "view_bundle_file_index_compacted",
+            "view_bundle_artifact_availability",
             "view_parameter_summary",
             "gui_current_revision",
             "view_name",
@@ -33235,15 +33315,45 @@ def _compact_live_response(
         bundle_files = report.get("view_bundle_files")
     if isinstance(bundle_files, dict):
         compact_bundle_files = _compact_view_bundle_files(bundle_files)
+        artifact_availability = _view_bundle_artifact_availability(bundle_files)
+        index_complete = len(compact_bundle_files) == len(bundle_files)
         compact["view_bundle_files"] = compact_bundle_files
-        compact["view_bundle_files_complete"] = len(compact_bundle_files) == len(
-            bundle_files
+        compact["view_bundle_files_complete"] = artifact_availability[
+            "complete"
+        ]
+        compact["view_bundle_files_complete_scope"] = artifact_availability[
+            "scope"
+        ]
+        compact["view_bundle_files_existing_count"] = artifact_availability[
+            "existing_file_count"
+        ]
+        compact["view_bundle_files_missing_count"] = artifact_availability[
+            "missing_file_count"
+        ]
+        compact["view_bundle_files_missing_keys"] = artifact_availability[
+            "missing_file_keys"
+        ]
+        compact["view_bundle_file_index_entry_count_in_response"] = len(
+            compact_bundle_files
         )
+        compact["view_bundle_file_index_complete_in_response"] = index_complete
+        compact["view_bundle_file_index_compacted"] = not index_complete
+        compact["view_bundle_artifact_availability"] = artifact_availability
         compact["view_bundle_files_total_count"] = len(bundle_files)
+        compact_live_summary = compact.get("live_summary")
+        if isinstance(compact_live_summary, dict):
+            compact_live_summary["view_bundle_files_complete"] = (
+                artifact_availability["complete"]
+            )
+            compact_live_summary["view_bundle_files_missing_count"] = (
+                artifact_availability["missing_file_count"]
+            )
+            compact_live_summary["view_bundle_file_index_compacted"] = (
+                not index_complete
+            )
         diagnostic_manifest = bundle_files.get("diagnostic_export_manifest_json")
         if diagnostic_manifest and compact.get("diagnostic_export_requested") is True:
             compact["view_bundle_manifest_path"] = diagnostic_manifest
-            compact_live_summary = compact.get("live_summary")
             if isinstance(compact_live_summary, dict):
                 compact_live_summary["view_bundle_manifest_path"] = diagnostic_manifest
     for key in ("report_json_path", "view_audit_report_path", "view_bundle_manifest_path"):

@@ -75,6 +75,12 @@ For unusually large all-view/focus requests, inspect
 `response_compaction.hard_budget_applied`, `semantic_core_preserved`,
 `response_bytes`, `headroom_bytes`, and `omitted_fields`; use the returned detail
 paths instead of assuming an omitted duplicate field was unavailable.
+For diagnostic files, read `view_bundle_files_complete` as persisted-path
+availability, not as the size of the in-band index. A normal compact response
+may set `view_bundle_file_index_compacted=true` and return only five stable
+paths while all files remain present. Use `view_bundle_artifact_availability`
+for existing/missing counts and `view_bundle_manifest_path` for the complete
+artifact index.
 
 When Computer Use or a human reviewer has actually observed the model, record
 that evidence with the already-enabled live entry point:

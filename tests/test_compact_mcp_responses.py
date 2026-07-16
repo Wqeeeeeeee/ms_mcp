@@ -12,6 +12,76 @@ def _json_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
 
+def test_compact_bundle_separates_artifact_availability_from_path_index(
+    tmp_path: Path,
+) -> None:
+    keys = [
+        "diagnostic_export_manifest_json",
+        "view_quality_csv",
+        "modeling_report_summary_csv",
+        "modeling_issue_index_json",
+        "requested_diagnostic_focus_status_json",
+        "semiconductor_neighbor_pairs_csv",
+    ]
+    bundle_files: dict[str, str] = {}
+    for key in keys:
+        path = tmp_path / f"{key}.txt"
+        path.write_text(key, encoding="utf-8")
+        bundle_files[key] = str(path)
+
+    compact = server._compact_live_response(
+        {
+            "ok": True,
+            "diagnostic_export_requested": True,
+            "live_summary": {},
+            "view_bundle_files": bundle_files,
+        },
+        "compact",
+    )
+
+    assert compact["view_bundle_files_complete"] is True
+    assert compact["view_bundle_files_complete_scope"] == (
+        "all_listed_persisted_paths_exist"
+    )
+    assert compact["view_bundle_files_total_count"] == 6
+    assert compact["view_bundle_files_existing_count"] == 6
+    assert compact["view_bundle_files_missing_count"] == 0
+    assert compact["view_bundle_files_missing_keys"] == []
+    assert compact["view_bundle_file_index_entry_count_in_response"] == 5
+    assert compact["view_bundle_file_index_complete_in_response"] is False
+    assert compact["view_bundle_file_index_compacted"] is True
+    availability = compact["view_bundle_artifact_availability"]
+    assert availability["status"] == "complete"
+    assert availability["complete"] is True
+    assert availability["content_integrity_validated"] is False
+    assert compact["view_bundle_manifest_path"] == bundle_files[
+        "diagnostic_export_manifest_json"
+    ]
+
+    missing_path = Path(bundle_files["semiconductor_neighbor_pairs_csv"])
+    missing_path.unlink()
+    incomplete = server._compact_live_response(
+        {
+            "ok": True,
+            "diagnostic_export_requested": True,
+            "live_summary": {},
+            "view_bundle_files": bundle_files,
+        },
+        "compact",
+    )
+
+    assert incomplete["view_bundle_files_complete"] is False
+    assert incomplete["view_bundle_files_existing_count"] == 5
+    assert incomplete["view_bundle_files_missing_count"] == 1
+    assert incomplete["view_bundle_files_missing_keys"] == [
+        "semiconductor_neighbor_pairs_csv"
+    ]
+    assert incomplete["view_bundle_file_index_compacted"] is True
+    assert incomplete["view_bundle_artifact_availability"]["status"] == (
+        "missing_or_invalid_files"
+    )
+
+
 def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     full = server.material_studio_live_capabilities()
     compact = server.material_studio_live_capabilities(response_mode="compact")
@@ -490,6 +560,19 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert compact_status["view_bundle_manifest_path"] == compact_status["view_bundle_files"][
         "diagnostic_export_manifest_json"
     ]
+    assert compact_status["view_bundle_files_complete"] is True
+    assert compact_status["view_bundle_files_existing_count"] == (
+        compact_status["view_bundle_files_total_count"]
+    )
+    assert compact_status["view_bundle_files_missing_count"] == 0
+    assert compact_status["view_bundle_file_index_entry_count_in_response"] == len(
+        compact_status["view_bundle_files"]
+    )
+    assert compact_status["view_bundle_file_index_complete_in_response"] is False
+    assert compact_status["view_bundle_file_index_compacted"] is True
+    assert compact_status["live_summary"]["view_bundle_files_complete"] is True
+    assert compact_status["live_summary"]["view_bundle_files_missing_count"] == 0
+    assert compact_status["live_summary"]["view_bundle_file_index_compacted"] is True
     assert compact_status["live_summary"]["gui_current_revision_view_audit_report_exists"] is True
     assert compact_status["live_summary"]["gui_current_revision_report_json_exists"] is True
     assert compact_status["live_summary"]["gui_current_revision_view_bundle_manifest_exists"] is True
@@ -515,6 +598,12 @@ def test_compact_live_workflow_keeps_full_reports_and_view_parameters(tmp_path: 
     assert Path(bundle["artifacts"]["view_projections_csv"]).exists()
     assert "modeling_issue_index_json" not in bundle["artifacts"]
     assert Path(bundle["view_bundle_files"]["modeling_issue_index_json"]).exists()
+    assert bundle["view_bundle_files_complete"] is True
+    assert bundle["view_bundle_files_existing_count"] == bundle[
+        "view_bundle_files_total_count"
+    ]
+    assert bundle["view_bundle_files_missing_count"] == 0
+    assert bundle["view_bundle_file_index_compacted"] is True
     assert "modeling_report" not in bundle
     assert _json_size(bundle) < server.COMPACT_RESPONSE_MAX_BYTES
 

@@ -61,6 +61,13 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["view_bundle_row_counts"]["view_summary"] == 3
     assert calls["view_bundle_row_counts"]["view_projections"] == 24
     assert calls["view_bundle_row_counts"]["structure_artifact_validation"] == 1
+    assert calls["view_bundle_files_complete"] is True
+    assert calls["view_bundle_files_existing_count"] == calls[
+        "view_bundle_files_total_count"
+    ]
+    assert calls["view_bundle_files_missing_count"] == 0
+    assert calls["view_bundle_file_index_compacted"] is True
+    assert calls["view_bundle_file_index_complete_in_response"] is False
     assert calls["history_count"] == 1
     assert calls["visual_diagnostics_binding_verified"] is True
     assert calls["visual_diagnostics_action_id"]

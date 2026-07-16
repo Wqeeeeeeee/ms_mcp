@@ -47,6 +47,12 @@ workspace. It does not run Materials Studio or touch the current GUI session.
 The optional config audit reports drift without modifying the active config.
 Use `--strict-config` when drift should fail CI or local acceptance.
 
+The example allowlist includes `material_studio_gui_execute_view_replay` with
+`approval_mode="prompt"`. Its default `execution_mode="preview"` only probes
+the exact UIA tree. Explicit execute is limited to one standard face view in
+the existing wrapper and still requires a separate visual review before the
+record tool can accept the view.
+
 Use `response_mode="compact"` for normal interactive calls to the live
 capabilities, modeling, update, status, view-bundle, and GUI-apply tools. The
 compact receipt includes multi-view camera parameters, normality and

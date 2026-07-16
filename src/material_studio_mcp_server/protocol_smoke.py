@@ -41,6 +41,7 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_gui_apply_current_revision",
     "material_studio_gui_record_visual_confirmation",
     "material_studio_gui_prepare_view_replay",
+    "material_studio_gui_execute_view_replay",
     "material_studio_gui_record_view_replay",
 )
 
@@ -62,6 +63,7 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_gui_apply_current_revision": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_gui_record_visual_confirmation": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_gui_record_view_replay": {"readOnlyHint": False, "destructiveHint": False},
+    "material_studio_gui_execute_view_replay": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_project_reconcile_dopant_metadata": {
         "readOnlyHint": False,
         "destructiveHint": True,
@@ -169,6 +171,16 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "runtime_accessibility_evidence",
             "working_dir",
             "response_mode",
+        },
+        "required": set(),
+    },
+    "material_studio_gui_execute_view_replay": {
+        "properties": {
+            "project_id",
+            "revision",
+            "view_name",
+            "execution_mode",
+            "working_dir",
         },
         "required": set(),
     },
@@ -465,6 +477,17 @@ async def _run_preview_calls(
             },
             timeout,
         )
+        execution_preview = await _call_tool(
+            session,
+            "material_studio_gui_execute_view_replay",
+            {
+                "project_id": project_id,
+                "revision": created.get("revision"),
+                "execution_mode": "preview",
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
         resumed_preflight = await _call_tool(
             session,
             "material_studio_live_session_preflight",
@@ -503,6 +526,9 @@ async def _run_preview_calls(
             "status": len(json.dumps(status, ensure_ascii=False).encode("utf-8")),
             "prepare_view_replay": len(
                 json.dumps(prepared_replay, ensure_ascii=False).encode("utf-8")
+            ),
+            "execute_view_replay_preview": len(
+                json.dumps(execution_preview, ensure_ascii=False).encode("utf-8")
             ),
             "resumed_preflight": len(
                 json.dumps(resumed_preflight, ensure_ascii=False).encode("utf-8")
@@ -543,6 +569,14 @@ async def _run_preview_calls(
             validation_errors.append("status_compact_schema_mismatch")
         if prepared_replay.get("ok") is not True:
             validation_errors.append("view_replay_prepare_not_ok")
+        if execution_preview.get("ok") is not True:
+            validation_errors.append("view_replay_execution_preview_not_ok")
+        if execution_preview.get("execution_mode") != "preview":
+            validation_errors.append("view_replay_execution_preview_mode_changed")
+        if execution_preview.get("gui_input_performed") is not False:
+            validation_errors.append("view_replay_execution_preview_sent_gui_input")
+        if execution_preview.get("manifest_modified") is not False:
+            validation_errors.append("view_replay_execution_preview_modified_manifest")
         if resumed_preflight.get("ok") is not True:
             validation_errors.append("resumed_preflight_not_ok")
         visual_summary = resumed_preflight.get("latest_project_visual_diagnostics")

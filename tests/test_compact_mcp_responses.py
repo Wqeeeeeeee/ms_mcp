@@ -95,6 +95,9 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     )
     assert compact["visual_confirmation_entry"]["report_json_atomic_publish"] is True
     assert compact["view_replay_confirmation_entry"]["payload_field"] == "view_replay_confirmation"
+    assert compact["view_replay_confirmation_entry"]["execute_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
     assert compact["view_replay_confirmation_entry"]["creates_revision"] is False
     assert compact["view_replay_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
         "gui_evidence_reaudit"
@@ -135,6 +138,16 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         "bottom",
         "isometric",
     ]
+    assert compact["view_replay_automation_policy"]["local_uia_standard_view_names"] == [
+        "front",
+        "back",
+        "right",
+        "left",
+        "top",
+        "bottom",
+    ]
+    assert compact["view_replay_automation_policy"]["local_uia_isometric_supported"] is False
+    assert compact["view_replay_automation_policy"]["local_uia_records_visual_acceptance"] is False
     assert compact["view_replay_automation_policy"]["documented_keyboard_sequences"]["right"] == [
         "Up",
         "Up",

@@ -3398,6 +3398,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "tool": "material_studio_live_modeling_request",
             "payload_field": "view_replay_confirmation",
             "prepare_tool": "material_studio_gui_prepare_view_replay",
+            "execute_tool": "material_studio_gui_execute_view_replay",
             "direct_record_tool": "material_studio_gui_record_view_replay",
             "creates_revision": False,
             "evidence_reaudit_receipt_field": "gui_evidence_reaudit",
@@ -3481,6 +3482,23 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "view_replay_automation_policy": {
             "manifest_recipe_field": "views[].execution_recipe",
             "continuation_field": "replay_continuation",
+            "local_uia_execute_tool": "material_studio_gui_execute_view_replay",
+            "local_uia_default_execution_mode": "preview",
+            "local_uia_requires_explicit_execute": True,
+            "local_uia_standard_view_names": [
+                "front",
+                "back",
+                "right",
+                "left",
+                "top",
+                "bottom",
+            ],
+            "local_uia_isometric_supported": False,
+            "local_uia_miller_plane_supported": False,
+            "local_uia_records_visual_acceptance": False,
+            "local_uia_semantic_viewport_class": "CViewer3DCtrl",
+            "local_uia_pointer_coordinates_allowed": False,
+            "local_uia_modifier_keys_allowed": False,
             "automatic_native_view_names": [
                 "front",
                 "back",
@@ -6261,6 +6279,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "material_studio_gui_apply_current_revision",
             "material_studio_gui_copy_script_assist",
             "material_studio_gui_prepare_view_replay",
+            "material_studio_gui_execute_view_replay",
             "material_studio_gui_record_view_replay",
         ],
         "gui": {
@@ -6274,6 +6293,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "apply_current_revision_tool": "material_studio_gui_apply_current_revision",
             "copy_script_assist_tool": "material_studio_gui_copy_script_assist",
             "prepare_view_replay_tool": "material_studio_gui_prepare_view_replay",
+            "execute_view_replay_tool": "material_studio_gui_execute_view_replay",
             "record_view_replay_tool": "material_studio_gui_record_view_replay",
             "hotload_entrypoints": [
                 "material_studio_live_modeling_request",
@@ -39638,6 +39658,103 @@ def material_studio_gui_prepare_view_replay(
         return _compact_live_response(_ok(result), response_mode)
     except Exception as exc:
         return _compact_live_response(_error(exc), response_mode)
+
+
+@mcp.tool(
+    name="material_studio_gui_execute_view_replay",
+    annotations={
+        "title": "Preview or execute one safe Materials Studio GUI view replay",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def material_studio_gui_execute_view_replay(
+    project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
+    revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
+    view_name: Annotated[str | None, Field(description="Optional prepared standard view. Omitted selects the next pending locally executable view.", min_length=1, max_length=80)] = None,
+    execution_mode: Annotated[ExecutionMode, Field(description="preview performs only a read-only UIA preflight; execute performs one Reset plus allowlisted unmodified-arrow recipe.")] = ExecutionMode.PREVIEW,
+    working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
+) -> dict[str, Any]:
+    """Run one standard GUI view recipe without recording visual acceptance."""
+
+    try:
+        context = _resolve_gui_action_context(
+            project_id=project_id,
+            revision=revision,
+            working_dir=working_dir,
+        )
+        if context.get("project_id") is None or context.get("revision") is None:
+            return _error(
+                ValueError(
+                    f"Cannot resolve project/revision for view replay execution: {context}"
+                )
+            )
+        resolved_project_id = str(context["project_id"])
+        resolved_revision = int(context["revision"])
+        store = _structured_store(working_dir)
+        spec = store.get_revision(resolved_project_id, resolved_revision)
+        output_dir = store.outputs_dir(spec.project_id, spec.revision)
+        persisted_manifest, _manifest_error = _read_json_file(
+            output_dir / "gui_view_replay_manifest.json"
+        )
+        existing_view_names = (
+            [
+                str(item)
+                for item in persisted_manifest.get("view_names") or []
+                if str(item).strip()
+            ]
+            if isinstance(persisted_manifest, dict)
+            and persisted_manifest.get("project_id") == spec.project_id
+            and persisted_manifest.get("revision") == spec.revision
+            else []
+        )
+        audit: dict[str, Any]
+        selection_source: str
+        if existing_view_names:
+            candidate_audit = model_view_audit(spec, existing_view_names)
+            if (
+                isinstance(persisted_manifest, dict)
+                and persisted_manifest.get("spec_fingerprint")
+                == candidate_audit.get("spec_fingerprint")
+            ):
+                audit = candidate_audit
+                selection_source = "current_view_replay_manifest"
+            else:
+                existing_view_names = []
+        if not existing_view_names:
+            persisted_audit, _audit_error = _read_json_file(
+                output_dir / "view_audit.json"
+            )
+            audit, selection = _resolve_gui_reaudit_view_selection(
+                spec,
+                views=None,
+                persisted_audit=persisted_audit,
+            )
+            selection_source = str(selection.get("source") or "default_views")
+
+        result = _gui_controller(working_dir).run_view_replay(
+            audit,
+            project_id=spec.project_id,
+            revision=spec.revision,
+            view_name=view_name,
+            execution_mode=execution_mode.value,
+        )
+        result["project_resolution"] = context.get(
+            "project_resolution"
+        ) or _explicit_project_resolution(spec)
+        result["resolved_latest_current_for_view_replay_execution"] = bool(
+            project_id is None
+            and revision is None
+            and context.get("reason") == "latest_current_project"
+        )
+        result["view_selection_source"] = selection_source
+        result["spec_fingerprint"] = audit.get("spec_fingerprint")
+        result["model_type"] = audit.get("model_type")
+        return _ok(result)
+    except Exception as exc:
+        return _error(exc)
 
 
 @mcp.tool(

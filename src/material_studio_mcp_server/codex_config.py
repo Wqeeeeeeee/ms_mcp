@@ -46,6 +46,7 @@ SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_gui_record_visual_confirmation",
     "material_studio_gui_copy_script_assist",
     "material_studio_gui_prepare_view_replay",
+    "material_studio_gui_execute_view_replay",
     "material_studio_gui_record_view_replay",
     "material_studio_structure_summary",
     "material_studio_import_export",
@@ -63,6 +64,7 @@ PROMPT_TOOLS: tuple[str, ...] = (
     "material_studio_gui_apply_current_revision",
     "material_studio_gui_record_visual_confirmation",
     "material_studio_gui_open_structure",
+    "material_studio_gui_execute_view_replay",
     "material_studio_run_script",
 )
 

@@ -17,6 +17,11 @@ def test_codex_config_example_disables_custom_script() -> None:
     assert "material_studio_gui_apply_current_revision" in text
     assert "material_studio_gui_record_visual_confirmation" in text
     assert "material_studio_gui_prepare_view_replay" in text
+    assert "material_studio_gui_execute_view_replay" in text
     assert "material_studio_gui_record_view_replay" in text
+    assert (
+        "[mcp_servers.materials_studio.tools.material_studio_gui_execute_view_replay]"
+        in text
+    )
     assert "material_studio_run_script" in text
     assert "disabled_tools" in text

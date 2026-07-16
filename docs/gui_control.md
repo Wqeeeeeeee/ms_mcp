@@ -27,6 +27,7 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_apply_current_revision`: validates the saved revision script, exports the current revision's `view_audit.json`/`modeling_health` by default, previews by default, may omit `project_id` for the latest current project, and only executes when `execution_mode="execute"`.
 - `material_studio_gui_copy_script_assist`: returns a checklist plus a non-callable reviewed-evidence payload template for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied. The template explicitly requires exact window binding and a workspace screenshot and never authorizes script execution.
 - `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_accessibility_evidence` records named Reset/Movement observations in `gui_view_replay_accessibility_preflight.json`; optional `runtime_ui_evidence` records the separate Miller-plane probe in `gui_view_replay_runtime_preflight.json`. Either artifact is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
+- `material_studio_gui_execute_view_replay`: performs a read-only local UIA probe by default. With explicit `execution_mode="execute"`, it executes exactly one pending front/back/right/left/top/bottom recipe in the existing verified window. Reset uses UIA `InvokePattern`; arrows are sent only after the unique enabled/visible `CViewer3DCtrl` accepts semantic keyboard focus. The tool never uses coordinates or modifiers, never supports isometric/Miller recipes, and never records visual acceptance. It persists the refreshed preflight, a post-action BMP, structure SHA-256 comparison, and a deliberately incomplete record template.
 - `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. For `source="reviewed_copy_script"`, `reviewed_copy_script_evidence`, exact handle/title binding, and a workspace screenshot are mandatory. The script is archived only as inert evidence after static safety checks and is never executed.
 - `material_studio_gui_record_visual_confirmation`: persists Computer Use or manual viewport evidence after verifying the current project/revision, exact wrapper title and handle, wrapper metadata, and single-window state. The same path is available through `material_studio_live_modeling_request.visual_confirmation` for restricted MCP allowlists. In an ongoing session, either entry may omit `project_id`; the supplied observed revision must match the latest current project's revision before window binding is evaluated.
 
@@ -114,10 +115,13 @@ auditable phases:
 1. `material_studio_gui_prepare_view_replay` persists exact camera, framing,
    crystallographic metadata, expected projection bounds, target-window
    identity, and single-window preflight state without touching the GUI.
-2. When the continuation is `automatic_recipe_ready`, Computer Use activates
-   and re-verifies the exact wrapper, then executes only the returned
-   `execution_action`. This phase may issue GUI input but cannot write replay
-   evidence, mutate the structure, or create a revision.
+2. When the continuation is `automatic_recipe_ready`, use
+   `material_studio_gui_execute_view_replay` for one of the six standard face
+   views, first in preview and then with explicit execute. The local backend
+   uses pywinauto UIA `InvokePattern` plus semantic viewport focus and exact
+   unmodified arrows. Use Computer Use for isometric, Miller-plane, or other
+   reviewed recipes. This phase may issue GUI input but cannot write accepted
+   replay evidence, mutate the structure, or create a revision.
 3. After the action, Computer Use or a reviewer captures a fresh screenshot and
    current accessibility/camera observations, fills the null fields in
    `post_action_record_payload_template`, and calls
@@ -130,6 +134,14 @@ identity are instructions, not success receipts. In particular,
 Miller-plane cleanup fields, and reviewed Copy Script attestations remain null
 until they are observed after the GUI action. `record_call_ready=false` remains
 in the continuation and preflight safety receipt until that observation exists.
+
+The local executor serializes one action per project/revision and rechecks the
+single-process, single-window, foreground, and wrapper binding immediately
+before input and again afterward. A failure after Reset may leave a partial
+camera orientation, but no acceptance event is written; retrying the same
+recipe starts from Reset again. The post-action screenshot and mechanical
+receipt are evidence to review, not proof that the requested camera or native
+crystal roll is visually correct.
 
 For a reviewed Copy Script path, the record call also supplies the exact script
 text and review attestations in `reviewed_copy_script_evidence`. The server

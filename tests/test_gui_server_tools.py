@@ -8062,6 +8062,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "material_studio_gui_launch" in capabilities["gui_tools"]
     assert "material_studio_gui_apply_current_revision" in capabilities["gui_tools"]
     assert "material_studio_gui_prepare_view_replay" in capabilities["gui_tools"]
+    assert "material_studio_gui_execute_view_replay" in capabilities["gui_tools"]
     assert "material_studio_gui_record_view_replay" in capabilities["gui_tools"]
     assert "semiconductor_pn_junction" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "Build a silicon p-n junction." in capabilities["natural_language"]["new_structure_inline_modifiers"]["junction_examples"]
@@ -8077,6 +8078,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["open_structure_tool"] == "material_studio_gui_open_structure"
     assert capabilities["gui"]["apply_current_revision_tool"] == "material_studio_gui_apply_current_revision"
     assert capabilities["gui"]["prepare_view_replay_tool"] == "material_studio_gui_prepare_view_replay"
+    assert capabilities["gui"]["execute_view_replay_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
     assert capabilities["gui"]["record_view_replay_tool"] == "material_studio_gui_record_view_replay"
     view_replay_policy = capabilities["gui"]["view_replay_policy"]
     assert view_replay_policy["preview_first"] is True

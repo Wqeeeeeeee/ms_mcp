@@ -335,6 +335,20 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     assert status["window_management"]["auto_launch_allowed"] is False
     assert status["window_management"]["payload_hint"]["reuse_existing_window_only"] is True
     assert "list_matstudio_windows" in status["capabilities"]
+    assert status["local_uia_view_replay_view_names"] == [
+        "back",
+        "bottom",
+        "front",
+        "left",
+        "right",
+        "top",
+    ]
+    assert status["local_uia_view_replay_supported"] is bool(
+        controller.view_replay_backend.supported
+    )
+    assert (
+        "execute_standard_view_replay_with_local_uia" in status["capabilities"]
+    ) is bool(controller.view_replay_backend.supported)
 
     activated = controller.activate(project_id="gui_proj", revision=0)
     assert activated["activated"] is True

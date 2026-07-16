@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Protocol
 from xml.sax.saxutils import escape as xml_escape
 
+from .gui_uia import (
+    PywinautoViewReplayBackend,
+    SAFE_STANDARD_VIEW_KEY_SEQUENCES,
+    ViewReplayAutomationBackend,
+)
 from .parsers.copy_script import analyze_reviewed_copy_script
 from .state.store import default_workspace_root, sanitize_project_id
 
@@ -211,6 +216,7 @@ VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS = {
     "accessibility_tree_refreshed",
     "viewer_document_observed",
     "empty_viewport_focus_target_observed",
+    "semantic_viewport_focus_supported",
     "unnamed_toolbar_children_observed",
     "controls",
     "anonymous_toolbars",
@@ -219,6 +225,7 @@ VIEW_RUNTIME_ACCESSIBILITY_EVIDENCE_FIELDS = {
 }
 VIEW_RUNTIME_ACCESSIBILITY_OPTIONAL_EVIDENCE_FIELDS = {
     "anonymous_toolbars",
+    "semantic_viewport_focus_supported",
     "screenshot_path",
     "note",
 }
@@ -502,7 +509,7 @@ def _normalize_view_runtime_accessibility_evidence(
 
     normalized = dict(value)
     source = str(normalized.get("source") or "").strip()
-    if source not in {"computer_use", "manual_review"}:
+    if source not in {"computer_use", "manual_review", "local_uia"}:
         raise GuiError("unsupported runtime_accessibility_evidence source")
     normalized["source"] = source
     try:
@@ -537,6 +544,18 @@ def _normalize_view_runtime_accessibility_evidence(
     ):
         if not isinstance(normalized.get(field), bool):
             raise GuiError(f"runtime_accessibility_evidence.{field} must be a boolean")
+    semantic_focus = normalized.get("semantic_viewport_focus_supported", False)
+    if not isinstance(semantic_focus, bool):
+        raise GuiError(
+            "runtime_accessibility_evidence.semantic_viewport_focus_supported "
+            "must be a boolean"
+        )
+    if source != "local_uia" and semantic_focus:
+        raise GuiError(
+            "semantic_viewport_focus_supported is reserved for the server-generated "
+            "local_uia probe"
+        )
+    normalized["semantic_viewport_focus_supported"] = semantic_focus
 
     raw_controls = normalized.get("controls")
     if not isinstance(raw_controls, list) or not 0 <= len(raw_controls) <= len(
@@ -938,7 +957,11 @@ def _resolve_verified_anonymous_toolbar_mappings(
                 "verified": True,
                 "invocation_ready": enabled,
                 "target_kind": "verified_anonymous_toolbar_child",
-                "invocation_method": "computer_use_accessibility_element_index",
+                "invocation_method": (
+                    "local_uia_invoke_pattern"
+                    if evidence.get("source") == "local_uia"
+                    else "computer_use_accessibility_element_index"
+                ),
                 "element_index_is_ephemeral": True,
                 "requires_fresh_tree_match_before_invoke": True,
                 "observed_control_name": child.get("observed_control_name"),
@@ -2726,7 +2749,12 @@ def _serialize_view_replay_write(method: Any) -> Any:
 class MaterialsStudioGuiController:
     """MCP 工具使用的高级 GUI 会话助手。"""
 
-    def __init__(self, workspace_root: str | Path | None = None, backend: GuiBackend | None = None) -> None:
+    def __init__(
+        self,
+        workspace_root: str | Path | None = None,
+        backend: GuiBackend | None = None,
+        view_replay_backend: ViewReplayAutomationBackend | None = None,
+    ) -> None:
         """初始化 GUI 控制器。
 
         参数:
@@ -2737,6 +2765,7 @@ class MaterialsStudioGuiController:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.trusted_wrapper_workspace_roots = _trusted_wrapper_workspace_roots(self.workspace_root)
         self.backend = backend or (WindowsGuiBackend() if os.name == "nt" else NullGuiBackend())
+        self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend()
 
     def status(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
         """返回状态。"""
@@ -2850,6 +2879,15 @@ class MaterialsStudioGuiController:
                 for root, trust_basis in self.trusted_wrapper_workspace_roots
             ],
             "screenshots_dir": str(self.workspace_root / "screenshots"),
+            "local_uia_view_replay_supported": bool(
+                self.view_replay_backend.supported
+            ),
+            "local_uia_view_replay_unavailable_reason": (
+                self.view_replay_backend.unavailable_reason
+            ),
+            "local_uia_view_replay_view_names": sorted(
+                SAFE_STANDARD_VIEW_KEY_SEQUENCES
+            ),
             "capabilities": [
                 "detect_matstudio_window",
                 "list_matstudio_windows",
@@ -2859,13 +2897,18 @@ class MaterialsStudioGuiController:
                 "capture_bmp_snapshot",
                 "copy_script_assist",
                 "prepare_view_replay_manifest",
+                *(
+                    ["execute_standard_view_replay_with_local_uia"]
+                    if self.view_replay_backend.supported
+                    else []
+                ),
                 "record_external_view_replay",
             ],
             "limits": [
                 "不使用 COM 自动化。",
                 "精确的结构编辑应保持 ModelSpec/SemanticPatch/MaterialsScript 驱动。",
-                "菜单和视口操作需要 Computer Use（如果可用）。",
-                "任意相机向量没有经过验证的 Materials Studio 2020 MaterialsScript API；本地后端只生成回放清单。",
+                "等轴测、Miller 平面和其他复杂菜单/视口操作仍需要 Computer Use 或人工审查。",
+                "任意相机向量没有经过验证的 Materials Studio 2020 MaterialsScript API；本地 UIA 仅执行六个标准面视角配方。",
             ],
         }
 
@@ -3566,6 +3609,634 @@ class MaterialsStudioGuiController:
         self._write_log("copy_script_assist", project_id=project_id, revision=revision, payload=payload)
         return payload
 
+    def probe_view_replay_accessibility(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        """Probe the exact current wrapper through local UIA without GUI input."""
+
+        safe_project = sanitize_project_id(project_id)
+        if revision < 0:
+            raise GuiError("revision must be non-negative")
+        status = self.status(project_id=safe_project, revision=revision)
+        target_window = (
+            status.get("target_window")
+            if isinstance(status.get("target_window"), dict)
+            else {}
+        )
+        target_resolution = (
+            status.get("target_window_resolution")
+            if isinstance(status.get("target_window_resolution"), dict)
+            else {}
+        )
+        block_reasons: list[str] = []
+        if status.get("supported") is not True:
+            block_reasons.append("gui_backend_unavailable")
+        if status.get("process_count") != 1:
+            block_reasons.append("exactly_one_matstudio_process_required")
+        if status.get("single_window_policy_ok") is not True:
+            block_reasons.extend(
+                str(item)
+                for item in status.get("single_window_violation_reasons") or []
+            )
+        if status.get("target_window_found") is not True:
+            block_reasons.append("target_revision_window_not_found")
+        if target_resolution.get("matched_project_window") is not True:
+            block_reasons.append("target_revision_window_identity_unverified")
+        if status.get("current_revision_loaded") is not True:
+            block_reasons.append("target_revision_not_loaded_in_gui")
+        try:
+            target_handle = int(target_window.get("handle"))
+        except (TypeError, ValueError):
+            target_handle = 0
+        target_title = str(target_window.get("title") or "")
+        if target_handle <= 0 or not target_title:
+            block_reasons.append("target_window_identity_missing")
+        if block_reasons:
+            return {
+                "project_id": safe_project,
+                "revision": revision,
+                "supported": bool(self.view_replay_backend.supported),
+                "safe_for_standard_view_replay": False,
+                "gui_input_performed": False,
+                "target_window": target_window or None,
+                "target_window_resolution": target_resolution or None,
+                "single_window_policy_ok": status.get("single_window_policy_ok"),
+                "block_reasons": _unique_strings(block_reasons),
+            }
+
+        probe = self.view_replay_backend.probe(
+            window_handle=target_handle,
+            expected_window_title=target_title,
+            expected_revision=revision,
+            toolbar_contracts=VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS,
+            command_labels=VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS,
+        )
+        evidence = probe.get("evidence") if isinstance(probe, dict) else None
+        binding: dict[str, Any] | None = None
+        if isinstance(evidence, dict):
+            try:
+                normalized_evidence = _normalize_view_runtime_accessibility_evidence(
+                    evidence
+                )
+                binding = _view_replay_runtime_ui_binding(
+                    status,
+                    project_id=safe_project,
+                    revision=revision,
+                    evidence=normalized_evidence,
+                )
+                probe["evidence"] = normalized_evidence
+                if binding.get("ok") is not True:
+                    probe.setdefault("block_reasons", []).extend(
+                        f"local_uia_binding_{reason}"
+                        for reason in binding.get("rejection_reasons") or []
+                    )
+            except Exception as exc:
+                probe.setdefault("block_reasons", []).append(
+                    "local_uia_evidence_normalization_failed"
+                )
+                probe["evidence_error"] = str(exc)
+        else:
+            probe.setdefault("block_reasons", []).append(
+                "local_uia_evidence_unavailable"
+            )
+        probe["block_reasons"] = _unique_strings(
+            str(item) for item in probe.get("block_reasons") or []
+        )
+        probe["safe_for_standard_view_replay"] = bool(
+            probe.get("safe_for_standard_view_replay") is True
+            and isinstance(binding, dict)
+            and binding.get("ok") is True
+            and not probe["block_reasons"]
+        )
+        return {
+            "project_id": safe_project,
+            "revision": revision,
+            **probe,
+            "gui_input_performed": False,
+            "binding": binding,
+            "target_window": target_window,
+            "target_window_resolution": target_resolution,
+            "single_window_policy_ok": status.get("single_window_policy_ok"),
+            "target_window_is_foreground": target_window.get("is_foreground"),
+        }
+
+    def run_view_replay(
+        self,
+        audit: dict[str, Any],
+        *,
+        project_id: str,
+        revision: int,
+        view_name: str | None = None,
+        execution_mode: str = "preview",
+    ) -> dict[str, Any]:
+        """Preview or execute one local-UIA standard view without auto-accepting it."""
+
+        safe_project = sanitize_project_id(project_id)
+        mode = str(execution_mode).strip().lower()
+        if mode not in {"preview", "execute"}:
+            raise GuiError("execution_mode must be preview or execute")
+        requested_view_name = str(view_name or "").strip() or None
+        if requested_view_name is not None and len(requested_view_name) > 80:
+            raise GuiError("view_name must be at most 80 characters")
+        if str(audit.get("project_id") or "") != safe_project:
+            raise GuiError("view audit project_id does not match the replay target")
+        try:
+            audit_revision = int(audit.get("revision"))
+        except (TypeError, ValueError) as exc:
+            raise GuiError("view audit revision is missing or invalid") from exc
+        if audit_revision != revision:
+            raise GuiError("view audit revision does not match the replay target")
+
+        initial_probe = self.probe_view_replay_accessibility(
+            project_id=safe_project,
+            revision=revision,
+        )
+        plan = self._local_view_replay_plan(
+            audit,
+            project_id=safe_project,
+            revision=revision,
+            probe=initial_probe,
+            requested_view_name=requested_view_name,
+        )
+        response: dict[str, Any] = {
+            "project_id": safe_project,
+            "revision": revision,
+            "execution_mode": mode,
+            "status": (
+                "preview_ready"
+                if plan.get("execution_ready") is True
+                else "blocked"
+            ),
+            "selected_view_name": plan.get("selected_view_name"),
+            "requested_view_name": requested_view_name,
+            "execution_ready": plan.get("execution_ready"),
+            "execution_supported_view_names": sorted(
+                SAFE_STANDARD_VIEW_KEY_SEQUENCES
+            ),
+            "plan": plan,
+            "local_uia_probe": initial_probe,
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "manifest_modified": False,
+            "revision_created": False,
+            "visual_acceptance_recorded": False,
+            "record_call_ready": False,
+        }
+        if mode == "preview" or plan.get("execution_ready") is not True:
+            response["confirmation_required"] = mode == "preview"
+            response["confirmation_action"] = (
+                {
+                    "tool": "material_studio_gui_execute_view_replay",
+                    "payload": {
+                        "project_id": safe_project,
+                        "revision": revision,
+                        "view_name": plan.get("selected_view_name"),
+                        "execution_mode": "execute",
+                    },
+                }
+                if mode == "preview" and plan.get("execution_ready") is True
+                else None
+            )
+            return response
+
+        manifest_path = self._view_replay_manifest_path(
+            project_id=safe_project,
+            revision=revision,
+        )
+        execution_lock_path = manifest_path.with_name(
+            "gui_view_replay_execution.lock"
+        )
+        with _view_replay_write_lock(
+            execution_lock_path,
+            workspace_root=self.workspace_root,
+            timeout_seconds=VIEW_REPLAY_WRITE_LOCK_TIMEOUT_SECONDS,
+        ) as execution_transaction:
+            activation = None
+            if initial_probe.get("target_window_is_foreground") is not True:
+                activation = self.activate(
+                    project_id=safe_project,
+                    revision=revision,
+                )
+                if activation.get("activation_verified") is not True:
+                    response.update(
+                        {
+                            "status": "blocked",
+                            "execution_ready": False,
+                            "execution_block_reasons": [
+                                "target_window_activation_not_verified"
+                            ],
+                            "activation": activation,
+                            "execution_transaction": execution_transaction,
+                        }
+                    )
+                    return response
+
+            fresh_probe = self.probe_view_replay_accessibility(
+                project_id=safe_project,
+                revision=revision,
+            )
+            fresh_plan = self._local_view_replay_plan(
+                audit,
+                project_id=safe_project,
+                revision=revision,
+                probe=fresh_probe,
+                requested_view_name=str(plan["selected_view_name"]),
+            )
+            if fresh_plan.get("execution_ready") is not True:
+                response.update(
+                    {
+                        "status": "blocked",
+                        "execution_ready": False,
+                        "execution_block_reasons": fresh_plan.get(
+                            "block_reasons"
+                        )
+                        or ["fresh_local_uia_preflight_failed"],
+                        "activation": activation,
+                        "local_uia_probe": fresh_probe,
+                        "plan": fresh_plan,
+                        "execution_transaction": execution_transaction,
+                    }
+                )
+                return response
+
+            prepared = self.prepare_view_replay(
+                audit,
+                project_id=safe_project,
+                revision=revision,
+                runtime_accessibility_evidence=fresh_probe.get("evidence"),
+            )
+            selected_view_name = str(fresh_plan["selected_view_name"])
+            selected_view = next(
+                (
+                    item
+                    for item in prepared.get("manifest", {}).get("views", [])
+                    if isinstance(item, dict)
+                    and item.get("view_name") == selected_view_name
+                ),
+                None,
+            )
+            if not isinstance(selected_view, dict):
+                raise GuiError(
+                    "prepared view replay manifest lost the selected view"
+                )
+            execution_recipe = selected_view.get("execution_recipe")
+            if not isinstance(execution_recipe, dict):
+                raise GuiError("selected view has no execution recipe")
+            supported, support_reasons = _local_uia_recipe_support(
+                execution_recipe
+            )
+            if not supported:
+                raise GuiError(
+                    "selected prepared recipe is not locally executable: "
+                    + ", ".join(support_reasons)
+                )
+            current_command_evidence = _materials_studio_view_command_evidence()
+            target = execution_recipe.get("accessibility_target")
+            if isinstance(target, dict) and target.get("registry_sha256"):
+                if target.get("registry_sha256") != current_command_evidence.get(
+                    "registry_sha256"
+                ):
+                    raise GuiError(
+                        "installed Materials Studio view registry changed after prepare"
+                    )
+
+            current_status = self.status(
+                project_id=safe_project,
+                revision=revision,
+            )
+            target_window = (
+                current_status.get("target_window")
+                if isinstance(current_status.get("target_window"), dict)
+                else {}
+            )
+            target_resolution = (
+                current_status.get("target_window_resolution")
+                if isinstance(
+                    current_status.get("target_window_resolution"), dict
+                )
+                else {}
+            )
+            pre_action_reasons = _local_view_replay_status_block_reasons(
+                current_status
+            )
+            if pre_action_reasons:
+                response.update(
+                    {
+                        "status": "blocked",
+                        "execution_ready": False,
+                        "execution_block_reasons": pre_action_reasons,
+                        "activation": activation,
+                        "local_uia_probe": fresh_probe,
+                        "plan": fresh_plan,
+                        "manifest_modified": True,
+                        "execution_transaction": execution_transaction,
+                    }
+                )
+                return response
+
+            structure_path = _target_structure_path(target_resolution)
+            structure_sha256_before = None
+            structure_size_before = None
+            if structure_path is not None and structure_path.exists():
+                structure_sha256_before, structure_size_before = _sha256_file(
+                    structure_path
+                )
+
+            action_receipt = self.view_replay_backend.execute_standard_recipe(
+                window_handle=int(target_window["handle"]),
+                expected_window_title=str(target_window["title"]),
+                execution_recipe=execution_recipe,
+                toolbar_contracts=VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS,
+                command_labels=VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS,
+            )
+            snapshot_result: dict[str, Any] | None = None
+            snapshot_error: str | None = None
+            try:
+                snapshot_result = self.snapshot(
+                    label=f"view_replay_{selected_view_name}_executed",
+                    project_id=safe_project,
+                    revision=revision,
+                )
+            except Exception as exc:
+                snapshot_error = str(exc)
+
+            structure_sha256_after = None
+            structure_size_after = None
+            if structure_path is not None and structure_path.exists():
+                structure_sha256_after, structure_size_after = _sha256_file(
+                    structure_path
+                )
+            structure_unchanged = bool(
+                structure_sha256_before is not None
+                and structure_sha256_before == structure_sha256_after
+                and structure_size_before == structure_size_after
+            )
+            post_status = self.status(
+                project_id=safe_project,
+                revision=revision,
+            )
+            post_action_reasons = _local_view_replay_status_block_reasons(
+                post_status
+            )
+            execution_succeeded = bool(
+                action_receipt.get("execution_succeeded") is True
+                and not post_action_reasons
+                and structure_unchanged
+                and isinstance(snapshot_result, dict)
+                and snapshot_result.get("analysis", {}).get("readable") is True
+            )
+            post_action_template = _local_view_replay_record_template(
+                project_id=safe_project,
+                revision=revision,
+                view_name=selected_view_name,
+                execution_recipe=execution_recipe,
+                action_receipt=action_receipt,
+                target_window=target_window,
+                screenshot_path=(
+                    snapshot_result.get("screenshot_path")
+                    if isinstance(snapshot_result, dict)
+                    else None
+                ),
+            )
+            result_payload = {
+                "project_id": safe_project,
+                "revision": revision,
+                "selected_view_name": selected_view_name,
+                "execution_mode": mode,
+                "execution_succeeded": execution_succeeded,
+                "action_receipt": action_receipt,
+                "snapshot": snapshot_result,
+                "snapshot_error": snapshot_error,
+                "structure_path": str(structure_path)
+                if structure_path is not None
+                else None,
+                "structure_sha256_before": structure_sha256_before,
+                "structure_sha256_after": structure_sha256_after,
+                "structure_unchanged": structure_unchanged,
+                "post_action_window_status_block_reasons": post_action_reasons,
+                "post_action_record_payload_template": post_action_template,
+                "post_action_observation_required": True,
+                "record_call_ready": False,
+                "visual_acceptance_recorded": False,
+                "acceptance_event_created": False,
+                "revision_created": False,
+                "manifest_path": prepared.get("manifest_path"),
+                "runtime_accessibility_preflight_path": prepared.get(
+                    "runtime_accessibility_preflight_path"
+                ),
+                "activation": activation,
+                "execution_transaction": execution_transaction,
+            }
+            log_path = self._write_log(
+                "execute_view_replay",
+                project_id=safe_project,
+                revision=revision,
+                payload=result_payload,
+            )
+            response.update(
+                {
+                    **result_payload,
+                    "status": (
+                        "awaiting_visual_confirmation"
+                        if execution_succeeded
+                        else "execution_failed"
+                    ),
+                    "execution_ready": True,
+                    "gui_input_performed": bool(
+                        action_receipt.get("reset_invocation_succeeded") is True
+                        or action_receipt.get("key_sequence_sent")
+                    ),
+                    "gui_modified": bool(
+                        action_receipt.get("reset_invocation_succeeded") is True
+                    ),
+                    "structure_modified": not structure_unchanged,
+                    "manifest_modified": True,
+                    "local_uia_probe": fresh_probe,
+                    "plan": fresh_plan,
+                    "gui_log_path": str(log_path),
+                    "confirmation_required": True,
+                    "confirmation_action": {
+                        "tool": "material_studio_gui_record_view_replay",
+                        "payload_template": post_action_template,
+                        "payload_template_is_directly_callable": False,
+                        "required_observations": [
+                            "model_visible",
+                            "camera_matches_manifest",
+                            "crystal_camera_evidence.view_direction_matches_manifest",
+                            "crystal_camera_evidence.native_in_plane_roll_observed",
+                        ],
+                    },
+                }
+            )
+            return response
+
+    def _local_view_replay_plan(
+        self,
+        audit: dict[str, Any],
+        *,
+        project_id: str,
+        revision: int,
+        probe: dict[str, Any],
+        requested_view_name: str | None,
+    ) -> dict[str, Any]:
+        """Build a non-persisting local execution plan from a fresh UIA probe."""
+
+        command_evidence = _materials_studio_view_command_evidence()
+        status = self.status(project_id=project_id, revision=revision)
+        evidence = probe.get("evidence") if isinstance(probe, dict) else None
+        runtime_preflight: dict[str, Any]
+        if isinstance(evidence, dict):
+            runtime_preflight = (
+                self._resolve_view_replay_runtime_accessibility_preflight(
+                    status=status,
+                    project_id=project_id,
+                    revision=revision,
+                    supplied_evidence=evidence,
+                    command_evidence=command_evidence,
+                    persist_supplied_evidence=False,
+                )
+            )
+        else:
+            runtime_preflight = {
+                "status": "missing",
+                "observation_available": False,
+                "binding_verified": False,
+                "automation_gate_satisfied": False,
+                "block_reasons": ["local_uia_evidence_unavailable"],
+            }
+        steps = [
+            _view_replay_step(view, index=index)
+            for index, view in enumerate(audit.get("views") or [])
+        ]
+        for step in steps:
+            step["execution_recipe"] = _view_replay_execution_recipe(
+                step,
+                command_evidence,
+                model_type=str(audit.get("model_type") or "") or None,
+                runtime_ui_preflight=None,
+                runtime_accessibility_preflight=runtime_preflight,
+            )
+
+        accepted_view_names = self._existing_view_replay_accepted_names(
+            project_id=project_id,
+            revision=revision,
+            spec_fingerprint=str(audit.get("spec_fingerprint") or ""),
+        )
+        candidate_rows: list[dict[str, Any]] = []
+        selected: dict[str, Any] | None = None
+        for step in steps:
+            item_view_name = str(step.get("view_name") or "")
+            recipe = (
+                step.get("execution_recipe")
+                if isinstance(step.get("execution_recipe"), dict)
+                else {}
+            )
+            locally_supported, support_reasons = _local_uia_recipe_support(recipe)
+            accepted = item_view_name in accepted_view_names
+            row = {
+                "view_name": item_view_name,
+                "accepted": accepted,
+                "recipe_automation_ready": recipe.get("automation_ready") is True,
+                "local_execution_supported": locally_supported,
+                "block_reasons": support_reasons,
+            }
+            candidate_rows.append(row)
+            if accepted:
+                continue
+            if requested_view_name is not None and item_view_name != requested_view_name:
+                continue
+            if locally_supported and selected is None:
+                selected = step
+
+        block_reasons = list(probe.get("block_reasons") or [])
+        if probe.get("safe_for_standard_view_replay") is not True:
+            block_reasons.append("local_uia_probe_not_safe")
+        if requested_view_name is not None and not any(
+            row["view_name"] == requested_view_name for row in candidate_rows
+        ):
+            block_reasons.append("requested_view_not_in_manifest_selection")
+        if requested_view_name is not None and any(
+            row["view_name"] == requested_view_name and row["accepted"]
+            for row in candidate_rows
+        ):
+            block_reasons.append("requested_view_already_accepted")
+        if selected is None:
+            block_reasons.append("no_pending_local_uia_standard_view_ready")
+        block_reasons = _unique_strings(str(item) for item in block_reasons)
+        selected_recipe = (
+            selected.get("execution_recipe")
+            if isinstance(selected, dict)
+            and isinstance(selected.get("execution_recipe"), dict)
+            else None
+        )
+        return {
+            "project_id": project_id,
+            "revision": revision,
+            "requested_view_name": requested_view_name,
+            "selected_view_name": (
+                selected.get("view_name") if isinstance(selected, dict) else None
+            ),
+            "execution_ready": bool(selected is not None and not block_reasons),
+            "accepted_view_names": sorted(accepted_view_names),
+            "candidate_views": candidate_rows,
+            "execution_recipe": selected_recipe,
+            "runtime_accessibility_preflight": runtime_preflight,
+            "block_reasons": block_reasons,
+            "preview_has_no_gui_input": True,
+            "preview_persists_no_manifest_or_evidence": True,
+        }
+
+    def _existing_view_replay_accepted_names(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+        spec_fingerprint: str,
+    ) -> set[str]:
+        """Read current accepted names without creating directories or writing files."""
+
+        path = (
+            self.workspace_root
+            / sanitize_project_id(project_id)
+            / "outputs"
+            / f"r{revision:03d}"
+            / "gui_view_replay_manifest.json"
+        ).resolve()
+        _ensure_inside(self.workspace_root, path)
+        if not path.exists() or not path.is_file():
+            return set()
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return set()
+        if not isinstance(manifest, dict):
+            return set()
+        if (
+            manifest.get("project_id") != project_id
+            or manifest.get("revision") != revision
+            or str(manifest.get("spec_fingerprint") or "") != spec_fingerprint
+        ):
+            return set()
+        _refresh_view_replay_summary(
+            manifest,
+            workspace_root=self.workspace_root,
+            events_path=path.with_name("gui_view_replay_events.jsonl"),
+        )
+        summary = (
+            manifest.get("replay_summary")
+            if isinstance(manifest.get("replay_summary"), dict)
+            else {}
+        )
+        return {
+            str(item)
+            for item in summary.get("accepted_view_names") or []
+            if str(item)
+        }
+
     @_serialize_view_replay_write
     def prepare_view_replay(
         self,
@@ -3873,12 +4544,16 @@ class MaterialsStudioGuiController:
         revision: int,
         supplied_evidence: dict[str, Any] | None,
         command_evidence: dict[str, Any],
+        persist_supplied_evidence: bool = True,
     ) -> dict[str, Any]:
         """Load or persist exact-window accessibility and toolbar-order evidence."""
 
         artifact_path = self._view_replay_runtime_accessibility_preflight_path(
             project_id=project_id,
             revision=revision,
+            create_parent=bool(
+                supplied_evidence is not None and persist_supplied_evidence
+            ),
         )
         if supplied_evidence is None and not artifact_path.exists():
             return {
@@ -4061,7 +4736,7 @@ class MaterialsStudioGuiController:
                 )
             )
         )
-        if supplied_evidence is not None:
+        if supplied_evidence is not None and persist_supplied_evidence:
             artifact = {
                 "schema_version": 2,
                 "kind": "materials_studio_view_runtime_accessibility_preflight",
@@ -4273,6 +4948,7 @@ class MaterialsStudioGuiController:
         *,
         project_id: str,
         revision: int,
+        create_parent: bool = True,
     ) -> Path:
         """Return the immutable-revision-scoped accessibility preflight path."""
 
@@ -4285,7 +4961,8 @@ class MaterialsStudioGuiController:
             / "gui_view_replay_accessibility_preflight.json"
         ).resolve()
         _ensure_inside(self.workspace_root, path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if create_parent:
+            path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
     @_serialize_view_replay_write
@@ -5566,6 +6243,204 @@ def _view_replay_step(view: Any, *, index: int) -> dict[str, Any]:
     }
 
 
+def _local_uia_recipe_support(
+    execution_recipe: dict[str, Any],
+) -> tuple[bool, list[str]]:
+    """Return whether one prepared recipe fits the narrow local UIA executor."""
+
+    reasons: list[str] = []
+    view_name = str(execution_recipe.get("view_name") or "")
+    expected_keys = SAFE_STANDARD_VIEW_KEY_SEQUENCES.get(view_name)
+    if expected_keys is None:
+        reasons.append("local_uia_view_name_not_allowlisted")
+        expected_keys = []
+    if execution_recipe.get("automation_ready") is not True:
+        reasons.append("prepared_recipe_not_automation_ready")
+    if execution_recipe.get("structure_mutation_allowed") is not False:
+        reasons.append("prepared_recipe_structure_mutation_not_prohibited")
+    if execution_recipe.get("launch_new_matstudio_process_allowed") is not False:
+        reasons.append("prepared_recipe_process_launch_not_prohibited")
+    if execution_recipe.get("blind_coordinate_action_allowed") is not False:
+        reasons.append("prepared_recipe_blind_coordinates_not_prohibited")
+    if execution_recipe.get("keyboard_stages") is not None:
+        reasons.append("local_uia_staged_keyboard_recipe_unsupported")
+    if list(execution_recipe.get("key_sequence") or []) != expected_keys:
+        reasons.append("prepared_recipe_key_sequence_not_allowlisted")
+    if list(execution_recipe.get("modifier_keys") or []) != []:
+        reasons.append("prepared_recipe_modifier_keys_not_empty")
+    if expected_keys and execution_recipe.get("rotation_increment_degrees") != 45:
+        reasons.append("prepared_recipe_rotation_increment_not_45_degrees")
+    if execution_recipe.get("native_command_id") != "cmdViewer3DResetView":
+        reasons.append("prepared_recipe_reset_command_mismatch")
+    target = execution_recipe.get("accessibility_target")
+    if not isinstance(target, dict):
+        reasons.append("prepared_recipe_reset_accessibility_target_missing")
+    else:
+        if target.get("target_kind") not in {
+            "named_control",
+            "verified_anonymous_toolbar_child",
+        }:
+            reasons.append("prepared_recipe_reset_target_kind_unsupported")
+        if target.get("command_id") != "cmdViewer3DResetView":
+            reasons.append("prepared_recipe_reset_target_command_mismatch")
+    reasons = _unique_strings(reasons)
+    return not reasons, reasons
+
+
+def _local_view_replay_status_block_reasons(
+    status: dict[str, Any],
+) -> list[str]:
+    """Return exact single-window/foreground blockers immediately around input."""
+
+    reasons: list[str] = []
+    target_window = (
+        status.get("target_window")
+        if isinstance(status.get("target_window"), dict)
+        else {}
+    )
+    target_resolution = (
+        status.get("target_window_resolution")
+        if isinstance(status.get("target_window_resolution"), dict)
+        else {}
+    )
+    if status.get("supported") is not True:
+        reasons.append("gui_backend_unavailable")
+    if status.get("process_count") != 1:
+        reasons.append("exactly_one_matstudio_process_required")
+    if status.get("single_window_policy_ok") is not True:
+        reasons.extend(
+            str(item) for item in status.get("single_window_violation_reasons") or []
+        )
+    if status.get("target_window_found") is not True:
+        reasons.append("target_revision_window_not_found")
+    if target_resolution.get("matched_project_window") is not True:
+        reasons.append("target_revision_window_identity_unverified")
+    if status.get("current_revision_loaded") is not True:
+        reasons.append("target_revision_not_loaded_in_gui")
+    if target_window.get("is_visible") is not True:
+        reasons.append("target_window_not_visible")
+    if target_window.get("is_minimized") is True:
+        reasons.append("target_window_minimized")
+    if target_window.get("is_foreground") is not True:
+        reasons.append("target_window_not_foreground")
+    structure_path = _target_structure_path(target_resolution)
+    if structure_path is None or not structure_path.exists() or not structure_path.is_file():
+        reasons.append("target_structure_artifact_unavailable")
+    return _unique_strings(reasons)
+
+
+def _target_structure_path(
+    target_resolution: dict[str, Any],
+) -> Path | None:
+    """Return the generated source structure bound to a wrapper window."""
+
+    metadata = (
+        target_resolution.get("target_project_wrapper_metadata")
+        if isinstance(
+            target_resolution.get("target_project_wrapper_metadata"), dict
+        )
+        else {}
+    )
+    raw_path = metadata.get("source_path")
+    if not raw_path:
+        return None
+    try:
+        return Path(str(raw_path)).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _local_view_replay_record_template(
+    *,
+    project_id: str,
+    revision: int,
+    view_name: str,
+    execution_recipe: dict[str, Any],
+    action_receipt: dict[str, Any],
+    target_window: dict[str, Any],
+    screenshot_path: str | None,
+) -> dict[str, Any]:
+    """Build a deliberately incomplete post-action visual record template."""
+
+    key_sequence = list(execution_recipe.get("key_sequence") or [])
+    target = (
+        execution_recipe.get("accessibility_target")
+        if isinstance(execution_recipe.get("accessibility_target"), dict)
+        else {}
+    )
+    accessibility_command_uses: list[dict[str, Any]] | None = None
+    if target.get("target_kind") == "verified_anonymous_toolbar_child":
+        accessibility_command_uses = [
+            {
+                "command_id": target.get("command_id"),
+                "toolbar_name": target.get("toolbar_name"),
+                "toolbar_automation_id": target.get("toolbar_automation_id"),
+                "registry_toolbar_name": target.get("registry_toolbar_name"),
+                "zero_based_child_index": target.get("zero_based_child_index"),
+                "element_index": target.get("element_index"),
+                "registry_sha256": target.get("registry_sha256"),
+                "semantic_mapping_sha256": target.get(
+                    "semantic_mapping_sha256"
+                ),
+                "accessibility_tree_refreshed": bool(
+                    action_receipt.get("reset_command", {}).get(
+                        "accessibility_tree_refreshed"
+                    )
+                    is True
+                ),
+                "invocation_succeeded": bool(
+                    action_receipt.get("reset_invocation_succeeded") is True
+                ),
+            }
+        ]
+    crystal_camera_evidence = None
+    required_record_evidence = execution_recipe.get("required_record_evidence")
+    if (
+        isinstance(required_record_evidence, dict)
+        and required_record_evidence.get("field") == "crystal_camera_evidence"
+    ):
+        crystal_camera_evidence = {
+            "camera_match_scope": CRYSTAL_STANDARD_VIEW_CAMERA_MATCH_SCOPE,
+            "view_direction_matches_manifest": None,
+            "analytic_in_plane_basis_matches_manifest": None,
+            "native_in_plane_roll_observed": None,
+        }
+    return {
+        "project_id": project_id,
+        "revision": revision,
+        "view_name": view_name,
+        "source": "local_gui_fallback",
+        "model_visible": None,
+        "camera_matches_manifest": None,
+        "screenshot_path": screenshot_path,
+        "expected_window_handle": target_window.get("handle"),
+        "expected_window_title": target_window.get("title"),
+        "native_command_id": execution_recipe.get("native_command_id"),
+        "accessibility_command_uses": accessibility_command_uses,
+        "key_sequence": key_sequence or None,
+        "reset_before_key_sequence": (
+            action_receipt.get("reset_invocation_succeeded")
+            if key_sequence
+            else None
+        ),
+        "rotation_increment_degrees": (
+            execution_recipe.get("rotation_increment_degrees")
+            if key_sequence
+            else None
+        ),
+        "modifier_keys": [] if key_sequence else None,
+        "keyboard_stages": None,
+        "rotation_increment_restored_degrees": None,
+        "movement_options_command_id": None,
+        "movement_angle_control_id": None,
+        "movement_screen_factor_control_id": None,
+        "movement_screen_factor": None,
+        "movement_dialog_closed": None,
+        "crystal_camera_evidence": crystal_camera_evidence,
+        "miller_plane_evidence": None,
+    }
+
+
 def _view_replay_runtime_ui_binding(
     status: dict[str, Any],
     *,
@@ -5745,9 +6620,14 @@ def _view_runtime_accessibility_gate(
         reasons.append("runtime_accessibility_tree_not_refreshed")
     if require_viewer_document and evidence.get("viewer_document_observed") is not True:
         reasons.append("runtime_viewer_document_not_observed")
+    semantic_viewport_focus_ready = bool(
+        evidence.get("source") == "local_uia"
+        and evidence.get("semantic_viewport_focus_supported") is True
+    )
     if (
         require_empty_viewport_focus_target
         and evidence.get("empty_viewport_focus_target_observed") is not True
+        and not semantic_viewport_focus_ready
     ):
         reasons.append("runtime_empty_viewport_focus_target_not_observed")
 
@@ -5887,6 +6767,10 @@ def _view_runtime_accessibility_gate(
         ),
         "require_viewer_document": require_viewer_document,
         "require_empty_viewport_focus_target": require_empty_viewport_focus_target,
+        "semantic_viewport_focus_supported": evidence.get(
+            "semantic_viewport_focus_supported"
+        ),
+        "semantic_viewport_focus_ready": semantic_viewport_focus_ready,
         "unnamed_toolbar_children_observed": runtime.get(
             "unnamed_toolbar_children_observed"
         ),

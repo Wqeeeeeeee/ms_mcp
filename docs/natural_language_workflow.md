@@ -410,6 +410,16 @@ recipe, re-query the bound window, capture the viewport, populate the required
 observation fields, call the record tool, and re-query status again. A client
 must never prefill invocation success or camera-match evidence from the recipe.
 
+For a pending `front`, `back`, `right`, `left`, `top`, or `bottom` view, call
+`material_studio_gui_execute_view_replay` with its default preview mode first.
+After inspecting the exact window/UIA gate, an explicit
+`execution_mode="execute"` performs one deterministic Reset-plus-arrow action
+in the already open wrapper. The result remains
+`awaiting_visual_confirmation`: inspect the returned BMP with Computer Use or a
+human reviewer, fill the null visibility/camera/native-roll observations, and
+only then record the replay. Isometric and crystallographic plane/direction
+recipes remain on their reviewed Computer Use paths.
+
 For crystal standard views, do not compare the screenshot against the audit's
 analytic in-plane basis as an exact equality test. Confirm the requested view
 direction, observe the Materials Studio native in-plane roll, capture a fresh

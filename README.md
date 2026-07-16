@@ -291,6 +291,7 @@ GUI 工具激活已打开的 Materials Studio 窗口、打开生成的结构、�
 - `material_studio_gui_apply_current_revision`
 - `material_studio_gui_copy_script_assist`
 - `material_studio_gui_prepare_view_replay`
+- `material_studio_gui_execute_view_replay`
 - `material_studio_gui_record_view_replay`
 
 这不是 COM 自动化，也不手写 `.xsd` XML。如果 Computer Use 不可用，本地回退仍然支持进程检测、

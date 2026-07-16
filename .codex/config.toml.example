@@ -33,6 +33,7 @@ enabled_tools = [
   "material_studio_gui_record_visual_confirmation",
   "material_studio_gui_copy_script_assist",
   "material_studio_gui_prepare_view_replay",
+  "material_studio_gui_execute_view_replay",
   "material_studio_gui_record_view_replay",
   "material_studio_structure_summary",
   "material_studio_import_export",
@@ -70,6 +71,9 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_open_structure]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_execute_view_replay]
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_run_script]

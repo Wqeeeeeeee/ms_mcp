@@ -101,6 +101,73 @@ MILLER_VIEW_ONTO_UNDO_LABEL = "Undo View Onto Miller Plane"
 MILLER_CREATE_UNDO_LABEL = "Undo Create Miller Plane"
 
 
+def local_uia_view_replay_implementation_contract() -> dict[str, Any]:
+    """Describe the bounded recipe classes implemented by the local UIA backend."""
+
+    return {
+        "schema_version": 1,
+        "backend": "pywinauto_uia",
+        "platform": "windows",
+        "execute_tool": "material_studio_gui_execute_view_replay",
+        "default_execution_mode": "preview",
+        "explicit_execute_required": True,
+        "records_visual_acceptance": False,
+        "runtime_support_fields": {
+            "backend": "gui_status.local_uia_view_replay_supported",
+            "transactional_miller": (
+                "gui_status.local_uia_miller_plane_transaction_supported"
+            ),
+            "single_window": "gui_status.single_window_policy_ok",
+        },
+        "recipe_classes": {
+            "cartesian_standard": {
+                "implemented": True,
+                "view_names": sorted(SAFE_STANDARD_VIEW_KEY_SEQUENCES),
+                "requires_current_bound_runtime_accessibility_preflight": True,
+            },
+            "isometric": {
+                "implemented": True,
+                "view_names": ["isometric"],
+                "requires_current_bound_runtime_accessibility_preflight": True,
+                "staged_keyboard_recipe": True,
+            },
+            "transactional_miller_plane": {
+                "implemented": True,
+                "recipe_kind": "miller_plane_view_onto",
+                "view_name_pattern": "crystal_plane_*",
+                "requires_automation_ready_recipe": True,
+                "requires_current_bound_runtime_ui_preflight": True,
+                "runtime_gate": "safe_for_miller_plane_transaction",
+                "requires_exact_viewport_restoration": True,
+                "requires_structure_sha256_unchanged": True,
+                "requires_post_action_visual_confirmation": True,
+            },
+            "exact_collinear_crystal_direction": {
+                "implemented": True,
+                "recipe_kind": (
+                    "crystal_direction_via_collinear_miller_plane_view_onto"
+                ),
+                "view_name_pattern": "crystal_*",
+                "eligibility_status": "exact_integer_plane_collinear",
+                "requires_automation_ready_recipe": True,
+                "requires_current_bound_runtime_ui_preflight": True,
+                "runtime_gate": "safe_for_miller_plane_transaction",
+                "requires_direct_lattice_direction_match_evidence": True,
+                "requires_post_action_visual_confirmation": True,
+            },
+            "non_collinear_crystal_direction": {
+                "implemented": False,
+                "reviewed_camera_backend_required": True,
+            },
+        },
+        "miller_recipe_kinds": sorted(MILLER_VIEW_ONTO_RECIPE_KINDS),
+        "blind_coordinates_allowed": False,
+        "modifier_keys_allowed": False,
+        "launch_new_matstudio_process_allowed": False,
+        "structure_mutation_allowed": False,
+    }
+
+
 class UiaReplayError(RuntimeError):
     """Raised when an exact UIA binding or action gate cannot be satisfied."""
 

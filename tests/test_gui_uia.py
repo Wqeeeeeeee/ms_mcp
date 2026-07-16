@@ -15,6 +15,7 @@ from material_studio_mcp_server.gui_uia import (
     UiaReplayError,
     analyze_miller_plane_bmp_diff,
     compare_bmp_region,
+    local_uia_view_replay_implementation_contract,
 )
 
 
@@ -443,6 +444,38 @@ def _backend(
         sleep_fn=lambda _seconds: None,
         platform_supported=True,
     )
+
+
+def test_local_uia_implementation_contract_exposes_transactional_recipe_boundary() -> None:
+    contract = local_uia_view_replay_implementation_contract()
+    recipe_classes = contract["recipe_classes"]
+
+    assert contract["default_execution_mode"] == "preview"
+    assert contract["explicit_execute_required"] is True
+    assert contract["records_visual_acceptance"] is False
+    assert recipe_classes["transactional_miller_plane"] == {
+        "implemented": True,
+        "recipe_kind": "miller_plane_view_onto",
+        "view_name_pattern": "crystal_plane_*",
+        "requires_automation_ready_recipe": True,
+        "requires_current_bound_runtime_ui_preflight": True,
+        "runtime_gate": "safe_for_miller_plane_transaction",
+        "requires_exact_viewport_restoration": True,
+        "requires_structure_sha256_unchanged": True,
+        "requires_post_action_visual_confirmation": True,
+    }
+    assert recipe_classes["exact_collinear_crystal_direction"][
+        "eligibility_status"
+    ] == "exact_integer_plane_collinear"
+    assert recipe_classes["exact_collinear_crystal_direction"]["implemented"] is True
+    assert recipe_classes["non_collinear_crystal_direction"] == {
+        "implemented": False,
+        "reviewed_camera_backend_required": True,
+    }
+    assert contract["miller_recipe_kinds"] == [
+        "crystal_direction_via_collinear_miller_plane_view_onto",
+        "miller_plane_view_onto",
+    ]
 
 
 def test_viewport_capture_bounds_clips_uia_child_to_negative_monitor_window() -> None:

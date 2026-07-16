@@ -406,6 +406,15 @@ while the request waited, so use the retry payload to resolve and export the
 new current revision. Inline-spec retry payloads carry the original `spec`, and
 an inline spec that conflicts with a stored immutable revision is rejected.
 
+Before choosing a replay backend, call
+`material_studio_live_capabilities(include_status=true, response_mode="compact")`.
+Use `local_uia_implementation_contract` only to discover implemented recipe
+classes. Runtime permission additionally requires
+`view_replay_runtime_availability.transactional_miller_supported=true`, a clean
+single-window gate, and the current prepared recipe's `automation_ready=true`.
+Exact-collinear crystal directions share the transactional Miller backend;
+non-collinear directions remain reviewed-camera-backend gated.
+
 For an external/manual `crystal_plane_*` or exact-collinear `crystal_*` replay,
 observe the live controls on the exact current wrapper and submit the
 Miller-specific `runtime_ui_evidence` to the prepare tool. The local

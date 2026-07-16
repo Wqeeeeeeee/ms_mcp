@@ -46,6 +46,17 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["artifact_status"] == "not_materialized"
     assert calls["planned_structure_exists"] is False
     assert calls["gui_opened"] is False
+    assert calls["capabilities_runner_status_present"] is True
+    assert calls["capabilities_gui_status_present"] is True
+    assert calls["capabilities_replay_runtime_status"] in {
+        "transactional_miller_available",
+        "standard_and_isometric_only",
+        "unavailable",
+    }
+    assert calls["capabilities_replay_runtime_observed"] is True
+    assert calls["capabilities_transactional_miller_implemented"] is True
+    assert calls["capabilities_exact_collinear_direction_implemented"] is True
+    assert calls["capabilities_non_collinear_direction_implemented"] is False
     assert calls["view_names"] == ["front", "top", "isometric"]
     assert calls["view_bundle_row_counts"]["view_summary"] == 3
     assert calls["view_bundle_row_counts"]["view_projections"] == 24

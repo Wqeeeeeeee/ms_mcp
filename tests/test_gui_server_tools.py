@@ -8161,6 +8161,21 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy["local_mcp_backend"] == (
         "standard_isometric_and_transactional_miller_plane_uia"
     )
+    assert view_replay_policy["local_uia_miller_plane_supported"] is True
+    assert view_replay_policy[
+        "local_uia_exact_collinear_direction_supported"
+    ] is True
+    assert view_replay_policy["local_uia_non_collinear_direction_supported"] is False
+    implementation = view_replay_policy["local_uia_implementation_contract"]
+    assert implementation["recipe_classes"]["transactional_miller_plane"][
+        "implemented"
+    ] is True
+    assert implementation["recipe_classes"][
+        "exact_collinear_crystal_direction"
+    ]["eligibility_status"] == "exact_integer_plane_collinear"
+    assert implementation["recipe_classes"]["non_collinear_crystal_direction"][
+        "reviewed_camera_backend_required"
+    ] is True
     assert view_replay_policy["automatic_view_names"] == [
         "front",
         "back",
@@ -8251,6 +8266,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "never_assumes_same_index_direction_equals_plane": True,
     }
     assert view_replay_policy["crystallographic_direction_views_require_reviewed_camera_backend"] is True
+    assert view_replay_policy["crystallographic_direction_review_gate_scope"] == (
+        "non_collinear_only"
+    )
+    assert view_replay_policy[
+        "crystallographic_direction_legacy_review_gate_field_is_conservative"
+    ] is True
     assert view_replay_policy["requires_exactly_one_matstudio_process"] is True
     assert view_replay_policy["pre_activation_screenshot_may_capture_occluding_window"] is True
     assert view_replay_policy["blind_toolbar_or_coordinate_actions_allowed"] is False

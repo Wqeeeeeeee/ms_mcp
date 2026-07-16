@@ -425,7 +425,7 @@ async def _run_preview_calls(
         capabilities = await _call_tool(
             session,
             "material_studio_live_capabilities",
-            {"response_mode": "compact"},
+            {"response_mode": "compact", "include_status": True},
             timeout,
         )
         preflight = await _call_tool(
@@ -543,6 +543,57 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_response_not_compact")
         if capabilities.get("response_schema") != EXPECTED_CAPABILITIES_COMPACT_SCHEMA:
             validation_errors.append("capabilities_compact_schema_mismatch")
+        replay_policy = capabilities.get("view_replay_automation_policy")
+        if not isinstance(replay_policy, dict):
+            validation_errors.append("capabilities_replay_policy_missing")
+            replay_policy = {}
+        if replay_policy.get("local_uia_miller_plane_supported") is not True:
+            validation_errors.append("capabilities_static_miller_support_missing")
+        if (
+            replay_policy.get("local_uia_exact_collinear_direction_supported")
+            is not True
+        ):
+            validation_errors.append(
+                "capabilities_static_collinear_direction_support_missing"
+            )
+        if replay_policy.get("local_uia_non_collinear_direction_supported") is not False:
+            validation_errors.append(
+                "capabilities_non_collinear_direction_boundary_missing"
+            )
+        runner_status = capabilities.get("runner_status")
+        if not isinstance(runner_status, dict):
+            validation_errors.append("capabilities_compact_runner_status_missing")
+            runner_status = {}
+        gui_status = capabilities.get("gui_status")
+        if not isinstance(gui_status, dict):
+            validation_errors.append("capabilities_compact_gui_status_missing")
+            gui_status = {}
+        replay_runtime = capabilities.get("view_replay_runtime_availability")
+        if not isinstance(replay_runtime, dict):
+            validation_errors.append("capabilities_replay_runtime_missing")
+            replay_runtime = {}
+        if replay_runtime.get("observed") is not True:
+            validation_errors.append("capabilities_replay_runtime_not_observed")
+        if replay_runtime.get("transactional_miller_implemented") is not True:
+            validation_errors.append(
+                "capabilities_runtime_miller_implementation_missing"
+            )
+        if replay_runtime.get("exact_collinear_direction_implemented") is not True:
+            validation_errors.append(
+                "capabilities_runtime_collinear_implementation_missing"
+            )
+        if replay_runtime.get("non_collinear_direction_implemented") is not False:
+            validation_errors.append(
+                "capabilities_runtime_non_collinear_boundary_missing"
+            )
+        if replay_runtime.get("execution_requires_project_recipe_preflight") is not True:
+            validation_errors.append(
+                "capabilities_runtime_project_recipe_gate_missing"
+            )
+        if replay_runtime.get("execute_tool") != (
+            "material_studio_gui_execute_view_replay"
+        ):
+            validation_errors.append("capabilities_runtime_execute_tool_mismatch")
         if preflight.get("ok") is not True:
             validation_errors.append("preflight_call_not_ok")
         if created.get("ok") is not True:
@@ -702,6 +753,26 @@ async def _run_preview_calls(
                 "preflight_response_compaction": preflight_compaction,
                 "response_mode": created.get("response_mode"),
                 "response_sizes_bytes": response_sizes_bytes,
+                "capabilities_runner_status_present": bool(runner_status),
+                "capabilities_gui_status_present": bool(gui_status),
+                "capabilities_replay_runtime_status": replay_runtime.get(
+                    "status"
+                ),
+                "capabilities_replay_runtime_observed": replay_runtime.get(
+                    "observed"
+                ),
+                "capabilities_transactional_miller_implemented": (
+                    replay_runtime.get("transactional_miller_implemented")
+                ),
+                "capabilities_transactional_miller_supported": (
+                    replay_runtime.get("transactional_miller_supported")
+                ),
+                "capabilities_exact_collinear_direction_implemented": (
+                    replay_runtime.get("exact_collinear_direction_implemented")
+                ),
+                "capabilities_non_collinear_direction_implemented": (
+                    replay_runtime.get("non_collinear_direction_implemented")
+                ),
             }
         )
     except Exception as exc:

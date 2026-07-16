@@ -194,3 +194,12 @@ The same schema supports crystallographic directions only when the prepared
 recipe reports an exact direct-direction/reciprocal-normal collinearity
 mapping; it additionally requires the direction-match boolean. Directions
 without that exact mapping remain review-gated.
+Capability acceptance must agree with that executor boundary. Both full and
+compact discovery report transactional Miller planes and exact-collinear
+crystal directions as statically implemented, while non-collinear directions
+remain unimplemented by local UIA. A compact
+`material_studio_live_capabilities(include_status=true)` call must preserve the
+bounded runner and GUI receipts plus `view_replay_runtime_availability`; the
+runtime receipt distinguishes implementation from backend availability and
+single-window state, and explicitly states that project/recipe preflight is
+still required. Omitting `include_status` must not fabricate runtime evidence.

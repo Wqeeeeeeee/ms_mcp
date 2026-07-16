@@ -39,6 +39,7 @@ from .gui import (
     _workspace_advisory_lock_status,
     _workspace_advisory_write_lock,
 )
+from .gui_uia import local_uia_view_replay_implementation_contract
 from .health import build_modeling_health
 from .natural_language import (
     infer_modeling_plan,
@@ -3317,11 +3318,90 @@ _TOP_LEVEL_SEMICONDUCTOR_NORMALITY_FIELDS = (
 )
 
 
+def _view_replay_runtime_availability(
+    gui_status: Any,
+) -> dict[str, Any]:
+    """Summarize runtime replay availability without claiming recipe readiness."""
+
+    implementation = local_uia_view_replay_implementation_contract()
+    recipe_classes = implementation["recipe_classes"]
+    miller_implemented = bool(
+        recipe_classes["transactional_miller_plane"]["implemented"]
+    )
+    collinear_implemented = bool(
+        recipe_classes["exact_collinear_crystal_direction"]["implemented"]
+    )
+    if not isinstance(gui_status, dict):
+        return {
+            "schema_version": 1,
+            "observed": False,
+            "status": "not_probed",
+            "transactional_miller_implemented": miller_implemented,
+            "exact_collinear_direction_implemented": collinear_implemented,
+            "non_collinear_direction_implemented": False,
+            "execution_requires_project_recipe_preflight": True,
+            "execute_tool": "material_studio_gui_execute_view_replay",
+        }
+
+    backend_supported = gui_status.get("local_uia_view_replay_supported") is True
+    miller_supported = (
+        gui_status.get("local_uia_miller_plane_transaction_supported") is True
+    )
+    single_window_ok = gui_status.get("single_window_policy_ok") is True
+    process_count = gui_status.get("process_count")
+    window_count = gui_status.get("window_count")
+    session_gate_ready = bool(
+        backend_supported
+        and single_window_ok
+        and process_count == 1
+        and window_count == 1
+    )
+    return {
+        "schema_version": 1,
+        "observed": True,
+        "status": (
+            "transactional_miller_available"
+            if backend_supported and miller_supported
+            else "standard_and_isometric_only"
+            if backend_supported
+            else "unavailable"
+        ),
+        "backend_supported": backend_supported,
+        "backend_unavailable_reason": gui_status.get(
+            "local_uia_view_replay_unavailable_reason"
+        ),
+        "transactional_miller_implemented": miller_implemented,
+        "transactional_miller_supported": miller_supported,
+        "exact_collinear_direction_implemented": collinear_implemented,
+        "exact_collinear_direction_supported": miller_supported,
+        "non_collinear_direction_implemented": False,
+        "non_collinear_direction_supported": False,
+        "process_count": process_count,
+        "window_count": window_count,
+        "single_window_policy_ok": single_window_ok,
+        "session_gate_ready": session_gate_ready,
+        "execution_requires_project_recipe_preflight": True,
+        "execution_requires_automation_ready_recipe": True,
+        "execution_requires_explicit_execute": True,
+        "post_action_visual_confirmation_required": True,
+        "execute_tool": "material_studio_gui_execute_view_replay",
+    }
+
+
 def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any]:
     """Return the capability payload shared by discovery tools and error hints."""
 
     semiconductor_use_cases = _semiconductor_use_case_capabilities()
     semiconductor_carrier_type = _semiconductor_carrier_type_capabilities()
+    local_uia_implementation = local_uia_view_replay_implementation_contract()
+    local_uia_recipe_classes = local_uia_implementation["recipe_classes"]
+    local_uia_miller = local_uia_recipe_classes["transactional_miller_plane"]
+    local_uia_collinear_direction = local_uia_recipe_classes[
+        "exact_collinear_crystal_direction"
+    ]
+    local_uia_non_collinear_direction = local_uia_recipe_classes[
+        "non_collinear_crystal_direction"
+    ]
     response: dict[str, Any] = {
         "live_preflight_tool": "material_studio_live_session_preflight",
         "live_entry_tool": "material_studio_live_modeling_request",
@@ -3525,7 +3605,19 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "movement_screen_factor": 2.0,
                 "movement_dialog_closed_after_restore": True,
             },
-            "local_uia_miller_plane_supported": False,
+            "local_uia_implementation_contract": local_uia_implementation,
+            "local_uia_miller_plane_supported": bool(
+                local_uia_miller["implemented"]
+            ),
+            "local_uia_exact_collinear_direction_supported": bool(
+                local_uia_collinear_direction["implemented"]
+            ),
+            "local_uia_non_collinear_direction_supported": bool(
+                local_uia_non_collinear_direction["implemented"]
+            ),
+            "local_uia_runtime_availability_field": (
+                "view_replay_runtime_availability"
+            ),
             "local_uia_records_visual_acceptance": False,
             "local_uia_semantic_viewport_class": "CViewer3DCtrl",
             "local_uia_pointer_coordinates_allowed": False,
@@ -3667,6 +3759,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ),
             "crystallographic_direction_collinear_plane_requires_miller_plane_evidence": True,
             "crystallographic_direction_views_require_reviewed_camera_backend": True,
+            "crystallographic_direction_review_gate_scope": "non_collinear_only",
+            "crystallographic_direction_legacy_review_gate_field_is_conservative": True,
             "crystallographic_views_require_deterministic_selection": True,
             "arbitrary_camera_vector_materialscript_api_verified": False,
             "continuous_spin_roll_rock_accepted_as_deterministic": False,
@@ -6523,6 +6617,19 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "local_mcp_backend": (
                     "standard_isometric_and_transactional_miller_plane_uia"
                 ),
+                "local_uia_implementation_contract": local_uia_implementation,
+                "local_uia_miller_plane_supported": bool(
+                    local_uia_miller["implemented"]
+                ),
+                "local_uia_exact_collinear_direction_supported": bool(
+                    local_uia_collinear_direction["implemented"]
+                ),
+                "local_uia_non_collinear_direction_supported": bool(
+                    local_uia_non_collinear_direction["implemented"]
+                ),
+                "local_uia_runtime_availability_field": (
+                    "view_replay_runtime_availability"
+                ),
                 "external_replay_backends": [
                     "computer_use",
                     "local_gui_fallback",
@@ -6672,6 +6779,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "never_assumes_same_index_direction_equals_plane": True,
                 },
                 "crystallographic_direction_views_require_reviewed_camera_backend": True,
+                "crystallographic_direction_review_gate_scope": (
+                    "non_collinear_only"
+                ),
+                "crystallographic_direction_legacy_review_gate_field_is_conservative": True,
                 "requires_exactly_one_matstudio_process": True,
                 "requires_project_revision_window_identity": True,
                 "requires_activation_before_screenshot_or_input": True,
@@ -6746,9 +6857,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     if include_status:
         response["runner_status"] = runner.status()
         try:
-            response["gui_status"] = _gui_controller(None).status()
+            gui_status = _gui_controller(None).status()
         except Exception as exc:
-            response["gui_status"] = {"ok": False, "error": str(exc)}
+            gui_status = {"ok": False, "error": str(exc)}
+        response["gui_status"] = gui_status
+        response["view_replay_runtime_availability"] = (
+            _view_replay_runtime_availability(gui_status)
+        )
     return response
 
 
@@ -32425,6 +32540,9 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "max_response_bytes",
             "target_response_bytes",
             "full_detail_hint",
+            "runner_status",
+            "gui_status",
+            "view_replay_runtime_availability",
             "domain_focus",
             "diagnostics",
             "gui_tools",
@@ -33150,6 +33268,90 @@ def _compact_live_response(
     return _enforce_live_compact_budget(compact)
 
 
+def _compact_capabilities_runner_status(value: Any) -> dict[str, Any]:
+    """Keep runner readiness while omitting the full installation search list."""
+
+    return _mapping_subset(
+        value,
+        (
+            "connected",
+            "runner",
+            "runner_exists",
+            "runner_source",
+            "install_home",
+            "workspace_root",
+            "default_timeout_seconds",
+            "extra_runner_args",
+            "searched_candidate_count",
+            "notes",
+        ),
+    )
+
+
+def _compact_capabilities_gui_status(value: Any) -> dict[str, Any]:
+    """Keep live replay and single-window availability without window inventories."""
+
+    compact = _mapping_subset(
+        value,
+        (
+            "ok",
+            "supported",
+            "unavailable_reason",
+            "status",
+            "recommended_tool",
+            "recommended_action",
+            "process_count",
+            "window_found",
+            "window_count",
+            "live_window_count",
+            "selected_window_handle",
+            "requested_project_id",
+            "requested_revision",
+            "single_window_policy_ok",
+            "single_window_violation_reasons",
+            "local_uia_view_replay_supported",
+            "local_uia_view_replay_unavailable_reason",
+            "local_uia_view_replay_view_names",
+            "local_uia_miller_plane_transaction_supported",
+            "local_uia_exact_collinear_direction_transaction_supported",
+            "local_uia_non_collinear_direction_transaction_supported",
+            "workspace_root",
+        ),
+    )
+    runtime = value.get("local_uia_view_replay_runtime") if isinstance(value, dict) else None
+    if isinstance(runtime, dict):
+        compact["local_uia_view_replay_runtime"] = runtime
+    management = value.get("window_management") if isinstance(value, dict) else None
+    if isinstance(management, dict):
+        compact["window_management"] = _mapping_subset(
+            management,
+            (
+                "status",
+                "process_count",
+                "window_count",
+                "blocking_dialog_count",
+                "selected_window_handle",
+                "selected_window_title",
+                "selected_window_project_id",
+                "selected_window_revision",
+                "target_window_handle",
+                "target_window_title",
+                "target_window_project_id",
+                "target_window_revision",
+                "target_window_is_selected",
+                "target_window_is_visible",
+                "target_window_is_minimized",
+                "target_window_is_foreground",
+                "single_window_policy_ok",
+                "single_window_violation_reasons",
+                "ready_for_next_live_edit",
+                "recommended_tool",
+                "recommended_action",
+            ),
+        )
+    return compact
+
+
 def _compact_capabilities_response(
     response: dict[str, Any],
     response_mode: McpResponseMode | str,
@@ -33184,6 +33386,7 @@ def _compact_capabilities_response(
             "visual_confirmation_entry",
             "view_replay_confirmation_entry",
             "view_replay_automation_policy",
+            "view_replay_runtime_availability",
             "structured_source_of_truth",
             "schemas",
             "gui_tools",
@@ -33242,6 +33445,14 @@ def _compact_capabilities_response(
             "gui": _compact_capabilities_gui(response.get("gui")),
         }
     )
+    if isinstance(response.get("runner_status"), dict):
+        compact["runner_status"] = _compact_capabilities_runner_status(
+            response["runner_status"]
+        )
+    if isinstance(response.get("gui_status"), dict):
+        compact["gui_status"] = _compact_capabilities_gui_status(
+            response["gui_status"]
+        )
     return _enforce_capabilities_compact_budget(compact)
 
 

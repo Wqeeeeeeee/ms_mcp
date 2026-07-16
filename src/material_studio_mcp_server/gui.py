@@ -34,6 +34,7 @@ from .gui_uia import (
     SAFE_LOCAL_VIEW_NAMES,
     SAFE_STANDARD_VIEW_KEY_SEQUENCES,
     ViewReplayAutomationBackend,
+    local_uia_view_replay_implementation_contract,
 )
 from .parsers.copy_script import analyze_reviewed_copy_script
 from .state.store import default_workspace_root, sanitize_project_id
@@ -2843,6 +2844,15 @@ class MaterialsStudioGuiController:
         ready_for_next_live_edit = bool(window_management.get("ready_for_next_live_edit"))
         recommended_tool = window_management.get("recommended_tool")
         recommended_action = window_management.get("recommended_action")
+        local_uia_implementation = local_uia_view_replay_implementation_contract()
+        local_uia_supported = bool(self.view_replay_backend.supported)
+        local_uia_miller_supported = bool(
+            getattr(
+                self.view_replay_backend,
+                "miller_plane_transaction_supported",
+                False,
+            )
+        )
         return {
             "ok": self.backend.supported,
             "supported": self.backend.supported,
@@ -2915,22 +2925,40 @@ class MaterialsStudioGuiController:
                 for root, trust_basis in self.trusted_wrapper_workspace_roots
             ],
             "screenshots_dir": str(self.workspace_root / "screenshots"),
-            "local_uia_view_replay_supported": bool(
-                self.view_replay_backend.supported
-            ),
+            "local_uia_view_replay_supported": local_uia_supported,
             "local_uia_view_replay_unavailable_reason": (
                 self.view_replay_backend.unavailable_reason
             ),
             "local_uia_view_replay_view_names": sorted(
                 SAFE_LOCAL_VIEW_NAMES
             ),
-            "local_uia_miller_plane_transaction_supported": bool(
-                getattr(
-                    self.view_replay_backend,
-                    "miller_plane_transaction_supported",
-                    False,
-                )
+            "local_uia_miller_plane_transaction_supported": (
+                local_uia_miller_supported
             ),
+            "local_uia_exact_collinear_direction_transaction_supported": (
+                local_uia_miller_supported
+            ),
+            "local_uia_non_collinear_direction_transaction_supported": False,
+            "local_uia_view_replay_implementation": local_uia_implementation,
+            "local_uia_view_replay_runtime": {
+                "status": (
+                    "transactional_miller_available"
+                    if local_uia_supported and local_uia_miller_supported
+                    else "standard_and_isometric_only"
+                    if local_uia_supported
+                    else "unavailable"
+                ),
+                "backend_supported": local_uia_supported,
+                "transactional_miller_supported": local_uia_miller_supported,
+                "exact_collinear_direction_supported": (
+                    local_uia_miller_supported
+                ),
+                "non_collinear_direction_supported": False,
+                "single_window_policy_ok": not single_window_violation_reasons,
+                "execution_requires_prepared_automation_ready_recipe": True,
+                "execution_requires_explicit_execute": True,
+                "post_action_visual_confirmation_required": True,
+            },
             "capabilities": [
                 "detect_matstudio_window",
                 "list_matstudio_windows",
@@ -2946,11 +2974,7 @@ class MaterialsStudioGuiController:
                         "execute_staged_isometric_view_replay_with_local_uia",
                         *(
                             ["execute_transactional_miller_plane_view_replay_with_local_uia"]
-                            if getattr(
-                                self.view_replay_backend,
-                                "miller_plane_transaction_supported",
-                                False,
-                            )
+                            if local_uia_miller_supported
                             else []
                         ),
                     ]
@@ -2960,10 +2984,12 @@ class MaterialsStudioGuiController:
                 "record_external_view_replay",
             ],
             "limits": [
-                "不使用 COM 自动化。",
-                "精确的结构编辑应保持 ModelSpec/SemanticPatch/MaterialsScript 驱动。",
-                "等轴测、Miller 平面和其他复杂菜单/视口操作仍需要 Computer Use 或人工审查。",
-                "任意相机向量没有经过验证的 Materials Studio 2020 MaterialsScript API；本地 UIA 仅执行六个标准面视角配方。",
+                "COM automation is not used.",
+                "Structural edits remain ModelSpec, SemanticPatch, or MaterialsScript driven.",
+                "The local UIA executor records mechanical evidence but never visual acceptance.",
+                "Miller planes and exact-collinear crystal directions require a prepared automation-ready transactional recipe.",
+                "Non-collinear crystal directions still require a reviewed camera backend.",
+                "Blind coordinates, viewport modifier keys, and implicit MatStudio launches are prohibited.",
             ],
         }
 

@@ -347,6 +347,32 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     assert status["local_uia_view_replay_supported"] is bool(
         controller.view_replay_backend.supported
     )
+    assert status["local_uia_miller_plane_transaction_supported"] is bool(
+        controller.view_replay_backend.miller_plane_transaction_supported
+    )
+    assert status[
+        "local_uia_exact_collinear_direction_transaction_supported"
+    ] is bool(controller.view_replay_backend.miller_plane_transaction_supported)
+    assert status[
+        "local_uia_non_collinear_direction_transaction_supported"
+    ] is False
+    implementation = status["local_uia_view_replay_implementation"]
+    assert implementation["recipe_classes"]["transactional_miller_plane"][
+        "implemented"
+    ] is True
+    assert implementation["recipe_classes"][
+        "exact_collinear_crystal_direction"
+    ]["implemented"] is True
+    runtime = status["local_uia_view_replay_runtime"]
+    assert runtime["backend_supported"] is bool(
+        controller.view_replay_backend.supported
+    )
+    assert runtime["transactional_miller_supported"] is bool(
+        controller.view_replay_backend.miller_plane_transaction_supported
+    )
+    assert runtime["non_collinear_direction_supported"] is False
+    assert runtime["execution_requires_prepared_automation_ready_recipe"] is True
+    assert runtime["post_action_visual_confirmation_required"] is True
     assert (
         "execute_standard_view_replay_with_local_uia" in status["capabilities"]
     ) is bool(controller.view_replay_backend.supported)

@@ -156,6 +156,20 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert isometric_contract["restore_rotation_increment_degrees"] == 45.0
     assert isometric_contract["movement_screen_factor"] == 2.0
     assert isometric_contract["movement_dialog_closed_after_restore"] is True
+    replay_policy = compact["view_replay_automation_policy"]
+    assert replay_policy["local_uia_miller_plane_supported"] is True
+    assert replay_policy["local_uia_exact_collinear_direction_supported"] is True
+    assert replay_policy["local_uia_non_collinear_direction_supported"] is False
+    assert replay_policy["crystallographic_direction_review_gate_scope"] == (
+        "non_collinear_only"
+    )
+    implementation = replay_policy["local_uia_implementation_contract"]
+    assert implementation["recipe_classes"]["transactional_miller_plane"][
+        "implemented"
+    ] is True
+    assert implementation["recipe_classes"][
+        "exact_collinear_crystal_direction"
+    ]["eligibility_status"] == "exact_integer_plane_collinear"
     assert compact["view_replay_automation_policy"]["local_uia_records_visual_acceptance"] is False
     assert compact["view_replay_automation_policy"]["documented_keyboard_sequences"]["right"] == [
         "Up",
@@ -231,6 +245,129 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["view_replay_automation_policy"]["structure_nudge_or_align_commands_allowed_for_camera_replay"] is False
     assert _json_size(compact) < server.COMPACT_RESPONSE_MAX_BYTES
     assert _json_size(compact) * 4 < _json_size(full)
+
+
+def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server.runner,
+        "status",
+        lambda: {
+            "connected": True,
+            "runner": "C:/Materials Studio/RunMatScript.bat",
+            "runner_exists": True,
+            "runner_source": "environment",
+            "workspace_root": "C:/workspace",
+            "default_timeout_seconds": 3600,
+            "extra_runner_args": [],
+            "searched_candidates": [f"candidate-{index}" for index in range(100)],
+            "searched_candidate_count": 100,
+            "notes": [],
+        },
+    )
+
+    class _Controller:
+        def status(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "supported": True,
+                "status": "ready_for_same_window_live_edit",
+                "recommended_tool": "material_studio_gui_snapshot",
+                "recommended_action": "snapshot_target_project_window",
+                "process_count": 1,
+                "window_found": True,
+                "window_count": 1,
+                "live_window_count": 1,
+                "selected_window_handle": 303,
+                "single_window_policy_ok": True,
+                "single_window_violation_reasons": [],
+                "local_uia_view_replay_supported": True,
+                "local_uia_view_replay_unavailable_reason": None,
+                "local_uia_view_replay_view_names": ["front", "isometric"],
+                "local_uia_miller_plane_transaction_supported": True,
+                "local_uia_exact_collinear_direction_transaction_supported": True,
+                "local_uia_non_collinear_direction_transaction_supported": False,
+                "local_uia_view_replay_runtime": {
+                    "status": "transactional_miller_available",
+                    "backend_supported": True,
+                    "transactional_miller_supported": True,
+                    "exact_collinear_direction_supported": True,
+                    "non_collinear_direction_supported": False,
+                    "single_window_policy_ok": True,
+                },
+                "workspace_root": "C:/workspace",
+                "windows": [{"handle": 303}, {"handle": 404}],
+                "window_management": {
+                    "status": "ready_for_same_window_live_edit",
+                    "process_count": 1,
+                    "window_count": 1,
+                    "blocking_dialog_count": 0,
+                    "selected_window_handle": 303,
+                    "selected_window_title": "msmcp_r004 - Materials Studio",
+                    "selected_window_project_id": "project",
+                    "selected_window_revision": 4,
+                    "target_window_handle": 303,
+                    "target_window_title": "msmcp_r004 - Materials Studio",
+                    "target_window_project_id": "project",
+                    "target_window_revision": 4,
+                    "target_window_is_selected": True,
+                    "target_window_is_visible": True,
+                    "target_window_is_minimized": False,
+                    "target_window_is_foreground": True,
+                    "single_window_policy_ok": True,
+                    "single_window_violation_reasons": [],
+                    "ready_for_next_live_edit": True,
+                    "recommended_tool": "material_studio_gui_snapshot",
+                    "recommended_action": "snapshot_target_project_window",
+                },
+            }
+
+    monkeypatch.setattr(server, "_gui_controller", lambda _working_dir: _Controller())
+
+    compact = server.material_studio_live_capabilities(
+        include_status=True,
+        response_mode="compact",
+    )
+
+    assert compact["runner_status"]["connected"] is True
+    assert "searched_candidates" not in compact["runner_status"]
+    assert compact["runner_status"]["searched_candidate_count"] == 100
+    assert compact["gui_status"]["process_count"] == 1
+    assert "windows" not in compact["gui_status"]
+    assert compact["gui_status"][
+        "local_uia_miller_plane_transaction_supported"
+    ] is True
+    runtime = compact["view_replay_runtime_availability"]
+    assert runtime["status"] == "transactional_miller_available"
+    assert runtime["transactional_miller_implemented"] is True
+    assert runtime["transactional_miller_supported"] is True
+    assert runtime["exact_collinear_direction_supported"] is True
+    assert runtime["non_collinear_direction_supported"] is False
+    assert runtime["session_gate_ready"] is True
+    assert runtime["execution_requires_project_recipe_preflight"] is True
+    assert runtime["post_action_visual_confirmation_required"] is True
+    assert _json_size(compact) < server.COMPACT_RESPONSE_MAX_BYTES
+
+
+def test_view_replay_runtime_availability_fails_closed_without_miller_backend() -> None:
+    not_probed = server._view_replay_runtime_availability(None)
+    assert not_probed["status"] == "not_probed"
+    assert not_probed["observed"] is False
+    assert not_probed["transactional_miller_implemented"] is True
+
+    standard_only = server._view_replay_runtime_availability(
+        {
+            "local_uia_view_replay_supported": True,
+            "local_uia_miller_plane_transaction_supported": False,
+            "single_window_policy_ok": True,
+            "process_count": 1,
+            "window_count": 1,
+        }
+    )
+    assert standard_only["status"] == "standard_and_isometric_only"
+    assert standard_only["transactional_miller_implemented"] is True
+    assert standard_only["transactional_miller_supported"] is False
+    assert standard_only["exact_collinear_direction_supported"] is False
+    assert standard_only["session_gate_ready"] is True
 
 
 def test_compact_capabilities_expose_crystallographic_and_oriented_views() -> None:

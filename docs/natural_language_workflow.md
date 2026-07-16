@@ -8,12 +8,19 @@ latest-project context for follow-up edits, and the recommended next tool
 without executing scripts or changing the open GUI.
 For a resumed project, `next_action_plan` remains the backward-compatible
 immediate session action. Read `coordinated_next_action_plan.recommended_sequence`
-to preserve both tracks: `session_next_action_plan` handles activation, reload,
-or GUI preflight, while `modeling_next_action_plan` carries the current
-revision's structural or calculation remediation. Only use the modeling plan
-when `latest_project_modeling.binding_verified=true`. A completed GUI action
-does not clear a deferred modeling action and does not satisfy its explicit
-confirmation gate; rerun preflight after session control before applying it.
+for the complete three-track order. `session_next_action_plan` handles
+activation/reload/preflight, `visual_diagnostics_next_action_plan` handles the
+current revision's view-replay or visual-diagnostic continuation, and
+`modeling_next_action_plan` carries structural or calculation remediation.
+Require `latest_project_visual_diagnostics.binding_verified=true` or
+`latest_project_modeling.binding_verified=true` as appropriate, follow each
+`plan_ref`, and rerun preflight after every step. GUI session work does not
+clear visual/modeling actions, and visual-diagnostic preparation does not
+satisfy a later modeling confirmation gate.
+Preflight compacts duplicated runner/window metadata only after deriving this
+sequence. Check its `response_compaction` receipt, follow the returned
+`latest_project_gui.*_ref` paths for compact context, and use the receipt's
+full-detail tools when the complete GUI inventory or runner search is needed.
 When it recommends `material_studio_gui_launch`, use that tool only when
 starting a new GUI session is intentional; otherwise activate an already-open
 Materials Studio window first. Explicit hot-load/open paths do not implicitly

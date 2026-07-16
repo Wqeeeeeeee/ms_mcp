@@ -22,10 +22,17 @@ The command verifies:
 - Required live, GUI, view replay, and repair tools.
 - Selected input schema fields and safety annotations.
 - Preview-only silicon creation, project status, history, and three-view export.
+- Isolated view-replay manifest preparation followed by a resumed-session
+  preflight with a revision-bound `visual_diagnostics` action track.
+- One coordinated sequence reference, with the callable visual payload kept in
+  `visual_diagnostics_next_action_plan` and no extra model revision.
 - No materialized structure and no GUI open during the preview path.
 - Optional Codex TOML drift without writing the config.
-- Compact responses for capabilities, create, status, and view-bundle calls,
-  each below the 48 KB protocol acceptance limit.
+- Compact responses for capabilities, create, status, replay preparation,
+  resumed preflight, and view-bundle calls, each below the 48 KB protocol
+  acceptance limit.
+- The resumed preflight's own compact receipt: exact serialized byte count,
+  45 KB target, 48 KB budget, positive headroom, and no target overflow.
 
 ## Safety
 
@@ -34,6 +41,9 @@ The acceptance workspace is supplied through
 `RunMatScript.bat`, do not launch `MatStudio.exe`, and do not modify the active
 Materials Studio project. `material_studio_run_script` must remain explicitly
 disabled in the example Codex config.
+Replay preparation writes only its manifest inside the isolated acceptance
+workspace; it does not issue GUI input, mutate the structure, or create a
+second revision.
 
 ## Config Drift
 

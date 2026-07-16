@@ -521,12 +521,21 @@ session or when runner/GUI/latest-project readiness is uncertain. It returns
 runner status, GUI status, latest current project metadata, readiness flags,
 safe smoke-test prompts, and the next recommended tool.
 For resumed projects, `next_action_plan` is retained as the immediate
-session-control compatibility plan. Read
-`coordinated_next_action_plan.recommended_sequence` for the full order and
-require `latest_project_modeling.binding_verified=true` before using
-`modeling_next_action_plan`. If activation, reload, or GUI preflight is step 1,
-perform it and rerun preflight; that session action does not clear or confirm a
-deferred revision-bound modeling action.
+session-control compatibility plan. Use
+`coordinated_next_action_plan.recommended_sequence` for the complete order
+across `session_control`, `visual_diagnostics`, and `modeling`, and resolve each
+step through its `plan_ref`. Require
+`latest_project_visual_diagnostics.binding_verified=true` for replay/visual
+continuation and `latest_project_modeling.binding_verified=true` for structural
+or calculation work. Rerun preflight after each completed step; session work
+does not clear project actions, and visual preparation does not confirm a later
+modeling action.
+The preflight derives those decisions from full local probes and then
+deduplicates its response. Verify `response_compaction.target_exceeded=false`
+and use `latest_project_gui.window_management_ref`,
+`target_window_resolution_ref`, or `workspace_context_ref` to resolve the
+authoritative compact context. Call the receipt's `full_detail_tools` only when
+the unabridged probe internals are required.
 If `latest_project.current_pointer_recovery_used=true`, continue read-only
 inspection from the returned immutable revision and report the recovery. Do
 not rewrite `current.json` merely to hide the warning; only an explicit

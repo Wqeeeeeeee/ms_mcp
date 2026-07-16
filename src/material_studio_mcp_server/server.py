@@ -3654,6 +3654,56 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         },
         "session_preflight": {
             "tool": "material_studio_live_session_preflight",
+            "action_tracks": [
+                "session_control",
+                "visual_diagnostics",
+                "modeling",
+            ],
+            "action_plan_fields": {
+                "session_control": "session_next_action_plan",
+                "visual_diagnostics": "visual_diagnostics_next_action_plan",
+                "modeling": "modeling_next_action_plan",
+            },
+            "project_action_binding_fields": {
+                "visual_diagnostics": (
+                    "latest_project_visual_diagnostics.binding_verified"
+                ),
+                "modeling": "latest_project_modeling.binding_verified",
+            },
+            "coordinated_sequence_field": (
+                "coordinated_next_action_plan.recommended_sequence"
+            ),
+            "coordinated_sequence_ref_field": (
+                "next_action_tracks.recommended_sequence_ref"
+            ),
+            "requery_after_each_completed_step": True,
+            "session_action_never_clears_deferred_project_actions": True,
+            "visual_diagnostics_action_never_clears_modeling_action": True,
+            "response_compaction": {
+                "schema": "material_studio_live_session_preflight_compact_v1",
+                "target_bytes": COMPACT_RESPONSE_TARGET_BYTES,
+                "budget_bytes": COMPACT_RESPONSE_MAX_BYTES,
+                "exact_size_field": "response_compaction.response_bytes",
+                "headroom_field": "response_compaction.headroom_bytes",
+                "target_exceeded_field": "response_compaction.target_exceeded",
+                "deduplicated_context": True,
+                "context_refs": {
+                    "latest_project_gui.window_management_ref": (
+                        "gui_status.window_management"
+                    ),
+                    "latest_project_gui.target_window_resolution_ref": (
+                        "gui_status.target_window_resolution"
+                    ),
+                    "latest_project_gui.workspace_context_ref": (
+                        "workspace_context"
+                    ),
+                },
+                "full_detail_tools": {
+                    "runner_status": "material_studio_get_status",
+                    "gui_status": "material_studio_gui_status",
+                    "project_status": "material_studio_live_project_status",
+                },
+            },
             "states": [
                 "runner_setup_required",
                 "preview_ready_gui_not_open",
@@ -3701,7 +3751,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "selected_window_matches_current",
                 "foreground_window_matches_current",
                 "matching_windows",
-                "window_management",
+                "window_management_ref",
+                "target_window_resolution_ref",
+                "workspace_context_ref",
                 "window_management_recommended_tool",
                 "window_management_recommended_action",
                 "window_management_target_window_is_selected",
@@ -3797,6 +3849,24 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "next_action_id",
                 "needs_user_confirmation",
                 "safe_to_call_without_confirmation",
+                "coordinated_next_action_status",
+                "coordinated_primary_track",
+                "session_control_required_before_visual_diagnostics",
+                "visual_diagnostics_action_available",
+                "visual_diagnostics_action_pending",
+                "visual_diagnostics_action_deferred_until_session_control",
+                "visual_diagnostics_next_action_id",
+                "visual_diagnostics_next_action_tool",
+                "visual_diagnostics_next_action_needs_user_confirmation",
+                "visual_diagnostics_next_action_safe_to_call_without_confirmation",
+                "modeling_action_available",
+                "modeling_action_pending",
+                "modeling_action_deferred_until_session_control",
+                "modeling_next_action_id",
+                "modeling_next_action_tool",
+                "modeling_next_action_needs_user_confirmation",
+                "modeling_next_action_safe_to_call_without_confirmation",
+                "next_action_sequence_ref",
                 "hotload_blocking_reasons",
             ],
             "visible_followup_contract_fields": [
@@ -6633,10 +6703,15 @@ def _live_session_preflight_payload(
         latest_project = _latest_project_preflight_summary(store)
     latest_project_target = latest_project if isinstance(latest_project, dict) and latest_project.get("available") else {}
     latest_project_modeling: dict[str, Any] | None = None
+    latest_project_visual_diagnostics: dict[str, Any] | None = None
     if latest_project_target:
         latest_project_modeling = _latest_project_modeling_preflight_summary(
             latest_project_target,
             working_dir=working_dir,
+        )
+        latest_project_visual_diagnostics = latest_project_modeling.pop(
+            "visual_diagnostics",
+            None,
         )
     gui_status: dict[str, Any] | None = None
     if include_gui_status:
@@ -6858,6 +6933,7 @@ def _live_session_preflight_payload(
         "gui_status": gui_status,
         "latest_project": latest_project,
         "latest_project_modeling": latest_project_modeling,
+        "latest_project_visual_diagnostics": latest_project_visual_diagnostics,
         "latest_project_gui": latest_project_gui,
         "workspace_context": gui_workspace_context or None,
         "workspace_context_mismatch": gui_workspace_context_mismatch,
@@ -6935,6 +7011,253 @@ def _live_session_preflight_payload(
     _attach_session_preflight_action_coordination(payload)
     payload["mcp_client_readiness"] = _session_preflight_mcp_client_readiness(payload)
     _promote_session_preflight_visible_followup(payload)
+    return _compact_live_session_preflight_payload(payload)
+
+
+def _compact_live_session_preflight_window(value: Any) -> dict[str, Any]:
+    """Keep one window's identity and interaction state without wrapper internals."""
+
+    return _mapping_subset(
+        value,
+        (
+            "index",
+            "handle",
+            "title",
+            "pid",
+            "process_name",
+            "class_name",
+            "rect",
+            "is_selected",
+            "is_visible",
+            "is_minimized",
+            "is_foreground",
+            "foreground_state_observed",
+            "minimized_state_source",
+            "project_id",
+            "revision",
+            "source_path",
+            "wrapper_workspace_root",
+            "wrapper_workspace_scope",
+            "wrapper_workspace_matches_controller",
+            "wrapper_provenance_status",
+            "external_workspace_wrapper_detected",
+        ),
+    )
+
+
+def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Deduplicate verbose probes after all preflight decisions have been derived."""
+
+    runner_status = payload.get("runner_status")
+    if isinstance(runner_status, dict):
+        compact_runner = _mapping_subset(
+            runner_status,
+            (
+                "connected",
+                "runner_exists",
+                "runner",
+                "runner_source",
+                "install_home",
+                "workspace_root",
+                "default_timeout_seconds",
+                "extra_runner_args",
+                "searched_candidate_count",
+                "notes",
+                "error",
+            ),
+        )
+        if runner_status.get("searched_candidates"):
+            compact_runner["searched_candidates_omitted"] = True
+        compact_runner["detail_tool"] = "material_studio_get_status"
+        payload["runner_status"] = compact_runner
+
+    gui_status = payload.get("gui_status")
+    if isinstance(gui_status, dict):
+        compact_gui = _mapping_subset(
+            gui_status,
+            (
+                "ok",
+                "supported",
+                "unavailable_reason",
+                "error",
+                "status",
+                "process_found",
+                "process_count",
+                "window_found",
+                "window_count",
+                "live_window_count",
+                "wrapper_window_count",
+                "selected_window_handle",
+                "target_window_found",
+                "target_window_is_visible",
+                "target_window_is_minimized",
+                "target_window_foreground_observed",
+                "target_window_is_foreground",
+                "current_revision_loaded",
+                "ready_for_open",
+                "ready_for_snapshot",
+                "ready_for_next_live_edit",
+                "can_launch_matstudio",
+                "can_launch_blank_session",
+                "can_open_structure_in_existing_window",
+                "can_apply_current_revision_without_new_window",
+                "same_window_open_supported",
+                "open_strategy",
+                "open_strategy_may_launch_new_instance",
+                "reuse_existing_window_default",
+                "hotload_requires_existing_window",
+                "auto_launch_allowed",
+                "needs_activation",
+                "needs_reload",
+                "needs_dialog_resolution",
+                "needs_single_window_resolution",
+                "activation_required_before_capture_or_input",
+                "activation_reasons",
+                "single_window_policy_ok",
+                "single_window_violation_reasons",
+                "workspace_context_mismatch",
+                "recommended_working_dir",
+                "recommended_tool",
+                "recommended_action",
+                "requested_project_id",
+                "requested_revision",
+                "matstudio_exe",
+                "workspace_root",
+                "screenshots_dir",
+            ),
+        )
+        compact_gui["processes"] = [
+            _mapping_subset(item, ("pid", "name", "path", "title"))
+            for item in (gui_status.get("processes") or [])
+            if isinstance(item, dict)
+        ]
+        compact_gui["window"] = _compact_live_session_preflight_window(
+            gui_status.get("window")
+        )
+        compact_gui["target_window"] = _compact_live_session_preflight_window(
+            gui_status.get("target_window")
+        )
+        compact_gui["windows"] = [
+            _compact_live_session_preflight_window(item)
+            for item in (gui_status.get("windows") or [])
+            if isinstance(item, dict)
+        ]
+        compact_gui["target_window_resolution"] = _mapping_subset(
+            gui_status.get("target_window_resolution"),
+            (
+                "matched_project_window",
+                "matching_window_count",
+                "requested_project_id",
+                "requested_revision",
+                "target_handle",
+                "target_title",
+                "fallback_used",
+                "target_wrapper_workspace_root",
+                "target_wrapper_workspace_matches_controller",
+            ),
+        )
+        compact_gui["window_management"] = _mapping_subset(
+            gui_status.get("window_management"),
+            (
+                "status",
+                "process_count",
+                "window_count",
+                "primary_window_count",
+                "dialog_window_count",
+                "blocking_dialog_count",
+                "unresolved_blocking_dialog_count",
+                "requested_project_id",
+                "requested_revision",
+                "selected_window_handle",
+                "selected_window_title",
+                "selected_window_project_id",
+                "selected_window_revision",
+                "target_window_handle",
+                "target_window_title",
+                "target_window_project_id",
+                "target_window_revision",
+                "target_window_is_selected",
+                "target_window_is_visible",
+                "target_window_is_minimized",
+                "target_window_foreground_observed",
+                "target_window_is_foreground",
+                "target_window_has_project_metadata",
+                "matched_project_window",
+                "fallback_used",
+                "current_revision_loaded",
+                "single_window_policy_ok",
+                "single_window_violation_reasons",
+                "workspace_context_mismatch",
+                "recommended_working_dir",
+                "activation_required_before_capture_or_input",
+                "activation_reasons",
+                "needs_activation",
+                "needs_reload",
+                "needs_snapshot",
+                "needs_dialog_resolution",
+                "needs_single_window_resolution",
+                "ready_for_next_live_edit",
+                "can_hotload_without_new_window",
+                "can_apply_current_revision_without_new_window",
+                "recommended_tool",
+                "recommended_action",
+                "payload_hint",
+                "warnings",
+            ),
+        )
+        compact_gui["window_management"]["workspace_context_ref"] = (
+            "workspace_context"
+        )
+        compact_gui["workspace_context_ref"] = "workspace_context"
+        compact_gui["detail_tool"] = "material_studio_gui_status"
+        payload["gui_status"] = compact_gui
+
+    latest_project_gui = payload.get("latest_project_gui")
+    if isinstance(latest_project_gui, dict):
+        latest_project_gui.pop("window_management", None)
+        latest_project_gui.pop("target_window_resolution", None)
+        latest_project_gui.pop("workspace_context", None)
+        latest_project_gui["window_management_ref"] = (
+            "gui_status.window_management"
+        )
+        latest_project_gui["target_window_resolution_ref"] = (
+            "gui_status.target_window_resolution"
+        )
+        latest_project_gui["workspace_context_ref"] = "workspace_context"
+        latest_project_gui["detail_tool"] = "material_studio_gui_status"
+
+    receipt = {
+        "schema": "material_studio_live_session_preflight_compact_v1",
+        "target_bytes": COMPACT_RESPONSE_TARGET_BYTES,
+        "budget_bytes": COMPACT_RESPONSE_MAX_BYTES,
+        "deduplicated_context": True,
+        "full_detail_tools": {
+            "runner_status": "material_studio_get_status",
+            "gui_status": "material_studio_gui_status",
+            "project_status": "material_studio_live_project_status",
+        },
+    }
+    payload["response_compaction"] = receipt
+    for _ in range(4):
+        response_bytes = len(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        )
+        headroom_bytes = max(COMPACT_RESPONSE_MAX_BYTES - response_bytes, 0)
+        target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
+        if (
+            receipt.get("response_bytes") == response_bytes
+            and receipt.get("headroom_bytes") == headroom_bytes
+            and receipt.get("target_exceeded") == target_exceeded
+        ):
+            break
+        receipt["response_bytes"] = response_bytes
+        receipt["headroom_bytes"] = headroom_bytes
+        receipt["target_exceeded"] = target_exceeded
     return payload
 
 
@@ -7016,6 +7339,11 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
     modeling_action = (
         payload.get("modeling_next_action_plan")
         if isinstance(payload.get("modeling_next_action_plan"), dict)
+        else {}
+    )
+    visual_diagnostics_action = (
+        payload.get("visual_diagnostics_next_action_plan")
+        if isinstance(payload.get("visual_diagnostics_next_action_plan"), dict)
         else {}
     )
     action_tracks = (
@@ -7210,6 +7538,37 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "session_control_required_before_modeling": coordinated_action.get(
                 "session_control_required_before_modeling"
             ),
+            "session_control_required_before_visual_diagnostics": (
+                coordinated_action.get(
+                    "session_control_required_before_visual_diagnostics"
+                )
+            ),
+            "visual_diagnostics_action_available": coordinated_action.get(
+                "visual_diagnostics_action_available"
+            ),
+            "visual_diagnostics_action_pending": payload.get(
+                "visual_diagnostics_action_pending"
+            ),
+            "visual_diagnostics_action_deferred_until_session_control": (
+                coordinated_action.get(
+                    "visual_diagnostics_action_deferred_until_session_control"
+                )
+            ),
+            "visual_diagnostics_next_action_id": visual_diagnostics_action.get(
+                "action_id"
+            ),
+            "visual_diagnostics_next_action_tool": visual_diagnostics_action.get(
+                "recommended_tool"
+            ),
+            "visual_diagnostics_next_action": visual_diagnostics_action.get(
+                "recommended_action"
+            ),
+            "visual_diagnostics_next_action_needs_user_confirmation": (
+                visual_diagnostics_action.get("needs_user_confirmation")
+            ),
+            "visual_diagnostics_next_action_safe_to_call_without_confirmation": (
+                visual_diagnostics_action.get("safe_to_call_without_confirmation")
+            ),
             "modeling_action_available": coordinated_action.get(
                 "modeling_action_available"
             ),
@@ -7226,7 +7585,9 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "modeling_next_action_safe_to_call_without_confirmation": modeling_action.get(
                 "safe_to_call_without_confirmation"
             ),
-            "next_action_sequence": action_tracks.get("recommended_sequence") or [],
+            "next_action_sequence_ref": action_tracks.get(
+                "recommended_sequence_ref"
+            ),
             "hotload_blocking_reasons": _dedupe_strings(hotload_blocking_reasons),
         }
     )
@@ -7822,6 +8183,14 @@ def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
             "recommended_action",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
+            "action_scope",
+            "binding_verified",
+            "mutates_structure",
+            "creates_revision",
+            "issues_gui_input",
+            "metadata_write_possible",
+            "automatic_replay_allowed",
+            "requires_requery_after_call",
             "payload_hint",
             "blocking_reasons",
             "review_reasons",
@@ -7922,6 +8291,198 @@ def _semiconductor_modeling_action_plan(
     return _drop_none_values(plan)
 
 
+def _view_replay_preflight_action_id(
+    *,
+    recommended_tool: str,
+    recommended_action: str,
+) -> str:
+    if recommended_tool == "material_studio_gui_activate":
+        return "activate_gui_for_view_replay"
+    if recommended_tool == "material_studio_gui_status":
+        return "verify_gui_for_view_replay"
+    if recommended_tool == "material_studio_gui_prepare_view_replay":
+        return "prepare_gui_view_replay"
+    if recommended_tool == "material_studio_gui_record_view_replay":
+        return "record_gui_view_replay_evidence"
+    if (
+        recommended_tool == "material_studio_live_modeling_request"
+        or "view_replay" in recommended_action
+    ):
+        return "continue_gui_view_replay"
+    return "review_gui_view_replay_action"
+
+
+def _latest_project_visual_diagnostics_preflight_summary(
+    current_status: dict[str, Any],
+    *,
+    project_id: str,
+    revision: int,
+    current_status_binding_verified: bool,
+) -> dict[str, Any]:
+    """Return one revision-bound visual-diagnostics continuation action."""
+
+    replay = (
+        current_status.get("gui_view_replay")
+        if isinstance(current_status.get("gui_view_replay"), dict)
+        else {}
+    )
+    if not replay or replay.get("manifest_exists") is not True:
+        return {
+            "available": False,
+            "status": "view_replay_manifest_unavailable",
+            "binding_verified": False,
+            "project_id": project_id,
+            "revision": revision,
+            "action_available": False,
+        }
+
+    binding_reasons = [str(item) for item in replay.get("binding_reasons") or []]
+    if not current_status_binding_verified:
+        binding_reasons.append("current_project_status_binding_mismatch")
+    if replay.get("binding_verified") is not True and not binding_reasons:
+        binding_reasons.append("view_replay_binding_unverified")
+
+    next_action = (
+        replay.get("next_action")
+        if isinstance(replay.get("next_action"), dict)
+        else {}
+    )
+    recommended_tool = str(next_action.get("recommended_tool") or "").strip()
+    recommended_action = str(next_action.get("recommended_action") or "").strip()
+    payload_hint = (
+        dict(next_action.get("payload_hint"))
+        if isinstance(next_action.get("payload_hint"), dict)
+        else {}
+    )
+    continuation = (
+        replay.get("replay_continuation")
+        if isinstance(replay.get("replay_continuation"), dict)
+        else {}
+    )
+    resolution = (
+        replay.get("next_action_resolution")
+        if isinstance(replay.get("next_action_resolution"), dict)
+        else {}
+    )
+    safety_gate = (
+        resolution.get("safety_gate")
+        if isinstance(resolution.get("safety_gate"), dict)
+        else {}
+    )
+    directly_callable = next_action.get("payload_hint_is_directly_callable") is True
+    nonmutating_gate = bool(
+        safety_gate.get("structure_mutation_allowed") is False
+        and safety_gate.get("revision_creation_allowed") is False
+    )
+    safe_session_tool = recommended_tool in {
+        "material_studio_gui_activate",
+        "material_studio_gui_status",
+    }
+    safe_metadata_continuation = bool(
+        directly_callable
+        and nonmutating_gate
+        and recommended_tool == "material_studio_live_modeling_request"
+    )
+    safe_to_call_without_confirmation = bool(
+        safe_session_tool or safe_metadata_continuation
+    )
+    action_plan = _drop_none_values(
+        {
+            "state": continuation.get("status") or replay.get("replay_status"),
+            "action_id": (
+                _view_replay_preflight_action_id(
+                    recommended_tool=recommended_tool,
+                    recommended_action=recommended_action,
+                )
+                if recommended_tool and recommended_action
+                else None
+            ),
+            "project_id": project_id,
+            "revision": revision,
+            "recommended_tool": recommended_tool or None,
+            "recommended_action": recommended_action or None,
+            "needs_user_confirmation": not safe_to_call_without_confirmation,
+            "safe_to_call_without_confirmation": safe_to_call_without_confirmation,
+            "action_scope": "visual_diagnostics",
+            "binding_verified": not binding_reasons,
+            "mutates_structure": safety_gate.get("structure_mutation_allowed"),
+            "creates_revision": safety_gate.get("revision_creation_allowed"),
+            "issues_gui_input": recommended_tool in {
+                "material_studio_gui_activate",
+                "material_studio_gui_record_view_replay",
+            },
+            "metadata_write_possible": recommended_tool in {
+                "material_studio_live_modeling_request",
+                "material_studio_gui_prepare_view_replay",
+                "material_studio_gui_record_view_replay",
+            },
+            "automatic_replay_allowed": safety_gate.get(
+                "automatic_replay_allowed"
+            ),
+            "requires_requery_after_call": True,
+            "payload_hint": payload_hint,
+            "blocking_reasons": binding_reasons,
+            "review_reasons": _dedupe_strings(
+                [
+                    str(item)
+                    for item in (
+                        continuation.get("block_reasons")
+                        or replay.get("binding_reasons")
+                        or []
+                    )
+                ]
+            ),
+        }
+    )
+    action_binding_reasons = _modeling_action_binding_reasons(
+        action_plan,
+        project_id=project_id,
+        revision=revision,
+    )
+    binding_reasons = _dedupe_strings(binding_reasons + action_binding_reasons)
+    binding_verified = not binding_reasons
+    action_plan["binding_verified"] = binding_verified
+    if binding_reasons:
+        action_plan["blocking_reasons"] = binding_reasons
+    else:
+        action_plan.pop("blocking_reasons", None)
+    if not action_plan.get("review_reasons"):
+        action_plan.pop("review_reasons", None)
+    action_available = bool(
+        binding_verified and _preflight_action_contract_complete(action_plan)
+    )
+    return _drop_none_values(
+        {
+            "available": True,
+            "status": (
+                "visual_diagnostics_action_ready"
+                if action_available
+                else "visual_diagnostics_action_binding_mismatch"
+                if binding_reasons
+                else "visual_diagnostics_without_callable_action"
+            ),
+            "binding_verified": binding_verified,
+            "binding_reasons": binding_reasons,
+            "project_id": project_id,
+            "revision": revision,
+            "replay_status": replay.get("replay_status"),
+            "continuation_status": continuation.get("status"),
+            "next_pending_view_name": continuation.get("next_pending_view_name"),
+            "next_actionable_pending_view_name": continuation.get(
+                "next_actionable_pending_view_name"
+            ),
+            "requested_view_count": replay.get("requested_view_count"),
+            "pending_view_count": (
+                replay.get("replay_summary") or {}
+            ).get("pending_view_count"),
+            "action_available": action_available,
+            "action_source": "gui_view_replay.next_action",
+            "detail_tool": "material_studio_live_project_status",
+            "next_action_plan": action_plan if binding_verified else {},
+        }
+    )
+
+
 def _latest_project_modeling_preflight_summary(
     latest_project: dict[str, Any],
     *,
@@ -7969,6 +8530,12 @@ def _latest_project_modeling_preflight_summary(
     if current_status.get("revision") != revision:
         binding_reasons.append("revision_mismatch")
     binding_verified = not binding_reasons
+    visual_diagnostics = _latest_project_visual_diagnostics_preflight_summary(
+        current_status,
+        project_id=str(project_id),
+        revision=revision,
+        current_status_binding_verified=binding_verified,
+    )
     status_next_action_plan = _session_preflight_action_plan_summary(
         current_status.get("next_action_plan")
     )
@@ -8052,6 +8619,16 @@ def _latest_project_modeling_preflight_summary(
             "safe_to_call_without_confirmation",
         ),
     )
+    status_next_action_track = _session_preflight_action_track(
+        status_next_action_plan
+    )
+    status_next_action_context = (
+        status_next_action_summary
+        if status_next_action_track != "modeling"
+        or modeling_action_source
+        != "material_studio_live_project_status.next_action_plan"
+        else None
+    )
     return _drop_none_values(
         {
             "available": binding_verified,
@@ -8081,29 +8658,24 @@ def _latest_project_modeling_preflight_summary(
             "action_available": action_available,
             "action_source": modeling_action_source,
             "action_binding_reasons": action_binding_reasons,
-            "status_next_action_track": _session_preflight_action_track(
-                status_next_action_plan
+            "status_next_action_track": status_next_action_track,
+            "status_next_action": (
+                status_next_action_context if binding_verified else None
             ),
-            "status_next_action": status_next_action_summary if binding_verified else {},
             "next_action_plan": modeling_action_plan if binding_verified else {},
             "normality_context": normality_context,
-            "report_json_path": current_status.get("report_json_path"),
-            "view_audit_report_path": current_status.get(
-                "view_audit_report_path"
-            ),
-            "view_bundle_manifest_path": current_status.get(
-                "view_bundle_manifest_path"
-            ),
+            "detail_tool": "material_studio_live_project_status",
             "status_response_bytes": response_compaction.get("response_bytes"),
             "status_semantic_core_preserved": response_compaction.get(
                 "semantic_core_preserved"
             ),
+            "visual_diagnostics": visual_diagnostics,
         }
     )
 
 
 def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> None:
-    """Coordinate immediate session control with the current model's pending action."""
+    """Coordinate session, visual-diagnostics, and modeling continuation actions."""
 
     session_plan = _session_preflight_action_plan_summary(
         payload.get("session_next_action_plan") or payload.get("next_action_plan")
@@ -8120,16 +8692,44 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
         modeling.get("action_available") is True
         and _preflight_action_contract_complete(modeling_plan)
     )
+    visual_diagnostics = (
+        payload.get("latest_project_visual_diagnostics")
+        if isinstance(payload.get("latest_project_visual_diagnostics"), dict)
+        else {}
+    )
+    visual_diagnostics_plan = _session_preflight_action_plan_summary(
+        visual_diagnostics.get("next_action_plan")
+    )
+    visual_diagnostics_action_available = bool(
+        visual_diagnostics.get("action_available") is True
+        and visual_diagnostics.get("binding_verified") is True
+        and _preflight_action_contract_complete(visual_diagnostics_plan)
+    )
     state = str(payload.get("state") or "")
     session_control_required = state not in {
         "ready_for_live_edit",
         "ready_for_new_model",
     }
-    same_action = bool(
-        modeling_action_available
-        and session_plan.get("action_id") == modeling_plan.get("action_id")
-        and session_plan.get("recommended_tool")
-        == modeling_plan.get("recommended_tool")
+
+    def same_action(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        return bool(
+            _preflight_action_contract_complete(left)
+            and _preflight_action_contract_complete(right)
+            and left.get("action_id") == right.get("action_id")
+            and left.get("recommended_tool") == right.get("recommended_tool")
+        )
+
+    modeling_matches_session = bool(
+        modeling_action_available and same_action(session_plan, modeling_plan)
+    )
+    visual_matches_session = bool(
+        visual_diagnostics_action_available
+        and same_action(session_plan, visual_diagnostics_plan)
+    )
+    visual_matches_modeling = bool(
+        visual_diagnostics_action_available
+        and modeling_action_available
+        and same_action(visual_diagnostics_plan, modeling_plan)
     )
 
     sequence: list[dict[str, Any]] = []
@@ -8142,38 +8742,76 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
                     "track": track,
                     "plan_ref": plan_ref,
                     "action_id": plan.get("action_id"),
-                    "recommended_tool": plan.get("recommended_tool"),
-                    "recommended_action": plan.get("recommended_action"),
                     "needs_user_confirmation": plan.get(
                         "needs_user_confirmation"
-                    ),
-                    "safe_to_call_without_confirmation": plan.get(
-                        "safe_to_call_without_confirmation"
                     ),
                 }
             )
         )
 
-    if session_control_required or not modeling_action_available:
+    if (
+        session_control_required
+        or (
+            not modeling_action_available
+            and not visual_diagnostics_action_available
+        )
+    ):
         append_step("session_control", session_plan, "session_next_action_plan")
-    if modeling_action_available and not same_action:
+    if visual_diagnostics_action_available and not visual_matches_session:
+        append_step(
+            "visual_diagnostics",
+            visual_diagnostics_plan,
+            "visual_diagnostics_next_action_plan",
+        )
+    if (
+        modeling_action_available
+        and not modeling_matches_session
+        and not visual_matches_modeling
+    ):
         append_step("modeling", modeling_plan, "modeling_next_action_plan")
     if not sequence:
-        append_step("modeling", modeling_plan, "modeling_next_action_plan")
+        append_step("session_control", session_plan, "session_next_action_plan")
 
     primary_track = str(sequence[0]["track"])
-    primary_plan = session_plan if primary_track == "session_control" else modeling_plan
+    primary_plan = {
+        "session_control": session_plan,
+        "visual_diagnostics": visual_diagnostics_plan,
+        "modeling": modeling_plan,
+    }[primary_track]
     modeling_deferred = bool(
-        session_control_required and modeling_action_available and not same_action
+        session_control_required
+        and modeling_action_available
+        and not modeling_matches_session
     )
-    if modeling_deferred:
+    visual_diagnostics_deferred = bool(
+        session_control_required
+        and visual_diagnostics_action_available
+        and not visual_matches_session
+    )
+    sequence_tracks = tuple(str(step.get("track")) for step in sequence)
+    if sequence_tracks == (
+        "session_control",
+        "visual_diagnostics",
+        "modeling",
+    ):
+        coordination_status = (
+            "session_control_then_visual_diagnostics_then_modeling"
+        )
+    elif sequence_tracks == ("visual_diagnostics", "modeling"):
+        coordination_status = "visual_diagnostics_then_modeling"
+    elif sequence_tracks == ("session_control", "visual_diagnostics"):
+        coordination_status = "session_control_then_visual_diagnostics"
+    elif sequence_tracks == ("session_control", "modeling"):
         coordination_status = "session_control_then_modeling"
-    elif modeling_action_available:
+    elif sequence_tracks == ("visual_diagnostics",):
+        coordination_status = "visual_diagnostics_action_ready"
+    elif sequence_tracks == ("modeling",):
         coordination_status = "modeling_action_ready"
     else:
         coordination_status = "session_action_only"
 
     payload["modeling_next_action_plan"] = modeling_plan
+    payload["visual_diagnostics_next_action_plan"] = visual_diagnostics_plan
     payload["next_action_tracks"] = {
         "status": coordination_status,
         "primary_track": primary_track,
@@ -8183,6 +8821,21 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
             "plan_ref": "session_next_action_plan",
             "action_id": session_plan.get("action_id"),
             "recommended_tool": session_plan.get("recommended_tool"),
+        },
+        "visual_diagnostics": {
+            "available": visual_diagnostics_action_available,
+            "binding_verified": visual_diagnostics.get("binding_verified"),
+            "deferred_until_session_control": visual_diagnostics_deferred,
+            "coalesced_with_session_control": visual_matches_session,
+            "plan_ref": "visual_diagnostics_next_action_plan",
+            "action_id": visual_diagnostics_plan.get("action_id"),
+            "recommended_tool": visual_diagnostics_plan.get("recommended_tool"),
+            "needs_user_confirmation": visual_diagnostics_plan.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": visual_diagnostics_plan.get(
+                "safe_to_call_without_confirmation"
+            ),
         },
         "modeling": {
             "available": modeling_action_available,
@@ -8198,7 +8851,18 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
             ),
         },
         "session_action_does_not_clear_modeling_action": modeling_deferred,
-        "recommended_sequence": sequence,
+        "session_action_does_not_clear_visual_diagnostics_action": (
+            visual_diagnostics_deferred
+        ),
+        "visual_diagnostics_action_does_not_clear_modeling_action": bool(
+            visual_diagnostics_action_available
+            and modeling_action_available
+            and not visual_matches_modeling
+        ),
+        "requires_preflight_requery_after_each_completed_step": len(sequence) > 1,
+        "recommended_sequence_ref": (
+            "coordinated_next_action_plan.recommended_sequence"
+        ),
     }
     payload["coordinated_next_action_plan"] = _drop_none_values(
         {
@@ -8215,13 +8879,36 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
             ),
             "payload_hint": primary_plan.get("payload_hint") or {},
             "session_control_required_before_modeling": session_control_required,
+            "session_control_required_before_visual_diagnostics": (
+                session_control_required
+            ),
+            "visual_diagnostics_action_available": (
+                visual_diagnostics_action_available
+            ),
+            "visual_diagnostics_action_deferred_until_session_control": (
+                visual_diagnostics_deferred
+            ),
+            "deferred_visual_diagnostics_action_ref": (
+                "visual_diagnostics_next_action_plan"
+                if visual_diagnostics_deferred
+                else None
+            ),
             "modeling_action_available": modeling_action_available,
             "modeling_action_deferred_until_session_control": modeling_deferred,
             "deferred_modeling_action_ref": (
                 "modeling_next_action_plan" if modeling_deferred else None
             ),
+            "requires_preflight_requery_after_each_completed_step": (
+                len(sequence) > 1
+            ),
             "recommended_sequence": sequence,
         }
+    )
+    payload["visual_diagnostics_action_pending"] = (
+        visual_diagnostics_action_available
+    )
+    payload["visual_diagnostics_action_deferred_until_session_control"] = (
+        visual_diagnostics_deferred
     )
     payload["modeling_action_pending"] = modeling_action_available
     payload["modeling_action_deferred_until_session_control"] = modeling_deferred
@@ -8229,6 +8916,14 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
         modeling.pop("next_action_plan", None)
         modeling["next_action_plan_ref"] = "modeling_next_action_plan"
         modeling["next_action_id"] = modeling_plan.get("action_id")
+    if visual_diagnostics:
+        visual_diagnostics.pop("next_action_plan", None)
+        visual_diagnostics["next_action_plan_ref"] = (
+            "visual_diagnostics_next_action_plan"
+        )
+        visual_diagnostics["next_action_id"] = visual_diagnostics_plan.get(
+            "action_id"
+        )
 
 
 def _latest_project_preflight_summary(store: ProjectStore) -> dict[str, Any]:
@@ -30699,6 +31394,13 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     replay = _mapping_subset(
         value,
         (
+            "project_id",
+            "revision",
+            "spec_fingerprint",
+            "current_spec_fingerprint",
+            "binding_status",
+            "binding_verified",
+            "binding_reasons",
             "manifest_path",
             "manifest_exists",
             "manifest_read_error",
@@ -30754,6 +31456,66 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     if last_event:
         replay["last_replay_event"] = last_event
     return replay
+
+
+def _view_replay_manifest_binding_summary(
+    manifest: Any,
+    *,
+    project_id: str,
+    revision: int,
+    current_spec_fingerprint: str | None,
+) -> dict[str, Any]:
+    """Bind one replay manifest to the immutable current structured revision."""
+
+    if not isinstance(manifest, dict):
+        return {
+            "project_id": None,
+            "revision": None,
+            "spec_fingerprint": None,
+            "current_spec_fingerprint": current_spec_fingerprint,
+            "binding_status": "manifest_unavailable",
+            "binding_verified": False,
+            "binding_reasons": ["view_replay_manifest_unavailable"],
+        }
+
+    manifest_project_id = manifest.get("project_id")
+    manifest_revision = manifest.get("revision")
+    manifest_fingerprint = manifest.get("spec_fingerprint")
+    reasons: list[str] = []
+    if manifest_project_id is None:
+        reasons.append("view_replay_project_id_missing")
+    elif str(manifest_project_id) != project_id:
+        reasons.append("view_replay_project_id_mismatch")
+    if manifest_revision is None:
+        reasons.append("view_replay_revision_missing")
+    else:
+        try:
+            parsed_revision = int(manifest_revision)
+        except (TypeError, ValueError):
+            reasons.append("view_replay_revision_invalid")
+        else:
+            if parsed_revision != revision:
+                reasons.append("view_replay_revision_mismatch")
+    if not manifest_fingerprint:
+        reasons.append("view_replay_spec_fingerprint_missing")
+    elif not current_spec_fingerprint:
+        reasons.append("current_spec_fingerprint_unavailable")
+    elif str(manifest_fingerprint) != str(current_spec_fingerprint):
+        reasons.append("view_replay_spec_fingerprint_mismatch")
+    binding_verified = not reasons
+    return {
+        "project_id": manifest_project_id,
+        "revision": manifest_revision,
+        "spec_fingerprint": manifest_fingerprint,
+        "current_spec_fingerprint": current_spec_fingerprint,
+        "binding_status": (
+            "verified_current_revision"
+            if binding_verified
+            else "rejected_current_revision_binding"
+        ),
+        "binding_verified": binding_verified,
+        "binding_reasons": reasons,
+    }
 
 
 def _deduplicate_compact_gui_view_replay(
@@ -33278,6 +34040,14 @@ def material_studio_live_project_status(
             ),
         }
         computed_audit = model_view_audit(spec)
+        view_replay_summary.update(
+            _view_replay_manifest_binding_summary(
+                view_replay_manifest,
+                project_id=project_id,
+                revision=revision,
+                current_spec_fingerprint=computed_audit.get("spec_fingerprint"),
+            )
+        )
         computed_health = build_modeling_health(
             {
                 "validation": generated["script_validation"],

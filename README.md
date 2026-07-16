@@ -112,10 +112,16 @@ preserving unrelated config, then restart Codex before calling
 `material_studio_live_session_preflight`.
 
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
-immediate session-control action and also returns a revision-bound
-`modeling_next_action_plan`. Follow
-`coordinated_next_action_plan.recommended_sequence`; activating or reloading the
-GUI does not satisfy a later modeling action's explicit confirmation gate.
+immediate session-control action and coordinates three revision-bound tracks:
+session control, visual diagnostics, and modeling. Follow
+`coordinated_next_action_plan.recommended_sequence` and resolve each `plan_ref`
+to its top-level action plan. Activating/reloading the GUI does not clear a
+pending replay or modeling step, and preparing visual diagnostics does not
+satisfy a later modeling action's explicit confirmation gate.
+The preflight response is independently bounded to a 45 KB target and 48 KB
+hard budget. Its `response_compaction` receipt reports the exact serialized
+size and points to the full runner, GUI, and project-status tools when a compact
+`*_ref` replaces duplicated probe internals.
 
 Use the real MCP stdio client to verify initialization, tool discovery, input
 schemas, safety annotations, and preview-only live modeling calls:

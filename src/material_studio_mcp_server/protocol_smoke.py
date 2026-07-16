@@ -45,8 +45,12 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
 )
 
 COMPACT_RESPONSE_MAX_BYTES = 48_000
+COMPACT_RESPONSE_TARGET_BYTES = 45_000
 EXPECTED_CAPABILITIES_COMPACT_SCHEMA = "material_studio_capabilities_compact_v2"
 EXPECTED_LIVE_COMPACT_SCHEMA = "material_studio_live_compact_v2"
+EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
+    "material_studio_live_session_preflight_compact_v1"
+)
 
 _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_capabilities": {"readOnlyHint": True, "destructiveHint": False},
@@ -449,6 +453,28 @@ async def _run_preview_calls(
             },
             timeout,
         )
+        prepared_replay = await _call_tool(
+            session,
+            "material_studio_gui_prepare_view_replay",
+            {
+                "project_id": project_id,
+                "revision": created.get("revision"),
+                "views": ["front", "top", "isometric"],
+                "working_dir": str(workspace),
+                "response_mode": "compact",
+            },
+            timeout,
+        )
+        resumed_preflight = await _call_tool(
+            session,
+            "material_studio_live_session_preflight",
+            {
+                "working_dir": str(workspace),
+                "include_latest_project": True,
+                "include_gui_status": False,
+            },
+            timeout,
+        )
         exported = await _call_tool(
             session,
             "material_studio_model_export_view_bundle",
@@ -475,6 +501,12 @@ async def _run_preview_calls(
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
             "create": len(json.dumps(created, ensure_ascii=False).encode("utf-8")),
             "status": len(json.dumps(status, ensure_ascii=False).encode("utf-8")),
+            "prepare_view_replay": len(
+                json.dumps(prepared_replay, ensure_ascii=False).encode("utf-8")
+            ),
+            "resumed_preflight": len(
+                json.dumps(resumed_preflight, ensure_ascii=False).encode("utf-8")
+            ),
             "view_bundle": len(json.dumps(exported, ensure_ascii=False).encode("utf-8")),
             "history": len(json.dumps(history, ensure_ascii=False).encode("utf-8")),
         }
@@ -509,6 +541,69 @@ async def _run_preview_calls(
             validation_errors.append("status_response_not_compact")
         if status.get("response_schema") != EXPECTED_LIVE_COMPACT_SCHEMA:
             validation_errors.append("status_compact_schema_mismatch")
+        if prepared_replay.get("ok") is not True:
+            validation_errors.append("view_replay_prepare_not_ok")
+        if resumed_preflight.get("ok") is not True:
+            validation_errors.append("resumed_preflight_not_ok")
+        visual_summary = resumed_preflight.get("latest_project_visual_diagnostics")
+        if not isinstance(visual_summary, dict):
+            validation_errors.append("resumed_preflight_visual_summary_missing")
+            visual_summary = {}
+        if visual_summary.get("binding_verified") is not True:
+            validation_errors.append("resumed_preflight_visual_binding_unverified")
+        if visual_summary.get("action_available") is not True:
+            validation_errors.append("resumed_preflight_visual_action_unavailable")
+        visual_plan = resumed_preflight.get("visual_diagnostics_next_action_plan")
+        if not isinstance(visual_plan, dict):
+            validation_errors.append("resumed_preflight_visual_plan_missing")
+            visual_plan = {}
+        if visual_plan.get("project_id") != project_id:
+            validation_errors.append("resumed_preflight_visual_project_mismatch")
+        if visual_plan.get("revision") != created.get("revision"):
+            validation_errors.append("resumed_preflight_visual_revision_mismatch")
+        if visual_plan.get("action_scope") != "visual_diagnostics":
+            validation_errors.append("resumed_preflight_visual_scope_mismatch")
+        sequence = (
+            (resumed_preflight.get("coordinated_next_action_plan") or {}).get(
+                "recommended_sequence"
+            )
+            or []
+        )
+        if not any(step.get("track") == "visual_diagnostics" for step in sequence):
+            validation_errors.append("resumed_preflight_visual_track_missing")
+        if (
+            (resumed_preflight.get("next_action_tracks") or {}).get(
+                "recommended_sequence_ref"
+            )
+            != "coordinated_next_action_plan.recommended_sequence"
+        ):
+            validation_errors.append("resumed_preflight_sequence_ref_mismatch")
+        preflight_compaction = resumed_preflight.get("response_compaction")
+        if not isinstance(preflight_compaction, dict):
+            validation_errors.append("resumed_preflight_compaction_receipt_missing")
+            preflight_compaction = {}
+        if (
+            preflight_compaction.get("schema")
+            != EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA
+        ):
+            validation_errors.append("resumed_preflight_compaction_schema_mismatch")
+        compact_preflight_bytes = len(
+            json.dumps(
+                resumed_preflight,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        if preflight_compaction.get("response_bytes") != compact_preflight_bytes:
+            validation_errors.append("resumed_preflight_compaction_size_mismatch")
+        if preflight_compaction.get("target_bytes") != COMPACT_RESPONSE_TARGET_BYTES:
+            validation_errors.append("resumed_preflight_compaction_target_mismatch")
+        if preflight_compaction.get("budget_bytes") != COMPACT_RESPONSE_MAX_BYTES:
+            validation_errors.append("resumed_preflight_compaction_budget_mismatch")
+        if preflight_compaction.get("target_exceeded") is not False:
+            validation_errors.append("resumed_preflight_compaction_target_exceeded")
+        if compact_preflight_bytes >= COMPACT_RESPONSE_TARGET_BYTES:
+            validation_errors.append("resumed_preflight_target_size_exceeded")
         if exported.get("ok") is not True:
             validation_errors.append("view_bundle_export_not_ok")
         if exported.get("response_mode") != "compact":
@@ -517,7 +612,14 @@ async def _run_preview_calls(
             validation_errors.append("view_bundle_compact_schema_mismatch")
         oversized = sorted(
             name
-            for name in ("capabilities", "create", "status", "view_bundle")
+            for name in (
+                "capabilities",
+                "create",
+                "status",
+                "prepare_view_replay",
+                "resumed_preflight",
+                "view_bundle",
+            )
             if response_sizes_bytes[name] >= COMPACT_RESPONSE_MAX_BYTES
         )
         if oversized:
@@ -546,6 +648,18 @@ async def _run_preview_calls(
                 "view_bundle_row_counts": exported.get("view_bundle_row_counts"),
                 "history_count": len(history.get("history") or []),
                 "preflight_state": preflight.get("state"),
+                "resumed_preflight_state": resumed_preflight.get("state"),
+                "visual_diagnostics_action_id": visual_plan.get("action_id"),
+                "visual_diagnostics_action_tool": visual_plan.get(
+                    "recommended_tool"
+                ),
+                "visual_diagnostics_binding_verified": visual_summary.get(
+                    "binding_verified"
+                ),
+                "coordinated_action_tracks": [
+                    step.get("track") for step in sequence
+                ],
+                "preflight_response_compaction": preflight_compaction,
                 "response_mode": created.get("response_mode"),
                 "response_sizes_bytes": response_sizes_bytes,
             }

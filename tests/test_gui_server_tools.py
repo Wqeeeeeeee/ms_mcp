@@ -4890,6 +4890,15 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
         response_mode="compact",
     )
     replay = status["gui_view_replay"]
+    assert replay["project_id"] == project_id
+    assert replay["revision"] == revision
+    assert replay["spec_fingerprint"] == stale_manifest["spec_fingerprint"]
+    assert replay["current_spec_fingerprint"] == stale_manifest[
+        "spec_fingerprint"
+    ]
+    assert replay["binding_status"] == "verified_current_revision"
+    assert replay["binding_verified"] is True
+    assert replay["binding_reasons"] == []
     assert replay["recipe_contract"]["status"] == "pending_recipe_upgrade_required"
     assert replay["recipe_contract"]["pending_upgrade_view_names"] == ["right"]
     assert replay["replay_continuation"]["status"] == "recipe_upgrade_required"
@@ -4932,6 +4941,66 @@ def test_live_view_replay_upgrades_stale_pending_recipe_without_losing_events(
     assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == (
         stale_manifest_sha256
     )
+
+    history_before_preflight = server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"]
+    preflight = server.material_studio_live_session_preflight(
+        working_dir=str(tmp_path)
+    )
+    visual_summary = preflight["latest_project_visual_diagnostics"]
+    assert visual_summary["binding_verified"] is True
+    assert visual_summary["action_available"] is True
+    assert visual_summary["replay_status"] == "partially_confirmed"
+    assert visual_summary["continuation_status"] == "recipe_upgrade_required"
+    assert visual_summary["next_action_plan_ref"] == (
+        "visual_diagnostics_next_action_plan"
+    )
+    visual_plan = preflight["visual_diagnostics_next_action_plan"]
+    assert visual_plan["state"] == "recipe_upgrade_required"
+    assert visual_plan["action_id"] == "continue_gui_view_replay"
+    assert visual_plan["recommended_tool"] == (
+        "material_studio_live_modeling_request"
+    )
+    assert visual_plan["needs_user_confirmation"] is False
+    assert visual_plan["safe_to_call_without_confirmation"] is True
+    assert visual_plan["mutates_structure"] is False
+    assert visual_plan["creates_revision"] is False
+    assert visual_plan["issues_gui_input"] is False
+    assert visual_plan["requires_requery_after_call"] is True
+    coordinated = preflight["coordinated_next_action_plan"]
+    sequence = coordinated["recommended_sequence"]
+    visual_step = next(
+        step for step in sequence if step["track"] == "visual_diagnostics"
+    )
+    assert visual_step["plan_ref"] == "visual_diagnostics_next_action_plan"
+    assert visual_step["action_id"] == "continue_gui_view_replay"
+    modeling_step_indexes = [
+        index for index, step in enumerate(sequence) if step["track"] == "modeling"
+    ]
+    visual_step_index = sequence.index(visual_step)
+    assert all(visual_step_index < index for index in modeling_step_indexes)
+    assert preflight["next_action_tracks"]["recommended_sequence_ref"] == (
+        "coordinated_next_action_plan.recommended_sequence"
+    )
+    assert preflight["mcp_client_readiness"]["next_action_sequence_ref"] == (
+        "coordinated_next_action_plan.recommended_sequence"
+    )
+    assert len(
+        json.dumps(
+            preflight,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ) < server.COMPACT_RESPONSE_MAX_BYTES
+    assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == (
+        stale_manifest_sha256
+    )
+    assert server.material_studio_project_history(
+        project_id,
+        working_dir=str(tmp_path),
+    )["history"] == history_before_preflight
 
     rejected = server.material_studio_gui_record_view_replay(
         view_name="right",
@@ -5610,6 +5679,32 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["project_history_project_id_optional"] is True
     assert capabilities["project_rollback_project_id_optional"] is True
     assert capabilities["session_preflight"]["tool"] == "material_studio_live_session_preflight"
+    assert capabilities["session_preflight"]["action_tracks"] == [
+        "session_control",
+        "visual_diagnostics",
+        "modeling",
+    ]
+    assert capabilities["session_preflight"]["action_plan_fields"] == {
+        "session_control": "session_next_action_plan",
+        "visual_diagnostics": "visual_diagnostics_next_action_plan",
+        "modeling": "modeling_next_action_plan",
+    }
+    assert capabilities["session_preflight"]["project_action_binding_fields"] == {
+        "visual_diagnostics": (
+            "latest_project_visual_diagnostics.binding_verified"
+        ),
+        "modeling": "latest_project_modeling.binding_verified",
+    }
+    assert capabilities["session_preflight"]["coordinated_sequence_field"] == (
+        "coordinated_next_action_plan.recommended_sequence"
+    )
+    assert capabilities["session_preflight"]["coordinated_sequence_ref_field"] == (
+        "next_action_tracks.recommended_sequence_ref"
+    )
+    assert capabilities["session_preflight"]["requery_after_each_completed_step"] is True
+    assert capabilities["session_preflight"][
+        "visual_diagnostics_action_never_clears_modeling_action"
+    ] is True
     assert "preview_ready_gui_process_without_window" in capabilities["session_preflight"]["states"]
     assert "ready_for_live_edit_gui_review" in capabilities["session_preflight"]["states"]
     assert "ready_for_live_edit_gui_activation" in capabilities["session_preflight"]["states"]
@@ -5664,6 +5759,21 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "window_management_payload_hint" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "window_management_single_window_policy_ok" in capabilities["session_preflight"]["latest_project_gui_fields"]
     assert "window_management_single_window_violation_reasons" in capabilities["session_preflight"]["latest_project_gui_fields"]
+    preflight_compaction = capabilities["session_preflight"]["response_compaction"]
+    assert preflight_compaction["schema"] == (
+        "material_studio_live_session_preflight_compact_v1"
+    )
+    assert preflight_compaction["target_bytes"] == server.COMPACT_RESPONSE_TARGET_BYTES
+    assert preflight_compaction["budget_bytes"] == server.COMPACT_RESPONSE_MAX_BYTES
+    assert preflight_compaction["context_refs"][
+        "latest_project_gui.window_management_ref"
+    ] == "gui_status.window_management"
+    assert "window_management_ref" in capabilities["session_preflight"][
+        "latest_project_gui_fields"
+    ]
+    assert "window_management" not in capabilities["session_preflight"][
+        "latest_project_gui_fields"
+    ]
     assert "latest_project_gui_loaded" in capabilities["session_preflight"]["readiness_fields"]
     assert "latest_project_target_window_is_selected" in capabilities["session_preflight"]["readiness_fields"]
     assert "gui_process_found" in capabilities["session_preflight"]["readiness_fields"]
@@ -9730,13 +9840,34 @@ def test_live_session_preflight_sequences_activation_before_pending_modeling_act
     assert client["modeling_action_pending"] is True
     assert client["modeling_action_deferred_until_session_control"] is True
     assert client["modeling_next_action_needs_user_confirmation"] is True
-    assert len(
+    response_bytes = len(
         json.dumps(
             preflight,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
-    ) < server.COMPACT_RESPONSE_MAX_BYTES
+    )
+    compaction = preflight["response_compaction"]
+    assert compaction["schema"] == (
+        "material_studio_live_session_preflight_compact_v1"
+    )
+    assert compaction["response_bytes"] == response_bytes
+    assert compaction["target_bytes"] == server.COMPACT_RESPONSE_TARGET_BYTES
+    assert compaction["budget_bytes"] == server.COMPACT_RESPONSE_MAX_BYTES
+    assert compaction["headroom_bytes"] == (
+        server.COMPACT_RESPONSE_MAX_BYTES - response_bytes
+    )
+    assert compaction["target_exceeded"] is False
+    assert response_bytes < server.COMPACT_RESPONSE_TARGET_BYTES
+    assert preflight["gui_status"]["detail_tool"] == "material_studio_gui_status"
+    assert preflight["gui_status"]["workspace_context_ref"] == (
+        "workspace_context"
+    )
+    assert "workspace_context" not in preflight["gui_status"]
+    assert preflight["latest_project_gui"]["window_management_ref"] == (
+        "gui_status.window_management"
+    )
+    assert "window_management" not in preflight["latest_project_gui"]
     assert server.material_studio_model_get_current(
         created["project_id"],
         working_dir=str(tmp_path),
@@ -9776,6 +9907,66 @@ def test_latest_project_modeling_preflight_rejects_revision_binding_mismatch(
     assert summary["binding_reasons"] == ["revision_mismatch"]
     assert summary["action_available"] is False
     assert summary["next_action_plan"] == {}
+
+
+def test_latest_project_visual_preflight_rejects_stale_manifest_binding(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "material_studio_live_project_status",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "visual_binding_project",
+            "revision": 4,
+            "normality": "review_warnings",
+            "gui_view_replay": {
+                "manifest_exists": True,
+                "project_id": "visual_binding_project",
+                "revision": 3,
+                "binding_verified": False,
+                "binding_reasons": ["view_replay_revision_mismatch"],
+                "replay_status": "recipe_upgrade_required",
+                "replay_continuation": {
+                    "status": "recipe_upgrade_required",
+                    "next_pending_view_name": "front",
+                },
+                "next_action": {
+                    "recommended_tool": "material_studio_live_modeling_request",
+                    "recommended_action": (
+                        "regenerate_view_replay_manifest_with_current_safety_recipes_preserving_events"
+                    ),
+                    "payload_hint": {
+                        "user_request": (
+                            "Continue GUI view replay using the current safety recipe."
+                        ),
+                        "project_id": "visual_binding_project",
+                    },
+                    "payload_hint_is_directly_callable": True,
+                },
+                "next_action_resolution": {
+                    "safety_gate": {
+                        "automatic_replay_allowed": False,
+                        "structure_mutation_allowed": False,
+                        "revision_creation_allowed": False,
+                    }
+                },
+            },
+        },
+    )
+
+    summary = server._latest_project_modeling_preflight_summary(
+        {"project_id": "visual_binding_project", "revision": 4},
+        working_dir=None,
+    )
+
+    visual = summary["visual_diagnostics"]
+    assert visual["available"] is True
+    assert visual["status"] == "visual_diagnostics_action_binding_mismatch"
+    assert visual["binding_verified"] is False
+    assert visual["binding_reasons"] == ["view_replay_revision_mismatch"]
+    assert visual["action_available"] is False
+    assert visual["next_action_plan"] == {}
 
 
 def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(monkeypatch, tmp_path: Path) -> None:

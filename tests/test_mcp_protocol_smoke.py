@@ -51,9 +51,29 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["view_bundle_row_counts"]["view_projections"] == 24
     assert calls["view_bundle_row_counts"]["structure_artifact_validation"] == 1
     assert calls["history_count"] == 1
+    assert calls["visual_diagnostics_binding_verified"] is True
+    assert calls["visual_diagnostics_action_id"]
+    assert calls["visual_diagnostics_action_tool"]
+    assert "visual_diagnostics" in calls["coordinated_action_tracks"]
+    compaction = calls["preflight_response_compaction"]
+    assert compaction["schema"] == (
+        "material_studio_live_session_preflight_compact_v1"
+    )
+    assert compaction["target_exceeded"] is False
+    assert compaction["response_bytes"] < compaction["target_bytes"]
+    assert compaction["headroom_bytes"] == (
+        compaction["budget_bytes"] - compaction["response_bytes"]
+    )
     assert max(
         calls["response_sizes_bytes"][name]
-        for name in ("capabilities", "create", "status", "view_bundle")
+        for name in (
+            "capabilities",
+            "create",
+            "status",
+            "prepare_view_replay",
+            "resumed_preflight",
+            "view_bundle",
+        )
     ) < COMPACT_RESPONSE_MAX_BYTES
     assert Path(calls["view_bundle_manifest_path"]).exists()
     assert result["config_audit"]["ok"] is True

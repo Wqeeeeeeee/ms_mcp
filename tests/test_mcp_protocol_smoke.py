@@ -95,6 +95,23 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls[
         "capabilities_castep_result_diagnostic_focus_present"
     ] is True
+    assert calls[
+        "capabilities_castep_convergence_diagnostic_focus_present"
+    ] is True
+    assert calls["capabilities_castep_convergence_schema"] == (
+        "material_studio_castep_convergence_audit_v1"
+    )
+    assert calls["capabilities_castep_convergence_source"] == (
+        "immutable_verified_electronic_result_revisions"
+    )
+    assert calls["capabilities_castep_convergence_axes_separate"] is True
+    assert calls[
+        "capabilities_castep_convergence_scientific_verified"
+    ] is False
+    assert calls["capabilities_castep_convergence_preview_mode"] == "preview"
+    assert calls[
+        "capabilities_castep_convergence_execute_confirmation"
+    ] is True
     assert calls["castep_electronic_preview_task"] == "Energy"
     assert calls["castep_electronic_preview_execution_started"] is False
     assert calls["castep_electronic_preview_structure_exists"] is False

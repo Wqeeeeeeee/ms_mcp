@@ -20,6 +20,12 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .castep_materialscript import build_castep_materialscript_plan
+from .castep_convergence import (
+    CASTEP_CONVERGENCE_AUDIT_SCHEMA,
+    DEFAULT_BAND_GAP_TOLERANCE_EV,
+    DEFAULT_ENERGY_TOLERANCE_EV_PER_ATOM,
+    audit_castep_convergence_series,
+)
 from .castep_electronic import (
     RESULT_DOCUMENT_BY_TASK,
     SUPPORTED_CASTEP_ELECTRONIC_TASKS,
@@ -1806,6 +1812,57 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             },
         },
         {
+            "id": "castep_convergence_series",
+            "default_tool": "material_studio_live_modeling_request",
+            "execution_policy": (
+                "read_only_current_revision_review; continuation payloads are preview_only "
+                "and execution_mode_execute_requires_explicit_confirmation"
+            ),
+            "requires_existing_result": True,
+            "minimum_comparable_point_count": 2,
+            "minimum_sequence_point_count": 3,
+            "request_terms": [
+                "CASTEP convergence",
+                "cutoff convergence",
+                "k-point convergence",
+                "parameter convergence",
+                "convergence series",
+                "parameter sensitivity",
+            ],
+            "cjk_terms": [
+                "CASTEP 收敛",
+                "截断能收敛",
+                "K 点收敛",
+                "参数收敛",
+                "收敛序列",
+                "参数敏感性",
+            ],
+            "examples": [
+                "Inspect the current CASTEP cutoff convergence series and export the deltas.",
+                "Check k-point parameter sensitivity without rerunning CASTEP.",
+                "检查当前 CASTEP 截断能和 K 点收敛序列并导出 CSV。",
+            ],
+            "diagnostic_summaries": [
+                "castep_convergence_audit",
+                "semiconductor_review.castep_convergence",
+                "semiconductor_calculation_readiness",
+                "normality_gate",
+            ],
+            "diagnostic_csvs": [
+                "semiconductor_castep_convergence_series_csv",
+                "semiconductor_calculation_readiness_csv",
+            ],
+            "result_contract": {
+                "every_point_requires_immutable_revision_and_artifact_binding": True,
+                "cutoff_and_kpoint_axes_are_compared_separately": True,
+                "parameter_sensitivity_is_not_scientific_convergence": True,
+                "scientific_convergence_verified": False,
+                "structure_normality_blocked_by_result_review": False,
+                "recommended_rerun_tool": "material_studio_castep_run_current",
+                "recommended_rerun_execution_mode": "preview",
+            },
+        },
+        {
             "id": "electronic_structure_preflight",
             "default_tool": "material_studio_live_modeling_request",
             "execution_policy": "preview_by_default_execute_only_for_explicit_hotload_or_execution_mode_execute",
@@ -2733,6 +2790,7 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_band_path_csv",
     "semiconductor_castep_electronic_result_csv",
     "semiconductor_castep_band_edges_csv",
+    "semiconductor_castep_convergence_series_csv",
     "semiconductor_band_alignment_csv",
     "semiconductor_polarization_2deg_csv",
     "semiconductor_p_gan_gate_cap_csv",
@@ -2995,6 +3053,17 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_castep_electronic_calculation_result_review_required",
     "semiconductor_castep_electronic_structure_normality_blocked",
     "semiconductor_castep_electronic_result_review_reasons",
+    "semiconductor_castep_convergence_status",
+    "semiconductor_castep_convergence_history_entry_count",
+    "semiconductor_castep_convergence_verified_point_count",
+    "semiconductor_castep_convergence_rejected_point_count",
+    "semiconductor_castep_convergence_series_count",
+    "semiconductor_castep_convergence_artifact_evidence_verified",
+    "semiconductor_castep_parameter_sensitivity_evidence_verified",
+    "semiconductor_castep_parameter_sensitivity_within_tolerance",
+    "semiconductor_castep_scientific_convergence_verified",
+    "semiconductor_castep_convergence_structure_normality_blocked",
+    "semiconductor_castep_convergence_review_reasons",
     "semiconductor_commensurate_twist_count",
     "semiconductor_commensurate_twist_quality",
     "semiconductor_commensurate_twist_metadata_consistent",
@@ -3731,6 +3800,35 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "calculation_result_review_required": True,
                 "recommended_tool": "material_studio_castep_run_current",
                 "recommended_payload_execution_mode": "preview",
+                "execute_requires_explicit_confirmation": True,
+            },
+            "convergence_audit": {
+                "schema": CASTEP_CONVERGENCE_AUDIT_SCHEMA,
+                "source": "immutable_verified_electronic_result_revisions",
+                "axes": [
+                    "cutoff_energy_ev",
+                    "kpoint_separation",
+                    "kpoint_grid",
+                    "properties_kpoint_separation",
+                ],
+                "axes_compared_separately": True,
+                "minimum_comparable_point_count": 2,
+                "minimum_sequence_point_count": 3,
+                "default_energy_tolerance_ev_per_atom": (
+                    DEFAULT_ENERGY_TOLERANCE_EV_PER_ATOM
+                ),
+                "default_band_gap_tolerance_ev": (
+                    DEFAULT_BAND_GAP_TOLERANCE_EV
+                ),
+                "scientific_convergence_verified": False,
+                "parameter_sensitivity_is_not_scientific_convergence": True,
+                "structure_normality_blocked_by_result_review": False,
+                "diagnostic_focus": "castep_convergence_series",
+                "diagnostic_csv": (
+                    "semiconductor_castep_convergence_series.csv"
+                ),
+                "recommended_rerun_tool": "material_studio_castep_run_current",
+                "recommended_rerun_execution_mode": "preview",
                 "execute_requires_explicit_confirmation": True,
             },
             "numeric_curve_data_exported": "conditional_on_native_bands",
@@ -13179,6 +13277,32 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
             ),
         ),
         (
+            "castep_convergence_series",
+            (
+                "castep convergence",
+                "cutoff convergence",
+                "energy cutoff convergence",
+                "kpoint convergence",
+                "k-point convergence",
+                "k point convergence",
+                "property kpoint convergence",
+                "property k-point convergence",
+                "parameter convergence",
+                "convergence series",
+                "convergence study",
+                "parameter sensitivity",
+                "castep 收敛",
+                "截断能收敛",
+                "能量截断收敛",
+                "k点收敛",
+                "k 点收敛",
+                "参数收敛",
+                "收敛序列",
+                "收敛性检查",
+                "参数敏感性",
+            ),
+        ),
+        (
             "castep_electronic_results",
             (
                 "castep result",
@@ -13409,7 +13533,12 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
     focuses: list[str] = []
     sapphire_epitaxy_preflight = _sapphire_epitaxy_preflight_focus_requested(text)
     for focus, terms in focus_patterns:
-        if any(term in text for term in terms):
+        matched = any(term in text for term in terms)
+        if focus == "view_quality":
+            matched = bool(re.search(r"\bviews?\b", text)) or any(
+                term in text for term in terms if term not in {"view", "views"}
+            )
+        if matched:
             if sapphire_epitaxy_preflight and focus == "epitaxial_strain_preflight":
                 continue
             focuses.append(focus)
@@ -13464,6 +13593,16 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
             focus
             for focus in focuses
             if focus != "electronic_structure_preflight"
+        ]
+    if "castep_convergence_series" in focuses:
+        focuses = [
+            focus
+            for focus in focuses
+            if focus != "castep_electronic_results"
+            and (
+                focus != "electronic_structure_preflight"
+                or _calculation_readiness_requested_from_text(user_request)
+            )
         ]
     if _calculation_readiness_requested_from_text(user_request) and "electronic_structure_preflight" not in focuses:
         focuses.append("electronic_structure_preflight")
@@ -13888,6 +14027,18 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
         "csv_keys": [
             "semiconductor_castep_electronic_result_csv",
             "semiconductor_castep_band_edges_csv",
+        ],
+    },
+    "castep_convergence_series": {
+        "summary_keys": [
+            "inspection.semiconductor_health.castep_convergence_audit",
+            "semiconductor_review.castep_convergence",
+            "semiconductor_calculation_readiness",
+            "normality_gate",
+        ],
+        "csv_keys": [
+            "semiconductor_castep_convergence_series_csv",
+            "semiconductor_calculation_readiness_csv",
         ],
     },
     "electronic_structure_preflight": {
@@ -14468,6 +14619,8 @@ def _attach_modeling_health(
     if spec is not None:
         response.setdefault("acceptance", spec.acceptance.model_dump(mode="json"))
         _attach_structure_artifact_validation(response, spec=spec, execution_mode=mode_value)
+    if store is not None and spec is not None:
+        _attach_castep_convergence_audit(response, store=store, spec=spec)
     health = build_modeling_health(response, execution_mode=mode_value)
     response["modeling_health"] = health
     if store is not None and spec is not None and isinstance(response.get("view_audit"), dict):
@@ -14503,6 +14656,7 @@ def _attach_modeling_health(
     response["gui_current_revision"] = response["modeling_report"].get("gui_current_revision")
     response["change_verification"] = response["modeling_report"].get("change_verification")
     response["semiconductor_intent"] = response["modeling_report"].get("semiconductor_intent")
+    response["semiconductor_review"] = response["modeling_report"].get("semiconductor_review")
     response["semiconductor_normality_diagnosis"] = response["modeling_report"].get(
         "semiconductor_normality_diagnosis"
     )
@@ -14937,6 +15091,38 @@ def _semiconductor_calculation_readiness_csv_row(summary: dict[str, Any]) -> dic
         "reciprocal_status": summary.get("reciprocal_status"),
         "band_path_task_relevant": summary.get("band_path_task_relevant"),
         "band_path_requires_materials_studio_review": summary.get("band_path_requires_materials_studio_review"),
+        "electronic_result_status": summary.get("electronic_result_status"),
+        "electronic_result_trust_status": summary.get(
+            "electronic_result_trust_status"
+        ),
+        "electronic_result_review_required": summary.get(
+            "electronic_result_review_required"
+        ),
+        "electronic_result_review_reasons": _csv_json_value(
+            summary.get("electronic_result_review_reasons") or []
+        ),
+        "castep_convergence_status": summary.get("castep_convergence_status"),
+        "castep_convergence_artifact_evidence_verified": summary.get(
+            "castep_convergence_artifact_evidence_verified"
+        ),
+        "castep_parameter_sensitivity_evidence_verified": summary.get(
+            "castep_parameter_sensitivity_evidence_verified"
+        ),
+        "castep_parameter_sensitivity_within_tolerance": summary.get(
+            "castep_parameter_sensitivity_within_tolerance"
+        ),
+        "castep_convergence_scientific_convergence_verified": summary.get(
+            "castep_convergence_scientific_convergence_verified"
+        ),
+        "castep_convergence_review_required": summary.get(
+            "castep_convergence_review_required"
+        ),
+        "castep_convergence_review_reasons": _csv_json_value(
+            summary.get("castep_convergence_review_reasons") or []
+        ),
+        "castep_convergence_structure_normality_blocked": summary.get(
+            "castep_convergence_structure_normality_blocked"
+        ),
     }
 
 
@@ -16008,6 +16194,7 @@ def _refresh_response_summaries(response: dict[str, Any]) -> None:
     response["diagnostic_export_manifest"] = modeling_report["diagnostic_export_manifest"]
     response["change_verification"] = modeling_report["change_verification"]
     response["semiconductor_intent"] = modeling_report["semiconductor_intent"]
+    response["semiconductor_review"] = modeling_report.get("semiconductor_review")
     response["semiconductor_diagnostic_gate"] = modeling_report["semiconductor_diagnostic_gate"]
     response["diagnostic_acceptance"] = modeling_report["diagnostic_acceptance"]
     response["normality_gate"] = modeling_report["normality_gate"]
@@ -19610,6 +19797,10 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
             "semiconductor_castep_band_edges_csv",
             "semiconductor_castep_band_edges",
         ),
+        (
+            "semiconductor_castep_convergence_series_csv",
+            "semiconductor_castep_convergence_series",
+        ),
     ),
     "semiconductor_electronic_interfaces": (
         ("semiconductor_band_alignment_csv", "semiconductor_band_alignment"),
@@ -20623,6 +20814,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             ),
             "semiconductor_castep_band_edges_csv": bundle_files.get(
                 "semiconductor_castep_band_edges_csv"
+            ),
+            "semiconductor_castep_convergence_series_csv": bundle_files.get(
+                "semiconductor_castep_convergence_series_csv"
             ),
             "semiconductor_band_alignment_csv": bundle_files.get("semiconductor_band_alignment_csv"),
             "semiconductor_polarization_2deg_csv": bundle_files.get("semiconductor_polarization_2deg_csv"),
@@ -22003,6 +22197,11 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
         if isinstance(semiconductor.get("electronic_result"), dict)
         else {}
     )
+    castep_convergence = (
+        semiconductor.get("castep_convergence")
+        if isinstance(semiconductor.get("castep_convergence"), dict)
+        else {}
+    )
     risk_flags = _dedupe_strings([str(item) for item in semiconductor.get("risk_flags") or []])
     all_calculation_blocking_reasons = _dedupe_strings(
         [str(item) for item in readiness.get("calculation_blocking_reasons") or []]
@@ -22127,6 +22326,30 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
             ),
             "electronic_result_structure_normality_blocked": (
                 electronic_result.get("structure_normality_blocked")
+            ),
+            "castep_convergence_status": castep_convergence.get("status"),
+            "castep_convergence_artifact_evidence_verified": (
+                castep_convergence.get("artifact_evidence_verified")
+            ),
+            "castep_parameter_sensitivity_evidence_verified": (
+                castep_convergence.get(
+                    "parameter_sensitivity_evidence_verified"
+                )
+            ),
+            "castep_parameter_sensitivity_within_tolerance": (
+                castep_convergence.get("parameter_sensitivity_within_tolerance")
+            ),
+            "castep_convergence_scientific_convergence_verified": (
+                castep_convergence.get("scientific_convergence_verified")
+            ),
+            "castep_convergence_review_required": castep_convergence.get(
+                "calculation_result_review_required"
+            ),
+            "castep_convergence_review_reasons": castep_convergence.get(
+                "result_review_reasons"
+            ),
+            "castep_convergence_structure_normality_blocked": (
+                castep_convergence.get("structure_normality_blocked")
             ),
         }
     )
@@ -25311,6 +25534,103 @@ def _attach_live_failure_contract(
     return response
 
 
+def _attach_castep_convergence_audit(
+    response: dict[str, Any],
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+) -> dict[str, Any] | None:
+    """Bind historical CASTEP results to immutable revisions before comparison."""
+
+    history = [
+        item
+        for item in (spec.metadata or {}).get(
+            "castep_electronic_calculation_history", []
+        )
+        or []
+        if isinstance(item, dict)
+    ]
+    if not history:
+        return None
+    revision_specs: dict[int, ModelSpec] = {}
+    revision_load_errors: dict[int, str] = {}
+    project_dir = store.project_dir(spec.project_id)
+    for receipt in history:
+        target_revision = receipt.get("target_revision")
+        if not isinstance(target_revision, int) or isinstance(target_revision, bool):
+            continue
+        if target_revision in revision_specs or target_revision in revision_load_errors:
+            continue
+        revision_path = (
+            project_dir
+            / "revisions"
+            / f"r{target_revision:03d}_model_spec.json"
+        )
+        try:
+            payload = json.loads(revision_path.read_text(encoding="utf-8"))
+            revision_spec = ModelSpec.model_validate(payload)
+            if (
+                revision_spec.project_id != spec.project_id
+                or revision_spec.revision != target_revision
+            ):
+                raise ValueError("revision identity mismatch")
+            revision_specs[target_revision] = revision_spec
+        except Exception as exc:
+            revision_load_errors[target_revision] = (
+                f"{exc.__class__.__name__}: {str(exc)[:400]}"
+            )
+    convergence = audit_castep_convergence_series(
+        spec,
+        revision_specs,
+        revision_load_errors=revision_load_errors,
+    )
+    if convergence is None:
+        return None
+    response["castep_convergence_audit"] = convergence
+    response["castep_convergence_status"] = convergence.get("status")
+    response["castep_convergence_history_entry_count"] = convergence.get(
+        "history_entry_count"
+    )
+    response["castep_convergence_verified_point_count"] = convergence.get(
+        "verified_point_count"
+    )
+    response["castep_convergence_rejected_point_count"] = convergence.get(
+        "rejected_point_count"
+    )
+    response["castep_convergence_series_count"] = convergence.get(
+        "comparable_series_count"
+    )
+    response["castep_convergence_artifact_evidence_verified"] = convergence.get(
+        "artifact_evidence_verified"
+    )
+    response["castep_parameter_sensitivity_evidence_verified"] = convergence.get(
+        "parameter_sensitivity_evidence_verified"
+    )
+    response["castep_parameter_sensitivity_within_tolerance"] = convergence.get(
+        "parameter_sensitivity_within_tolerance"
+    )
+    response["castep_convergence_review_reasons"] = convergence.get(
+        "result_review_reasons"
+    ) or []
+    response["castep_convergence_recommended_action_id"] = convergence.get(
+        "recommended_action_id"
+    )
+    response["castep_convergence_recommended_tool"] = convergence.get(
+        "recommended_tool"
+    )
+    response["castep_convergence_recommended_preview_payload"] = convergence.get(
+        "recommended_preview_payload"
+    )
+    view_audit = response.get("view_audit")
+    if isinstance(view_audit, dict):
+        audit_health = view_audit.get("health")
+        if isinstance(audit_health, dict):
+            semiconductor = audit_health.get("semiconductor_health")
+            if isinstance(semiconductor, dict):
+                semiconductor["castep_convergence_audit"] = convergence
+    return convergence
+
+
 def _attach_live_patch_failure_contract(
     response: dict[str, Any],
     *,
@@ -25391,6 +25711,11 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
     electronic_result_review = (
         semiconductor_review.get("electronic_result")
         if isinstance(semiconductor_review.get("electronic_result"), dict)
+        else {}
+    )
+    castep_convergence_review = (
+        semiconductor_review.get("castep_convergence")
+        if isinstance(semiconductor_review.get("castep_convergence"), dict)
         else {}
     )
     structure_artifact_validation = (
@@ -25496,6 +25821,36 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
             view_parameter_refresh_plan.get("payload_hint")
             if isinstance(view_parameter_refresh_plan.get("payload_hint"), dict)
             else {"project_id": report.get("project_id")}
+        )
+    elif (
+        castep_convergence_review.get("calculation_result_review_required") is True
+        and castep_convergence_review.get("recommended_tool")
+        and isinstance(
+            castep_convergence_review.get("recommended_preview_payload"),
+            dict,
+        )
+        and recommended_tool
+        in {
+            "material_studio_live_modeling_request",
+            "material_studio_live_project_status",
+            "material_studio_gui_status",
+            "material_studio_gui_open_structure",
+            "material_studio_gui_apply_current_revision",
+        }
+        and readiness.get("state") != "blocked"
+    ):
+        action_id = (
+            castep_convergence_review.get("recommended_action_id")
+            or "preview_refined_castep_parameter_point"
+        )
+        recommended_tool = castep_convergence_review.get("recommended_tool")
+        recommended_action_override = (
+            castep_convergence_review.get("recommended_action")
+            or "preview_one_finer_parameter_point"
+        )
+        needs_user_confirmation = False
+        payload_hint = dict(
+            castep_convergence_review["recommended_preview_payload"]
         )
     elif (
         electronic_result_review.get("calculation_result_review_required") is True
@@ -29196,6 +29551,7 @@ def _change_receipt_semiconductor_summary(semiconductor: dict[str, Any]) -> dict
         "surface_model": semiconductor.get("surface_model"),
         "surface": semiconductor.get("surface"),
         "electronic_result": semiconductor.get("electronic_result"),
+        "castep_convergence": semiconductor.get("castep_convergence"),
     }
 
 
@@ -29252,6 +29608,9 @@ def _change_receipt_artifacts(
             ),
             "semiconductor_castep_band_edges_csv": diagnostics.get(
                 "semiconductor_castep_band_edges_csv"
+            ),
+            "semiconductor_castep_convergence_series_csv": diagnostics.get(
+                "semiconductor_castep_convergence_series_csv"
             ),
             "semiconductor_band_alignment_csv": diagnostics.get("semiconductor_band_alignment_csv"),
             "semiconductor_polarization_2deg_csv": diagnostics.get("semiconductor_polarization_2deg_csv"),
@@ -29317,6 +29676,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_band_path",
         "semiconductor_castep_electronic_result",
         "semiconductor_castep_band_edges",
+        "semiconductor_castep_convergence_series",
         "semiconductor_band_alignment",
         "semiconductor_polarization_2deg",
         "semiconductor_p_gan_gate_cap",
@@ -29990,10 +30350,14 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     electronic_result = (
         semiconductor.get("castep_electronic_result_assessment") or {}
     )
+    castep_convergence = semiconductor.get("castep_convergence_audit") or {}
     result_review_flags = _dedupe_strings(
         [
             str(item)
-            for item in electronic_result.get("result_review_reasons") or []
+            for item in [
+                *(electronic_result.get("result_review_reasons") or []),
+                *(castep_convergence.get("result_review_reasons") or []),
+            ]
             if item
         ]
     )
@@ -30210,6 +30574,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         "electronic_result": _semiconductor_electronic_result_review(
             electronic_result
         ),
+        "castep_convergence": _semiconductor_castep_convergence_review(
+            castep_convergence
+        ),
         "result_review_flags": result_review_flags,
         "result_review_flag_count": len(result_review_flags),
         "risk_flags": risk_flags,
@@ -30218,6 +30585,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
             risk_flags,
             calculation,
             electronic_result,
+            castep_convergence,
         ),
     }
 
@@ -30318,6 +30686,56 @@ def _semiconductor_electronic_result_review(
                 "recommended_tool",
                 "recommended_action",
                 "recommended_preview_payload",
+                "preview_safe",
+                "execute_requires_explicit_confirmation",
+            )
+        }
+    )
+
+
+def _semiconductor_castep_convergence_review(
+    audit: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not audit:
+        return None
+    return _drop_none_values(
+        {
+            key: audit.get(key)
+            for key in (
+                "schema_version",
+                "available",
+                "status",
+                "project_id",
+                "current_revision",
+                "current_structure_sha256",
+                "history_entry_count",
+                "verified_point_count",
+                "rejected_point_count",
+                "artifact_evidence_verified",
+                "parameter_sensitivity_evidence_verified",
+                "parameter_sensitivity_within_tolerance",
+                "scientific_convergence_verified",
+                "scientific_band_gap_verified",
+                "structure_normality_blocked",
+                "structure_normality_impact",
+                "calculation_result_review_required",
+                "calculation_readiness_impact",
+                "energy_tolerance_ev_per_atom",
+                "band_gap_tolerance_ev",
+                "minimum_sequence_point_count",
+                "comparable_series_count",
+                "stable_series_count",
+                "above_tolerance_series_count",
+                "pairwise_only_series_count",
+                "active_series_id",
+                "active_axis",
+                "result_review_reasons",
+                "result_review_reason_count",
+                "recommended_action_id",
+                "recommended_tool",
+                "recommended_action",
+                "recommended_preview_payload",
+                "payload_hint_is_directly_callable",
                 "preview_safe",
                 "execute_requires_explicit_confirmation",
             )
@@ -31191,11 +31609,17 @@ def _semiconductor_review_next_action(
     risk_flags: list[str],
     calculation: dict[str, Any],
     electronic_result: dict[str, Any],
+    castep_convergence: dict[str, Any],
 ) -> str:
     if "dopant_site_metadata_inconsistent" in risk_flags:
         return "reconcile_dopant_metadata_with_current_structure_then_reaudit"
     if risk_flags:
         return "review_semiconductor_risk_flags_before_calculation_or_claiming_normality"
+    if castep_convergence.get("calculation_result_review_required") is True:
+        return str(
+            castep_convergence.get("recommended_action")
+            or "review_castep_parameter_convergence_before_scientific_use"
+        )
     if electronic_result.get("calculation_result_review_required") is True:
         return str(
             electronic_result.get("recommended_action")
@@ -35092,6 +35516,18 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "electronic_result_recommended_action_id",
             "electronic_result_recommended_tool",
             "electronic_result_recommended_preview_payload",
+            "castep_convergence_status",
+            "castep_convergence_history_entry_count",
+            "castep_convergence_verified_point_count",
+            "castep_convergence_rejected_point_count",
+            "castep_convergence_series_count",
+            "castep_convergence_artifact_evidence_verified",
+            "castep_parameter_sensitivity_evidence_verified",
+            "castep_parameter_sensitivity_within_tolerance",
+            "castep_convergence_review_reasons",
+            "castep_convergence_recommended_action_id",
+            "castep_convergence_recommended_tool",
+            "castep_convergence_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -35279,6 +35715,18 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "electronic_result_recommended_action_id",
             "electronic_result_recommended_tool",
             "electronic_result_recommended_preview_payload",
+            "castep_convergence_status",
+            "castep_convergence_history_entry_count",
+            "castep_convergence_verified_point_count",
+            "castep_convergence_rejected_point_count",
+            "castep_convergence_series_count",
+            "castep_convergence_artifact_evidence_verified",
+            "castep_parameter_sensitivity_evidence_verified",
+            "castep_parameter_sensitivity_within_tolerance",
+            "castep_convergence_review_reasons",
+            "castep_convergence_recommended_action_id",
+            "castep_convergence_recommended_tool",
+            "castep_convergence_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -35691,6 +36139,18 @@ def _compact_live_response(
             "electronic_result_recommended_action_id",
             "electronic_result_recommended_tool",
             "electronic_result_recommended_preview_payload",
+            "castep_convergence_status",
+            "castep_convergence_history_entry_count",
+            "castep_convergence_verified_point_count",
+            "castep_convergence_rejected_point_count",
+            "castep_convergence_series_count",
+            "castep_convergence_artifact_evidence_verified",
+            "castep_parameter_sensitivity_evidence_verified",
+            "castep_parameter_sensitivity_within_tolerance",
+            "castep_convergence_review_reasons",
+            "castep_convergence_recommended_action_id",
+            "castep_convergence_recommended_tool",
+            "castep_convergence_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -37790,6 +38250,7 @@ def material_studio_live_project_status(
                 response["gui_status"] = _gui_controller(working_dir).status(project_id=project_id, revision=revision)
             except Exception as exc:
                 response["gui_status"] = {"ok": False, "error": str(exc)}
+        _attach_castep_convergence_audit(response, store=store, spec=spec)
         _refresh_status_modeling_health(response)
         response["next_action"] = _live_project_next_action(
             script_valid=bool(generated["script_validation"].get("valid")),
@@ -38907,6 +39368,11 @@ def material_studio_model_export_view_bundle(
                 response,
                 spec=model_spec,
                 execution_mode=str(execution_mode),
+            )
+            _attach_castep_convergence_audit(
+                response,
+                store=store,
+                spec=model_spec,
             )
             modeling_health = build_modeling_health(
                 response,

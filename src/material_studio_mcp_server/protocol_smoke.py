@@ -655,6 +655,10 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_castep_result_diagnostic_focus_missing"
             )
+        if "castep_convergence_series" not in diagnostic_focus_ids:
+            validation_errors.append(
+                "capabilities_castep_convergence_diagnostic_focus_missing"
+            )
         castep_relaxation_capability = capabilities.get(
             "castep_geometry_optimization"
         )
@@ -754,6 +758,42 @@ async def _run_preview_calls(
         ) is not True:
             validation_errors.append(
                 "capabilities_castep_result_assessment_execute_gate_missing"
+            )
+        convergence_audit = castep_electronic_capability.get(
+            "convergence_audit"
+        )
+        if not isinstance(convergence_audit, dict):
+            validation_errors.append(
+                "capabilities_castep_convergence_audit_missing"
+            )
+            convergence_audit = {}
+        if convergence_audit.get("schema") != (
+            "material_studio_castep_convergence_audit_v1"
+        ):
+            validation_errors.append(
+                "capabilities_castep_convergence_schema_mismatch"
+            )
+        if convergence_audit.get("source") != (
+            "immutable_verified_electronic_result_revisions"
+        ):
+            validation_errors.append(
+                "capabilities_castep_convergence_binding_missing"
+            )
+        if convergence_audit.get("axes_compared_separately") is not True:
+            validation_errors.append(
+                "capabilities_castep_convergence_axis_isolation_missing"
+            )
+        if convergence_audit.get("scientific_convergence_verified") is not False:
+            validation_errors.append(
+                "capabilities_castep_convergence_overclaim"
+            )
+        if convergence_audit.get("recommended_rerun_execution_mode") != "preview":
+            validation_errors.append(
+                "capabilities_castep_convergence_preview_boundary_missing"
+            )
+        if convergence_audit.get("execute_requires_explicit_confirmation") is not True:
+            validation_errors.append(
+                "capabilities_castep_convergence_execute_gate_missing"
             )
         if castep_electronic_capability.get(
             "band_edge_diagnostic_csv"
@@ -1264,6 +1304,27 @@ async def _run_preview_calls(
                 ),
                 "capabilities_castep_result_diagnostic_focus_present": (
                     "castep_electronic_results" in diagnostic_focus_ids
+                ),
+                "capabilities_castep_convergence_diagnostic_focus_present": (
+                    "castep_convergence_series" in diagnostic_focus_ids
+                ),
+                "capabilities_castep_convergence_schema": (
+                    convergence_audit.get("schema")
+                ),
+                "capabilities_castep_convergence_source": (
+                    convergence_audit.get("source")
+                ),
+                "capabilities_castep_convergence_axes_separate": (
+                    convergence_audit.get("axes_compared_separately")
+                ),
+                "capabilities_castep_convergence_scientific_verified": (
+                    convergence_audit.get("scientific_convergence_verified")
+                ),
+                "capabilities_castep_convergence_preview_mode": (
+                    convergence_audit.get("recommended_rerun_execution_mode")
+                ),
+                "capabilities_castep_convergence_execute_confirmation": (
+                    convergence_audit.get("execute_requires_explicit_confirmation")
                 ),
                 "capabilities_castep_electronic_band_export": (
                     electronic_exports.get("BandStructure")

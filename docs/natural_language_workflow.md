@@ -1170,6 +1170,30 @@ review notes and do not make an otherwise unchanged structure abnormal. Follow
 `semiconductor_castep_band_edges.csv` preserves aggregate, per-spin, and
 crossing-band rows so clients do not need to flatten native audit JSON.
 
+Requests such as `Inspect the current CASTEP cutoff convergence series and
+export the CSV` or `检查当前 CASTEP 截断能收敛序列并导出 CSV` select the
+`castep_convergence_series` focus. The read-only inspection replays no CASTEP
+job and creates no revision. It revalidates every historical point against its
+exact immutable revision and receipt hashes before comparing values.
+
+Convergence axes are isolated. A cutoff series never mixes with
+`kpoint_separation`, custom `kpoint_grid`, or
+`properties_kpoint_separation`; other simulation settings and the current
+structure SHA-256 must match. Two verified points produce
+`pairwise_evidence_only`; at least three points are needed for a sequence. The
+default review thresholds are 0.01 eV/atom for adjacent total-energy changes
+and 0.05 eV for reported `BandGap` changes. The CSV contains audit-summary,
+verified-point, series-delta, and binding-error rows.
+
+`parameter_sensitivity_within_tolerance` is deliberately weaker than a
+scientific convergence claim. Even for a stable three-point sequence,
+`scientific_convergence_verified=false` and
+`scientific_band_gap_verified=false`. A missing or modified historical report
+sets `history_binding_review_required` and suppresses automatic rerun advice.
+When another point is useful, the returned payload calls
+`material_studio_castep_run_current` in `preview` mode with GUI loading off;
+execution still requires a new explicit confirmation.
+
 ## Rollback
 
 Use `material_studio_project_rollback` to create a new revision copied from a previous revision. Rollback must not delete historical revisions.

@@ -9,6 +9,10 @@ from typing import Any
 import pytest
 
 from material_studio_mcp_server import server
+from material_studio_mcp_server.castep_convergence import (
+    CASTEP_CONVERGENCE_AUDIT_SCHEMA,
+    _build_comparable_series,
+)
 from material_studio_mcp_server.castep_electronic import (
     CASTEP_ELECTRONIC_RESULT_ASSESSMENT_SCHEMA,
     RESULT_DOCUMENT_BY_TASK,
@@ -117,6 +121,8 @@ class _ElectronicRunner:
         payload_revision: int | None = None,
         change_structure: bool = False,
         native_bands_text: str = _NATIVE_BANDS,
+        total_energy_kcal_per_mol: float = -101.25,
+        band_gap_ev: float = 1.12,
     ) -> None:
         self.source = source
         self.task = task
@@ -124,6 +130,8 @@ class _ElectronicRunner:
         self.payload_revision = payload_revision
         self.change_structure = change_structure
         self.native_bands_text = native_bands_text
+        self.total_energy_kcal_per_mol = total_energy_kcal_per_mol
+        self.band_gap_ev = band_gap_ev
         self.call_count = 0
 
     def run_script(
@@ -191,9 +199,9 @@ class _ElectronicRunner:
             "materials_studio_api_contract": "Materials Studio 20.1",
             "result_keys": _RESULT_KEYS,
             "required_result_document": expected_document,
-            "total_energy_kcal_per_mol": -101.25,
+            "total_energy_kcal_per_mol": self.total_energy_kcal_per_mol,
             "free_energy_kcal_per_mol": -100.75,
-            "band_gap_ev": 1.12,
+            "band_gap_ev": self.band_gap_ev,
             "fermi_level_ev": 0.42,
             "work_function_ev": None,
             "work_function_top_ev": None,
@@ -375,7 +383,7 @@ def _relax_current(monkeypatch, tmp_path: Path, source: ModelSpec) -> ModelSpec:
         export_view_audit=False,
         working_dir=str(tmp_path),
     )
-    assert result["ok"] is True
+    assert result["ok"] is True, result
     assert result["status"] == "castep_relaxation_promoted"
     assert geometry_runner.call_count == 1
     return ProjectStore(tmp_path).load_current(source.project_id)
@@ -1408,3 +1416,340 @@ def test_live_natural_language_electronic_execution_and_preview_override(
     )
     assert fake_runner.call_count == 1
     assert ProjectStore(tmp_path).load_current(execute_source.project_id).revision == 1
+
+
+def _execute_energy_convergence_point(
+    monkeypatch,
+    tmp_path: Path,
+    source: ModelSpec,
+    *,
+    cutoff_energy_ev: int,
+    kpoint_separation: float | None = None,
+    kpoints: tuple[int, int, int] | None = None,
+    total_energy_kcal_per_mol: float,
+    band_gap_ev: float,
+    export_view_audit: bool,
+) -> tuple[ModelSpec, dict[str, Any], _ElectronicRunner]:
+    fake_runner = _ElectronicRunner(
+        source,
+        CastepTask.ENERGY,
+        total_energy_kcal_per_mol=total_energy_kcal_per_mol,
+        band_gap_ev=band_gap_ev,
+    )
+    monkeypatch.setattr(server, "runner", fake_runner)
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        cutoff_energy_ev=cutoff_energy_ev,
+        kpoint_separation=kpoint_separation,
+        kpoints=kpoints,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=export_view_audit,
+        working_dir=str(tmp_path),
+    )
+    assert result["ok"] is True, result
+    assert result["status"] == "castep_electronic_result_recorded"
+    assert fake_runner.call_count == 1
+    return (
+        ProjectStore(tmp_path).load_current(source.project_id),
+        result,
+        fake_runner,
+    )
+
+
+def test_castep_cutoff_convergence_audit_exports_stable_bound_series(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current = _create_silicon(tmp_path, "electronic_cutoff_convergence")
+    result: dict[str, Any] = {}
+    last_runner: _ElectronicRunner | None = None
+    for index, (cutoff, energy, gap) in enumerate(
+        (
+            (400, -1000.0, 1.00),
+            (500, -1008.0, 1.08),
+            (600, -1008.4, 1.10),
+        )
+    ):
+        current, result, last_runner = _execute_energy_convergence_point(
+            monkeypatch,
+            tmp_path,
+            current,
+            cutoff_energy_ev=cutoff,
+            total_energy_kcal_per_mol=energy,
+            band_gap_ev=gap,
+            export_view_audit=index == 2,
+        )
+
+    audit = result["castep_convergence_audit"]
+    assert audit["schema_version"] == CASTEP_CONVERGENCE_AUDIT_SCHEMA
+    assert audit["status"] == "parameter_sensitivity_within_tolerance"
+    assert audit["history_entry_count"] == 3
+    assert audit["verified_point_count"] == 3
+    assert audit["rejected_point_count"] == 0
+    assert audit["artifact_evidence_verified"] is True
+    assert audit["parameter_sensitivity_evidence_verified"] is True
+    assert audit["parameter_sensitivity_within_tolerance"] is True
+    assert audit["scientific_convergence_verified"] is False
+    assert audit["structure_normality_blocked"] is False
+    assert audit["comparable_series_count"] == 1
+    series = audit["series"][0]
+    assert series["axis"] == "cutoff_energy_ev"
+    assert series["axis_values"] == [400, 500, 600]
+    assert series["point_count"] == 3
+    assert series["latest_pair_within_tolerance"] is True
+    assert len(series["deltas"]) == 2
+    assert result["semiconductor_review"]["castep_convergence"]["status"] == (
+        "parameter_sensitivity_within_tolerance"
+    )
+    assert result["semiconductor_calculation_readiness"][
+        "castep_parameter_sensitivity_within_tolerance"
+    ] is True
+    assert result["modeling_health"]["checks"][
+        "semiconductor_castep_parameter_sensitivity_within_tolerance"
+    ] is True
+    convergence_csv = Path(
+        result["view_bundle_files"][
+            "semiconductor_castep_convergence_series_csv"
+        ]
+    )
+    assert convergence_csv.is_file()
+    convergence_text = convergence_csv.read_text(encoding="utf-8-sig")
+    assert "verified_point" in convergence_text
+    assert "series_delta" in convergence_text
+    assert "total_energy_delta_ev_per_atom" in convergence_text
+    assert "refinement_verified" in convergence_text
+    assert result["view_bundle_row_counts"][
+        "semiconductor_castep_convergence_series"
+    ] == 6
+
+    assert last_runner is not None
+    call_count = last_runner.call_count
+    inspected = server.material_studio_live_modeling_request(
+        "Inspect the current CASTEP cutoff convergence series and export the CSV.",
+        project_id=current.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+    assert inspected["ok"] is True
+    assert inspected["workflow"] == "inspect_current"
+    assert inspected["requested_diagnostic_focuses"] == [
+        "castep_convergence_series",
+        "view_quality",
+    ]
+    assert inspected["requested_diagnostic_focus_status"]["ok"] is True
+    assert last_runner.call_count == call_count
+    assert ProjectStore(tmp_path).load_current(current.project_id).revision == 3
+
+
+def test_castep_convergence_pairwise_and_above_tolerance_are_preview_safe(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    pairwise = _create_silicon(tmp_path, "electronic_pairwise_convergence")
+    pairwise_result: dict[str, Any] = {}
+    for index, (cutoff, energy, gap) in enumerate(
+        ((400, -1000.0, 1.0), (500, -1000.2, 1.01))
+    ):
+        pairwise, pairwise_result, _ = _execute_energy_convergence_point(
+            monkeypatch,
+            tmp_path,
+            pairwise,
+            cutoff_energy_ev=cutoff,
+            total_energy_kcal_per_mol=energy,
+            band_gap_ev=gap,
+            export_view_audit=index == 1,
+        )
+    pairwise_audit = pairwise_result["castep_convergence_audit"]
+    assert pairwise_audit["status"] == "pairwise_evidence_only"
+    assert pairwise_audit["parameter_sensitivity_within_tolerance"] is None
+    assert pairwise_audit["recommended_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    pairwise_payload = pairwise_audit["recommended_preview_payload"]
+    assert pairwise_payload["execution_mode"] == "preview"
+    assert pairwise_payload["cutoff_energy_ev"] == 550
+    assert pairwise_payload["open_in_gui"] is False
+    assert pairwise_audit["execute_requires_explicit_confirmation"] is True
+    assert pairwise_result["next_action_plan"]["recommended_tool"] == (
+        "material_studio_castep_run_current"
+    ), {
+        "live_readiness": pairwise_result.get("modeling_report", {}).get(
+            "live_readiness"
+        ),
+        "next_action_plan": pairwise_result.get("next_action_plan"),
+        "castep_convergence": pairwise_result.get("semiconductor_review", {}).get(
+            "castep_convergence"
+        ),
+    }
+    assert pairwise_result["next_action_plan"]["needs_user_confirmation"] is False
+
+    divergent = _create_silicon(tmp_path, "electronic_divergent_convergence")
+    divergent_result: dict[str, Any] = {}
+    for index, (cutoff, energy, gap) in enumerate(
+        (
+            (400, -1000.0, 1.0),
+            (500, -1005.0, 1.1),
+            (600, -1010.0, 1.2),
+        )
+    ):
+        divergent, divergent_result, _ = _execute_energy_convergence_point(
+            monkeypatch,
+            tmp_path,
+            divergent,
+            cutoff_energy_ev=cutoff,
+            total_energy_kcal_per_mol=energy,
+            band_gap_ev=gap,
+            export_view_audit=index == 2,
+        )
+    divergent_audit = divergent_result["castep_convergence_audit"]
+    assert divergent_audit["status"] == "parameter_sensitivity_above_tolerance"
+    assert divergent_audit["parameter_sensitivity_within_tolerance"] is False
+    assert divergent_audit["scientific_convergence_verified"] is False
+    assert divergent_audit["structure_normality_blocked"] is False
+    assert divergent_audit["recommended_preview_payload"]["execution_mode"] == (
+        "preview"
+    )
+    assert divergent_audit["recommended_preview_payload"][
+        "cutoff_energy_ev"
+    ] == 660
+
+
+def test_castep_convergence_keeps_axes_separate_and_prioritizes_incomplete_series(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current = _create_silicon(tmp_path, "electronic_mixed_convergence")
+    result: dict[str, Any] = {}
+    for index, (cutoff, separation, energy) in enumerate(
+        (
+            (400, 0.04, -1000.00),
+            (500, 0.04, -1000.20),
+            (500, 0.03, -1000.25),
+            (500, 0.02, -1000.26),
+        )
+    ):
+        current, result, _ = _execute_energy_convergence_point(
+            monkeypatch,
+            tmp_path,
+            current,
+            cutoff_energy_ev=cutoff,
+            kpoint_separation=separation,
+            total_energy_kcal_per_mol=energy,
+            band_gap_ev=1.0,
+            export_view_audit=index == 3,
+        )
+
+    audit = result["castep_convergence_audit"]
+    assert audit["status"] == "pairwise_evidence_only"
+    assert audit["comparable_series_count"] == 2
+    by_axis = {series["axis"]: series for series in audit["series"]}
+    assert by_axis["cutoff_energy_ev"]["axis_values"] == [400, 500]
+    assert by_axis["cutoff_energy_ev"]["status"] == "pairwise_evidence_only"
+    assert by_axis["kpoint_separation"]["axis_values"] == [0.04, 0.03, 0.02]
+    assert by_axis["kpoint_separation"]["status"] == (
+        "parameter_sensitivity_within_tolerance"
+    )
+    assert audit["active_axis"] == "cutoff_energy_ev"
+    assert audit["recommended_preview_payload"]["cutoff_energy_ev"] == 550
+    assert audit["recommended_preview_payload"]["kpoint_separation"] == 0.04
+    assert audit["recommended_preview_payload"]["execution_mode"] == "preview"
+
+
+def test_castep_convergence_rejects_non_monotonic_custom_grid_comparison() -> None:
+    common_simulation = {
+        "module": "CASTEP",
+        "task": "Energy",
+        "quality": "Medium",
+        "functional": "PBE",
+        "cutoff_energy_ev": 500,
+        "kpoint_separation": None,
+    }
+    points = [
+        {
+            "target_revision": 1,
+            "simulation": {**common_simulation, "kpoints": [4, 4, 1]},
+            "kpoint_grid": [4, 4, 1],
+            "total_energy_ev_per_atom": -10.0,
+            "band_gap_ev": 1.0,
+        },
+        {
+            "target_revision": 2,
+            "simulation": {**common_simulation, "kpoints": [8, 2, 1]},
+            "kpoint_grid": [8, 2, 1],
+            "total_energy_ev_per_atom": -10.001,
+            "band_gap_ev": 1.01,
+        },
+    ]
+
+    assert _build_comparable_series(
+        points,
+        energy_tolerance_ev_per_atom=0.01,
+        band_gap_tolerance_ev=0.05,
+    ) == []
+
+
+def test_castep_convergence_history_tamper_fails_closed_without_structure_block(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    current = _create_silicon(tmp_path, "electronic_convergence_tamper")
+    result: dict[str, Any] = {}
+    for index, cutoff in enumerate((400, 500, 600)):
+        current, result, _ = _execute_energy_convergence_point(
+            monkeypatch,
+            tmp_path,
+            current,
+            cutoff_energy_ev=cutoff,
+            total_energy_kcal_per_mol=-1000.0 - (index * 0.1),
+            band_gap_ev=1.0 + (index * 0.01),
+            export_view_audit=index == 2,
+        )
+    first_receipt = current.metadata["castep_electronic_calculation_history"][0]
+    Path(first_receipt["output_report"]).write_text(
+        "tampered convergence evidence\n",
+        encoding="utf-8",
+    )
+
+    inspected = server.material_studio_live_modeling_request(
+        "检查当前 CASTEP 截断能收敛序列并导出 CSV。",
+        project_id=current.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+    audit = inspected["castep_convergence_audit"]
+    assert audit["status"] == "history_binding_review_required"
+    assert audit["artifact_evidence_verified"] is False
+    assert audit["parameter_sensitivity_evidence_verified"] is False
+    assert audit["parameter_sensitivity_within_tolerance"] is None
+    assert audit["rejected_point_count"] == 1
+    assert audit["binding_errors"][0]["reason"] == "receipt_binding_failed"
+    assert audit["recommended_tool"] is None
+    assert audit["recommended_preview_payload"] is None
+    assert audit["structure_normality_blocked"] is False
+    assert inspected["semiconductor_review"]["result_review_flag_count"] >= 2
+    live_readiness = inspected["modeling_report"]["live_readiness"]
+    assert all(
+        reason.startswith("castep_result:")
+        for reason in live_readiness["calculation_result_review_reasons"]
+    )
+    assert not any(
+        reason.startswith("castep_result:")
+        for reason in inspected["normality_gate"][
+            "must_not_claim_normal_reasons"
+        ]
+    )
+    csv_path = Path(
+        inspected["view_bundle_files"][
+            "semiconductor_castep_convergence_series_csv"
+        ]
+    )
+    assert "binding_error" in csv_path.read_text(encoding="utf-8-sig")

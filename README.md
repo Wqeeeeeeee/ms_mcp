@@ -81,6 +81,8 @@ $env:MATERIAL_STUDIO_RUNNER = "<MS安装目录>\etc\Scripting\bin\RunMatScript.b
 - CASTEP 原生带边审计按自旋通道使用各自 Fermi 能级，导出采样 VBM/CBM、采样间隔、Fermi 穿越和 `BandGap` 交叉核对；这些字段始终保持 `scientific_band_gap_verified=false`，不能替代完整能带路径、收敛性或科学带隙验证
 - `castep_electronic_result_assessment` 将 revision/hash 绑定的产物证据与科学收敛、科学带隙结论分开；结果复核不会被误报为结构异常，建议重算始终先返回 `execution_mode="preview"`
 - `castep_electronic_results` 诊断焦点支持“检查当前 CASTEP 结果”等只读请求，并导出结果摘要及 aggregate/per-spin/crossing-band 的 `semiconductor_castep_band_edges.csv`
+- `castep_convergence_audit` 从多个不可变、哈希绑定的 CASTEP 结果 revision 独立比较截断能、K 点间距、自定义 K 点网格或性质 K 点间距；两点只提供成对敏感性证据，至少三点才形成序列
+- `castep_convergence_series` 诊断焦点可只读检查收敛序列并导出 `semiconductor_castep_convergence_series.csv`；默认阈值为总能量变化 0.01 eV/atom、报告 `BandGap` 变化 0.05 eV，阈值内也不会宣称已科学收敛，后续计算只先给出 preview
 
 ### 扩展工具（本地 crystal/interface builders）
 

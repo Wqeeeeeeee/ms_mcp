@@ -125,6 +125,31 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
                 "task": "BandStructure",
                 "execution_mode": "preview",
             },
+            "castep_convergence_status": "pairwise_evidence_only",
+            "castep_convergence_history_entry_count": 2,
+            "castep_convergence_verified_point_count": 2,
+            "castep_convergence_rejected_point_count": 0,
+            "castep_convergence_series_count": 1,
+            "castep_convergence_artifact_evidence_verified": True,
+            "castep_parameter_sensitivity_evidence_verified": True,
+            "castep_parameter_sensitivity_within_tolerance": None,
+            "castep_convergence_review_reasons": [
+                "scientific_convergence_unverified",
+                "three_point_sequence_required",
+            ],
+            "castep_convergence_recommended_action_id": (
+                "preview_refined_castep_parameter_point"
+            ),
+            "castep_convergence_recommended_tool": (
+                "material_studio_castep_run_current"
+            ),
+            "castep_convergence_recommended_preview_payload": {
+                "project_id": "electronic_result",
+                "task": "Energy",
+                "cutoff_energy_ev": 550,
+                "execution_mode": "preview",
+                "open_in_gui": False,
+            },
             "derived_artifact_count": 1,
         },
         "compact",
@@ -163,6 +188,29 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
     assert compact["electronic_result_recommended_preview_payload"][
         "execution_mode"
     ] == "preview"
+    assert compact["castep_convergence_status"] == "pairwise_evidence_only"
+    assert compact["castep_convergence_history_entry_count"] == 2
+    assert compact["castep_convergence_verified_point_count"] == 2
+    assert compact["castep_convergence_rejected_point_count"] == 0
+    assert compact["castep_convergence_series_count"] == 1
+    assert compact["castep_convergence_artifact_evidence_verified"] is True
+    assert compact["castep_parameter_sensitivity_evidence_verified"] is True
+    assert "castep_parameter_sensitivity_within_tolerance" not in compact
+    assert "three_point_sequence_required" in compact[
+        "castep_convergence_review_reasons"
+    ]
+    assert compact["castep_convergence_recommended_action_id"] == (
+        "preview_refined_castep_parameter_point"
+    )
+    assert compact["castep_convergence_recommended_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert compact["castep_convergence_recommended_preview_payload"][
+        "execution_mode"
+    ] == "preview"
+    assert compact["castep_convergence_recommended_preview_payload"][
+        "open_in_gui"
+    ] is False
     assert compact["derived_artifact_count"] == 1
 
 
@@ -202,6 +250,17 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert "castep_electronic_results" in compact["diagnostics"][
         "diagnostic_focus_ids"
     ]
+    assert "castep_convergence_series" in compact["diagnostics"][
+        "diagnostic_focus_ids"
+    ]
+    convergence = compact["castep_electronic_calculation"][
+        "convergence_audit"
+    ]
+    assert convergence["schema"] == "material_studio_castep_convergence_audit_v1"
+    assert convergence["axes_compared_separately"] is True
+    assert convergence["scientific_convergence_verified"] is False
+    assert convergence["recommended_rerun_execution_mode"] == "preview"
+    assert convergence["execute_requires_explicit_confirmation"] is True
     assert "diagnostic_focus_profiles" not in compact["diagnostics"]
     assert compact["diagnostics"]["diagnostic_focus_profile_count"] >= 20
     assert compact["natural_language"]["patch_command_count"] == len(

@@ -7,7 +7,7 @@ import csv
 import hashlib
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -1440,6 +1440,20 @@ def write_view_audit_bundle(
                 band_edge_rows,
             )
 
+    castep_convergence = semiconductor.get("castep_convergence_audit") or {}
+    if castep_convergence:
+        convergence_rows = _semiconductor_castep_convergence_csv_rows(
+            castep_convergence
+        )
+        files["semiconductor_castep_convergence_series_csv"] = str(
+            bundle_dir / "semiconductor_castep_convergence_series.csv"
+        )
+        row_counts["semiconductor_castep_convergence_series"] = _write_csv(
+            bundle_dir / "semiconductor_castep_convergence_series.csv",
+            list(convergence_rows[0]),
+            convergence_rows,
+        )
+
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
         twist_rows = _semiconductor_commensurate_twist_csv_rows(commensurate_twist)
@@ -2324,6 +2338,16 @@ def write_view_audit_bundle(
             "semiconductor_castep_electronic_calculation_result_review_required",
             "semiconductor_castep_electronic_structure_normality_blocked",
             "semiconductor_castep_electronic_result_review_reasons",
+            "semiconductor_castep_convergence_status",
+            "semiconductor_castep_convergence_verified_point_count",
+            "semiconductor_castep_convergence_rejected_point_count",
+            "semiconductor_castep_convergence_series_count",
+            "semiconductor_castep_convergence_artifact_evidence_verified",
+            "semiconductor_castep_parameter_sensitivity_evidence_verified",
+            "semiconductor_castep_parameter_sensitivity_within_tolerance",
+            "semiconductor_castep_scientific_convergence_verified",
+            "semiconductor_castep_convergence_structure_normality_blocked",
+            "semiconductor_castep_convergence_review_reasons",
             "semiconductor_2d_electrostatic_status",
             "semiconductor_2d_electrostatic_quality",
             "semiconductor_2d_expected_asymmetry_verified",
@@ -2395,6 +2419,7 @@ def _modeling_health_summary_csv_row(
     castep_electronic_assessment = (
         semiconductor.get("castep_electronic_result_assessment") or {}
     )
+    castep_convergence = semiconductor.get("castep_convergence_audit") or {}
     return {
         "project_id": spec.project_id,
         "revision": spec.revision,
@@ -2518,6 +2543,48 @@ def _modeling_health_summary_csv_row(
             checks.get(
                 "semiconductor_castep_electronic_result_review_reasons",
                 castep_electronic_assessment.get("result_review_reasons") or [],
+            )
+        ),
+        "semiconductor_castep_convergence_status": checks.get(
+            "semiconductor_castep_convergence_status",
+            castep_convergence.get("status"),
+        ),
+        "semiconductor_castep_convergence_verified_point_count": checks.get(
+            "semiconductor_castep_convergence_verified_point_count",
+            castep_convergence.get("verified_point_count"),
+        ),
+        "semiconductor_castep_convergence_rejected_point_count": checks.get(
+            "semiconductor_castep_convergence_rejected_point_count",
+            castep_convergence.get("rejected_point_count"),
+        ),
+        "semiconductor_castep_convergence_series_count": checks.get(
+            "semiconductor_castep_convergence_series_count",
+            castep_convergence.get("comparable_series_count"),
+        ),
+        "semiconductor_castep_convergence_artifact_evidence_verified": checks.get(
+            "semiconductor_castep_convergence_artifact_evidence_verified",
+            castep_convergence.get("artifact_evidence_verified"),
+        ),
+        "semiconductor_castep_parameter_sensitivity_evidence_verified": checks.get(
+            "semiconductor_castep_parameter_sensitivity_evidence_verified",
+            castep_convergence.get("parameter_sensitivity_evidence_verified"),
+        ),
+        "semiconductor_castep_parameter_sensitivity_within_tolerance": checks.get(
+            "semiconductor_castep_parameter_sensitivity_within_tolerance",
+            castep_convergence.get("parameter_sensitivity_within_tolerance"),
+        ),
+        "semiconductor_castep_scientific_convergence_verified": checks.get(
+            "semiconductor_castep_scientific_convergence_verified",
+            castep_convergence.get("scientific_convergence_verified"),
+        ),
+        "semiconductor_castep_convergence_structure_normality_blocked": checks.get(
+            "semiconductor_castep_convergence_structure_normality_blocked",
+            castep_convergence.get("structure_normality_blocked"),
+        ),
+        "semiconductor_castep_convergence_review_reasons": _json_csv_value(
+            checks.get(
+                "semiconductor_castep_convergence_review_reasons",
+                castep_convergence.get("result_review_reasons") or [],
             )
         ),
         "semiconductor_2d_electrostatic_status": checks.get("semiconductor_2d_electrostatic_status"),
@@ -3675,6 +3742,254 @@ def _semiconductor_castep_band_edge_csv_rows(
                         crossing_band=crossing,
                     )
                 )
+    return rows
+
+
+def _semiconductor_castep_convergence_csv_rows(
+    audit: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Flatten a convergence audit into inspectable summary, point, and delta rows."""
+
+    columns = (
+        "row_type",
+        "audit_status",
+        "project_id",
+        "current_revision",
+        "current_structure_sha256",
+        "history_entry_count",
+        "verified_point_count",
+        "rejected_point_count",
+        "artifact_evidence_verified",
+        "parameter_sensitivity_evidence_verified",
+        "parameter_sensitivity_within_tolerance",
+        "scientific_convergence_verified",
+        "structure_normality_blocked",
+        "energy_tolerance_ev_per_atom",
+        "band_gap_tolerance_ev",
+        "minimum_sequence_point_count",
+        "comparable_series_count",
+        "stable_series_count",
+        "above_tolerance_series_count",
+        "pairwise_only_series_count",
+        "active_series_id",
+        "active_axis",
+        "series_id",
+        "series_status",
+        "axis",
+        "axis_mode",
+        "refinement_direction",
+        "series_point_count",
+        "sequence_evidence_sufficient",
+        "latest_pair_within_tolerance",
+        "series_ids",
+        "target_revision",
+        "source_revision",
+        "task",
+        "functional",
+        "quality",
+        "cutoff_energy_ev",
+        "kpoint_mode",
+        "kpoint_grid",
+        "kpoint_grid_product",
+        "kpoint_separation",
+        "properties_kpoint_separation",
+        "total_energy_kcal_per_mol",
+        "total_energy_ev_per_cell",
+        "total_energy_ev_per_atom",
+        "band_gap_ev",
+        "fermi_level_ev",
+        "native_output_audit_status",
+        "native_scf_status",
+        "native_scf_last_iteration",
+        "native_scf_maximum_cycles_reached",
+        "receipt_sha256",
+        "simulation_sha256",
+        "output_report_sha256",
+        "coarse_revision",
+        "fine_revision",
+        "coarse_axis_value",
+        "fine_axis_value",
+        "refinement_verified",
+        "total_energy_delta_ev_per_atom",
+        "energy_within_tolerance",
+        "band_gap_delta_ev",
+        "band_gap_within_tolerance",
+        "available_metric_count",
+        "all_available_metrics_within_tolerance",
+        "binding_error_history_index",
+        "binding_error_target_revision",
+        "binding_error_reason",
+        "binding_error_detail",
+        "result_review_reasons",
+        "recommended_action_id",
+        "recommended_tool",
+        "recommended_action",
+        "recommended_preview_payload",
+        "execute_requires_explicit_confirmation",
+    )
+    common = {
+        "audit_status": audit.get("status"),
+        "project_id": audit.get("project_id"),
+        "current_revision": audit.get("current_revision"),
+        "current_structure_sha256": audit.get("current_structure_sha256"),
+        "history_entry_count": audit.get("history_entry_count"),
+        "verified_point_count": audit.get("verified_point_count"),
+        "rejected_point_count": audit.get("rejected_point_count"),
+        "artifact_evidence_verified": audit.get("artifact_evidence_verified"),
+        "parameter_sensitivity_evidence_verified": audit.get(
+            "parameter_sensitivity_evidence_verified"
+        ),
+        "parameter_sensitivity_within_tolerance": audit.get(
+            "parameter_sensitivity_within_tolerance"
+        ),
+        "scientific_convergence_verified": False,
+        "structure_normality_blocked": audit.get("structure_normality_blocked"),
+        "energy_tolerance_ev_per_atom": audit.get(
+            "energy_tolerance_ev_per_atom"
+        ),
+        "band_gap_tolerance_ev": audit.get("band_gap_tolerance_ev"),
+        "minimum_sequence_point_count": audit.get(
+            "minimum_sequence_point_count"
+        ),
+        "comparable_series_count": audit.get("comparable_series_count"),
+        "stable_series_count": audit.get("stable_series_count"),
+        "above_tolerance_series_count": audit.get(
+            "above_tolerance_series_count"
+        ),
+        "pairwise_only_series_count": audit.get("pairwise_only_series_count"),
+        "active_series_id": audit.get("active_series_id"),
+        "active_axis": audit.get("active_axis"),
+        "result_review_reasons": json.dumps(
+            audit.get("result_review_reasons") or [], separators=(",", ":")
+        ),
+        "recommended_action_id": audit.get("recommended_action_id"),
+        "recommended_tool": audit.get("recommended_tool"),
+        "recommended_action": audit.get("recommended_action"),
+        "recommended_preview_payload": json.dumps(
+            audit.get("recommended_preview_payload"),
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        "execute_requires_explicit_confirmation": audit.get(
+            "execute_requires_explicit_confirmation"
+        ),
+    }
+
+    def row(row_type: str, **values: Any) -> dict[str, Any]:
+        result = {column: None for column in columns}
+        result.update(common)
+        result["row_type"] = row_type
+        result.update(values)
+        return result
+
+    series_values = [
+        item for item in audit.get("series", []) or [] if isinstance(item, dict)
+    ]
+    memberships: dict[int, list[str]] = defaultdict(list)
+    for item in series_values:
+        for revision in item.get("target_revisions", []) or []:
+            if isinstance(revision, int):
+                memberships[revision].append(str(item.get("series_id")))
+    rows = [row("audit_summary")]
+    for point in audit.get("points", []) or []:
+        if not isinstance(point, dict):
+            continue
+        revision = point.get("target_revision")
+        rows.append(
+            row(
+                "verified_point",
+                series_ids=json.dumps(
+                    memberships.get(revision, []), separators=(",", ":")
+                ),
+                target_revision=revision,
+                source_revision=point.get("source_revision"),
+                task=point.get("task"),
+                functional=point.get("functional"),
+                quality=point.get("quality"),
+                cutoff_energy_ev=point.get("cutoff_energy_ev"),
+                kpoint_mode=point.get("kpoint_mode"),
+                kpoint_grid=json.dumps(
+                    point.get("kpoint_grid"), separators=(",", ":")
+                ),
+                kpoint_grid_product=point.get("kpoint_grid_product"),
+                kpoint_separation=point.get("kpoint_separation"),
+                properties_kpoint_separation=point.get(
+                    "properties_kpoint_separation"
+                ),
+                total_energy_kcal_per_mol=point.get(
+                    "total_energy_kcal_per_mol"
+                ),
+                total_energy_ev_per_cell=point.get("total_energy_ev_per_cell"),
+                total_energy_ev_per_atom=point.get("total_energy_ev_per_atom"),
+                band_gap_ev=point.get("band_gap_ev"),
+                fermi_level_ev=point.get("fermi_level_ev"),
+                native_output_audit_status=point.get("native_output_audit_status"),
+                native_scf_status=point.get("native_scf_status"),
+                native_scf_last_iteration=point.get("native_scf_last_iteration"),
+                native_scf_maximum_cycles_reached=point.get(
+                    "native_scf_maximum_cycles_reached"
+                ),
+                receipt_sha256=point.get("receipt_sha256"),
+                simulation_sha256=point.get("simulation_sha256"),
+                output_report_sha256=point.get("output_report_sha256"),
+            )
+        )
+    for item in series_values:
+        for delta in item.get("deltas", []) or []:
+            if not isinstance(delta, dict):
+                continue
+            rows.append(
+                row(
+                    "series_delta",
+                    series_id=item.get("series_id"),
+                    series_status=item.get("status"),
+                    axis=item.get("axis"),
+                    axis_mode=item.get("axis_mode"),
+                    refinement_direction=item.get("refinement_direction"),
+                    series_point_count=item.get("point_count"),
+                    sequence_evidence_sufficient=item.get(
+                        "sequence_evidence_sufficient"
+                    ),
+                    latest_pair_within_tolerance=item.get(
+                        "latest_pair_within_tolerance"
+                    ),
+                    coarse_revision=delta.get("coarse_revision"),
+                    fine_revision=delta.get("fine_revision"),
+                    coarse_axis_value=json.dumps(
+                        delta.get("coarse_axis_value"), separators=(",", ":")
+                    ),
+                    fine_axis_value=json.dumps(
+                        delta.get("fine_axis_value"), separators=(",", ":")
+                    ),
+                    refinement_verified=delta.get("refinement_verified"),
+                    total_energy_delta_ev_per_atom=delta.get(
+                        "total_energy_delta_ev_per_atom"
+                    ),
+                    energy_within_tolerance=delta.get(
+                        "energy_within_tolerance"
+                    ),
+                    band_gap_delta_ev=delta.get("band_gap_delta_ev"),
+                    band_gap_within_tolerance=delta.get(
+                        "band_gap_within_tolerance"
+                    ),
+                    available_metric_count=delta.get("available_metric_count"),
+                    all_available_metrics_within_tolerance=delta.get(
+                        "all_available_metrics_within_tolerance"
+                    ),
+                )
+            )
+    for error in audit.get("binding_errors", []) or []:
+        if not isinstance(error, dict):
+            continue
+        rows.append(
+            row(
+                "binding_error",
+                binding_error_history_index=error.get("history_index"),
+                binding_error_target_revision=error.get("target_revision"),
+                binding_error_reason=error.get("reason"),
+                binding_error_detail=error.get("detail"),
+            )
+        )
     return rows
 
 

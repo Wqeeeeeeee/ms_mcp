@@ -1250,6 +1250,23 @@ read-only current-revision inspection path. A complete focus exposes
 and Fermi-crossing provenance rows. This inspection does not rerun CASTEP or
 create a revision.
 
+For parameter studies, use requests such as `Inspect the current CASTEP cutoff
+convergence series and export the CSV` or the explicit focus
+`castep_convergence_series`. The server reloads every referenced immutable
+revision, verifies its final matching electronic receipt and artifact hashes,
+and compares cutoff energy, k-point separation, custom k-point grid, and
+properties k-point separation only in separate series. The exported
+`semiconductor_castep_convergence_series.csv` includes bound points, adjacent
+deltas, and rejected-history reasons.
+
+Two valid points establish pairwise sensitivity only; three are required for a
+sequence. Defaults are 0.01 eV/atom for total-energy change and 0.05 eV for
+reported `BandGap` change. Passing those thresholds never changes
+`scientific_convergence_verified=false` or
+`scientific_band_gap_verified=false`. Any suggested next point is returned as a
+directly callable `material_studio_castep_run_current` preview with GUI loading
+disabled. Execute remains a separately confirmed operation.
+
 The active user config is not rewritten by the doctor or protocol smoke. After
 merging the example snippet manually and restarting Codex, validate discovery
 with:

@@ -980,6 +980,66 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 f"{castep_electronic_assessment.get('status')}."
             )
 
+    castep_convergence = semiconductor.get("castep_convergence_audit") or {}
+    if castep_convergence:
+        checks["semiconductor_castep_convergence_status"] = (
+            castep_convergence.get("status")
+        )
+        checks["semiconductor_castep_convergence_history_entry_count"] = (
+            castep_convergence.get("history_entry_count")
+        )
+        checks["semiconductor_castep_convergence_verified_point_count"] = (
+            castep_convergence.get("verified_point_count")
+        )
+        checks["semiconductor_castep_convergence_rejected_point_count"] = (
+            castep_convergence.get("rejected_point_count")
+        )
+        checks["semiconductor_castep_convergence_series_count"] = (
+            castep_convergence.get("comparable_series_count")
+        )
+        checks["semiconductor_castep_convergence_artifact_evidence_verified"] = (
+            castep_convergence.get("artifact_evidence_verified")
+        )
+        checks[
+            "semiconductor_castep_parameter_sensitivity_evidence_verified"
+        ] = castep_convergence.get("parameter_sensitivity_evidence_verified")
+        checks[
+            "semiconductor_castep_parameter_sensitivity_within_tolerance"
+        ] = castep_convergence.get("parameter_sensitivity_within_tolerance")
+        checks["semiconductor_castep_scientific_convergence_verified"] = (
+            castep_convergence.get("scientific_convergence_verified")
+        )
+        checks["semiconductor_castep_convergence_structure_normality_blocked"] = (
+            castep_convergence.get("structure_normality_blocked")
+        )
+        checks["semiconductor_castep_convergence_review_reasons"] = (
+            castep_convergence.get("result_review_reasons") or []
+        )
+        convergence_status = castep_convergence.get("status")
+        if convergence_status == "history_binding_review_required":
+            warnings.append(
+                "CASTEP convergence history contains missing, changed, or unbound "
+                "result evidence."
+            )
+        elif convergence_status == "parameter_sensitivity_above_tolerance":
+            warnings.append(
+                "CASTEP cutoff or k-point parameter sensitivity remains above the "
+                "recorded tolerance."
+            )
+        elif convergence_status in {
+            "insufficient_comparable_points",
+            "pairwise_evidence_only",
+        }:
+            warnings.append(
+                "CASTEP parameter convergence needs a comparable three-point "
+                "cutoff or k-point sequence."
+            )
+        elif convergence_status == "parameter_sensitivity_within_tolerance":
+            warnings.append(
+                "CASTEP parameter sensitivity is within the recorded tolerance, "
+                "but this does not independently verify scientific convergence."
+            )
+
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
         latest_twist = commensurate_twist.get("latest") or {}

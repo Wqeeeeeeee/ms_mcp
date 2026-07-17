@@ -2629,6 +2629,7 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_layer_rotation_csv",
     "semiconductor_commensurate_twist_csv",
     "semiconductor_commensurate_heterobilayer_csv",
+    "semiconductor_2d_electrostatics_csv",
     "semiconductor_interface_profile_csv",
     "semiconductor_interface_quality_csv",
     "semiconductor_gate_stack_csv",
@@ -2886,6 +2887,21 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_commensurate_heterobilayer_commensurability_verified",
     "semiconductor_commensurate_heterobilayer_requires_geometry_relaxation",
     "semiconductor_commensurate_heterobilayer_calculation_ready",
+    "semiconductor_2d_electrostatic_status",
+    "semiconductor_2d_electrostatic_quality",
+    "semiconductor_2d_bottom_material",
+    "semiconductor_2d_top_material",
+    "semiconductor_2d_expected_asymmetry_verified",
+    "semiconductor_2d_vacuum_geometry_verified",
+    "semiconductor_2d_structure_binding_verified",
+    "semiconductor_2d_model_geometry_verified",
+    "semiconductor_2d_model_geometry_normality_blocker",
+    "semiconductor_2d_charge_density_available",
+    "semiconductor_2d_dipole_moment_calculated",
+    "semiconductor_2d_dipole_correction_api_verified",
+    "semiconductor_2d_dipole_correction_setting_verified",
+    "semiconductor_2d_calculation_review_required",
+    "semiconductor_2d_quantitative_electrostatic_calculation_ready",
     "semiconductor_slab_vacuum_ok",
     "semiconductor_slab_vacuum_status",
     "semiconductor_slab_vacuum_next_action",
@@ -4434,6 +4450,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "default_max_atoms": 2000,
                     "material_composition_and_strain_reverified_before_hotload": True,
                     "geometry_relaxation_required_before_calculation": True,
+                    "expected_top_bottom_compositional_asymmetry_is_not_surface_failure": True,
+                    "two_dimensional_electrostatic_preflight_required": True,
+                    "charge_density_available_in_model_spec_diagnostics": False,
+                    "dipole_moment_calculated": False,
+                    "dipole_correction_setting_verified": False,
+                    "dipole_review_method": "reviewed_materials_studio_copy_script_or_documented_castep_ui",
+                    "quantitative_electrostatic_calculation_ready": False,
                 },
                 "superlattice_examples": [
                     "Build a 3-period GaAs/AlAs MQW.",
@@ -4942,6 +4965,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "layer_rotation_summary",
                 "commensurate_twist_summary",
                 "commensurate_heterobilayer_summary",
+                "two_dimensional_electrostatic_summary",
                 "interface_profile_summary",
                 "superlattice_period_summary",
                 "quantum_well_summary",
@@ -5261,6 +5285,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_layer_rotation_csv",
                 "semiconductor_commensurate_twist_csv",
                 "semiconductor_commensurate_heterobilayer_csv",
+                "semiconductor_2d_electrostatics_csv",
                 "semiconductor_quantum_well_csv",
                 "semiconductor_interface_quality_csv",
                 "semiconductor_gate_stack_csv",
@@ -5308,6 +5333,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_layer_rotation",
                 "semiconductor_commensurate_twist",
                 "semiconductor_commensurate_heterobilayer",
+                "semiconductor_2d_electrostatics",
                 "semiconductor_interface_profile",
                 "semiconductor_interface_quality",
                 "semiconductor_gate_stack",
@@ -5363,6 +5389,19 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_commensurate_heterobilayer_commensurability_verified",
                 "semiconductor_commensurate_heterobilayer_requires_geometry_relaxation",
                 "semiconductor_commensurate_heterobilayer_calculation_ready",
+                "semiconductor_2d_electrostatic_status",
+                "semiconductor_2d_electrostatic_quality",
+                "semiconductor_2d_expected_asymmetry_verified",
+                "semiconductor_2d_vacuum_geometry_verified",
+                "semiconductor_2d_structure_binding_verified",
+                "semiconductor_2d_model_geometry_verified",
+                "semiconductor_2d_model_geometry_normality_blocker",
+                "semiconductor_2d_charge_density_available",
+                "semiconductor_2d_dipole_moment_calculated",
+                "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_calculation_review_required",
+                "semiconductor_2d_quantitative_electrostatic_calculation_ready",
             ],
             "modeling_report_summary_fields": [
                 "project_id",
@@ -5664,6 +5703,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_commensurate_heterobilayer_commensurability_verified",
                 "semiconductor_commensurate_heterobilayer_requires_geometry_relaxation",
                 "semiconductor_commensurate_heterobilayer_calculation_ready",
+                "semiconductor_2d_electrostatic_status",
+                "semiconductor_2d_electrostatic_quality",
+                "semiconductor_2d_bottom_material",
+                "semiconductor_2d_top_material",
+                "semiconductor_2d_expected_asymmetry_verified",
+                "semiconductor_2d_vacuum_geometry_verified",
+                "semiconductor_2d_structure_binding_verified",
+                "semiconductor_2d_model_geometry_verified",
+                "semiconductor_2d_model_geometry_normality_blocker",
+                "semiconductor_2d_charge_density_available",
+                "semiconductor_2d_dipole_moment_calculated",
+                "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_calculation_review_required",
+                "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "structure_path",
                 "structure_exists",
                 "report_json_path",
@@ -6321,6 +6375,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_commensurate_heterobilayer_commensurability_verified",
                 "semiconductor_commensurate_heterobilayer_requires_geometry_relaxation",
                 "semiconductor_commensurate_heterobilayer_calculation_ready",
+                "semiconductor_2d_electrostatic_status",
+                "semiconductor_2d_electrostatic_quality",
+                "semiconductor_2d_bottom_material",
+                "semiconductor_2d_top_material",
+                "semiconductor_2d_expected_asymmetry_verified",
+                "semiconductor_2d_vacuum_geometry_verified",
+                "semiconductor_2d_structure_binding_verified",
+                "semiconductor_2d_model_geometry_verified",
+                "semiconductor_2d_model_geometry_normality_blocker",
+                "semiconductor_2d_charge_density_available",
+                "semiconductor_2d_dipole_moment_calculated",
+                "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_calculation_review_required",
+                "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "semiconductor_surface_preparation_status",
                 "semiconductor_surface_preparation_next_action",
                 "semiconductor_surface_dangling_bond_estimate",
@@ -6369,6 +6438,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_calculation_readiness_action_reason",
                 "semiconductor_calculation_readiness_payload_hint",
                 "semiconductor_calculation_readiness_primary_blocking_reason",
+                "semiconductor_2d_electrostatic_status",
+                "semiconductor_2d_electrostatic_quality",
+                "semiconductor_2d_bottom_material",
+                "semiconductor_2d_top_material",
+                "semiconductor_2d_expected_asymmetry_verified",
+                "semiconductor_2d_vacuum_geometry_verified",
+                "semiconductor_2d_structure_binding_verified",
+                "semiconductor_2d_model_geometry_verified",
+                "semiconductor_2d_model_geometry_normality_blocker",
+                "semiconductor_2d_charge_density_available",
+                "semiconductor_2d_dipole_moment_calculated",
+                "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_calculation_review_required",
+                "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "semiconductor_gate_stack_quality",
                 "semiconductor_gate_stack_sequence",
                 "semiconductor_gate_stack_expected_sequence",
@@ -6395,6 +6479,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_band_alignment_csv",
                 "semiconductor_polarization_2deg_csv",
                 "semiconductor_p_gan_gate_cap_csv",
+                "semiconductor_2d_electrostatics_csv",
                 "blocking_reasons",
                 "review_reasons",
                 "visual_review_reasons",
@@ -12293,6 +12378,26 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         return []
     focus_patterns: list[tuple[str, tuple[str, ...]]] = [
         (
+            "two_dimensional_electrostatic_preflight",
+            (
+                "2d electrostatic",
+                "two-dimensional electrostatic",
+                "two dimensional electrostatic",
+                "out-of-plane electrostatic",
+                "out of plane electrostatic",
+                "out-of-plane dipole",
+                "out of plane dipole",
+                "dipole correction",
+                "slab dipole",
+                "electrostatic asymmetry",
+                "二维静电预检",
+                "二维静电诊断",
+                "面外偶极",
+                "偶极修正",
+                "电势不对称",
+            ),
+        ),
+        (
             "commensurate_tmd_heterobilayer",
             (
                 "commensurate tmd heterobilayer",
@@ -12896,9 +13001,16 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         focuses = [
             focus
             for focus in focuses
-            if focus not in {"commensurate_twisted_bilayer", "layer_registry_rotation"}
+            if focus
+            not in {
+                "commensurate_tmd_heterobilayer",
+                "commensurate_twisted_bilayer",
+                "layer_registry_rotation",
+                "two_dimensional_electrostatic_preflight",
+            }
         ]
         focuses.insert(0, "commensurate_tmd_heterobilayer")
+        focuses.insert(1, "two_dimensional_electrostatic_preflight")
     if _comprehensive_model_parameter_focus_requested(user_request):
         focuses.insert(0, "comprehensive_model_parameters")
     if _calculation_readiness_requested_from_text(user_request) and "electronic_structure_preflight" not in focuses:
@@ -13089,6 +13201,25 @@ def _comprehensive_model_parameter_focus_requested(user_request: str | None) -> 
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
+    "two_dimensional_electrostatic_preflight": {
+        "summary_keys": [
+            "inspection.semiconductor_health.two_dimensional_electrostatic_summary",
+            "inspection.semiconductor_health.surface_model_summary",
+            "inspection.semiconductor_health.surface_polarity_summary",
+            "inspection.semiconductor_health.commensurate_heterobilayer_summary",
+            "inspection.slab_vacuum",
+            "semiconductor_review.two_dimensional_electrostatics",
+            "semiconductor_review.surface_model",
+            "view_review",
+        ],
+        "csv_keys": [
+            "semiconductor_2d_electrostatics_csv",
+            "semiconductor_surface_model_csv",
+            "semiconductor_surface_polarity_csv",
+            "semiconductor_commensurate_heterobilayer_csv",
+            "view_quality_csv",
+        ],
+    },
     "commensurate_tmd_heterobilayer": {
         "summary_keys": [
             "inspection.semiconductor_health.commensurate_heterobilayer_summary",
@@ -13566,6 +13697,10 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_EXAMPLES: dict[str, list[str]] = {
+    "two_dimensional_electrostatic_preflight": [
+        "Export the 2D electrostatic preflight and review out-of-plane dipole correction.",
+        "导出二维静电诊断，并检查面外偶极修正。",
+    ],
     "commensurate_tmd_heterobilayer": [
         "Build MoS2/WSe2 commensurate twisted heterobilayer with m=2, n=1 and export strain diagnostics.",
         "\u6784\u5efa MoS2/WS2 \u5171\u683c\u626d\u8f6c\u5f02\u8d28\u53cc\u5c42\u5e76\u5bfc\u51fa\u5e94\u53d8\u4e0e\u5171\u683c\u8bca\u65ad\u3002",
@@ -14469,6 +14604,11 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         if isinstance(semiconductor_commensurate_heterobilayer.get("latest"), dict)
         else {}
     )
+    semiconductor_2d_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatics")
+        if isinstance(semiconductor.get("two_dimensional_electrostatics"), dict)
+        else {}
+    )
     semiconductor_surface = semiconductor.get("surface") if isinstance(semiconductor.get("surface"), dict) else {}
     semiconductor_surface_model = (
         semiconductor.get("surface_model")
@@ -15231,6 +15371,43 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         ),
         "semiconductor_commensurate_heterobilayer_calculation_ready": (
             semiconductor_commensurate_heterobilayer.get("calculation_ready")
+        ),
+        "semiconductor_2d_electrostatic_status": semiconductor_2d_electrostatics.get("status"),
+        "semiconductor_2d_electrostatic_quality": semiconductor_2d_electrostatics.get("quality"),
+        "semiconductor_2d_bottom_material": semiconductor_2d_electrostatics.get("bottom_material"),
+        "semiconductor_2d_top_material": semiconductor_2d_electrostatics.get("top_material"),
+        "semiconductor_2d_expected_asymmetry_verified": semiconductor_2d_electrostatics.get(
+            "expected_compositional_asymmetry_verified"
+        ),
+        "semiconductor_2d_vacuum_geometry_verified": semiconductor_2d_electrostatics.get(
+            "vacuum_geometry_verified"
+        ),
+        "semiconductor_2d_structure_binding_verified": semiconductor_2d_electrostatics.get(
+            "structure_binding_verified"
+        ),
+        "semiconductor_2d_model_geometry_verified": semiconductor_2d_electrostatics.get(
+            "model_geometry_verified"
+        ),
+        "semiconductor_2d_model_geometry_normality_blocker": semiconductor_2d_electrostatics.get(
+            "model_geometry_normality_blocker"
+        ),
+        "semiconductor_2d_charge_density_available": semiconductor_2d_electrostatics.get(
+            "charge_density_available"
+        ),
+        "semiconductor_2d_dipole_moment_calculated": semiconductor_2d_electrostatics.get(
+            "dipole_moment_calculated"
+        ),
+        "semiconductor_2d_dipole_correction_api_verified": semiconductor_2d_electrostatics.get(
+            "dipole_correction_api_verified"
+        ),
+        "semiconductor_2d_dipole_correction_setting_verified": semiconductor_2d_electrostatics.get(
+            "dipole_correction_setting_verified"
+        ),
+        "semiconductor_2d_calculation_review_required": semiconductor_2d_electrostatics.get(
+            "calculation_review_required"
+        ),
+        "semiconductor_2d_quantitative_electrostatic_calculation_ready": (
+            semiconductor_2d_electrostatics.get("quantitative_electrostatic_calculation_ready")
         ),
         "structure_path": structure.get("path"),
         "structure_exists": structure.get("exists"),
@@ -18950,6 +19127,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
             "semiconductor_commensurate_heterobilayer_csv",
             "semiconductor_commensurate_heterobilayer",
         ),
+        ("semiconductor_2d_electrostatics_csv", "semiconductor_2d_electrostatics"),
         ("semiconductor_interface_profile_csv", "semiconductor_interface_profile"),
         ("semiconductor_interface_scaffold_csv", "semiconductor_interface_scaffold"),
         ("semiconductor_interface_quality_csv", "semiconductor_interface_quality"),
@@ -19961,6 +20139,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             ),
             "semiconductor_commensurate_heterobilayer_csv": bundle_files.get(
                 "semiconductor_commensurate_heterobilayer_csv"
+            ),
+            "semiconductor_2d_electrostatics_csv": bundle_files.get(
+                "semiconductor_2d_electrostatics_csv"
             ),
             "semiconductor_interface_profile_csv": bundle_files.get("semiconductor_interface_profile_csv"),
             "semiconductor_interface_scaffold_csv": bundle_files.get("semiconductor_interface_scaffold_csv"),
@@ -21309,7 +21490,7 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
         reason for reason in all_calculation_blocking_reasons if reason.startswith("semiconductor:")
     ]
     surface_model_blocked = (
-        surface_model.get("status") not in {None, "ready"}
+        surface_model.get("status") not in {None, "ready", "calculation_review"}
         or "semiconductor:surface_model_not_ready" in semiconductor_blocking_reasons
     )
     calculation_settings_blocked = any(
@@ -21805,6 +21986,7 @@ _SEMICONDUCTOR_NORMALITY_REASON_PRIORITY = (
     "semiconductor:heterostructure_strain_warning",
     "semiconductor:epitaxial_strain_warning",
     "semiconductor:kpoint_reciprocal_lattice_warnings",
+    "semiconductor:two_dimensional_dipole_correction_review_required",
     "semiconductor:band_path_requires_materials_studio_review",
     "semiconductor:calculation_preflight_warnings",
     "semiconductor:calculation_settings_review_required",
@@ -21821,7 +22003,18 @@ def _semiconductor_reason_category(reason: str | None) -> str | None:
         return None
     if any(token in reason for token in ("surface_model", "surface_", "slab_", "vacuum")):
         return "surface_model"
-    if any(token in reason for token in ("kpoint", "band_path", "calculation", "cutoff", "relaxed")):
+    if any(
+        token in reason
+        for token in (
+            "kpoint",
+            "band_path",
+            "calculation",
+            "cutoff",
+            "relaxed",
+            "dipole",
+            "electrostatic",
+        )
+    ):
         return "calculation_settings"
     if any(token in reason for token in ("strain", "heterostructure", "epitaxial", "interface")):
         return "heterostructure"
@@ -22918,6 +23111,7 @@ _CALCULATION_ONLY_NORMALITY_REVIEW_REASONS = {
     "semiconductor:kpoint_reciprocal_lattice_warnings",
     "semiconductor:odd_valence_electron_count",
     "semiconductor:prior_relaxed_structure_required",
+    "semiconductor:two_dimensional_dipole_correction_review_required",
 }
 
 
@@ -26553,6 +26747,11 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     latest_strain = strain.get("latest") if isinstance(strain.get("latest"), dict) else {}
     surface = semiconductor.get("surface") if isinstance(semiconductor.get("surface"), dict) else {}
     surface_model = semiconductor.get("surface_model") if isinstance(semiconductor.get("surface_model"), dict) else {}
+    two_dimensional_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatics")
+        if isinstance(semiconductor.get("two_dimensional_electrostatics"), dict)
+        else {}
+    )
     gate_stack = semiconductor.get("gate_stack") if isinstance(semiconductor.get("gate_stack"), dict) else {}
     contact = semiconductor.get("contact") if isinstance(semiconductor.get("contact"), dict) else {}
     artifacts = receipt.get("artifacts") if isinstance(receipt.get("artifacts"), dict) else {}
@@ -27572,6 +27771,43 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
                 "ready_for_calculation_preflight"
             ),
             "semiconductor_surface_model_next_action": surface_model.get("next_action"),
+            "semiconductor_2d_electrostatic_status": two_dimensional_electrostatics.get("status"),
+            "semiconductor_2d_electrostatic_quality": two_dimensional_electrostatics.get("quality"),
+            "semiconductor_2d_bottom_material": two_dimensional_electrostatics.get("bottom_material"),
+            "semiconductor_2d_top_material": two_dimensional_electrostatics.get("top_material"),
+            "semiconductor_2d_expected_asymmetry_verified": two_dimensional_electrostatics.get(
+                "expected_compositional_asymmetry_verified"
+            ),
+            "semiconductor_2d_vacuum_geometry_verified": two_dimensional_electrostatics.get(
+                "vacuum_geometry_verified"
+            ),
+            "semiconductor_2d_structure_binding_verified": two_dimensional_electrostatics.get(
+                "structure_binding_verified"
+            ),
+            "semiconductor_2d_model_geometry_verified": two_dimensional_electrostatics.get(
+                "model_geometry_verified"
+            ),
+            "semiconductor_2d_model_geometry_normality_blocker": two_dimensional_electrostatics.get(
+                "model_geometry_normality_blocker"
+            ),
+            "semiconductor_2d_charge_density_available": two_dimensional_electrostatics.get(
+                "charge_density_available"
+            ),
+            "semiconductor_2d_dipole_moment_calculated": two_dimensional_electrostatics.get(
+                "dipole_moment_calculated"
+            ),
+            "semiconductor_2d_dipole_correction_api_verified": two_dimensional_electrostatics.get(
+                "dipole_correction_api_verified"
+            ),
+            "semiconductor_2d_dipole_correction_setting_verified": two_dimensional_electrostatics.get(
+                "dipole_correction_setting_verified"
+            ),
+            "semiconductor_2d_calculation_review_required": two_dimensional_electrostatics.get(
+                "calculation_review_required"
+            ),
+            "semiconductor_2d_quantitative_electrostatic_calculation_ready": (
+                two_dimensional_electrostatics.get("quantitative_electrostatic_calculation_ready")
+            ),
             "semiconductor_gate_stack_quality": gate_stack.get("quality"),
             "semiconductor_gate_stack_sequence": gate_stack.get("material_sequence"),
             "semiconductor_gate_stack_expected_sequence": gate_stack.get("expected_stack_sequence"),
@@ -28353,6 +28589,7 @@ def _change_receipt_semiconductor_summary(semiconductor: dict[str, Any]) -> dict
         "layer_rotation": semiconductor.get("layer_rotation"),
         "commensurate_twist": semiconductor.get("commensurate_twist"),
         "commensurate_heterobilayer": semiconductor.get("commensurate_heterobilayer"),
+        "two_dimensional_electrostatics": semiconductor.get("two_dimensional_electrostatics"),
         "alloy": semiconductor.get("alloy"),
         "defects": semiconductor.get("defects"),
         "interface": semiconductor.get("interface"),
@@ -28434,6 +28671,9 @@ def _change_receipt_artifacts(
             "semiconductor_commensurate_heterobilayer_csv": diagnostics.get(
                 "semiconductor_commensurate_heterobilayer_csv"
             ),
+            "semiconductor_2d_electrostatics_csv": diagnostics.get(
+                "semiconductor_2d_electrostatics_csv"
+            ),
             "semiconductor_quantum_well_csv": diagnostics.get("semiconductor_quantum_well_csv"),
             "semiconductor_interface_quality_csv": diagnostics.get("semiconductor_interface_quality_csv"),
             "semiconductor_gate_stack_csv": diagnostics.get("semiconductor_gate_stack_csv"),
@@ -28490,6 +28730,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_layer_rotation",
         "semiconductor_commensurate_twist",
         "semiconductor_commensurate_heterobilayer",
+        "semiconductor_2d_electrostatics",
         "semiconductor_interface_profile",
         "semiconductor_interface_scaffold",
         "semiconductor_interface_quality",
@@ -29119,6 +29360,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     layer_rotation = semiconductor.get("layer_rotation_summary") or {}
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     commensurate_heterobilayer = semiconductor.get("commensurate_heterobilayer_summary") or {}
+    two_dimensional_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatic_summary") or {}
+    )
     charge_balance = semiconductor.get("charge_balance_summary") or {}
     dopant = semiconductor.get("dopant_summary") or {}
     dopant_site = semiconductor.get("dopant_site_summary") or {}
@@ -29153,6 +29397,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         layer_rotation=layer_rotation,
         commensurate_twist=commensurate_twist,
         commensurate_heterobilayer=commensurate_heterobilayer,
+        two_dimensional_electrostatics=two_dimensional_electrostatics,
         charge_balance=charge_balance,
         dopant=dopant,
         dopant_site=dopant_site,
@@ -29329,6 +29574,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         "commensurate_twist": _semiconductor_commensurate_twist_review(commensurate_twist),
         "commensurate_heterobilayer": _semiconductor_commensurate_heterobilayer_review(
             commensurate_heterobilayer
+        ),
+        "two_dimensional_electrostatics": _semiconductor_2d_electrostatic_review(
+            two_dimensional_electrostatics
         ),
         "alloy": _semiconductor_alloy_review(alloy),
         "defects": _semiconductor_defect_review(defect, finite_size),
@@ -29846,6 +30094,58 @@ def _semiconductor_commensurate_heterobilayer_review(
     }
 
 
+def _semiconductor_2d_electrostatic_review(
+    summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not summary:
+        return None
+    return _select_keys(
+        summary,
+        [
+            "status",
+            "quality",
+            "bottom_material",
+            "top_material",
+            "surface_axis",
+            "surface_orientation",
+            "bottom_surface_formula",
+            "top_surface_formula",
+            "bottom_surface_element_counts",
+            "top_surface_element_counts",
+            "bottom_layer_element_counts",
+            "top_layer_element_counts",
+            "surface_asymmetry_expected",
+            "surface_asymmetry_expected_reason",
+            "expected_compositional_asymmetry_verified",
+            "outer_surface_asymmetry_observed",
+            "outer_surface_formulas_distinct",
+            "periodic_out_of_plane_boundary",
+            "cell_axis_length_angstrom",
+            "declared_vacuum_angstrom",
+            "bottom_vacuum_angstrom",
+            "top_vacuum_angstrom",
+            "vacuum_asymmetry_abs_angstrom",
+            "vacuum_geometry_verified",
+            "structure_binding_verified",
+            "expected_structure_sha256",
+            "current_structure_sha256",
+            "model_geometry_verified",
+            "model_geometry_normality_blocker",
+            "charge_density_available",
+            "dipole_moment_calculated",
+            "dipole_correction_api_verified",
+            "dipole_correction_setting_verified",
+            "dipole_correction_review_method",
+            "calculation_review_required",
+            "quantitative_electrostatic_calculation_ready",
+            "calculation_blocking_reasons",
+            "next_action",
+            "warning_count",
+            "warnings",
+        ],
+    )
+
+
 def _semiconductor_alloy_review(alloy: dict[str, Any]) -> dict[str, Any] | None:
     if not alloy:
         return None
@@ -29953,12 +30253,17 @@ def _semiconductor_surface_model_review(surface_model: dict[str, Any]) -> dict[s
     return {
         "status": surface_model.get("status"),
         "ready_for_calculation_preflight": surface_model.get("ready_for_calculation_preflight"),
+        "model_geometry_ready": surface_model.get("model_geometry_ready"),
+        "calculation_review_only": surface_model.get("calculation_review_only"),
         "next_action": surface_model.get("next_action"),
         "slab_vacuum_status": surface_model.get("slab_vacuum_status"),
         "surface_preparation_status": surface_model.get("surface_preparation_status"),
         "surface_polarity_status": surface_model.get("surface_polarity_status"),
         "surface_orientation_status": surface_model.get("surface_orientation_status"),
         "surface_orientation": surface_model.get("surface_orientation_summary"),
+        "two_dimensional_electrostatic_status": surface_model.get(
+            "two_dimensional_electrostatic_status"
+        ),
         "blocking_reasons": surface_model.get("blocking_reasons") or [],
         "review_reasons": surface_model.get("review_reasons") or [],
     }
@@ -29980,6 +30285,12 @@ def _semiconductor_surface_review(surface: dict[str, Any], polarity: dict[str, A
         "surface_asymmetry_observed": polarity.get("surface_asymmetry_observed"),
         "surface_asymmetry_expected": polarity.get("surface_asymmetry_expected"),
         "surface_asymmetry_expected_reason": polarity.get("surface_asymmetry_expected_reason"),
+        "expected_2d_heterobilayer_asymmetry": polarity.get(
+            "expected_2d_heterobilayer_asymmetry"
+        ),
+        "two_dimensional_electrostatic_review_required": polarity.get(
+            "two_dimensional_electrostatic_review_required"
+        ),
         "surface_asymmetry_warning": polarity.get("surface_asymmetry_warning"),
         "surface_polarity_status": polarity.get("surface_polarity_status"),
         "surface_polarity_next_action": polarity.get("surface_polarity_next_action"),
@@ -30005,6 +30316,7 @@ def _semiconductor_review_risk_flags(
     layer_rotation: dict[str, Any],
     commensurate_twist: dict[str, Any],
     commensurate_heterobilayer: dict[str, Any],
+    two_dimensional_electrostatics: dict[str, Any],
     charge_balance: dict[str, Any],
     dopant: dict[str, Any],
     dopant_site: dict[str, Any],
@@ -30103,6 +30415,10 @@ def _semiconductor_review_risk_flags(
         flags.append("commensurate_tmd_heterobilayer_not_verified")
     if commensurate_heterobilayer.get("requires_geometry_relaxation"):
         flags.append("commensurate_tmd_heterobilayer_requires_geometry_relaxation")
+    if two_dimensional_electrostatics.get("model_geometry_normality_blocker"):
+        flags.append("two_dimensional_electrostatic_model_geometry_unverified")
+    elif two_dimensional_electrostatics.get("calculation_review_required"):
+        flags.append("two_dimensional_dipole_correction_review_required")
     if charge_balance.get("odd_electron_warning"):
         flags.append("odd_valence_electron_count")
     if dopant.get("total_dopant_count"):
@@ -30148,7 +30464,10 @@ def _semiconductor_review_risk_flags(
         flags.append("metal_semiconductor_contact_sequence_mismatch")
     if quantum_well.get("warning_count"):
         flags.append("quantum_well_review")
-    if surface_model and surface_model.get("status") not in {None, "ready"}:
+    if (
+        surface_model
+        and surface_model.get("status") not in {None, "ready", "calculation_review"}
+    ):
         flags.append("surface_model_not_ready")
     surface_orientation = surface_model.get("surface_orientation_summary") or {}
     if surface_orientation.get("blocking"):
@@ -30450,6 +30769,7 @@ def _change_verification_summary(report: dict[str, Any]) -> dict[str, Any]:
                     "layer_rotation",
                     "commensurate_twist",
                     "commensurate_heterobilayer",
+                    "two_dimensional_electrostatics",
                 ],
             )
             if semiconductor
@@ -30528,6 +30848,11 @@ def _change_verification_domain_tags(
         if isinstance(semiconductor.get("commensurate_heterobilayer"), dict)
         else {}
     )
+    two_dimensional_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatics")
+        if isinstance(semiconductor.get("two_dimensional_electrostatics"), dict)
+        else {}
+    )
     if dopants.get("total_dopant_count"):
         tags.append("dopant")
     if defects.get("defect_count") or defects.get("vacancy_count"):
@@ -30552,6 +30877,8 @@ def _change_verification_domain_tags(
         tags.extend(
             ["commensurate_heterobilayer", "tmd_heterostructure", "twisted_bilayer", "strain"]
         )
+    if two_dimensional_electrostatics:
+        tags.append("two_dimensional_electrostatics")
     return _dedupe_strings(tags)
 
 

@@ -781,6 +781,19 @@ window. It remains a coherent pre-relaxation scaffold, so normality and
 calculation readiness stay blocked until a trusted geometry relaxation is bound
 and re-audited.
 
+The same request automatically adds the
+`two_dimensional_electrostatic_preflight` focus. The preflight verifies expected
+composition asymmetry from the complete bottom/top layer materials and element
+counts, not only the outermost termination formulas. MoS2/WS2 therefore remains
+a valid compositionally asymmetric heterobilayer even though both outer
+surfaces are sulfur-terminated. `two_dimensional_electrostatic_summary` and
+`semiconductor_2d_electrostatics.csv` bind the layer evidence, slab vacuum, and
+current structure SHA-256. ModelSpec diagnostics contain no charge density, so
+the out-of-plane dipole is not calculated and neither a dipole-correction API
+nor its setting is verified. Quantitative electrostatic readiness remains false
+until a reviewed Materials Studio Copy Script or documented CASTEP UI receipt
+confirms the calculation setting.
+
 Lattice summaries are exported as `semiconductor_lattice.csv` and report cell
 volume, atom density, volume per non-passivant atom, and slab vacuum fractions
 when surface metadata is present.

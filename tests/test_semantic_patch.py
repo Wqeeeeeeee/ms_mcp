@@ -463,6 +463,7 @@ def test_new_tmd_template_applies_inline_commensurate_twisted_bilayer() -> None:
     spec = ModelSpec.model_validate(plan.payload)
     assert len(spec.model.basis_atoms) == 42
     assert spec.metadata["commensurate_twisted_bilayer"] is True
+    assert spec.metadata.get("two_dimensional_electrostatic_preflight_required") is not True
     assert spec.metadata["last_commensurate_twist"]["commensurability_verified"] is True
     assert any("make_commensurate_twisted_bilayer m=2 n=1" in note for note in plan.notes)
 
@@ -492,6 +493,12 @@ def test_commensurate_tmd_heterobilayer_builds_strain_controlled_periodic_cell()
     assert heterobilayer.metadata["material"] == "MoS2/WSe2"
     assert heterobilayer.metadata["materials"] == ["MoS2", "WSe2"]
     assert heterobilayer.metadata["structure_family"] == "commensurate twisted 2d tmd heterobilayer"
+    assert heterobilayer.metadata["surface_asymmetry_expected"] is True
+    assert (
+        heterobilayer.metadata["surface_asymmetry_expected_reason"]
+        == "distinct_tmd_layers_in_vdw_heterobilayer"
+    )
+    assert heterobilayer.metadata["two_dimensional_electrostatic_preflight_required"] is True
     assert diff[0].startswith(
         "make_commensurate_tmd_heterobilayer bottom=MoS2 top=WSe2 m=2 n=1 "
         "angle=21.786789298deg strain_policy=balanced"
@@ -513,12 +520,14 @@ def test_commensurate_tmd_heterobilayer_builds_strain_controlled_periodic_cell()
     assert receipt["strain_within_limit"] is True
     assert receipt["interlayer_chalcogen_gap_angstrom"] > 1.5
     assert receipt["commensurability_verified"] is True
+    assert receipt["surface_asymmetry_expected"] is True
+    assert receipt["two_dimensional_electrostatic_preflight_required"] is True
     assert receipt["requires_geometry_relaxation"] is True
     assert receipt["calculation_ready"] is False
     assert len(receipt["structure_sha256"]) == 64
     assert {atom.element for atom in heterobilayer.model.basis_atoms if "_L1_" in atom.id} == {"Mo", "S"}
     assert {atom.element for atom in heterobilayer.model.basis_atoms if "_L2_" in atom.id} == {"W", "Se"}
-    assert any("strain review" in note for note in heterobilayer.acceptance.notes)
+    assert any("out-of-plane electrostatic review" in note for note in heterobilayer.acceptance.notes)
 
 
 def test_commensurate_tmd_heterobilayer_rejects_homobilayer_and_excess_strain() -> None:

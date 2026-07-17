@@ -3824,6 +3824,32 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert summary["calculation_blocking_reasons"] == [
         "commensurate_tmd_heterobilayer_requires_geometry_relaxation"
     ]
+    electrostatics = audit["health"]["semiconductor_health"][
+        "two_dimensional_electrostatic_summary"
+    ]
+    assert electrostatics["status"] == "model_geometry_verified_calculation_review"
+    assert electrostatics["quality"] == "preflight_complete"
+    assert electrostatics["expected_compositional_asymmetry_verified"] is True
+    assert electrostatics["vacuum_geometry_verified"] is True
+    assert electrostatics["structure_binding_verified"] is True
+    assert electrostatics["model_geometry_verified"] is True
+    assert electrostatics["model_geometry_normality_blocker"] is False
+    assert electrostatics["charge_density_available"] is False
+    assert electrostatics["dipole_moment_calculated"] is False
+    assert electrostatics["dipole_correction_api_verified"] is False
+    assert electrostatics["dipole_correction_setting_verified"] is False
+    assert electrostatics["calculation_review_required"] is True
+    assert electrostatics["quantitative_electrostatic_calculation_ready"] is False
+    assert electrostatics["calculation_blocking_reasons"] == [
+        "two_dimensional_dipole_correction_review_required"
+    ]
+    surface_polarity = audit["health"]["semiconductor_health"]["surface_polarity_summary"]
+    assert surface_polarity["surface_polarity_status"] == "asymmetric_expected_2d_heterobilayer"
+    assert surface_polarity["surface_asymmetry_warning"] is False
+    surface_model = audit["health"]["semiconductor_health"]["surface_model_summary"]
+    assert surface_model["status"] == "calculation_review"
+    assert surface_model["model_geometry_ready"] is True
+    assert surface_model["calculation_review_only"] is True
 
     modeling_health = build_modeling_health(
         {"ok": True, "view_audit": audit},
@@ -3837,8 +3863,22 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert checks["semiconductor_commensurate_heterobilayer_layer_materials_verified"] is True
     assert checks["semiconductor_commensurate_heterobilayer_strain_partition_verified"] is True
     assert checks["semiconductor_commensurate_heterobilayer_calculation_ready"] is False
+    assert checks["semiconductor_2d_electrostatic_status"] == "model_geometry_verified_calculation_review"
+    assert checks["semiconductor_2d_expected_asymmetry_verified"] is True
+    assert checks["semiconductor_2d_model_geometry_verified"] is True
+    assert checks["semiconductor_2d_model_geometry_normality_blocker"] is False
+    assert checks["semiconductor_2d_charge_density_available"] is False
+    assert checks["semiconductor_2d_dipole_moment_calculated"] is False
+    assert checks["semiconductor_2d_dipole_correction_api_verified"] is False
+    assert checks["semiconductor_2d_dipole_correction_setting_verified"] is False
+    assert checks["semiconductor_2d_calculation_review_required"] is True
 
-    bundle = write_view_audit_bundle(tmp_path, heterobilayer, audit)
+    bundle = write_view_audit_bundle(
+        tmp_path,
+        heterobilayer,
+        audit,
+        modeling_health=modeling_health,
+    )
     csv_path = Path(bundle["files"]["semiconductor_commensurate_heterobilayer_csv"])
     assert csv_path.exists()
     assert bundle["row_counts"]["semiconductor_commensurate_heterobilayer"] == 1
@@ -3850,6 +3890,29 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert rows[0]["strain_partition_verified"] == "True"
     assert rows[0]["structure_binding_matches_current"] == "True"
     assert rows[0]["calculation_ready"] == "False"
+    electrostatic_csv_path = Path(bundle["files"]["semiconductor_2d_electrostatics_csv"])
+    assert electrostatic_csv_path.exists()
+    assert bundle["row_counts"]["semiconductor_2d_electrostatics"] == 1
+    electrostatic_rows = list(
+        csv.DictReader(electrostatic_csv_path.open(encoding="utf-8", newline=""))
+    )
+    assert electrostatic_rows[0]["status"] == "model_geometry_verified_calculation_review"
+    assert electrostatic_rows[0]["expected_compositional_asymmetry_verified"] == "True"
+    assert electrostatic_rows[0]["model_geometry_normality_blocker"] == "False"
+    assert electrostatic_rows[0]["charge_density_available"] == "False"
+    assert electrostatic_rows[0]["dipole_correction_setting_verified"] == "False"
+    health_rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["modeling_health_summary_csv"]).open(
+                encoding="utf-8", newline=""
+            )
+        )
+    )
+    assert health_rows[0]["semiconductor_2d_electrostatic_status"] == (
+        "model_geometry_verified_calculation_review"
+    )
+    assert health_rows[0]["semiconductor_2d_model_geometry_verified"] == "True"
+    assert health_rows[0]["semiconductor_2d_dipole_correction_api_verified"] == "False"
 
     target = next(atom for atom in heterobilayer.model.basis_atoms if atom.id.startswith("Setop1_L2_"))
     stale, _ = apply_semantic_patch(
@@ -3866,15 +3929,22 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
             ],
         ),
     )
-    stale_summary = model_view_audit(stale)["health"]["semiconductor_health"][
-        "commensurate_heterobilayer_summary"
-    ]
+    stale_semiconductor = model_view_audit(stale)["health"]["semiconductor_health"]
+    stale_summary = stale_semiconductor["commensurate_heterobilayer_summary"]
     assert stale_summary["quality"] == "review_required"
     assert stale_summary["top_layer_composition_verified"] is False
     assert stale_summary["layer_materials_verified"] is False
     assert stale_summary["structure_binding_matches_current"] is False
     assert stale_summary["metadata_consistent"] is False
     assert stale_summary["commensurability_verified"] is False
+    stale_electrostatics = stale_semiconductor["two_dimensional_electrostatic_summary"]
+    assert stale_electrostatics["status"] == "model_review_required"
+    assert stale_electrostatics["structure_binding_verified"] is False
+    assert stale_electrostatics["model_geometry_verified"] is False
+    assert stale_electrostatics["model_geometry_normality_blocker"] is True
+    assert "two_dimensional_electrostatic_model_geometry_unverified" in stale_electrostatics[
+        "calculation_blocking_reasons"
+    ]
 
 
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:

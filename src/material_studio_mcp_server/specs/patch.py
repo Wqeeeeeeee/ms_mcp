@@ -1299,6 +1299,9 @@ def _apply_commensurate_tmd_heterobilayer_patch(
         "pre_relaxation_scaffold": True,
         "visual_review_only": False,
         "visual_hotload_ready": True,
+        "surface_asymmetry_expected": True,
+        "surface_asymmetry_expected_reason": "distinct_tmd_layers_in_vdw_heterobilayer",
+        "two_dimensional_electrostatic_preflight_required": True,
         "requires_geometry_relaxation": True,
         "geometry_relaxed": False,
         "calculation_ready": False,
@@ -1333,6 +1336,9 @@ def _apply_commensurate_tmd_heterobilayer_patch(
             "coherent_strain_model": f"{strain_policy}_biaxial_tmd_commensurate_cell",
             "slab_thickness_angstrom": _round_patch_float(total_slab_thickness),
             "vacuum_angstrom": _round_patch_float(vacuum_angstrom),
+            "surface_asymmetry_expected": True,
+            "surface_asymmetry_expected_reason": "distinct_tmd_layers_in_vdw_heterobilayer",
+            "two_dimensional_electrostatic_preflight_required": True,
             "pre_relaxation_scaffold": True,
             "unrelaxed_interface": True,
             "requires_geometry_relaxation": True,
@@ -1343,7 +1349,8 @@ def _apply_commensurate_tmd_heterobilayer_patch(
     spec.metadata = metadata
     acceptance_note = (
         "Exact integer coincidence TMD heterobilayer with explicit biaxial strain; "
-        "geometry relaxation and strain review are required before production calculation."
+        "geometry relaxation, strain review, and out-of-plane electrostatic review are required "
+        "before production calculation."
     )
     acceptance_notes = [
         note

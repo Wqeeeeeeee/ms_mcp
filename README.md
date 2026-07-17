@@ -345,5 +345,11 @@ MoS2/WS2/MoSe2/WSe2 单层模板构造精确整数共格同质双层。可直接
 `semiconductor_commensurate_heterobilayer.csv` 会复核两层组成、应变分配、整数矩阵、扭角、层间距、
 真空和结构 SHA-256。该模型可在预检通过后热加载到同一个 MS 窗口，但始终标记为预弛豫结构，
 完成可信几何弛豫并重新审计前不能声称模型正常或可计算。
+该路径会自动补充 `two_dimensional_electrostatic_preflight`。它按完整上下层材料和元素计数识别预期的
+二维组成非对称，因此 MoS2/WS2 即使两个最外表面都是 S，也不会被误判为表面几何异常。
+`two_dimensional_electrostatic_summary` 和 `semiconductor_2d_electrostatics.csv` 会记录结构 SHA-256、
+真空/居中状态、外表面是否同构以及层组成绑定。该预检不含电荷密度，不会计算面外偶极，也不会声称
+已验证或启用 CASTEP 偶极修正；在经审阅的 Materials Studio Copy Script 或已记录的 CASTEP UI 设置
+确认前，定量静电计算仍保持阻断。
 晶体 execute/hot-load 还会重新解析生成的 CIF，逐项核对原子 ID、元素、分数坐标和六个晶格参数。
 已有 CIF 与当前 `CrystalSpec` 不一致时，即使路径和窗口 revision 正确也会阻断正常性结论；重新物化需要显式确认且不会创建空 revision。

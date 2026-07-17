@@ -956,6 +956,18 @@ accepts coprime indices or a bounded target angle plus `balanced`,
 commensurability, neighbor, local-environment, and view evidence. Exact periodic
 coincidence is established only after the explicit strain is recorded; the
 result remains a pre-relaxation scaffold and is not calculation-ready.
+The heterobilayer focus automatically adds
+`two_dimensional_electrostatic_preflight`. Its required evidence is
+`two_dimensional_electrostatic_summary`,
+`semiconductor_2d_electrostatics.csv`, surface-model/polarity rows, slab vacuum,
+and view diagnostics. Layer-level material and element-count differences prove
+the expected composition asymmetry even when the two outer termination formulas
+match. The summary explicitly reports `charge_density_available=false`,
+`dipole_moment_calculated=false`, `dipole_correction_api_verified=false`, and
+`dipole_correction_setting_verified=false`; do not translate this metadata-only
+preflight into a quantitative electrostatic or calculation-ready claim. Review
+the installed Materials Studio 20.1 Copy Script or documented CASTEP UI before
+confirming a dipole-correction setting.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

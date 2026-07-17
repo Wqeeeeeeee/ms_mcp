@@ -1470,6 +1470,59 @@ def write_view_audit_bundle(
             heterobilayer_rows,
         )
 
+    two_dimensional_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatic_summary") or {}
+    )
+    if two_dimensional_electrostatics:
+        files["semiconductor_2d_electrostatics_csv"] = str(
+            bundle_dir / "semiconductor_2d_electrostatics.csv"
+        )
+        row_counts["semiconductor_2d_electrostatics"] = _write_csv(
+            bundle_dir / "semiconductor_2d_electrostatics.csv",
+            [
+                "status",
+                "quality",
+                "bottom_material",
+                "top_material",
+                "surface_axis",
+                "surface_orientation",
+                "bottom_surface_formula",
+                "top_surface_formula",
+                "bottom_surface_element_counts",
+                "top_surface_element_counts",
+                "bottom_layer_element_counts",
+                "top_layer_element_counts",
+                "surface_asymmetry_expected",
+                "surface_asymmetry_expected_reason",
+                "expected_compositional_asymmetry_verified",
+                "outer_surface_asymmetry_observed",
+                "outer_surface_formulas_distinct",
+                "periodic_out_of_plane_boundary",
+                "cell_axis_length_angstrom",
+                "declared_vacuum_angstrom",
+                "bottom_vacuum_angstrom",
+                "top_vacuum_angstrom",
+                "vacuum_asymmetry_abs_angstrom",
+                "vacuum_geometry_verified",
+                "structure_binding_verified",
+                "expected_structure_sha256",
+                "current_structure_sha256",
+                "model_geometry_verified",
+                "model_geometry_normality_blocker",
+                "charge_density_available",
+                "dipole_moment_calculated",
+                "dipole_correction_api_verified",
+                "dipole_correction_setting_verified",
+                "dipole_correction_review_method",
+                "calculation_review_required",
+                "quantitative_electrostatic_calculation_ready",
+                "calculation_blocking_reasons",
+                "next_action",
+                "warning_count",
+            ],
+            [_semiconductor_2d_electrostatic_csv_row(two_dimensional_electrostatics)],
+        )
+
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:
         interface_rows = _semiconductor_interface_profile_csv_rows(interface_profile)
@@ -2147,6 +2200,19 @@ def write_view_audit_bundle(
             "semiconductor_dopant_concentration_warning_level",
             "semiconductor_degenerate_doping_review_required",
             "semiconductor_calculation_status",
+            "semiconductor_2d_electrostatic_status",
+            "semiconductor_2d_electrostatic_quality",
+            "semiconductor_2d_expected_asymmetry_verified",
+            "semiconductor_2d_vacuum_geometry_verified",
+            "semiconductor_2d_structure_binding_verified",
+            "semiconductor_2d_model_geometry_verified",
+            "semiconductor_2d_model_geometry_normality_blocker",
+            "semiconductor_2d_charge_density_available",
+            "semiconductor_2d_dipole_moment_calculated",
+            "semiconductor_2d_dipole_correction_api_verified",
+            "semiconductor_2d_dipole_correction_setting_verified",
+            "semiconductor_2d_calculation_review_required",
+            "semiconductor_2d_quantitative_electrostatic_calculation_ready",
             "errors",
             "warnings",
         ],
@@ -2294,6 +2360,41 @@ def _modeling_health_summary_csv_row(
             "semiconductor_degenerate_doping_review_required"
         ),
         "semiconductor_calculation_status": checks.get("semiconductor_calculation_status", calculation.get("status")),
+        "semiconductor_2d_electrostatic_status": checks.get("semiconductor_2d_electrostatic_status"),
+        "semiconductor_2d_electrostatic_quality": checks.get("semiconductor_2d_electrostatic_quality"),
+        "semiconductor_2d_expected_asymmetry_verified": checks.get(
+            "semiconductor_2d_expected_asymmetry_verified"
+        ),
+        "semiconductor_2d_vacuum_geometry_verified": checks.get(
+            "semiconductor_2d_vacuum_geometry_verified"
+        ),
+        "semiconductor_2d_structure_binding_verified": checks.get(
+            "semiconductor_2d_structure_binding_verified"
+        ),
+        "semiconductor_2d_model_geometry_verified": checks.get(
+            "semiconductor_2d_model_geometry_verified"
+        ),
+        "semiconductor_2d_model_geometry_normality_blocker": checks.get(
+            "semiconductor_2d_model_geometry_normality_blocker"
+        ),
+        "semiconductor_2d_charge_density_available": checks.get(
+            "semiconductor_2d_charge_density_available"
+        ),
+        "semiconductor_2d_dipole_moment_calculated": checks.get(
+            "semiconductor_2d_dipole_moment_calculated"
+        ),
+        "semiconductor_2d_dipole_correction_api_verified": checks.get(
+            "semiconductor_2d_dipole_correction_api_verified"
+        ),
+        "semiconductor_2d_dipole_correction_setting_verified": checks.get(
+            "semiconductor_2d_dipole_correction_setting_verified"
+        ),
+        "semiconductor_2d_calculation_review_required": checks.get(
+            "semiconductor_2d_calculation_review_required"
+        ),
+        "semiconductor_2d_quantitative_electrostatic_calculation_ready": checks.get(
+            "semiconductor_2d_quantitative_electrostatic_calculation_ready"
+        ),
         "errors": _json_csv_value(errors),
         "warnings": _json_csv_value(warnings),
     }
@@ -3234,6 +3335,23 @@ def _semiconductor_commensurate_heterobilayer_csv_rows(
             }
         )
     return rows
+
+
+def _semiconductor_2d_electrostatic_csv_row(summary: dict[str, Any]) -> dict[str, Any]:
+    row = dict(summary)
+    for key in (
+        "bottom_surface_element_counts",
+        "top_surface_element_counts",
+        "bottom_layer_element_counts",
+        "top_layer_element_counts",
+        "calculation_blocking_reasons",
+    ):
+        row[key] = json.dumps(
+            summary.get(key) or ({} if key.endswith("element_counts") else []),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    return row
 
 
 def _semiconductor_interface_profile_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -4938,6 +5056,24 @@ def _semiconductor_health_summary(
         expected_coordination_by_element=expected_coordination_by_element,
     )
     surface_polarity_summary = _surface_polarity_summary(surface_termination_summary, metadata)
+    two_dimensional_electrostatic_summary = _two_dimensional_electrostatic_summary(
+        spec,
+        metadata,
+        slab_vacuum,
+        surface_polarity_summary,
+        commensurate_heterobilayer_summary,
+    )
+    if two_dimensional_electrostatic_summary:
+        if two_dimensional_electrostatic_summary.get("model_geometry_normality_blocker"):
+            warnings.append(
+                "Two-dimensional heterobilayer electrostatic preflight could not verify the current "
+                "structure, expected surface asymmetry, or vacuum geometry."
+            )
+        elif two_dimensional_electrostatic_summary.get("calculation_review_required"):
+            warnings.append(
+                "Two-dimensional heterobilayer geometry is consistent with expected compositional "
+                "asymmetry; review out-of-plane dipole correction before quantitative calculations."
+            )
     surface_orientation_summary = _surface_orientation_summary(spec, slab_vacuum)
     if surface_orientation_summary and surface_orientation_summary.get("blocking"):
         errors.append(
@@ -4949,6 +5085,7 @@ def _semiconductor_health_summary(
         surface_termination_summary,
         surface_polarity_summary,
         surface_orientation_summary,
+        two_dimensional_electrostatic_summary,
     )
 
     return {
@@ -5002,6 +5139,7 @@ def _semiconductor_health_summary(
         "surface_orientation_summary": surface_orientation_summary,
         "surface_termination_summary": surface_termination_summary,
         "surface_polarity_summary": surface_polarity_summary,
+        "two_dimensional_electrostatic_summary": two_dimensional_electrostatic_summary,
         "expected_coordination": expected_coordination,
         "expected_coordination_by_element": dict(sorted(expected_coordination_by_element.items())),
         "neighbor_pair_counts": dict(sorted(pair_counts.items())),
@@ -5298,6 +5436,7 @@ def _surface_model_summary(
     surface_termination: dict[str, Any] | None,
     surface_polarity: dict[str, Any] | None,
     surface_orientation: dict[str, Any] | None = None,
+    two_dimensional_electrostatics: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not slab_vacuum and not surface_termination and not surface_polarity and not surface_orientation:
         return None
@@ -5306,6 +5445,7 @@ def _surface_model_summary(
     termination = surface_termination or {}
     polarity = surface_polarity or {}
     orientation = surface_orientation or {}
+    electrostatics = two_dimensional_electrostatics or {}
     vacuum_status = vacuum.get("slab_vacuum_status")
     preparation_status = termination.get("surface_preparation_status")
     polarity_status = polarity.get("surface_polarity_status")
@@ -5329,7 +5469,11 @@ def _surface_model_summary(
         "no_dangling_bonds_detected",
     }:
         review_reasons.append(f"surface_preparation:{preparation_status}")
-    if polarity_status == "asymmetric_or_polar":
+    if electrostatics.get("model_geometry_normality_blocker"):
+        blocking_reasons.append("two_dimensional_electrostatics:model_geometry_unverified")
+    elif electrostatics.get("calculation_review_required"):
+        review_reasons.append("two_dimensional_electrostatics:dipole_correction_review_required")
+    elif polarity_status == "asymmetric_or_polar":
         review_reasons.append("surface_polarity:asymmetric_or_polar")
     elif polarity_status not in {None, "symmetric_nonpolar"}:
         review_reasons.append(f"surface_polarity:{polarity_status}")
@@ -5343,8 +5487,15 @@ def _surface_model_summary(
         else:
             next_action = termination.get("surface_preparation_next_action") or "fix_surface_preparation_before_calculation"
     elif review_reasons:
-        status = "review"
-        if polarity_status and polarity_status != "symmetric_nonpolar":
+        status = (
+            "calculation_review"
+            if electrostatics.get("model_geometry_verified") is True
+            and electrostatics.get("calculation_review_required") is True
+            else "review"
+        )
+        if status == "calculation_review":
+            next_action = electrostatics.get("next_action") or "review_2d_dipole_correction_before_calculation"
+        elif polarity_status and polarity_status != "symmetric_nonpolar":
             next_action = polarity.get("surface_polarity_next_action") or "review_surface_polarity_before_calculation"
         else:
             next_action = termination.get("surface_preparation_next_action") or "review_surface_preparation_before_calculation"
@@ -5356,12 +5507,16 @@ def _surface_model_summary(
         "available": True,
         "status": status,
         "ready_for_calculation_preflight": status == "ready",
+        "model_geometry_ready": status in {"ready", "calculation_review"},
+        "calculation_review_only": status == "calculation_review",
         "next_action": next_action,
         "slab_vacuum_status": vacuum_status,
         "surface_preparation_status": preparation_status,
         "surface_polarity_status": polarity_status,
         "surface_orientation_status": orientation_status,
         "surface_orientation_summary": orientation or None,
+        "two_dimensional_electrostatic_status": electrostatics.get("status"),
+        "two_dimensional_electrostatic_summary": electrostatics or None,
         "blocking_reasons": blocking_reasons,
         "review_reasons": review_reasons,
     }
@@ -5565,6 +5720,7 @@ def _surface_polarity_summary(
     polar_surface_hint = not same_element_counts
     metadata = metadata or {}
     surface_asymmetry_observed = bool(polar_surface_hint or not passivation_symmetric)
+    expected_reason = metadata.get("surface_asymmetry_expected_reason")
     surface_asymmetry_expected = bool(
         metadata.get("surface_asymmetry_expected")
         or (
@@ -5578,7 +5734,19 @@ def _surface_polarity_summary(
         warnings.append("Top and bottom slab surfaces have different non-passivant element counts; inspect possible polar/asymmetric termination.")
     if not passivation_symmetric and not surface_asymmetry_expected:
         warnings.append("Top and bottom slab surfaces have different passivant-bond counts; inspect asymmetric passivation.")
-    if surface_asymmetry_observed and surface_asymmetry_expected:
+    expected_2d_heterobilayer = bool(
+        surface_asymmetry_expected
+        and metadata.get("two_dimensional_electrostatic_preflight_required")
+        and expected_reason == "distinct_tmd_layers_in_vdw_heterobilayer"
+    )
+    if expected_2d_heterobilayer:
+        polarity_status = (
+            "asymmetric_expected_2d_heterobilayer"
+            if surface_asymmetry_observed
+            else "outer_surfaces_symmetric_2d_heterobilayer_composition_expected"
+        )
+        polarity_next_action = "review_2d_out_of_plane_dipole_correction_before_quantitative_calculation"
+    elif surface_asymmetry_observed and surface_asymmetry_expected:
         polarity_status = "asymmetric_expected"
         polarity_next_action = (
             "review_unrelaxed_metal_semiconductor_interface_before_calculation"
@@ -5619,10 +5787,148 @@ def _surface_polarity_summary(
         "polar_surface_hint": polar_surface_hint,
         "surface_asymmetry_observed": surface_asymmetry_observed,
         "surface_asymmetry_expected": surface_asymmetry_expected,
-        "surface_asymmetry_expected_reason": metadata.get("surface_asymmetry_expected_reason"),
+        "surface_asymmetry_expected_reason": expected_reason,
+        "expected_2d_heterobilayer_asymmetry": expected_2d_heterobilayer,
+        "two_dimensional_electrostatic_review_required": expected_2d_heterobilayer,
         "surface_asymmetry_warning": surface_asymmetry_warning,
         "surface_polarity_status": polarity_status,
         "surface_polarity_next_action": polarity_next_action,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
+def _two_dimensional_electrostatic_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+    slab_vacuum: dict[str, Any] | None,
+    surface_polarity: dict[str, Any] | None,
+    commensurate_heterobilayer: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    required = bool(
+        metadata.get("two_dimensional_electrostatic_preflight_required")
+        or metadata.get("commensurate_tmd_heterobilayer")
+    )
+    if not required:
+        return None
+
+    vacuum = slab_vacuum or {}
+    polarity = surface_polarity or {}
+    heterobilayer = commensurate_heterobilayer or {}
+    latest = heterobilayer.get("latest") if isinstance(heterobilayer.get("latest"), dict) else {}
+    bottom = polarity.get("bottom") if isinstance(polarity.get("bottom"), dict) else {}
+    top = polarity.get("top") if isinstance(polarity.get("top"), dict) else {}
+    bottom_material = heterobilayer.get("bottom_material") or latest.get("bottom_material")
+    top_material = heterobilayer.get("top_material") or latest.get("top_material")
+    bottom_layer_element_counts = heterobilayer.get("bottom_layer_element_counts") or {}
+    top_layer_element_counts = heterobilayer.get("top_layer_element_counts") or {}
+
+    crystal_model = isinstance(spec.model, CrystalSpec)
+    structure_binding_verified = bool(
+        crystal_model
+        and heterobilayer.get("metadata_consistent") is True
+        and heterobilayer.get("structure_binding_matches_current") is True
+        and heterobilayer.get("layer_materials_verified") is True
+    )
+    expected_reason = metadata.get("surface_asymmetry_expected_reason")
+    expected_compositional_asymmetry = bool(
+        polarity.get("surface_asymmetry_expected") is True
+        and polarity.get("expected_2d_heterobilayer_asymmetry") is True
+        and expected_reason == "distinct_tmd_layers_in_vdw_heterobilayer"
+        and heterobilayer.get("materials_distinct") is True
+        and heterobilayer.get("layer_materials_verified") is True
+        and bottom_material
+        and top_material
+        and bottom_material != top_material
+        and bottom_layer_element_counts
+        and top_layer_element_counts
+        and bottom_layer_element_counts != top_layer_element_counts
+    )
+    outer_surface_formulas_distinct = bool(
+        bottom.get("formula")
+        and top.get("formula")
+        and bottom.get("formula") != top.get("formula")
+    )
+    vacuum_geometry_verified = bool(
+        vacuum.get("slab_vacuum_status") == "ready"
+        and vacuum.get("vacuum_ok") is True
+        and vacuum.get("centered_in_cell") is True
+        and vacuum.get("metadata_cell_mismatch") is False
+    )
+    model_geometry_verified = bool(
+        structure_binding_verified
+        and expected_compositional_asymmetry
+        and vacuum_geometry_verified
+    )
+
+    warnings: list[str] = []
+    if not crystal_model:
+        warnings.append("Two-dimensional electrostatic preflight requires a crystal model.")
+    if not structure_binding_verified:
+        warnings.append(
+            "Current structure or layer composition is not bound to the commensurate TMD heterobilayer receipt."
+        )
+    if not expected_compositional_asymmetry:
+        warnings.append(
+            "Current bottom/top layer materials or element counts do not verify the declared "
+            "two-dimensional heterobilayer compositional asymmetry."
+        )
+    if not vacuum_geometry_verified:
+        warnings.append("Slab vacuum spacing, centering, or metadata binding is not ready for electrostatic review.")
+    warnings.append(
+        "No charge density is available in ModelSpec diagnostics, so the out-of-plane dipole moment and "
+        "dipole-correction setting are not calculated or verified."
+    )
+
+    calculation_blocking_reasons = []
+    if not model_geometry_verified:
+        calculation_blocking_reasons.append("two_dimensional_electrostatic_model_geometry_unverified")
+    calculation_blocking_reasons.append("two_dimensional_dipole_correction_review_required")
+    return {
+        "available": True,
+        "model": "metadata_surface_and_vacuum_preflight_without_charge_density",
+        "status": (
+            "model_geometry_verified_calculation_review"
+            if model_geometry_verified
+            else "model_review_required"
+        ),
+        "quality": "preflight_complete" if model_geometry_verified else "review_required",
+        "bottom_material": bottom_material,
+        "top_material": top_material,
+        "surface_axis": polarity.get("surface_axis") or vacuum.get("surface_axis"),
+        "surface_orientation": polarity.get("surface_orientation") or vacuum.get("surface_orientation"),
+        "bottom_surface_formula": bottom.get("formula"),
+        "top_surface_formula": top.get("formula"),
+        "bottom_surface_element_counts": bottom.get("element_counts") or {},
+        "top_surface_element_counts": top.get("element_counts") or {},
+        "bottom_layer_element_counts": bottom_layer_element_counts,
+        "top_layer_element_counts": top_layer_element_counts,
+        "surface_asymmetry_expected": polarity.get("surface_asymmetry_expected") is True,
+        "surface_asymmetry_expected_reason": expected_reason,
+        "expected_compositional_asymmetry_verified": expected_compositional_asymmetry,
+        "outer_surface_asymmetry_observed": polarity.get("surface_asymmetry_observed") is True,
+        "outer_surface_formulas_distinct": outer_surface_formulas_distinct,
+        "periodic_out_of_plane_boundary": crystal_model,
+        "cell_axis_length_angstrom": vacuum.get("cell_axis_length_angstrom"),
+        "declared_vacuum_angstrom": vacuum.get("declared_vacuum_angstrom"),
+        "bottom_vacuum_angstrom": vacuum.get("bottom_vacuum_angstrom"),
+        "top_vacuum_angstrom": vacuum.get("top_vacuum_angstrom"),
+        "vacuum_asymmetry_abs_angstrom": vacuum.get("vacuum_asymmetry_abs_angstrom"),
+        "vacuum_geometry_verified": vacuum_geometry_verified,
+        "structure_binding_verified": structure_binding_verified,
+        "expected_structure_sha256": heterobilayer.get("expected_structure_sha256"),
+        "current_structure_sha256": heterobilayer.get("current_structure_sha256"),
+        "model_geometry_verified": model_geometry_verified,
+        "model_geometry_normality_blocker": not model_geometry_verified,
+        "charge_density_available": False,
+        "dipole_moment_calculated": False,
+        "dipole_correction_api_verified": False,
+        "dipole_correction_setting_verified": False,
+        "dipole_correction_review_method": "reviewed_materials_studio_copy_script_or_documented_castep_ui",
+        "calculation_review_required": True,
+        "quantitative_electrostatic_calculation_ready": False,
+        "calculation_blocking_reasons": calculation_blocking_reasons,
+        "next_action": "review_2d_out_of_plane_dipole_correction_before_quantitative_calculation",
         "warning_count": len(warnings),
         "warnings": warnings,
     }

@@ -896,6 +896,62 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "requires geometry relaxation."
             )
 
+    two_dimensional_electrostatics = (
+        semiconductor.get("two_dimensional_electrostatic_summary") or {}
+    )
+    if two_dimensional_electrostatics:
+        checks["semiconductor_2d_electrostatic_status"] = two_dimensional_electrostatics.get(
+            "status"
+        )
+        checks["semiconductor_2d_electrostatic_quality"] = two_dimensional_electrostatics.get(
+            "quality"
+        )
+        checks["semiconductor_2d_expected_asymmetry_verified"] = (
+            two_dimensional_electrostatics.get("expected_compositional_asymmetry_verified")
+        )
+        checks["semiconductor_2d_vacuum_geometry_verified"] = two_dimensional_electrostatics.get(
+            "vacuum_geometry_verified"
+        )
+        checks["semiconductor_2d_structure_binding_verified"] = (
+            two_dimensional_electrostatics.get("structure_binding_verified")
+        )
+        checks["semiconductor_2d_model_geometry_verified"] = two_dimensional_electrostatics.get(
+            "model_geometry_verified"
+        )
+        checks["semiconductor_2d_model_geometry_normality_blocker"] = (
+            two_dimensional_electrostatics.get("model_geometry_normality_blocker")
+        )
+        checks["semiconductor_2d_charge_density_available"] = two_dimensional_electrostatics.get(
+            "charge_density_available"
+        )
+        checks["semiconductor_2d_dipole_moment_calculated"] = two_dimensional_electrostatics.get(
+            "dipole_moment_calculated"
+        )
+        checks["semiconductor_2d_dipole_correction_api_verified"] = (
+            two_dimensional_electrostatics.get("dipole_correction_api_verified")
+        )
+        checks["semiconductor_2d_dipole_correction_setting_verified"] = (
+            two_dimensional_electrostatics.get("dipole_correction_setting_verified")
+        )
+        checks["semiconductor_2d_calculation_review_required"] = (
+            two_dimensional_electrostatics.get("calculation_review_required")
+        )
+        checks["semiconductor_2d_quantitative_electrostatic_calculation_ready"] = (
+            two_dimensional_electrostatics.get(
+                "quantitative_electrostatic_calculation_ready"
+            )
+        )
+        if two_dimensional_electrostatics.get("model_geometry_normality_blocker"):
+            warnings.append(
+                "Two-dimensional electrostatic preflight could not verify the current heterobilayer "
+                "geometry, expected surface asymmetry, or vacuum."
+            )
+        elif two_dimensional_electrostatics.get("calculation_review_required"):
+            warnings.append(
+                "Two-dimensional heterobilayer geometry is verified; out-of-plane dipole correction "
+                "still requires calculation-only review."
+            )
+
     interface_quality = semiconductor.get("interface_quality_summary") or {}
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:

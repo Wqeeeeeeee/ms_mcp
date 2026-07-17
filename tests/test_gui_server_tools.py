@@ -6835,6 +6835,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert heterobilayer_safety["default_max_atoms"] == 2000
     assert heterobilayer_safety["material_composition_and_strain_reverified_before_hotload"] is True
     assert heterobilayer_safety["geometry_relaxation_required_before_calculation"] is True
+    assert heterobilayer_safety["expected_top_bottom_compositional_asymmetry_is_not_surface_failure"] is True
+    assert heterobilayer_safety["two_dimensional_electrostatic_preflight_required"] is True
+    assert heterobilayer_safety["charge_density_available_in_model_spec_diagnostics"] is False
+    assert heterobilayer_safety["dipole_moment_calculated"] is False
+    assert heterobilayer_safety["dipole_correction_setting_verified"] is False
+    assert heterobilayer_safety["quantitative_electrostatic_calculation_ready"] is False
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7176,6 +7182,16 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ]["summary_keys"]
     assert "semiconductor_commensurate_heterobilayer_csv" in diagnostic_profiles[
         "commensurate_tmd_heterobilayer"
+    ]["csv_keys"]
+    assert "two_dimensional_electrostatic_preflight" in diagnostic_profiles
+    assert "inspection.semiconductor_health.two_dimensional_electrostatic_summary" in diagnostic_profiles[
+        "two_dimensional_electrostatic_preflight"
+    ]["summary_keys"]
+    assert "semiconductor_review.two_dimensional_electrostatics" in diagnostic_profiles[
+        "two_dimensional_electrostatic_preflight"
+    ]["summary_keys"]
+    assert "semiconductor_2d_electrostatics_csv" in diagnostic_profiles[
+        "two_dimensional_electrostatic_preflight"
     ]["csv_keys"]
     assert "modeling_report_summary_csv" in diagnostic_profiles["comprehensive_model_parameters"]["csv_keys"]
     assert "semiconductor_calculation_readiness" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
@@ -20712,10 +20728,24 @@ def test_live_request_detects_calculation_readiness_preflight_focus() -> None:
 def test_live_request_detects_any_supported_commensurate_tmd_heterobilayer_pair() -> None:
     assert server._requested_diagnostic_focuses_from_text(
         "Build WSe2/MoSe2 commensurate twisted bilayer with m=2, n=1."
-    ) == ["commensurate_tmd_heterobilayer", "tmd_2d_monolayer"]
+    ) == [
+        "commensurate_tmd_heterobilayer",
+        "two_dimensional_electrostatic_preflight",
+        "tmd_2d_monolayer",
+    ]
     assert server._requested_diagnostic_focuses_from_text(
         "构建二硫化钨/二硒化钼共格扭转双层，m=2,n=1。"
-    ) == ["commensurate_tmd_heterobilayer", "tmd_2d_monolayer"]
+    ) == [
+        "commensurate_tmd_heterobilayer",
+        "two_dimensional_electrostatic_preflight",
+        "tmd_2d_monolayer",
+    ]
+    assert server._requested_diagnostic_focuses_from_text(
+        "Export the 2D electrostatic preflight and review out-of-plane dipole correction."
+    ) == ["two_dimensional_electrostatic_preflight", "view_quality"]
+    assert server._requested_diagnostic_focuses_from_text(
+        "导出二维静电诊断，并检查面外偶极修正。"
+    ) == ["two_dimensional_electrostatic_preflight", "view_quality"]
 
 
 def test_live_modeling_request_exports_comprehensive_model_parameter_focus(monkeypatch, tmp_path: Path) -> None:
@@ -25713,6 +25743,7 @@ def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_stra
     assert summary["requires_geometry_relaxation"] is True
     assert summary["calculation_ready"] is False
     assert "commensurate_tmd_heterobilayer" in result["requested_diagnostic_focuses"]
+    assert "two_dimensional_electrostatic_preflight" in result["requested_diagnostic_focuses"]
     assert "commensurate_twisted_bilayer" not in result["requested_diagnostic_focuses"]
     assert result["requested_diagnostic_focus_ok"] is True
     csv_path = Path(
@@ -25721,6 +25752,56 @@ def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_stra
         ]
     )
     assert csv_path.exists()
+    electrostatic = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "two_dimensional_electrostatic_summary"
+    ]
+    assert electrostatic["status"] == "model_geometry_verified_calculation_review"
+    assert electrostatic["model_geometry_verified"] is True
+    assert electrostatic["charge_density_available"] is False
+    assert electrostatic["dipole_moment_calculated"] is False
+    assert electrostatic["dipole_correction_api_verified"] is False
+    assert electrostatic["dipole_correction_setting_verified"] is False
+    electrostatic_csv_path = Path(
+        result["modeling_report"]["diagnostics"]["semiconductor_2d_electrostatics_csv"]
+    )
+    assert electrostatic_csv_path.exists()
+    assert result["modeling_report"]["change_receipt"]["diagnostic_row_counts"][
+        "semiconductor_2d_electrostatics"
+    ] == 1
+    risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "two_dimensional_dipole_correction_review_required" in risk_flags
+    assert "surface_model_not_ready" not in risk_flags
+    assert "surface_polarity_or_asymmetry" not in risk_flags
+    assert "semiconductor:two_dimensional_dipole_correction_review_required" in result[
+        "modeling_report"
+    ]["normality_gate"]["calculation_only_review_reasons"]
+    electrostatic_receipt = result["modeling_report"]["change_receipt"]["semiconductor"][
+        "two_dimensional_electrostatics"
+    ]
+    assert electrostatic_receipt["model_geometry_verified"] is True
+    assert electrostatic_receipt["calculation_review_required"] is True
+    export_category = result["modeling_report"]["diagnostic_export_manifest"]["categories"][
+        "semiconductor_electronic_interfaces"
+    ]
+    assert "semiconductor_2d_electrostatics_csv" in export_category["files"]
+    assert result["semiconductor_2d_electrostatic_status"] == (
+        "model_geometry_verified_calculation_review"
+    )
+    assert result["semiconductor_2d_electrostatics_csv"] == str(electrostatic_csv_path)
+    summary_row = next(
+        csv.DictReader(
+            Path(result["view_bundle_files"]["modeling_report_summary_csv"]).open(
+                encoding="utf-8"
+            )
+        )
+    )
+    assert summary_row["semiconductor_2d_electrostatic_status"] == (
+        "model_geometry_verified_calculation_review"
+    )
+    assert summary_row["semiconductor_2d_model_geometry_verified"] == "True"
+    assert summary_row["semiconductor_2d_charge_density_available"] == "False"
+    assert summary_row["semiconductor_2d_dipole_correction_api_verified"] == "False"
+    assert summary_row["semiconductor_2d_dipole_correction_setting_verified"] == "False"
     receipt = result["modeling_report"]["change_receipt"]["semiconductor"][
         "commensurate_heterobilayer"
     ]
@@ -25754,6 +25835,20 @@ def test_live_modeling_request_hotloads_chinese_commensurate_tmd_heterobilayer_i
     assert summary["commensurability_verified"] is True
     assert summary["strain_partition_verified"] is True
     assert summary["calculation_ready"] is False
+    electrostatic = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "two_dimensional_electrostatic_summary"
+    ]
+    assert electrostatic["expected_compositional_asymmetry_verified"] is True
+    assert electrostatic["outer_surface_asymmetry_observed"] is False
+    assert electrostatic["outer_surface_formulas_distinct"] is False
+    assert electrostatic["model_geometry_verified"] is True
+    assert electrostatic["model_geometry_normality_blocker"] is False
+    assert result["modeling_report"]["inspection"]["semiconductor_health"][
+        "surface_polarity_summary"
+    ]["surface_polarity_status"] == "outer_surfaces_symmetric_2d_heterobilayer_composition_expected"
+    assert result["modeling_report"]["semiconductor_review"]["surface_model"][
+        "status"
+    ] == "calculation_review"
     checks = result["modeling_health"]["checks"]
     assert checks["semiconductor_commensurate_heterobilayer_m"] == 2
     assert checks["semiconductor_commensurate_heterobilayer_n"] == 1
@@ -25761,7 +25856,9 @@ def test_live_modeling_request_hotloads_chinese_commensurate_tmd_heterobilayer_i
     assert checks["semiconductor_commensurate_heterobilayer_strain_partition_verified"] is True
     risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
     assert "commensurate_tmd_heterobilayer_requires_geometry_relaxation" in risk_flags
+    assert "two_dimensional_dipole_correction_review_required" in risk_flags
     assert "commensurate_tmd_heterobilayer_strain_unverified" not in risk_flags
+    assert "surface_model_not_ready" not in risk_flags
     assert result["modeling_report"]["live_readiness"]["ready_for_calculation"] is False
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
     assert result["modeling_report"]["gui"]["single_window_policy_ok"] is True

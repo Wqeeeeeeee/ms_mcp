@@ -30,6 +30,7 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_live_modeling_request",
     "material_studio_live_project_status",
     "material_studio_live_update_with_patch",
+    "material_studio_castep_relax_current",
     "material_studio_model_export_view_bundle",
     "material_studio_project_history",
     "material_studio_project_rollback",
@@ -60,6 +61,10 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_gui_status": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_live_modeling_request": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_live_update_with_patch": {"readOnlyHint": False, "destructiveHint": True},
+    "material_studio_castep_relax_current": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    },
     "material_studio_gui_apply_current_revision": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_gui_record_visual_confirmation": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_gui_record_view_replay": {"readOnlyHint": False, "destructiveHint": False},
@@ -104,6 +109,30 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "confirm_metadata_reconciliation",
             "execution_mode",
             "working_dir",
+            "response_mode",
+        },
+        "required": set(),
+    },
+    "material_studio_castep_relax_current": {
+        "properties": {
+            "project_id",
+            "execution_mode",
+            "cutoff_energy_ev",
+            "kpoint_separation",
+            "kpoints",
+            "dipole_correction",
+            "max_iterations",
+            "displacement_convergence_angstrom",
+            "energy_convergence_ev_per_atom",
+            "force_convergence_ev_per_angstrom",
+            "cell_optimization",
+            "optimization_algorithm",
+            "open_in_gui",
+            "take_snapshot",
+            "export_view_audit",
+            "views",
+            "working_dir",
+            "timeout_seconds",
             "response_mode",
         },
         "required": set(),
@@ -465,6 +494,20 @@ async def _run_preview_calls(
             },
             timeout,
         )
+        relaxation_preview = await _call_tool(
+            session,
+            "material_studio_castep_relax_current",
+            {
+                "project_id": project_id,
+                "execution_mode": "preview",
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": False,
+                "working_dir": str(workspace),
+                "response_mode": "compact",
+            },
+            timeout,
+        )
         prepared_replay = await _call_tool(
             session,
             "material_studio_gui_prepare_view_replay",
@@ -524,6 +567,9 @@ async def _run_preview_calls(
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
             "create": len(json.dumps(created, ensure_ascii=False).encode("utf-8")),
             "status": len(json.dumps(status, ensure_ascii=False).encode("utf-8")),
+            "castep_relaxation_preview": len(
+                json.dumps(relaxation_preview, ensure_ascii=False).encode("utf-8")
+            ),
             "prepare_view_replay": len(
                 json.dumps(prepared_replay, ensure_ascii=False).encode("utf-8")
             ),
@@ -543,6 +589,20 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_response_not_compact")
         if capabilities.get("response_schema") != EXPECTED_CAPABILITIES_COMPACT_SCHEMA:
             validation_errors.append("capabilities_compact_schema_mismatch")
+        castep_relaxation_capability = capabilities.get(
+            "castep_geometry_optimization"
+        )
+        if not isinstance(castep_relaxation_capability, dict):
+            validation_errors.append("capabilities_castep_relaxation_missing")
+            castep_relaxation_capability = {}
+        if castep_relaxation_capability.get("tool") != (
+            "material_studio_castep_relax_current"
+        ):
+            validation_errors.append("capabilities_castep_relaxation_tool_mismatch")
+        if castep_relaxation_capability.get("default_execution_mode") != "preview":
+            validation_errors.append("capabilities_castep_relaxation_default_not_preview")
+        if castep_relaxation_capability.get("promotion_requires_converged") is not True:
+            validation_errors.append("capabilities_castep_relaxation_convergence_gate_missing")
         replay_policy = capabilities.get("view_replay_automation_policy")
         if not isinstance(replay_policy, dict):
             validation_errors.append("capabilities_replay_policy_missing")
@@ -662,6 +722,29 @@ async def _run_preview_calls(
             validation_errors.append("status_response_not_compact")
         if status.get("response_schema") != EXPECTED_LIVE_COMPACT_SCHEMA:
             validation_errors.append("status_compact_schema_mismatch")
+        relaxation_structure_value = str(
+            (relaxation_preview.get("planned_outputs") or {}).get("structure")
+            or ""
+        )
+        relaxation_structure = (
+            Path(relaxation_structure_value)
+            if relaxation_structure_value
+            else None
+        )
+        if relaxation_preview.get("ok") is not True:
+            validation_errors.append("castep_relaxation_preview_not_ok")
+        if relaxation_preview.get("workflow") != "castep_geometry_optimization":
+            validation_errors.append("castep_relaxation_preview_workflow_mismatch")
+        if relaxation_preview.get("execution_mode") != "preview":
+            validation_errors.append("castep_relaxation_preview_mode_changed")
+        if relaxation_preview.get("execution_started") is not False:
+            validation_errors.append("castep_relaxation_preview_started_execution")
+        if relaxation_preview.get("revision_created") is not False:
+            validation_errors.append("castep_relaxation_preview_created_revision")
+        if relaxation_structure is None:
+            validation_errors.append("castep_relaxation_preview_structure_path_missing")
+        elif relaxation_structure.exists():
+            validation_errors.append("castep_relaxation_preview_materialized_structure")
         if prepared_replay.get("ok") is not True:
             validation_errors.append("view_replay_prepare_not_ok")
         if execution_preview.get("ok") is not True:
@@ -761,6 +844,7 @@ async def _run_preview_calls(
                 "capabilities",
                 "create",
                 "status",
+                "castep_relaxation_preview",
                 "prepare_view_replay",
                 "resumed_preflight",
                 "view_bundle",
@@ -787,6 +871,17 @@ async def _run_preview_calls(
                 "artifact_status": created.get("structure_artifact_validation_status"),
                 "planned_structure": str(planned_structure),
                 "planned_structure_exists": planned_structure.exists(),
+                "castep_relaxation_preview_status": relaxation_preview.get(
+                    "status"
+                ),
+                "castep_relaxation_preview_execution_started": (
+                    relaxation_preview.get("execution_started")
+                ),
+                "castep_relaxation_preview_structure_exists": (
+                    relaxation_structure.exists()
+                    if relaxation_structure is not None
+                    else None
+                ),
                 "gui_opened": created.get("gui_open") is not None,
                 "view_names": view_names,
                 "view_bundle_manifest_path": exported.get("view_bundle_manifest_path"),
@@ -850,6 +945,9 @@ async def _run_preview_calls(
                 ),
                 "capabilities_replay_runtime_observed": replay_runtime.get(
                     "observed"
+                ),
+                "capabilities_castep_relaxation_tool": (
+                    castep_relaxation_capability.get("tool")
                 ),
                 "capabilities_transactional_miller_implemented": (
                     replay_runtime.get("transactional_miller_implemented")

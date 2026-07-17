@@ -24,9 +24,19 @@ The local Materials Studio 20.1 scripting and CASTEP UI help also confirms the r
 
 Each crystal revision with a CASTEP simulation persists a deterministic `scripts/rNNN_castep_task.pl` companion that imports that revision's planned CIF and dispatches the reviewed task. Create, patch, rollback, validate, preview, live status, and GUI-apply responses expose a `calculation_preview` receipt with validation, file binding, SHA-256 comparison, and explicit non-execution fields. The companion remains preview-only: crystal execute mode materializes a CIF and does not run CASTEP. A missing or modified companion is reported as `planned_not_persisted`, `read_failed`, or `mismatch` and is never described as a trusted calculation preview.
 
+Explicit geometry optimization is now a separate, narrow workflow exposed as `material_studio_castep_relax_current`. It uses the locally documented `Modules->CASTEP->GeometryOptimization->Run` contract and exports the returned `Structure` and `Report`; tagged JSON carries `TotalEnergy`, `Enthalpy`, and `Converged`. The compatibility companion remains preview-only, while this dedicated tool defaults to preview and executes only when requested explicitly.
+
+Execution is revision-bound and fail-closed. The workflow records an execution attempt, refuses to overwrite prior scripts, input structures, outputs, or reports, rechecks that the source revision is still current after CASTEP returns, and promotes only a converged CIF that preserves atom IDs/elements and passes round-trip validation. Promotion creates a fresh immutable revision. Failed, malformed, superseded, and unconverged results preserve evidence without advancing `current.json`.
+
+The promoted revision records a source/output structure-hash transition. Diagnostics verify the receipt schema, history ordering, project/revision identity, task/backend, convergence, atom identity, script hash, model operation, simulation settings, source hash, and current output hash. Commensurate TMD diagnostics accept relaxed coordinate changes only through a verified fixed-cell transition. The view bundle exports `semiconductor_castep_geometry_optimization.csv`; a subsequent structural edit invalidates the output binding.
+
+For slabs, execution requires `CellOptimization=None`. Asymmetric slabs additionally require self-consistent dipole correction and at least 8 angstrom vacuum. GUI hot-loading probes the one-window policy before starting CASTEP and never launches a new `MatStudio.exe`; only the promoted revision may be opened in the existing window.
+
 ## Risks And Gaps
 
 `material_studio_run_script` remains intentionally powerful and risky because it executes arbitrary user-supplied Perl. Structured tools now default to preview and validate generated scripts before execution. Crystal lattice construction remains conservative because local Copy Script output should be trusted over guessed API calls.
+
+CASTEP remains an external licensed calculation backend. Unit and protocol tests use fake runners and preview calls; they prove transaction, parsing, promotion, diagnostics, and single-window gating without proving a particular local pseudopotential, queue, license, or scientific convergence setup.
 
 ## Migration
 

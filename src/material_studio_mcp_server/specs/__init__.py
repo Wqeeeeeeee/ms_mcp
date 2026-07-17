@@ -18,10 +18,14 @@ from .common import (
 from .crystal import BasisAtomSpec, CrystalOperation, CrystalSpec, LatticeSpec
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
 from .castep import (
+    CastepCellOptimization,
     CastepDipoleCorrection,
     CastepEnergySpec,
+    CastepOptimizationAlgorithm,
     CastepTask,
+    normalize_castep_cell_optimization,
     normalize_castep_dipole_correction,
+    normalize_castep_optimization_algorithm,
     normalize_castep_task,
 )
 from .molecule import AtomSpec, BondSpec, MoleculeSpec
@@ -38,8 +42,10 @@ __all__ = [
     "AtomSpec",
     "BasisAtomSpec",
     "BondSpec",
+    "CastepCellOptimization",
     "CastepEnergySpec",
     "CastepDipoleCorrection",
+    "CastepOptimizationAlgorithm",
     "CastepTask",
     "CrystalOperation",
     "CrystalSpec",
@@ -66,6 +72,8 @@ __all__ = [
     "Vector3",
     "apply_semantic_patch",
     "commensurate_twist_angle_degrees",
+    "normalize_castep_cell_optimization",
     "normalize_castep_task",
     "normalize_castep_dipole_correction",
+    "normalize_castep_optimization_algorithm",
 ]

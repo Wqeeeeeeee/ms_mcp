@@ -52,6 +52,7 @@ SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_import_export",
     "material_studio_forcite_geometry_optimization",
     "material_studio_castep_energy_script",
+    "material_studio_castep_relax_current",
     "material_studio_list_script_templates",
 )
 PROMPT_TOOLS: tuple[str, ...] = (
@@ -65,6 +66,7 @@ PROMPT_TOOLS: tuple[str, ...] = (
     "material_studio_gui_record_visual_confirmation",
     "material_studio_gui_open_structure",
     "material_studio_gui_execute_view_replay",
+    "material_studio_castep_relax_current",
     "material_studio_run_script",
 )
 

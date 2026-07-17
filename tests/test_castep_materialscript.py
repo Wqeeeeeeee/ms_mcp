@@ -11,11 +11,16 @@ from material_studio_mcp_server.castep_materialscript import (
 )
 from material_studio_mcp_server.scripts import castep_energy_script
 from material_studio_mcp_server.specs.castep import (
+    CastepCellOptimization,
     CastepDipoleCorrection,
     CastepEnergySpec,
+    CastepOptimizationAlgorithm,
     CastepTask,
 )
 from material_studio_mcp_server.specs.patch import SemanticPatchOperation
+from material_studio_mcp_server.translators import (
+    render_castep_geometry_optimization_script,
+)
 from material_studio_mcp_server.validators import validate_generated_script
 
 
@@ -81,6 +86,62 @@ def test_castep_custom_grid_uses_parameter_axes() -> None:
     assert "ParameterB => 5" in script
     assert "ParameterC => 4" in script
     assert "KPointSeparation =>" not in script
+
+
+def test_castep_geometry_settings_render_exact_ms_20_1_properties() -> None:
+    spec = CastepEnergySpec(
+        task="GeometryOptimization",
+        cutoff_energy_ev=600,
+        kpoints=(6, 6, 2),
+        max_iterations=250,
+        displacement_convergence_angstrom=0.001,
+        energy_convergence_ev_per_atom=1.0e-5,
+        force_convergence_ev_per_angstrom=0.02,
+        cell_optimization="None",
+        optimization_algorithm="LBFGS",
+    )
+    script = render_castep_run_snippet(spec)
+
+    assert "Modules->CASTEP->GeometryOptimization->Run" in script
+    assert "MaxIterations => 250" in script
+    assert "DisplacementConvergence => 0.001" in script
+    assert "EnergyConvergence => 1e-05" in script
+    assert "ForceConvergence => 0.02" in script
+    assert "CellOptimization => 'None'" in script
+    assert "OptimizationAlgorithm => 'LBFGS'" in script
+    assert spec.cell_optimization is CastepCellOptimization.NONE
+    assert spec.optimization_algorithm is CastepOptimizationAlgorithm.LBFGS
+
+    full_script = render_castep_geometry_optimization_script(
+        spec,
+        "input.cif",
+        "relaxed.cif",
+        "report.txt",
+        project_id="geometry_contract",
+        base_revision=3,
+    )
+    assert "$castep_results->Structure" in full_script
+    assert "$castep_results->Report" in full_script
+    assert "$castep_results->TotalEnergy" in full_script
+    assert "$castep_results->Enthalpy" in full_script
+    assert "$castep_results->Converged" in full_script
+    assert "__MS_MCP_JSON_START__" in full_script
+    assert "material_studio_castep_geometry_optimization_result_v1" in full_script
+    assert validate_generated_script(full_script)["valid"] is True
+
+
+def test_castep_geometry_settings_reject_wrong_task_and_incompatible_algorithm() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="geometry-optimization settings require task GeometryOptimization",
+    ):
+        CastepEnergySpec(task="Energy", max_iterations=100)
+    with pytest.raises(ValidationError, match="Damped MD"):
+        CastepEnergySpec(
+            task="GeometryOptimization",
+            cell_optimization="Full",
+            optimization_algorithm="Damped MD",
+        )
 
 
 @pytest.mark.parametrize(
@@ -220,6 +281,27 @@ def test_castep_mcp_preview_reports_resolved_dispatch() -> None:
     assert "DipoleCorrection => 'Self-consistent'" in result["script"]
 
 
+def test_castep_mcp_preview_exposes_geometry_optimization_settings() -> None:
+    result = server.material_studio_castep_energy_script(
+        "input.cif",
+        task="GeometryOptimization",
+        cutoff_energy_ev=520,
+        kpoint_separation=0.04,
+        max_iterations=180,
+        displacement_convergence_angstrom=0.002,
+        energy_convergence_ev_per_atom=2.0e-5,
+        force_convergence_ev_per_angstrom=0.03,
+        cell_optimization="Fixed Volume",
+        optimization_algorithm="BFGS",
+    )
+
+    assert result["ok"] is True
+    assert result["executes_castep"] is False
+    assert "MaxIterations => 180" in result["script"]
+    assert "CellOptimization => 'Fixed Volume'" in result["script"]
+    assert "OptimizationAlgorithm => 'BFGS'" in result["script"]
+
+
 def test_castep_mcp_input_schema_exposes_only_canonical_tasks() -> None:
     schema = server.CastepEnergyInput.model_json_schema()
 
@@ -230,4 +312,10 @@ def test_castep_mcp_input_schema_exposes_only_canonical_tasks() -> None:
     assert dipole_schema["$ref"] == "#/$defs/CastepDipoleCorrection"
     assert schema["$defs"]["CastepDipoleCorrection"]["enum"] == [
         mode.value for mode in CastepDipoleCorrection
+    ]
+    assert schema["$defs"]["CastepCellOptimization"]["enum"] == [
+        mode.value for mode in CastepCellOptimization
+    ]
+    assert schema["$defs"]["CastepOptimizationAlgorithm"]["enum"] == [
+        mode.value for mode in CastepOptimizationAlgorithm
     ]

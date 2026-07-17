@@ -296,6 +296,12 @@ def castep_energy_script(
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None = None,
     dipole_correction: str | None = None,
+    max_iterations: int | None = None,
+    displacement_convergence_angstrom: float | None = None,
+    energy_convergence_ev_per_atom: float | None = None,
+    force_convergence_ev_per_angstrom: float | None = None,
+    cell_optimization: str | None = None,
+    optimization_algorithm: str | None = None,
 ) -> str:
     """Create a task-aware CASTEP script using the MS 20.1 contract.
 
@@ -318,6 +324,12 @@ def castep_energy_script(
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
         dipole_correction=dipole_correction,
+        max_iterations=max_iterations,
+        displacement_convergence_angstrom=displacement_convergence_angstrom,
+        energy_convergence_ev_per_atom=energy_convergence_ev_per_atom,
+        force_convergence_ev_per_angstrom=force_convergence_ev_per_angstrom,
+        cell_optimization=cell_optimization,
+        optimization_algorithm=optimization_algorithm,
     )
     run_snippet = render_castep_run_snippet(spec, results_variable="$results")
 

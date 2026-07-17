@@ -1150,6 +1150,49 @@ confirmation, call `material_studio_gui_apply_current_revision` with execute,
 GUI open, snapshot, and view-audit export enabled. This rematerializes the same
 revision and preserves revision history.
 
+## CASTEP Relaxation Tool
+
+The recommended config enables `material_studio_castep_relax_current` and sets
+its approval mode to `prompt`. This is intentional: the same tool is
+preview-safe by default, but `execution_mode="execute"` starts a real CASTEP
+job through `RunMatScript.bat`.
+
+Use a preview first:
+
+```text
+@mcp Run CASTEP geometry optimization on the current model, but keep execution_mode=preview.
+```
+
+The preview must report `execution_started=false`, `revision_created=false`,
+and a missing planned optimized structure. After reviewing the exact script,
+settings, cutoff, k-point sampling, license/queue readiness, and slab gates,
+an explicit execute request may be made. Set `open_in_gui=false` when only the
+calculation and revision promotion are wanted. When `open_in_gui=true`, the
+tool requires one already-open Materials Studio process/window before CASTEP
+starts and hot-loads only the converged promoted revision into that window.
+
+The execute output should be treated as accepted only when these receipts are
+present:
+
+- `result_validation.ok=true` and `result_validation.converged=true`;
+- `revision_created=true` with a new revision number;
+- `relaxation_receipt.geometry_relaxation_verified=true`;
+- `view_audit.health.semiconductor_health.castep_geometry_optimization_summary.transition_verified=true`;
+- for fixed-cell slabs,
+  `fixed_cell_transition_verified=true`.
+
+The active user config is not rewritten by the doctor or protocol smoke. After
+merging the example snippet manually and restarting Codex, validate discovery
+with:
+
+```powershell
+ms-mcp-config-doctor --cwd .
+ms-mcp-protocol-smoke --cwd . --config .codex/config.toml.example
+```
+
+The protocol smoke calls only the preview branch and asserts that CASTEP,
+revision creation, structure materialization, and GUI input did not occur.
+
 ## Goal Watchdog
 
 The optional local watchdog runs as one hidden user-level PowerShell process

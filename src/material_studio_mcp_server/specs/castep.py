@@ -32,6 +32,24 @@ class CastepDipoleCorrection(str, Enum):
     SELF_CONSISTENT = "Self-consistent"
 
 
+class CastepCellOptimization(str, Enum):
+    """Geometry-optimization cell modes documented by MS 20.1."""
+
+    NONE = "None"
+    FULL = "Full"
+    FIXED_VOLUME = "Fixed Volume"
+    FIXED_SHAPE = "Fixed Shape"
+
+
+class CastepOptimizationAlgorithm(str, Enum):
+    """Geometry-optimization algorithms documented by MS 20.1."""
+
+    LBFGS = "LBFGS"
+    BFGS = "BFGS"
+    DAMPED_MD = "Damped MD"
+    TPSD = "TPSD"
+
+
 CASTEP_DIPOLE_CORRECTION_API_PROPERTY = "DipoleCorrection"
 CASTEP_DIPOLE_CORRECTION_API_CONTRACT = "Materials Studio 20.1 CASTEP DipoleCorrection"
 CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM = 8.0
@@ -124,6 +142,53 @@ CastepDipoleCorrectionValue = Annotated[
 ]
 
 
+def _normalize_documented_enum(
+    value: Any,
+    *,
+    enum_type: type[Enum],
+    label: str,
+) -> Enum:
+    if isinstance(value, enum_type):
+        return value
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    token = _normalized_task_token(value.strip())
+    aliases = {
+        _normalized_task_token(str(item.value)): item for item in enum_type
+    }
+    normalized = aliases.get(token)
+    if normalized is None:
+        supported = ", ".join(str(item.value) for item in enum_type)
+        raise ValueError(f"Unsupported {label} {value!r}; supported values: {supported}")
+    return normalized
+
+
+def normalize_castep_cell_optimization(value: Any) -> CastepCellOptimization:
+    return _normalize_documented_enum(
+        value,
+        enum_type=CastepCellOptimization,
+        label="CASTEP cell optimization",
+    )  # type: ignore[return-value]
+
+
+def normalize_castep_optimization_algorithm(value: Any) -> CastepOptimizationAlgorithm:
+    return _normalize_documented_enum(
+        value,
+        enum_type=CastepOptimizationAlgorithm,
+        label="CASTEP optimization algorithm",
+    )  # type: ignore[return-value]
+
+
+CastepCellOptimizationValue = Annotated[
+    CastepCellOptimization,
+    BeforeValidator(normalize_castep_cell_optimization),
+]
+CastepOptimizationAlgorithmValue = Annotated[
+    CastepOptimizationAlgorithm,
+    BeforeValidator(normalize_castep_optimization_algorithm),
+]
+
+
 class CastepEnergySpec(StrictModel):
     """CASTEP task settings rendered against the Materials Studio 20.1 API.
 
@@ -142,6 +207,24 @@ class CastepEnergySpec(StrictModel):
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
     dipole_correction: CastepDipoleCorrectionValue | None = None
+    max_iterations: int | None = Field(default=None, ge=3, le=1_000_000)
+    displacement_convergence_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    energy_convergence_ev_per_atom: float | None = Field(
+        default=None,
+        gt=1.0e-9,
+        le=100,
+    )
+    force_convergence_ev_per_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-7,
+        le=100,
+    )
+    cell_optimization: CastepCellOptimizationValue | None = None
+    optimization_algorithm: CastepOptimizationAlgorithmValue | None = None
     output_file: str | None = None
 
     @model_validator(mode="after")
@@ -158,5 +241,29 @@ class CastepEnergySpec(StrictModel):
         ):
             raise ValueError(
                 "Non self-consistent CASTEP dipole correction is supported only for the Energy task"
+            )
+        geometry_only_values = {
+            "max_iterations": self.max_iterations,
+            "displacement_convergence_angstrom": self.displacement_convergence_angstrom,
+            "energy_convergence_ev_per_atom": self.energy_convergence_ev_per_atom,
+            "force_convergence_ev_per_angstrom": self.force_convergence_ev_per_angstrom,
+            "cell_optimization": self.cell_optimization,
+            "optimization_algorithm": self.optimization_algorithm,
+        }
+        supplied_geometry_fields = [
+            name for name, value in geometry_only_values.items() if value is not None
+        ]
+        if supplied_geometry_fields and self.task is not CastepTask.GEOMETRY_OPTIMIZATION:
+            raise ValueError(
+                "CASTEP geometry-optimization settings require task GeometryOptimization: "
+                + ", ".join(supplied_geometry_fields)
+            )
+        if (
+            self.cell_optimization is not None
+            and self.cell_optimization is not CastepCellOptimization.NONE
+            and self.optimization_algorithm is CastepOptimizationAlgorithm.DAMPED_MD
+        ):
+            raise ValueError(
+                "CASTEP Damped MD is not supported when cell optimization is requested"
             )
         return self

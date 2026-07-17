@@ -786,6 +786,37 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "Semiconductor layer-rotation scaffold requires geometry relaxation before calculation."
             )
 
+    castep_relaxation = semiconductor.get("castep_geometry_optimization_summary") or {}
+    if castep_relaxation:
+        checks["semiconductor_castep_relaxation_quality"] = castep_relaxation.get(
+            "quality"
+        )
+        checks["semiconductor_castep_relaxation_source_revision"] = (
+            castep_relaxation.get("source_revision")
+        )
+        checks["semiconductor_castep_relaxation_target_revision"] = (
+            castep_relaxation.get("target_revision")
+        )
+        checks["semiconductor_castep_relaxation_converged"] = (
+            castep_relaxation.get("convergence_verified")
+        )
+        checks["semiconductor_castep_relaxation_transition_verified"] = (
+            castep_relaxation.get("transition_verified")
+        )
+        checks["semiconductor_castep_relaxation_fixed_cell_verified"] = (
+            castep_relaxation.get("fixed_cell_transition_verified")
+        )
+        checks["semiconductor_castep_relaxation_output_binding_verified"] = (
+            castep_relaxation.get("output_binding_verified")
+        )
+        checks["semiconductor_castep_relaxation_atom_identity_verified"] = (
+            castep_relaxation.get("atom_identity_verified")
+        )
+        if castep_relaxation.get("transition_verified") is False:
+            warnings.append(
+                "CASTEP geometry-optimization receipt is not bound to the current immutable revision."
+            )
+
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
         latest_twist = commensurate_twist.get("latest") or {}
@@ -811,6 +842,12 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         )
         checks["semiconductor_commensurate_twist_structure_binding_matches_current"] = (
             commensurate_twist.get("structure_binding_matches_current")
+        )
+        checks["semiconductor_commensurate_twist_structure_binding_scope"] = (
+            commensurate_twist.get("structure_binding_scope")
+        )
+        checks["semiconductor_commensurate_twist_relaxation_transition_verified"] = (
+            commensurate_twist.get("castep_relaxation_transition_verified")
         )
         checks["semiconductor_commensurate_twist_commensurability_verified"] = (
             commensurate_twist.get("commensurability_verified")
@@ -875,6 +912,12 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         )
         checks["semiconductor_commensurate_heterobilayer_structure_binding_matches_current"] = (
             commensurate_heterobilayer.get("structure_binding_matches_current")
+        )
+        checks["semiconductor_commensurate_heterobilayer_structure_binding_scope"] = (
+            commensurate_heterobilayer.get("structure_binding_scope")
+        )
+        checks["semiconductor_commensurate_heterobilayer_relaxation_transition_verified"] = (
+            commensurate_heterobilayer.get("castep_relaxation_transition_verified")
         )
         checks["semiconductor_commensurate_heterobilayer_commensurability_verified"] = (
             commensurate_heterobilayer.get("commensurability_verified")
@@ -953,6 +996,9 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         )
         checks["semiconductor_2d_geometry_relaxation_required"] = (
             two_dimensional_electrostatics.get("geometry_relaxation_required")
+        )
+        checks["semiconductor_2d_geometry_relaxation_verified"] = (
+            two_dimensional_electrostatics.get("geometry_relaxation_verified")
         )
         checks["semiconductor_2d_calculation_review_required"] = (
             two_dimensional_electrostatics.get("calculation_review_required")

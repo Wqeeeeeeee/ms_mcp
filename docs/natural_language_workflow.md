@@ -1042,6 +1042,50 @@ Common Chinese CASTEP setting phrases are also supported, including
 `计算光学性质，截断能 500 eV`. These still create preview-first
 `set_castep_energy` patches unless execution is explicitly confirmed.
 
+### Executing CASTEP Geometry Optimization
+
+An explicit request such as `Run CASTEP geometry optimization on the current
+model` routes to `material_studio_castep_relax_current`. A request that only
+configures or previews geometry-optimization settings remains a
+`set_castep_energy` semantic patch. An explicit `execution_mode=preview`
+always overrides run wording; when the mode is omitted, only explicit
+run/execute/relax intent may select execute.
+
+The preview response contains the exact MaterialsScript, its SHA-256, the
+resolved simulation settings, and a fail-closed preflight. It does not call
+`RunMatScript.bat`, create a revision, materialize the optimized structure, or
+touch the GUI. The execute path uses the documented Materials Studio 20.1
+`Modules->CASTEP->GeometryOptimization->Run` API and captures `Structure`,
+`Report`, `TotalEnergy`, `Enthalpy`, and `Converged` in tagged JSON.
+
+A calculation result is promoted only when all of the following are true:
+
+- the tagged result matches the project, source revision, API contract, and
+  planned workspace paths;
+- CASTEP reports convergence and the source revision is still current;
+- the optimized CIF parses, preserves every atom ID and element, and obeys the
+  requested cell mode;
+- the new structure and report are copied into a fresh output directory and a
+  new immutable revision is written atomically.
+
+Failed, malformed, superseded, or unconverged calculations preserve their
+logs and result metadata but create no revision. Slabs require a fixed cell;
+asymmetric slabs also require self-consistent dipole correction and at least 8
+angstrom vacuum. GUI loading is attempted only after promotion and only into
+one verified existing Materials Studio window. The workflow never launches a
+new GUI process.
+
+Fresh diagnostics expose
+`castep_geometry_optimization_summary.transition_verified`. Commensurate TMD
+slabs require `fixed_cell_transition_verified=true` before their independent
+geometry-relaxation blocker clears. The source hash must match the original
+commensurate receipt and the output hash must match the current revision.
+Relaxed interlayer coordinates may differ from construction values; the
+verified transition explains that change. Any later structural edit breaks the
+output binding and restores the blocker. The view bundle writes
+`semiconductor_castep_geometry_optimization.csv` together with the updated
+commensurate and two-dimensional electrostatic CSVs.
+
 ## Rollback
 
 Use `material_studio_project_rollback` to create a new revision copied from a previous revision. Rollback must not delete historical revisions.

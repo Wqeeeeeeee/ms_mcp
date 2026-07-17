@@ -3,7 +3,7 @@
 此模块提供了各种解析功能。
 """
 
-from .castep_log import parse_castep_energy
+from .castep_log import parse_castep_energy, validate_castep_geometry_result
 from .cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .copy_script import analyze_reviewed_copy_script
 from .forcite_log import parse_forcite_convergence
@@ -20,4 +20,5 @@ __all__ = [
     "parse_forcite_convergence",
     "parse_structure_summary",
     "validate_crystal_cif_against_spec",
+    "validate_castep_geometry_result",
 ]

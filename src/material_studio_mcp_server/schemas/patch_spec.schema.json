@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "CastepCellOptimization": {
+      "description": "Geometry-optimization cell modes documented by MS 20.1.",
+      "enum": [
+        "None",
+        "Full",
+        "Fixed Volume",
+        "Fixed Shape"
+      ],
+      "title": "CastepCellOptimization",
+      "type": "string"
+    },
     "CastepDipoleCorrection": {
       "description": "Dipole-correction modes documented by Materials Studio 20.1.",
       "enum": [
@@ -8,6 +19,17 @@
         "Self-consistent"
       ],
       "title": "CastepDipoleCorrection",
+      "type": "string"
+    },
+    "CastepOptimizationAlgorithm": {
+      "description": "Geometry-optimization algorithms documented by MS 20.1.",
+      "enum": [
+        "LBFGS",
+        "BFGS",
+        "Damped MD",
+        "TPSD"
+      ],
+      "title": "CastepOptimizationAlgorithm",
       "type": "string"
     },
     "CastepTask": {
@@ -356,8 +378,7 @@
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Task"
+          "default": null
         },
         "functional": {
           "anyOf": [
@@ -428,6 +449,70 @@
           "anyOf": [
             {
               "$ref": "#/$defs/CastepDipoleCorrection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "displacement_convergence_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displacement Convergence Angstrom"
+        },
+        "energy_convergence_ev_per_atom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-09,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Convergence Ev Per Atom"
+        },
+        "force_convergence_ev_per_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-07,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Force Convergence Ev Per Angstrom"
+        },
+        "cell_optimization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepCellOptimization"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "optimization_algorithm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepOptimizationAlgorithm"
             },
             {
               "type": "null"

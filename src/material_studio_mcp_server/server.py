@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import shutil
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -18,6 +19,10 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .castep_materialscript import build_castep_materialscript_plan
+from .castep_relaxation import (
+    build_relaxed_revision_spec,
+    crystal_structure_sha256,
+)
 from .diagnostics import (
     CRYSTAL_DIRECTION_VIEW_INDICES,
     CRYSTAL_PLANE_VIEW_INDICES,
@@ -51,7 +56,8 @@ from .natural_language import (
     supported_templates,
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
-from .parsers.cif import validate_crystal_cif_against_spec
+from .parsers.castep_log import validate_castep_geometry_result
+from .parsers.cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .parsers.structure_summary import parse_structure_summary
 from .scripts import (
     build_molecule_script,
@@ -64,8 +70,12 @@ from .scripts import (
 )
 from .specs.common import ExecutionMode, ModelType
 from .specs.castep import (
+    CastepCellOptimization,
+    CastepCellOptimizationValue,
+    CastepDipoleCorrection,
     CastepDipoleCorrectionValue,
     CastepEnergySpec,
+    CastepOptimizationAlgorithmValue,
     CastepTask,
     CastepTaskValue,
 )
@@ -90,7 +100,12 @@ from .state.store import (
     ProjectStore,
     atomic_write_text,
 )
-from .translators import crystal_cif_summary, render_model_to_perl, write_crystal_cif
+from .translators import (
+    crystal_cif_summary,
+    render_castep_geometry_optimization_script,
+    render_model_to_perl,
+    write_crystal_cif,
+)
 from .validators import validate_generated_script
 
 
@@ -351,6 +366,24 @@ class CastepEnergyInput(BaseModel):
             "Non self-consistent is valid only for the Energy task."
         ),
     )
+    max_iterations: int | None = Field(default=None, ge=3, le=1_000_000)
+    displacement_convergence_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    energy_convergence_ev_per_atom: float | None = Field(
+        default=None,
+        gt=1.0e-9,
+        le=100,
+    )
+    force_convergence_ev_per_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-7,
+        le=100,
+    )
+    cell_optimization: CastepCellOptimizationValue | None = None
+    optimization_algorithm: CastepOptimizationAlgorithmValue | None = None
 
     @model_validator(mode="after")
     def validate_kpoint_mode(self) -> "CastepEnergyInput":
@@ -362,6 +395,12 @@ class CastepEnergyInput(BaseModel):
             kpoint_separation=self.kpoint_separation,
             kpoints=self.kpoints,
             dipole_correction=self.dipole_correction,
+            max_iterations=self.max_iterations,
+            displacement_convergence_angstrom=self.displacement_convergence_angstrom,
+            energy_convergence_ev_per_atom=self.energy_convergence_ev_per_atom,
+            force_convergence_ev_per_angstrom=self.force_convergence_ev_per_angstrom,
+            cell_optimization=self.cell_optimization,
+            optimization_algorithm=self.optimization_algorithm,
         )
         return self
 
@@ -2869,6 +2908,14 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_layer_rotation_commensurability_verified",
     "semiconductor_layer_rotation_requires_geometry_relaxation",
     "semiconductor_layer_rotation_calculation_ready",
+    "semiconductor_castep_relaxation_quality",
+    "semiconductor_castep_relaxation_source_revision",
+    "semiconductor_castep_relaxation_target_revision",
+    "semiconductor_castep_relaxation_converged",
+    "semiconductor_castep_relaxation_transition_verified",
+    "semiconductor_castep_relaxation_fixed_cell_verified",
+    "semiconductor_castep_relaxation_output_binding_verified",
+    "semiconductor_castep_relaxation_atom_identity_verified",
     "semiconductor_commensurate_twist_count",
     "semiconductor_commensurate_twist_quality",
     "semiconductor_commensurate_twist_metadata_consistent",
@@ -2880,6 +2927,8 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_commensurate_twist_angle_verified",
     "semiconductor_commensurate_twist_lattice_verified",
     "semiconductor_commensurate_twist_structure_binding_matches_current",
+    "semiconductor_commensurate_twist_structure_binding_scope",
+    "semiconductor_commensurate_twist_relaxation_transition_verified",
     "semiconductor_commensurate_twist_commensurability_verified",
     "semiconductor_commensurate_twist_requires_geometry_relaxation",
     "semiconductor_commensurate_twist_calculation_ready",
@@ -2897,6 +2946,8 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_commensurate_heterobilayer_max_abs_strain_percent",
     "semiconductor_commensurate_heterobilayer_strain_partition_verified",
     "semiconductor_commensurate_heterobilayer_structure_binding_matches_current",
+    "semiconductor_commensurate_heterobilayer_structure_binding_scope",
+    "semiconductor_commensurate_heterobilayer_relaxation_transition_verified",
     "semiconductor_commensurate_heterobilayer_commensurability_verified",
     "semiconductor_commensurate_heterobilayer_requires_geometry_relaxation",
     "semiconductor_commensurate_heterobilayer_calculation_ready",
@@ -2920,6 +2971,7 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_2d_dipole_correction_vacuum_requirement_met",
     "semiconductor_2d_dipole_correction_setting_verified",
     "semiconductor_2d_geometry_relaxation_required",
+    "semiconductor_2d_geometry_relaxation_verified",
     "semiconductor_2d_calculation_review_required",
     "semiconductor_2d_quantitative_electrostatic_calculation_ready",
     "semiconductor_slab_vacuum_ok",
@@ -3509,6 +3561,35 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
         ),
         "recommended_calculation_settings_requires_explicit_confirmation": True,
+        "castep_geometry_optimization": {
+            "tool": "material_studio_castep_relax_current",
+            "natural_language_entry_tool": "material_studio_live_modeling_request",
+            "default_execution_mode": "preview",
+            "execute_requires_explicit_confirmation": True,
+            "materials_studio_api_contract": "Materials Studio 20.1",
+            "run_api": "Modules->CASTEP->GeometryOptimization->Run",
+            "result_properties": [
+                "Structure",
+                "Report",
+                "TotalEnergy",
+                "Enthalpy",
+                "Converged",
+            ],
+            "promotion_requires_converged": True,
+            "promotion_requires_current_revision_unchanged": True,
+            "promotion_requires_atom_identity_preserved": True,
+            "promotion_creates_immutable_revision": True,
+            "failed_or_unconverged_result_creates_revision": False,
+            "hotload_reuses_existing_window_only": True,
+            "launches_new_gui_process": False,
+            "asymmetric_slab_requires_self_consistent_dipole_correction": True,
+            "slab_cell_optimization": "None",
+            "diagnostic_summary_field": (
+                "semiconductor_health.castep_geometry_optimization_summary"
+            ),
+            "verified_transition_field": "transition_verified",
+            "fixed_cell_transition_field": "fixed_cell_transition_verified",
+        },
         "recommended_calculation_settings_receipt_recovery_field": (
             "recommended_calculation_settings_receipt_recovery"
         ),
@@ -3547,6 +3628,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "material_studio_live_capabilities",
                 "material_studio_live_modeling_request",
                 "material_studio_live_update_with_patch",
+                "material_studio_castep_relax_current",
                 "material_studio_live_project_status",
                 "material_studio_model_export_view_bundle",
                 "material_studio_gui_apply_current_revision",
@@ -4356,7 +4438,20 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "requires_existing_project": True,
                     "pattern": "Resume prepared GUI view validation, e.g. 'continue the next GUI view replay' or '继续验证下一个 GUI 视角'.",
                     "history_policy": "Reads or prepares the revision-scoped replay manifest; does not issue GUI input or create a revision.",
-                }
+                },
+                {
+                    "template_id": "castep_geometry_optimization",
+                    "operation": "castep_relaxation",
+                    "requires_existing_project": True,
+                    "pattern": (
+                        "Preview or explicitly run CASTEP geometry optimization on the current "
+                        "revision, e.g. 'run CASTEP geometry optimization on the current model'."
+                    ),
+                    "history_policy": (
+                        "Preview creates no revision. Execute preserves failed or unconverged "
+                        "evidence and creates one new revision only for a verified converged result."
+                    ),
+                },
             ],
             "new_structure_inline_modifiers": {
                 "enabled_for": "semiconductor crystal templates",
@@ -4487,6 +4582,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "dipole_correction_setting_verified_from_model_spec": True,
                     "dipole_review_method": "structured_materialscript_setting_verified_against_ms20_1_help",
                     "quantitative_electrostatic_calculation_ready": False,
+                    "geometry_relaxation_tool": "material_studio_castep_relax_current",
+                    "geometry_relaxation_transition_receipt_required": True,
                 },
                 "superlattice_examples": [
                     "Build a 3-period GaAs/AlAs MQW.",
@@ -10861,6 +10958,30 @@ def material_studio_castep_energy_script(
         CastepDipoleCorrectionValue | None,
         Field(description="Optional verified Materials Studio 20.1 dipole-correction mode."),
     ] = None,
+    max_iterations: Annotated[
+        int | None,
+        Field(description="Optional maximum geometry-optimization cycles.", ge=3, le=1_000_000),
+    ] = None,
+    displacement_convergence_angstrom: Annotated[
+        float | None,
+        Field(description="Optional displacement convergence in angstrom.", gt=1.0e-8, le=100),
+    ] = None,
+    energy_convergence_ev_per_atom: Annotated[
+        float | None,
+        Field(description="Optional energy convergence in eV/atom.", gt=1.0e-9, le=100),
+    ] = None,
+    force_convergence_ev_per_angstrom: Annotated[
+        float | None,
+        Field(description="Optional force convergence in eV/angstrom.", gt=1.0e-7, le=100),
+    ] = None,
+    cell_optimization: Annotated[
+        CastepCellOptimizationValue | None,
+        Field(description="Optional documented CASTEP cell-optimization mode."),
+    ] = None,
+    optimization_algorithm: Annotated[
+        CastepOptimizationAlgorithmValue | None,
+        Field(description="Optional documented CASTEP geometry algorithm."),
+    ] = None,
 ) -> dict[str, Any]:
     """Generate a task-aware CASTEP MaterialsScript Perl template.
 
@@ -10891,6 +11012,12 @@ def material_studio_castep_energy_script(
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
         dipole_correction=dipole_correction,
+        max_iterations=max_iterations,
+        displacement_convergence_angstrom=displacement_convergence_angstrom,
+        energy_convergence_ev_per_atom=energy_convergence_ev_per_atom,
+        force_convergence_ev_per_angstrom=force_convergence_ev_per_angstrom,
+        cell_optimization=cell_optimization,
+        optimization_algorithm=optimization_algorithm,
     )
     spec = CastepEnergySpec(
         task=params.task,
@@ -10900,6 +11027,12 @@ def material_studio_castep_energy_script(
         kpoint_separation=params.kpoint_separation,
         kpoints=params.kpoints,
         dipole_correction=params.dipole_correction,
+        max_iterations=params.max_iterations,
+        displacement_convergence_angstrom=params.displacement_convergence_angstrom,
+        energy_convergence_ev_per_atom=params.energy_convergence_ev_per_atom,
+        force_convergence_ev_per_angstrom=params.force_convergence_ev_per_angstrom,
+        cell_optimization=params.cell_optimization,
+        optimization_algorithm=params.optimization_algorithm,
     )
     plan = build_castep_materialscript_plan(spec)
     script = castep_energy_script(
@@ -10912,6 +11045,18 @@ def material_studio_castep_energy_script(
         kpoints=spec.kpoints,
         dipole_correction=(
             spec.dipole_correction.value if spec.dipole_correction is not None else None
+        ),
+        max_iterations=spec.max_iterations,
+        displacement_convergence_angstrom=spec.displacement_convergence_angstrom,
+        energy_convergence_ev_per_atom=spec.energy_convergence_ev_per_atom,
+        force_convergence_ev_per_angstrom=spec.force_convergence_ev_per_angstrom,
+        cell_optimization=(
+            spec.cell_optimization.value if spec.cell_optimization is not None else None
+        ),
+        optimization_algorithm=(
+            spec.optimization_algorithm.value
+            if spec.optimization_algorithm is not None
+            else None
         ),
     )
     return _ok(
@@ -34805,6 +34950,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "recommended_calculation_settings_requires_explicit_confirmation",
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
+            "castep_geometry_optimization",
             "default_execution_mode",
             "response_modes",
             "response_mode",
@@ -35700,6 +35846,7 @@ def _compact_capabilities_response(
             "recommended_calculation_settings_requires_explicit_confirmation",
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
+            "castep_geometry_optimization",
             "default_execution_mode",
             "response_modes",
             "visual_confirmation_entry",
@@ -39529,6 +39676,723 @@ def material_studio_live_update_with_patch(
         return _error(exc)
 
 
+def _effective_castep_relaxation_spec(
+    base_spec: ModelSpec,
+    *,
+    quality: str | None,
+    functional: str | None,
+    cutoff_energy_ev: int | None,
+    kpoint_separation: float | None,
+    kpoints: tuple[int, int, int] | None,
+    dipole_correction: Any | None,
+    max_iterations: int | None,
+    displacement_convergence_angstrom: float | None,
+    energy_convergence_ev_per_atom: float | None,
+    force_convergence_ev_per_angstrom: float | None,
+    cell_optimization: Any | None,
+    optimization_algorithm: Any | None,
+) -> CastepEnergySpec:
+    """Resolve explicit overrides against the current CASTEP settings."""
+
+    current = (
+        base_spec.simulation
+        if isinstance(base_spec.simulation, CastepEnergySpec)
+        else None
+    )
+
+    def selected(name: str, override: Any, default: Any = None) -> Any:
+        if override is not None:
+            return override
+        current_value = getattr(current, name, None) if current is not None else None
+        return current_value if current_value is not None else default
+
+    selected_kpoints = selected("kpoints", kpoints)
+    selected_separation = selected("kpoint_separation", kpoint_separation)
+    if kpoints is not None:
+        selected_separation = None
+    elif kpoint_separation is not None:
+        selected_kpoints = None
+    return CastepEnergySpec(
+        task=CastepTask.GEOMETRY_OPTIMIZATION,
+        quality=selected("quality", quality, "Medium"),
+        functional=selected("functional", functional, "PBE"),
+        cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
+        kpoint_separation=selected_separation,
+        kpoints=selected_kpoints,
+        dipole_correction=selected("dipole_correction", dipole_correction),
+        max_iterations=selected("max_iterations", max_iterations, 100),
+        displacement_convergence_angstrom=selected(
+            "displacement_convergence_angstrom",
+            displacement_convergence_angstrom,
+        ),
+        energy_convergence_ev_per_atom=selected(
+            "energy_convergence_ev_per_atom",
+            energy_convergence_ev_per_atom,
+        ),
+        force_convergence_ev_per_angstrom=selected(
+            "force_convergence_ev_per_angstrom",
+            force_convergence_ev_per_angstrom,
+        ),
+        cell_optimization=selected(
+            "cell_optimization",
+            cell_optimization,
+            CastepCellOptimization.NONE,
+        ),
+        optimization_algorithm=selected(
+            "optimization_algorithm",
+            optimization_algorithm,
+            "LBFGS",
+        ),
+    )
+
+
+def _castep_relaxation_preflight(
+    spec: ModelSpec,
+    simulation: CastepEnergySpec,
+    *,
+    script_validation: dict[str, Any],
+    input_structure: Path,
+    output_structure: Path,
+    output_report: Path,
+) -> dict[str, Any]:
+    """Build a fail-closed semiconductor relaxation execution gate."""
+
+    metadata = dict(spec.metadata or {})
+    slab_model = bool(
+        metadata.get("surface_axis")
+        or metadata.get("vacuum_angstrom") is not None
+        or metadata.get("two_dimensional_electrostatic_preflight_required")
+        or metadata.get("commensurate_twisted_bilayer")
+        or metadata.get("commensurate_tmd_heterobilayer")
+    )
+    asymmetric_slab = bool(
+        metadata.get("surface_asymmetry_expected")
+        or metadata.get("commensurate_tmd_heterobilayer")
+    )
+    vacuum_value = next(
+        (
+            float(metadata[key])
+            for key in (
+                "vacuum_angstrom",
+                "vacuum_thickness_angstrom",
+                "surface_vacuum_angstrom",
+            )
+            if isinstance(metadata.get(key), (int, float))
+        ),
+        None,
+    )
+    kpoint_ready = bool(
+        simulation.kpoints is not None
+        or simulation.kpoint_separation is not None
+    )
+    cutoff_ready = simulation.cutoff_energy_ev is not None
+    fixed_slab_cell = bool(
+        not slab_model
+        or simulation.cell_optimization in {None, CastepCellOptimization.NONE}
+    )
+    dipole_ready = bool(
+        not asymmetric_slab
+        or simulation.dipole_correction is CastepDipoleCorrection.SELF_CONSISTENT
+    )
+    vacuum_ready = bool(
+        not asymmetric_slab
+        or (vacuum_value is not None and vacuum_value >= 8.0)
+    )
+    checks = {
+        "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
+        "task_is_geometry_optimization": (
+            simulation.task is CastepTask.GEOMETRY_OPTIMIZATION
+        ),
+        "generated_script_valid": bool(script_validation.get("valid")),
+        "cutoff_energy_explicit": cutoff_ready,
+        "primary_kpoint_sampling_explicit": kpoint_ready,
+        "slab_model": slab_model,
+        "asymmetric_slab": asymmetric_slab,
+        "slab_cell_fixed": fixed_slab_cell,
+        "self_consistent_dipole_correction_for_asymmetric_slab": dipole_ready,
+        "minimum_8_angstrom_vacuum_for_dipole_correction": vacuum_ready,
+    }
+    blockers = [
+        reason
+        for condition, reason in (
+            (not checks["current_model_is_crystal"], "crystal_model_required"),
+            (
+                not checks["task_is_geometry_optimization"],
+                "geometry_optimization_task_required",
+            ),
+            (not checks["generated_script_valid"], "generated_script_invalid"),
+            (not cutoff_ready, "explicit_cutoff_energy_required"),
+            (not kpoint_ready, "explicit_primary_kpoint_sampling_required"),
+            (not fixed_slab_cell, "slab_cell_optimization_must_be_none"),
+            (
+                not dipole_ready,
+                "asymmetric_slab_requires_self_consistent_dipole_correction",
+            ),
+            (
+                not vacuum_ready,
+                "dipole_correction_requires_at_least_8_angstrom_vacuum",
+            ),
+        )
+        if condition
+    ]
+    return {
+        "schema_version": "material_studio_castep_relaxation_preflight_v1",
+        "execution_ready": not blockers,
+        "checks": checks,
+        "blocking_reasons": blockers,
+        "vacuum_angstrom": vacuum_value,
+        "input_structure": str(input_structure),
+        "input_structure_exists": input_structure.is_file(),
+        "output_structure": str(output_structure),
+        "output_report": str(output_report),
+        "result_contract": {
+            "api": "Modules->CASTEP->GeometryOptimization->Run",
+            "materials_studio_api_contract": "Materials Studio 20.1",
+            "required_result_keys": [
+                "Structure",
+                "Report",
+                "TotalEnergy",
+                "Enthalpy",
+                "Converged",
+            ],
+            "promotion_requires_converged": True,
+            "promotion_requires_atom_identity_preserved": True,
+        },
+    }
+
+
+def _write_json_artifact(path: Path, payload: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+    )
+    return path
+
+
+@mcp.tool(
+    name="material_studio_castep_relax_current",
+    annotations={
+        "title": "Preview or run CASTEP geometry relaxation for the current revision",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def material_studio_castep_relax_current(
+    project_id: Annotated[str | None, Field(description="Current structured crystal project; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
+    execution_mode: Annotated[ExecutionMode, Field(description="preview returns the exact script and gates; execute runs CASTEP and promotes only a converged result.")] = ExecutionMode.PREVIEW,
+    quality: Annotated[str | None, Field(description="Optional CASTEP quality override.", min_length=1, max_length=100)] = None,
+    functional: Annotated[str | None, Field(description="Optional exchange-correlation functional override.", min_length=1, max_length=100)] = None,
+    cutoff_energy_ev: Annotated[int | None, Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000)] = None,
+    kpoint_separation: Annotated[float | None, Field(description="Optional primary SCF k-point separation override.", gt=0, le=10)] = None,
+    kpoints: Annotated[tuple[int, int, int] | None, Field(description="Optional primary SCF custom k-point grid override.")] = None,
+    dipole_correction: Annotated[CastepDipoleCorrectionValue | None, Field(description="Optional MS 20.1 dipole-correction override.")] = None,
+    max_iterations: Annotated[int | None, Field(description="Optional maximum geometry cycles.", ge=3, le=1_000_000)] = None,
+    displacement_convergence_angstrom: Annotated[float | None, Field(description="Optional displacement convergence in angstrom.", gt=1.0e-8, le=100)] = None,
+    energy_convergence_ev_per_atom: Annotated[float | None, Field(description="Optional energy convergence in eV/atom.", gt=1.0e-9, le=100)] = None,
+    force_convergence_ev_per_angstrom: Annotated[float | None, Field(description="Optional force convergence in eV/angstrom.", gt=1.0e-7, le=100)] = None,
+    cell_optimization: Annotated[CastepCellOptimizationValue | None, Field(description="Optional documented cell mode; slabs require None.")] = None,
+    optimization_algorithm: Annotated[CastepOptimizationAlgorithmValue | None, Field(description="Optional documented geometry algorithm.")] = None,
+    open_in_gui: Annotated[bool, Field(description="Hot-load the converged revision into the one verified existing MS window.")] = True,
+    take_snapshot: Annotated[bool, Field(description="Capture a GUI snapshot after hot-loading.")] = True,
+    export_view_audit: Annotated[bool, Field(description="Export fresh structural and semiconductor diagnostics for the promoted revision.")] = True,
+    views: Annotated[list[str] | None, Field(description="Optional diagnostic view names.")] = None,
+    working_dir: Annotated[str | None, Field(description="Optional structured workspace root.")] = None,
+    timeout_seconds: Annotated[int | None, Field(description="CASTEP execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
+    response_mode: Annotated[McpResponseMode, Field(description="full result or compact MCP receipt.")] = McpResponseMode.FULL,
+) -> dict[str, Any]:
+    """Run the verified CASTEP relaxation-to-revision workflow."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        store = _structured_store(working_dir)
+        project_resolution: dict[str, Any]
+        if project_id is None:
+            latest = _latest_live_project(store)
+            if latest is None:
+                return _compact_live_response(
+                    _error(ValueError("No current structured project exists.")),
+                    response_mode,
+                )
+            base_spec, project_resolution = latest
+            project_id = base_spec.project_id
+        else:
+            base_spec, current_pointer = store.resolve_current(project_id)
+            project_resolution = _explicit_project_resolution(
+                base_spec,
+                current_pointer,
+            )
+        if not isinstance(base_spec.model, CrystalSpec):
+            raise ValueError("CASTEP geometry relaxation requires a crystal project")
+        simulation = _effective_castep_relaxation_spec(
+            base_spec,
+            quality=quality,
+            functional=functional,
+            cutoff_energy_ev=cutoff_energy_ev,
+            kpoint_separation=kpoint_separation,
+            kpoints=kpoints,
+            dipole_correction=dipole_correction,
+            max_iterations=max_iterations,
+            displacement_convergence_angstrom=displacement_convergence_angstrom,
+            energy_convergence_ev_per_atom=energy_convergence_ev_per_atom,
+            force_convergence_ev_per_angstrom=force_convergence_ev_per_angstrom,
+            cell_optimization=cell_optimization,
+            optimization_algorithm=optimization_algorithm,
+        )
+        output_dir = store.outputs_dir(base_spec.project_id, base_spec.revision)
+        relaxation_dir = output_dir / "castep_geometry_optimization"
+        input_structure = relaxation_dir / "input_structure.cif"
+        output_structure = relaxation_dir / "relaxed_structure.cif"
+        output_report = relaxation_dir / "castep_report.txt"
+        script_path = relaxation_dir / "run_geometry_optimization.pl"
+        result_metadata_path = relaxation_dir / "result_metadata.json"
+        script = render_castep_geometry_optimization_script(
+            simulation,
+            input_structure,
+            output_structure,
+            output_report,
+            project_id=base_spec.project_id,
+            base_revision=base_spec.revision,
+        )
+        script_validation = validate_generated_script(script)
+        preflight = _castep_relaxation_preflight(
+            base_spec,
+            simulation,
+            script_validation=script_validation,
+            input_structure=input_structure,
+            output_structure=output_structure,
+            output_report=output_report,
+        )
+        response: dict[str, Any] = {
+            "ok": True,
+            "workflow": "castep_geometry_optimization",
+            "project_id": base_spec.project_id,
+            "project_resolution": project_resolution,
+            "base_revision": base_spec.revision,
+            "revision": base_spec.revision,
+            "revision_created": False,
+            "execution_mode": mode.value,
+            "execution_started": False,
+            "simulation": simulation.model_dump(mode="json"),
+            "script": script,
+            "script_sha256": text_sha256(script),
+            "script_path": str(script_path),
+            "script_validation": script_validation,
+            "validation": script_validation,
+            "preflight": preflight,
+            "planned_outputs": {
+                "structure": str(output_structure),
+                "report": str(output_report),
+                "result_metadata": str(result_metadata_path),
+            },
+            "explicit_execute_required": True,
+            "new_process_launch_allowed": False,
+            "single_window_hotload_required": bool(open_in_gui),
+        }
+        if mode is ExecutionMode.PREVIEW:
+            response["status"] = (
+                "ready_for_explicit_execute"
+                if preflight["execution_ready"]
+                else "relaxation_preflight_blocked"
+            )
+            response["required_next_step"] = (
+                "Review the exact script and call again with execution_mode=execute."
+                if preflight["execution_ready"]
+                else "Resolve every relaxation preflight blocker before execution."
+            )
+            return _compact_live_response(
+                _attach_modeling_health(
+                    response,
+                    execution_mode=mode,
+                    store=None,
+                    spec=base_spec,
+                ),
+                response_mode,
+            )
+        if not preflight["execution_ready"]:
+            response.update(
+                {
+                    "ok": False,
+                    "status": "relaxation_preflight_blocked",
+                    "error": "CASTEP geometry optimization execution preflight failed.",
+                    "required_next_step": (
+                        "Resolve every relaxation preflight blocker before execution."
+                    ),
+                }
+            )
+            return _compact_live_response(response, response_mode)
+
+        gui = _gui_controller(working_dir)
+        gui_status: dict[str, Any] | None = None
+        if open_in_gui:
+            gui_status = gui.status(
+                project_id=base_spec.project_id,
+                revision=base_spec.revision,
+            )
+            response["gui_status"] = gui_status
+            if (
+                gui_status.get("window_found") is not True
+                or gui_status.get("single_window_policy_ok") is not True
+            ):
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "single_window_gui_preflight_blocked",
+                        "error": (
+                            "CASTEP was not started because one verified existing "
+                            "Materials Studio window is required for the requested hot-load."
+                        ),
+                        "gui_preflight_required": True,
+                        "recommended_tool": "material_studio_gui_status",
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+
+        terminal_attempt: dict[str, Any] | None = None
+        terminal_receipt: dict[str, Any] | None = None
+        runner_result: dict[str, Any] | None = None
+        result_validation: dict[str, Any] | None = None
+        with _revision_execution_transaction(
+            store=store,
+            spec=base_spec,
+            coverage=(
+                "castep_geometry_optimization",
+                "immutable_revision_binding",
+                "current_revision_revalidation",
+                "converged_result_promotion",
+            ),
+        ) as execution_transaction:
+            relaxation_dir.mkdir(parents=True, exist_ok=True)
+            if script_path.exists():
+                persisted_script = script_path.read_text(encoding="utf-8")
+                if persisted_script != script:
+                    raise ValueError(
+                        "Existing CASTEP relaxation script differs from the requested "
+                        "revision-bound script; refusing to overwrite it."
+                    )
+            else:
+                atomic_write_text(script_path, script)
+            if output_structure.exists() or output_report.exists():
+                raise ValueError(
+                    "CASTEP relaxation output already exists for this immutable revision; "
+                    "refusing to overwrite prior calculation evidence."
+                )
+            if not input_structure.exists():
+                write_crystal_cif(base_spec.model, input_structure)
+            input_validation = validate_crystal_cif_against_spec(
+                base_spec.model,
+                input_structure,
+            )
+            response["input_structure_validation"] = input_validation
+            if not input_validation.get("ok"):
+                raise ValueError("CASTEP relaxation input CIF failed ModelSpec validation")
+            spec_path = (
+                store.project_dir(base_spec.project_id)
+                / "revisions"
+                / f"r{base_spec.revision:03d}_model_spec.json"
+            )
+            attempt_receipt = begin_execution_attempt(
+                relaxation_dir,
+                project_id=base_spec.project_id,
+                revision=base_spec.revision,
+                backend="castep_geometry_optimization",
+                lock_path=Path(str(execution_transaction["path"])),
+                spec_path=spec_path,
+                spec_payload=base_spec.model_dump(mode="json"),
+                script_path=script_path,
+                script=script,
+                planned_structure_path=str(output_structure),
+                current_revision_at_start=base_spec.revision,
+            )
+            running_attempt = attempt_receipt["attempt"]
+            try:
+                run = runner.run_script(
+                    script,
+                    working_dir=relaxation_dir,
+                    timeout_seconds=timeout_seconds,
+                    job_prefix=f"{base_spec.project_id}_r{base_spec.revision:03d}_castep_relax",
+                    keep_script_name="run_geometry_optimization.pl",
+                )
+                runner_result = run.to_dict()
+                atomic_write_text(
+                    relaxation_dir / "stdout.log",
+                    str(runner_result.get("stdout") or runner_result.get("materials_output") or ""),
+                )
+                atomic_write_text(
+                    relaxation_dir / "stderr.log",
+                    str(runner_result.get("stderr") or runner_result.get("materials_log") or ""),
+                )
+                result_validation = validate_castep_geometry_result(
+                    runner_result.get("parsed_json"),
+                    project_id=base_spec.project_id,
+                    base_revision=base_spec.revision,
+                    output_structure=output_structure,
+                    output_report=output_report,
+                )
+                calculation_success = bool(
+                    runner_result.get("success")
+                    and result_validation.get("ok")
+                    and result_validation.get("converged")
+                )
+                execution_metadata = {
+                    "schema_version": "material_studio_castep_relaxation_execution_v1",
+                    "project_id": base_spec.project_id,
+                    "base_revision": base_spec.revision,
+                    "script_path": str(script_path),
+                    "script_sha256": text_sha256(script),
+                    "simulation": simulation.model_dump(mode="json"),
+                    "runner": runner_result,
+                    "result_validation": result_validation,
+                    "success": calculation_success,
+                }
+                _write_json_artifact(result_metadata_path, execution_metadata)
+                terminal_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=base_spec.revision,
+                    current_revision_still_current=True,
+                    result_success=calculation_success,
+                    result_metadata_path=result_metadata_path,
+                )
+                terminal_receipt = publish_terminal_execution_attempt(
+                    relaxation_dir,
+                    terminal_model.model_dump(mode="json"),
+                )
+                terminal_attempt = terminal_model.model_dump(mode="json")
+            except Exception as exc:
+                failed_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=base_spec.revision,
+                    current_revision_still_current=True,
+                    result_success=None,
+                    result_metadata_path=None,
+                    error=exc,
+                )
+                try:
+                    terminal_receipt = publish_terminal_execution_attempt(
+                        relaxation_dir,
+                        failed_model.model_dump(mode="json"),
+                    )
+                finally:
+                    terminal_attempt = failed_model.model_dump(mode="json")
+                raise
+
+            assert runner_result is not None
+            assert result_validation is not None
+            response.update(
+                {
+                    "execution_started": True,
+                    "execution_transaction": execution_transaction,
+                    "execution_attempt": terminal_attempt,
+                    "execution_attempt_state_path": (
+                        terminal_receipt or {}
+                    ).get("state_path"),
+                    "execution_attempt_events_path": (
+                        terminal_receipt or {}
+                    ).get("events_path"),
+                    "runner_result": runner_result,
+                    "result_validation": result_validation,
+                    "result_metadata_path": str(result_metadata_path),
+                }
+            )
+            if not runner_result.get("success") or not result_validation.get("ok"):
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "castep_relaxation_execution_failed",
+                        "error": (
+                            "CASTEP runner or tagged result validation failed; no revision was created."
+                        ),
+                        "result": {**runner_result, "success": False},
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+            if not result_validation.get("converged"):
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "castep_relaxation_not_converged",
+                        "error": (
+                            "CASTEP completed without convergence; the output was preserved but not promoted."
+                        ),
+                        "result": {**runner_result, "success": False},
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+
+            current_after_run, current_pointer_after_run = store.resolve_current(
+                base_spec.project_id
+            )
+            if current_after_run.revision != base_spec.revision:
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "castep_relaxation_revision_superseded",
+                        "error": (
+                            "CASTEP converged, but the current project advanced during execution; "
+                            "the result was preserved and not promoted."
+                        ),
+                        "current_revision": current_after_run.revision,
+                        "current_pointer": current_pointer_after_run,
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+
+            parsed_cif = parse_crystal_cif(output_structure)
+            candidate_revision = store.next_revision_number(base_spec.project_id)
+            candidate_output_dir = store.outputs_dir(
+                base_spec.project_id,
+                candidate_revision,
+            )
+            final_structure = candidate_output_dir / f"structure_r{candidate_revision:03d}.cif"
+            final_report = candidate_output_dir / "castep_geometry_optimization_report.txt"
+            if final_structure.exists() or final_report.exists():
+                raise ValueError(
+                    "Candidate revision output already exists; refusing to overwrite orphan evidence."
+                )
+            shutil.copy2(output_structure, final_structure)
+            shutil.copy2(output_report, final_report)
+            final_parsed_cif = parse_crystal_cif(final_structure)
+            relaxed_spec, relaxation_receipt = build_relaxed_revision_spec(
+                base_spec,
+                simulation=simulation,
+                parsed_cif=final_parsed_cif,
+                result_payload=dict(result_validation.get("result") or {}),
+                output_structure=final_structure,
+                output_report=final_report,
+                script_sha256=text_sha256(script),
+                target_revision=candidate_revision,
+            )
+            relaxed_spec = relaxed_spec.model_copy(
+                update={"revision": candidate_revision}
+            )
+            generated = _generate_structured_script(relaxed_spec, store)
+            if not generated["script_validation"].get("valid"):
+                raise ValueError(
+                    "Promoted relaxed revision generated an invalid build/preview script"
+                )
+            info = store.save_revision(
+                base_spec.project_id,
+                relaxed_spec,
+                user_text="CASTEP GeometryOptimization converged result promotion",
+                action="castep_geometry_optimization",
+                generated_script=generated["script"],
+                calculation_preview_script=generated.get(
+                    "calculation_preview_script"
+                ),
+                diff=[
+                    "castep_geometry_optimization converged=true "
+                    f"source=r{base_spec.revision:03d} target=r{candidate_revision:03d}"
+                ],
+                expected_revision=base_spec.revision,
+                expected_new_revision=candidate_revision,
+            )
+
+        promoted_spec = store.get_revision(base_spec.project_id, info.revision)
+        final_artifact_validation = validate_crystal_cif_against_spec(
+            promoted_spec.model,
+            final_structure,
+        )
+        if not final_artifact_validation.get("ok"):
+            response.update(
+                {
+                    "ok": False,
+                    "status": "promoted_relaxation_artifact_validation_failed",
+                    "error": (
+                        "The promoted revision exists, but its final CIF failed round-trip validation."
+                    ),
+                    "new_revision": info.revision,
+                    "revision": info.revision,
+                    "structure_artifact_validation": final_artifact_validation,
+                }
+            )
+            return _compact_live_response(response, response_mode)
+        audit_artifacts: list[dict[str, Any]] = []
+        audit = model_view_audit(promoted_spec, views)
+        response.update(
+            {
+                "ok": True,
+                "status": "castep_relaxation_promoted",
+                "revision_created": True,
+                "new_revision": info.revision,
+                "revision": info.revision,
+                "project_resolution": _explicit_project_resolution(promoted_spec),
+                "relaxation_receipt": relaxation_receipt,
+                "structure_artifact_validation": final_artifact_validation,
+                "planned_outputs": {
+                    "structure": str(final_structure),
+                    "report": str(final_report),
+                    "result_metadata": str(result_metadata_path),
+                },
+                "result": {
+                    **(runner_result or {}),
+                    "success": True,
+                    "calculation_converged": True,
+                    "promoted_revision": info.revision,
+                },
+                "view_audit": audit,
+                "warnings": list(result_validation.get("warnings") or []),
+            }
+        )
+        final_execution_metadata = {
+            "schema_version": "material_studio_castep_relaxation_execution_v1",
+            "project_id": base_spec.project_id,
+            "base_revision": base_spec.revision,
+            "promoted_revision": info.revision,
+            "success": True,
+            "relaxation_receipt": relaxation_receipt,
+            "runner": runner_result,
+            "result_validation": result_validation,
+            "structure_artifact_validation": final_artifact_validation,
+        }
+        _write_json_artifact(result_metadata_path, final_execution_metadata)
+        _write_json_artifact(
+            store.outputs_dir(base_spec.project_id, info.revision)
+            / "castep_geometry_optimization_result.json",
+            final_execution_metadata,
+        )
+        if export_view_audit:
+            report_path = write_view_audit_report(
+                store.outputs_dir(base_spec.project_id, info.revision),
+                promoted_spec,
+                audit,
+                gui_status=gui_status,
+                gui_artifacts=audit_artifacts,
+            )
+            response["view_audit_report_path"] = str(report_path)
+        if open_in_gui:
+            finalized = _finalize_high_level_gui_hotload(
+                response=response,
+                store=store,
+                spec=promoted_spec,
+                gui=gui,
+                structure_path=final_structure,
+                take_snapshot=take_snapshot,
+                audit_artifacts=audit_artifacts,
+                execution_mode=mode,
+                working_dir=working_dir,
+                workflow="castep_geometry_optimization",
+                record_gui_open_artifact=export_view_audit,
+                refresh_view_audit_report=export_view_audit,
+            )
+            return _compact_live_response(finalized, response_mode)
+        return _compact_live_response(
+            _attach_modeling_health(
+                response,
+                execution_mode=mode,
+                store=store if export_view_audit else None,
+                spec=promoted_spec,
+                gui_artifacts=audit_artifacts,
+            ),
+            response_mode,
+        )
+    except ValidationError as exc:
+        return _compact_live_response(_validation_error(exc), response_mode)
+    except Exception as exc:
+        return _compact_live_response(_error(exc), response_mode)
+
+
 @mcp.tool(
     name="material_studio_live_modeling_request",
     annotations={
@@ -39899,6 +40763,7 @@ def material_studio_live_modeling_request(
                 in {
                     "patch",
                     "apply_recommended_kpoint_grid",
+                    "castep_relaxation",
                     "redo",
                     "rollback",
                     "continue_view_replay",
@@ -39925,6 +40790,83 @@ def material_studio_live_modeling_request(
                     if isinstance(planned_spec.model, CrystalSpec) and _explicit_live_gui_open_requested(user_request):
                         mode = ExecutionMode.EXECUTE
                         execution_mode_source = "explicit_live_intent"
+            elif plan.kind == "castep_relaxation":
+                if project_id is None or current_spec is None:
+                    return finish(
+                        _attach_live_failure_contract(
+                            {
+                                "ok": False,
+                                "workflow": "castep_geometry_optimization",
+                                "error": (
+                                    "A CASTEP relaxation request was inferred, but no "
+                                    "current structured crystal project exists."
+                                ),
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_resolution": project_resolution,
+                            },
+                            status="missing_current_project",
+                            recommended_action="create_or_select_crystal_project",
+                            payload_hint={"project_id": "existing crystal project id"},
+                        )
+                    )
+                relaxation_payload = dict(plan.payload or {})
+                if (
+                    execution_mode is None
+                    and relaxation_payload.get("explicit_execution_intent") is True
+                ):
+                    mode = ExecutionMode.EXECUTE
+                    execution_mode_source = "explicit_castep_relaxation_intent"
+                result = material_studio_castep_relax_current(
+                    project_id=project_id,
+                    execution_mode=mode,
+                    quality=relaxation_payload.get("quality"),
+                    functional=relaxation_payload.get("functional"),
+                    cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
+                    kpoint_separation=relaxation_payload.get("kpoint_separation"),
+                    kpoints=relaxation_payload.get("kpoints"),
+                    dipole_correction=relaxation_payload.get("dipole_correction"),
+                    max_iterations=relaxation_payload.get("max_iterations"),
+                    displacement_convergence_angstrom=relaxation_payload.get(
+                        "displacement_convergence_angstrom"
+                    ),
+                    energy_convergence_ev_per_atom=relaxation_payload.get(
+                        "energy_convergence_ev_per_atom"
+                    ),
+                    force_convergence_ev_per_angstrom=relaxation_payload.get(
+                        "force_convergence_ev_per_angstrom"
+                    ),
+                    cell_optimization=relaxation_payload.get("cell_optimization"),
+                    optimization_algorithm=relaxation_payload.get(
+                        "optimization_algorithm"
+                    ),
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    export_view_audit=export_view_audit,
+                    views=views,
+                    working_dir=working_dir,
+                    timeout_seconds=timeout_seconds,
+                    response_mode=McpResponseMode.FULL,
+                )
+                result.update(
+                    {
+                        "workflow": "castep_geometry_optimization",
+                        "user_request": user_request,
+                        "nl_plan": nl_plan,
+                        "execution_mode": mode.value,
+                        "execution_mode_source": execution_mode_source,
+                        "project_resolution": (
+                            result.get("project_resolution") or project_resolution
+                        ),
+                        "diagnostic_export_requested": (
+                            _diagnostic_export_requested_from_text(user_request)
+                        ),
+                        "normality_check_requested": (
+                            _normality_check_requested_from_text(user_request)
+                        ),
+                    }
+                )
+                return finish(result)
             elif plan.kind == "apply_recommended_kpoint_grid":
                 if project_id is None or current_spec is None:
                     return finish(

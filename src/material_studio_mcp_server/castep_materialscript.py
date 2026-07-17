@@ -88,6 +88,24 @@ def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialSc
         settings.append(
             (CASTEP_DIPOLE_CORRECTION_API_PROPERTY, spec.dipole_correction.value)
         )
+    if spec.max_iterations is not None:
+        settings.append(("MaxIterations", spec.max_iterations))
+    if spec.displacement_convergence_angstrom is not None:
+        settings.append(
+            ("DisplacementConvergence", spec.displacement_convergence_angstrom)
+        )
+    if spec.energy_convergence_ev_per_atom is not None:
+        settings.append(
+            ("EnergyConvergence", spec.energy_convergence_ev_per_atom)
+        )
+    if spec.force_convergence_ev_per_angstrom is not None:
+        settings.append(
+            ("ForceConvergence", spec.force_convergence_ev_per_angstrom)
+        )
+    if spec.cell_optimization is not None:
+        settings.append(("CellOptimization", spec.cell_optimization.value))
+    if spec.optimization_algorithm is not None:
+        settings.append(("OptimizationAlgorithm", spec.optimization_algorithm.value))
     if spec.kpoint_separation is not None:
         settings.extend(
             [

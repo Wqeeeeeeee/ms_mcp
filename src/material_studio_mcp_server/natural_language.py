@@ -3364,6 +3364,9 @@ def infer_modeling_plan(
         )
         if recommended_kpoint_plan is not None:
             return recommended_kpoint_plan
+        relaxation_plan = _infer_castep_relaxation_plan(user_request, current_spec)
+        if relaxation_plan is not None:
+            return relaxation_plan
         patch_plan = _infer_patch(user_request, current_spec)
         if patch_plan is not None:
             return patch_plan
@@ -3389,6 +3392,100 @@ def infer_modeling_plan(
         notes=[
             "No conservative local template matched the request.",
             "Provide a ModelSpec for new structures or a SemanticPatch for modifications.",
+        ],
+    )
+
+
+def _infer_castep_relaxation_plan(
+    text: str,
+    current_spec: ModelSpec,
+) -> NaturalLanguagePlan | None:
+    """Infer an explicit request to run, not merely configure, CASTEP relaxation."""
+
+    if not isinstance(current_spec.model, CrystalSpec):
+        return None
+    lowered = " ".join(text.lower().split())
+    compact = re.sub(r"[\s,.;:!?()\[\]{}_-]+", "", lowered)
+    geometry_intent = bool(
+        re.search(
+            r"\b(?:geometry\s+optimi[sz](?:ation|e)|geom\s*opt|relax(?:ation)?|relax\s+(?:the\s+)?(?:current\s+)?(?:model|structure))\b",
+            lowered,
+        )
+    ) or any(
+        token in compact
+        for token in (
+            "castep几何优化",
+            "castep结构优化",
+            "castep弛豫",
+            "弛豫当前模型",
+            "弛豫当前结构",
+            "优化当前模型",
+            "优化当前结构",
+        )
+    )
+    if not geometry_intent:
+        return None
+    configuration_only = bool(
+        re.search(
+            r"\b(?:configure|set|change|prepare|preview|generate)\b.{0,30}"
+            r"\b(?:geometry\s+optimi[sz]ation|relaxation)\b",
+            lowered,
+        )
+    ) or any(
+        token in compact
+        for token in (
+            "设置几何优化",
+            "配置几何优化",
+            "预览几何优化",
+            "生成几何优化脚本",
+        )
+    )
+    execute_intent = bool(
+        re.search(
+            r"\b(?:run|execute|perform|start|launch|submit)\b.{0,40}"
+            r"\b(?:castep|geometry\s+optimi[sz]ation|relaxation)\b",
+            lowered,
+        )
+        or re.search(r"\brelax\s+(?:the\s+)?(?:current\s+)?(?:model|structure)\b", lowered)
+    ) or any(
+        token in compact
+        for token in (
+            "运行castep几何优化",
+            "执行castep几何优化",
+            "开始castep几何优化",
+            "运行几何优化",
+            "执行几何优化",
+            "开始几何优化",
+            "弛豫当前模型",
+            "弛豫当前结构",
+        )
+    )
+    if configuration_only or not execute_intent:
+        return None
+    operation = _match_castep_settings(text, current_spec) or {
+        "type": "set_castep_energy",
+        "task": "GeometryOptimization",
+    }
+    operation["task"] = "GeometryOptimization"
+    payload = {
+        key: value for key, value in operation.items() if key != "type"
+    }
+    payload.update(
+        {
+            "project_id": current_spec.project_id,
+            "base_revision": current_spec.revision,
+            "explicit_execution_intent": True,
+        }
+    )
+    return NaturalLanguagePlan(
+        kind="castep_relaxation",
+        payload=payload,
+        confidence=0.96,
+        template_id="castep_geometry_optimization_current_revision",
+        notes=[
+            "Use the MS 20.1 GeometryOptimization Results contract.",
+            "Promote only a converged, atom-identity-preserving output CIF to a new revision.",
+            "Re-audit the promoted revision before reporting calculation readiness.",
         ],
     )
 
@@ -12432,12 +12529,18 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
     cutoff = _match_castep_cutoff(text)
     kpoints = _match_castep_kpoint_grid(text)
     kpoint_separation = None if kpoints is not None else _match_castep_kpoint_separation(text)
+    max_iterations = _match_castep_max_iterations(text)
+    cell_optimization = _match_castep_cell_optimization(text)
+    optimization_algorithm = _match_castep_optimization_algorithm(text)
     if (
         task is None
         and cutoff is None
         and kpoints is None
         and kpoint_separation is None
         and dipole_correction is None
+        and max_iterations is None
+        and cell_optimization is None
+        and optimization_algorithm is None
     ):
         return None
 
@@ -12475,7 +12578,76 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
                 getattr(existing_dipole_correction, "value", existing_dipole_correction)
             )
 
+    for field_name, matched_value in (
+        ("max_iterations", max_iterations),
+        ("cell_optimization", cell_optimization),
+        ("optimization_algorithm", optimization_algorithm),
+    ):
+        existing_value = getattr(simulation, field_name, None)
+        selected_value = matched_value if matched_value is not None else existing_value
+        if selected_value is not None:
+            operation[field_name] = getattr(selected_value, "value", selected_value)
+
+    for field_name in (
+        "displacement_convergence_angstrom",
+        "energy_convergence_ev_per_atom",
+        "force_convergence_ev_per_angstrom",
+    ):
+        existing_value = getattr(simulation, field_name, None)
+        if existing_value is not None:
+            operation[field_name] = float(existing_value)
+
     return operation
+
+
+def _match_castep_max_iterations(text: str) -> int | None:
+    match = re.search(
+        r"\b(?:max(?:imum)?\s+)?(\d{1,7})\s+(?:geometry\s+)?(?:iterations?|cycles?)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        match = re.search(
+            r"(?:最大|上限)?\s*(\d{1,7})\s*(?:次)?(?:几何优化)?(?:迭代|循环)",
+            text,
+        )
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if 3 <= value <= 1_000_000 else None
+
+
+def _match_castep_cell_optimization(text: str) -> str | None:
+    lowered = text.lower()
+    if re.search(r"\bfixed\s+volume\b", lowered) or "固定体积" in text:
+        return "Fixed Volume"
+    if re.search(r"\bfixed\s+shape\b", lowered) or "固定形状" in text:
+        return "Fixed Shape"
+    if re.search(r"\b(?:full\s+cell|optimi[sz]e\s+(?:the\s+)?cell)\b", lowered) or any(
+        token in text for token in ("全晶胞优化", "优化晶胞")
+    ):
+        return "Full"
+    if re.search(
+        r"\b(?:fixed\s+cell|keep\s+(?:the\s+)?cell|atomic\s+positions?\s+only)\b",
+        lowered,
+    ) or any(
+        token in text for token in ("固定晶胞", "仅优化原子坐标")
+    ):
+        return "None"
+    return None
+
+
+def _match_castep_optimization_algorithm(text: str) -> str | None:
+    lowered = text.lower()
+    if re.search(r"\bdamped\s+md\b", lowered):
+        return "Damped MD"
+    if re.search(r"\btpsd\b", lowered):
+        return "TPSD"
+    if re.search(r"\blbfgs\b", lowered):
+        return "LBFGS"
+    if re.search(r"\bbfgs\b", lowered):
+        return "BFGS"
+    return None
 
 
 

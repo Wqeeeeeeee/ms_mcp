@@ -140,6 +140,16 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
         "dipole_correction"
     ]
     assert dipole_schema["anyOf"][0]["$ref"] == "#/$defs/CastepDipoleCorrection"
+    cell_schema = schema["$defs"]["SemanticPatchOperation"]["properties"][
+        "cell_optimization"
+    ]
+    assert cell_schema["anyOf"][0]["$ref"] == "#/$defs/CastepCellOptimization"
+    algorithm_schema = schema["$defs"]["SemanticPatchOperation"]["properties"][
+        "optimization_algorithm"
+    ]
+    assert algorithm_schema["anyOf"][0]["$ref"] == (
+        "#/$defs/CastepOptimizationAlgorithm"
+    )
     assert "metadata_updates" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "atom_ids" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "distance_angstrom" in schema["$defs"]["SemanticPatchOperation"]["properties"]
@@ -198,3 +208,24 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
         "Non self-consistent",
         "Self-consistent",
     ]
+    assert castep_schema["$defs"]["CastepCellOptimization"]["enum"] == [
+        "None",
+        "Full",
+        "Fixed Volume",
+        "Fixed Shape",
+    ]
+    assert castep_schema["$defs"]["CastepOptimizationAlgorithm"]["enum"] == [
+        "LBFGS",
+        "BFGS",
+        "Damped MD",
+        "TPSD",
+    ]
+    for field in (
+        "max_iterations",
+        "displacement_convergence_angstrom",
+        "energy_convergence_ev_per_atom",
+        "force_convergence_ev_per_angstrom",
+        "cell_optimization",
+        "optimization_algorithm",
+    ):
+        assert field in castep_schema["properties"]

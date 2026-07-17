@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from material_studio_mcp_server.castep_relaxation import build_relaxed_revision_spec
 from material_studio_mcp_server.diagnostics import (
     SEMICONDUCTOR_REFERENCE_ELECTRONIC_PROPERTIES,
     model_view_audit,
@@ -16,7 +17,7 @@ from material_studio_mcp_server.diagnostics import (
 from material_studio_mcp_server.health import build_modeling_health
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import SemanticPatch, apply_semantic_patch
-from material_studio_mcp_server.specs.castep import CastepTask
+from material_studio_mcp_server.specs.castep import CastepEnergySpec, CastepTask
 from material_studio_mcp_server.specs.project import ModelSpec
 
 
@@ -4083,6 +4084,191 @@ def test_self_consistent_dipole_correction_clears_only_the_2d_setting_blocker(
     assert calculation_rows[0]["dipole_correction_mode"] == "Self-consistent"
     assert calculation_rows[0]["dipole_correction_enabled"] == "True"
     assert calculation_rows[0]["dipole_correction_api_property"] == "DipoleCorrection"
+
+
+def test_verified_fixed_cell_castep_relaxation_rebinds_2d_diagnostics(
+    tmp_path: Path,
+) -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    heterobilayer, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_tmd_heterobilayer",
+                    "top_layer_material": "WSe2",
+                    "commensurate_m": 2,
+                    "commensurate_n": 1,
+                    "interlayer_distance_angstrom": 6.32,
+                    "strain_policy": "balanced",
+                    "max_strain_percent": 3.0,
+                }
+            ],
+        ),
+    )
+    assert heterobilayer.simulation is not None
+    simulation_payload = heterobilayer.simulation.model_dump(mode="json")
+    simulation_payload.update(
+        {
+            "task": "GeometryOptimization",
+            "dipole_correction": "Self-consistent",
+            "cell_optimization": "None",
+            "max_iterations": 120,
+        }
+    )
+    simulation = CastepEnergySpec.model_validate(simulation_payload)
+
+    parsed_atoms = []
+    for atom in heterobilayer.model.basis_atoms:
+        fractional = atom.fractional.model_dump(mode="json")
+        if atom.element == "Mo" and "_L1_" in atom.id:
+            fractional["z"] += 0.0005
+        elif atom.element == "W" and "_L2_" in atom.id:
+            fractional["z"] -= 0.0005
+        parsed_atoms.append(
+            {
+                "id": atom.id,
+                "element": atom.element,
+                "fractional": fractional,
+            }
+        )
+    parsed_cif = {
+        "ok": True,
+        "lattice": heterobilayer.model.lattice.model_dump(mode="json"),
+        "atoms": parsed_atoms,
+    }
+    output_structure = tmp_path / "relaxed.cif"
+    output_report = tmp_path / "geometry_optimization.txt"
+    output_structure.write_text("verified relaxed CIF artifact\n", encoding="utf-8")
+    output_report.write_text("CASTEP geometry optimization converged\n", encoding="utf-8")
+    target_revision = heterobilayer.revision + 1
+    relaxed, receipt = build_relaxed_revision_spec(
+        heterobilayer,
+        simulation=simulation,
+        parsed_cif=parsed_cif,
+        result_payload={
+            "converged": True,
+            "total_energy_kcal_per_mol": -123.5,
+            "enthalpy_kcal_per_mol": -122.75,
+        },
+        output_structure=output_structure,
+        output_report=output_report,
+        script_sha256="a" * 64,
+        target_revision=target_revision,
+    )
+    relaxed = relaxed.model_copy(update={"revision": target_revision}, deep=True)
+
+    audit = model_view_audit(relaxed)
+    semiconductor = audit["health"]["semiconductor_health"]
+    relaxation = semiconductor["castep_geometry_optimization_summary"]
+    assert relaxation["quality"] == "fixed_cell_relaxation_verified"
+    assert relaxation["transition_verified"] is True
+    assert relaxation["fixed_cell_transition_verified"] is True
+    assert relaxation["source_binding_verified"] is True
+    assert relaxation["output_binding_verified"] is True
+    assert relaxation["atom_identity_verified"] is True
+    assert relaxation["source_revision"] == heterobilayer.revision
+    assert relaxation["target_revision"] == target_revision
+    assert receipt["output_structure_sha256"] == relaxation["current_structure_sha256"]
+
+    summary = semiconductor["commensurate_heterobilayer_summary"]
+    assert summary["construction_structure_binding_matches_current"] is False
+    assert summary["structure_binding_matches_current"] is True
+    assert summary["structure_binding_scope"] == (
+        "verified_fixed_cell_castep_relaxation_output"
+    )
+    assert summary["interlayer_distance_verified"] is False
+    assert summary["geometry_measurement_binding_verified"] is True
+    assert summary["castep_relaxation_transition_verified"] is True
+    assert summary["metadata_consistent"] is True
+    assert summary["commensurability_verified"] is True
+    assert summary["geometry_relaxed"] is True
+    assert summary["requires_geometry_relaxation"] is False
+    assert summary["calculation_ready"] is True
+    assert summary["calculation_blocking_reasons"] == []
+
+    electrostatics = semiconductor["two_dimensional_electrostatic_summary"]
+    assert electrostatics["geometry_relaxation_verified"] is True
+    assert electrostatics["geometry_relaxation_required"] is False
+    assert electrostatics["dipole_correction_setting_verified"] is True
+    assert electrostatics["quantitative_electrostatic_calculation_ready"] is True
+    assert electrostatics["calculation_blocking_reasons"] == []
+
+    health = build_modeling_health(
+        {"ok": True, "view_audit": audit},
+        execution_mode="execute",
+    )
+    assert health["checks"]["semiconductor_castep_relaxation_transition_verified"] is True
+    assert health["checks"]["semiconductor_2d_geometry_relaxation_verified"] is True
+    bundle = write_view_audit_bundle(
+        tmp_path / "bundle",
+        relaxed,
+        audit,
+        modeling_health=health,
+    )
+    relaxation_rows = list(
+        csv.DictReader(
+            Path(
+                bundle["files"]["semiconductor_castep_geometry_optimization_csv"]
+            ).open(encoding="utf-8", newline="")
+        )
+    )
+    assert relaxation_rows[0]["transition_verified"] == "True"
+    assert relaxation_rows[0]["fixed_cell_transition_verified"] == "True"
+    heterobilayer_rows = list(
+        csv.DictReader(
+            Path(
+                bundle["files"]["semiconductor_commensurate_heterobilayer_csv"]
+            ).open(encoding="utf-8", newline="")
+        )
+    )
+    assert heterobilayer_rows[0]["geometry_relaxed"] == "True"
+    assert heterobilayer_rows[0]["requires_geometry_relaxation"] == "False"
+
+    forged_payload = relaxed.model_dump(mode="json")
+    forged_payload["metadata"]["last_castep_geometry_optimization"][
+        "source_structure_sha256"
+    ] = "0" * 64
+    forged_payload["metadata"]["castep_geometry_optimization_history"][-1][
+        "source_structure_sha256"
+    ] = "0" * 64
+    forged = ModelSpec.model_validate(forged_payload)
+    forged_summary = model_view_audit(forged)["health"]["semiconductor_health"][
+        "commensurate_heterobilayer_summary"
+    ]
+    assert forged_summary["castep_relaxation_transition_verified"] is False
+    assert forged_summary["metadata_consistent"] is False
+    assert forged_summary["requires_geometry_relaxation"] is True
+
+    stale_atoms = list(relaxed.model.basis_atoms)
+    target_index = next(
+        index
+        for index, atom in enumerate(stale_atoms)
+        if atom.element == "W" and "_L2_" in atom.id
+    )
+    target = stale_atoms[target_index]
+    stale_atoms[target_index] = target.model_copy(
+        update={
+            "fractional": target.fractional.model_copy(
+                update={"z": target.fractional.z + 0.002}
+            )
+        }
+    )
+    stale = relaxed.model_copy(
+        update={
+            "revision": target_revision + 1,
+            "model": relaxed.model.model_copy(update={"basis_atoms": stale_atoms}),
+        },
+        deep=True,
+    )
+    stale_relaxation = model_view_audit(stale)["health"]["semiconductor_health"][
+        "castep_geometry_optimization_summary"
+    ]
+    assert stale_relaxation["transition_verified"] is False
+    assert stale_relaxation["revision_binding_verified"] is False
+    assert stale_relaxation["output_binding_verified"] is False
 
 
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:

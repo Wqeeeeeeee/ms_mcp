@@ -11,6 +11,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
+from .castep_relaxation import (
+    CASTEP_RELAXATION_RECEIPT_SCHEMA,
+    crystal_structure_sha256,
+)
 from .specs.castep import (
     CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
     CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
@@ -1360,6 +1364,50 @@ def write_view_audit_bundle(
             rotation_rows,
         )
 
+    castep_relaxation = semiconductor.get("castep_geometry_optimization_summary") or {}
+    if castep_relaxation:
+        files["semiconductor_castep_geometry_optimization_csv"] = str(
+            bundle_dir / "semiconductor_castep_geometry_optimization.csv"
+        )
+        row_counts["semiconductor_castep_geometry_optimization"] = _write_csv(
+            bundle_dir / "semiconductor_castep_geometry_optimization.csv",
+            [
+                "source_project_id",
+                "source_revision",
+                "target_revision",
+                "task",
+                "backend",
+                "cell_optimization",
+                "optimization_algorithm",
+                "converged",
+                "total_energy_kcal_per_mol",
+                "enthalpy_kcal_per_mol",
+                "source_structure_sha256",
+                "output_structure_sha256",
+                "current_structure_sha256",
+                "schema_verified",
+                "history_binding_verified",
+                "project_binding_verified",
+                "revision_binding_verified",
+                "task_verified",
+                "backend_verified",
+                "convergence_verified",
+                "atom_identity_verified",
+                "source_binding_verified",
+                "output_binding_verified",
+                "script_binding_verified",
+                "operation_binding_verified",
+                "simulation_binding_verified",
+                "fixed_cell_verified",
+                "transition_verified",
+                "fixed_cell_transition_verified",
+                "quality",
+                "blocking_reasons",
+                "warning_count",
+            ],
+            [_semiconductor_castep_geometry_optimization_csv_row(castep_relaxation)],
+        )
+
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
         twist_rows = _semiconductor_commensurate_twist_csv_rows(commensurate_twist)
@@ -1403,7 +1451,11 @@ def write_view_audit_bundle(
                 "layer_atom_ids_verified",
                 "interlayer_distance_verified",
                 "interlayer_gap_verified",
+                "geometry_measurement_binding_verified",
+                "construction_structure_binding_matches_current",
                 "structure_binding_matches_current",
+                "structure_binding_scope",
+                "castep_relaxation_transition_verified",
                 "current_structure_sha256",
                 "metadata_consistent",
                 "commensurability_verified",
@@ -1470,7 +1522,10 @@ def write_view_audit_bundle(
                 "interlayer_gap_verified",
                 "structure_sha256",
                 "current_structure_sha256",
+                "construction_structure_binding_matches_current",
                 "structure_binding_matches_current",
+                "structure_binding_scope",
+                "castep_relaxation_transition_verified",
                 "metadata_consistent",
                 "commensurability_verified",
                 "requires_geometry_relaxation",
@@ -1541,6 +1596,10 @@ def write_view_audit_bundle(
                 "dipole_correction_setting_verified",
                 "dipole_correction_review_method",
                 "geometry_relaxation_required",
+                "geometry_relaxation_verified",
+                "geometry_relaxation_source_revision",
+                "geometry_relaxation_target_revision",
+                "geometry_relaxation_output_structure_sha256",
                 "calculation_review_required",
                 "quantitative_electrostatic_calculation_ready",
                 "calculation_blocking_reasons",
@@ -3204,6 +3263,56 @@ def _semiconductor_layer_rotation_csv_rows(summary: dict[str, Any]) -> list[dict
     return rows
 
 
+def _semiconductor_castep_geometry_optimization_csv_row(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    row = {
+        key: latest.get(key)
+        for key in (
+            "source_project_id",
+            "source_revision",
+            "target_revision",
+            "task",
+            "backend",
+            "cell_optimization",
+            "optimization_algorithm",
+            "converged",
+            "total_energy_kcal_per_mol",
+            "enthalpy_kcal_per_mol",
+            "source_structure_sha256",
+            "output_structure_sha256",
+        )
+    }
+    for key in (
+        "current_structure_sha256",
+        "schema_verified",
+        "history_binding_verified",
+        "project_binding_verified",
+        "revision_binding_verified",
+        "task_verified",
+        "backend_verified",
+        "convergence_verified",
+        "atom_identity_verified",
+        "source_binding_verified",
+        "output_binding_verified",
+        "script_binding_verified",
+        "operation_binding_verified",
+        "simulation_binding_verified",
+        "fixed_cell_verified",
+        "transition_verified",
+        "fixed_cell_transition_verified",
+        "quality",
+        "warning_count",
+    ):
+        row[key] = summary.get(key)
+    row["blocking_reasons"] = json.dumps(
+        summary.get("blocking_reasons") or [],
+        separators=(",", ":"),
+    )
+    return row
+
+
 def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     entries = summary.get("entries", []) or []
     latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
@@ -3266,8 +3375,26 @@ def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[
                 "interlayer_gap_verified": (
                     summary.get("interlayer_gap_verified") if is_latest else None
                 ),
+                "geometry_measurement_binding_verified": (
+                    summary.get("geometry_measurement_binding_verified")
+                    if is_latest
+                    else None
+                ),
+                "construction_structure_binding_matches_current": (
+                    summary.get("construction_structure_binding_matches_current")
+                    if is_latest
+                    else None
+                ),
                 "structure_binding_matches_current": (
                     summary.get("structure_binding_matches_current") if is_latest else None
+                ),
+                "structure_binding_scope": (
+                    summary.get("structure_binding_scope") if is_latest else None
+                ),
+                "castep_relaxation_transition_verified": (
+                    summary.get("castep_relaxation_transition_verified")
+                    if is_latest
+                    else None
                 ),
                 "current_structure_sha256": (
                     summary.get("current_structure_sha256") if is_latest else None
@@ -3276,8 +3403,10 @@ def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[
                 "commensurability_verified": (
                     summary.get("commensurability_verified") if is_latest else None
                 ),
-                "requires_geometry_relaxation": entry.get("requires_geometry_relaxation"),
-                "geometry_relaxed": entry.get("geometry_relaxed"),
+                "requires_geometry_relaxation": (
+                    summary.get("requires_geometry_relaxation") if is_latest else None
+                ),
+                "geometry_relaxed": summary.get("geometry_relaxed") if is_latest else None,
                 "calculation_ready": summary.get("calculation_ready") if is_latest else None,
                 "quality": summary.get("quality") if is_latest else None,
                 "warning_count": summary.get("warning_count") if is_latest else None,
@@ -3379,15 +3508,30 @@ def _semiconductor_commensurate_heterobilayer_csv_rows(
                 "current_structure_sha256": (
                     summary.get("current_structure_sha256") if is_latest else None
                 ),
+                "construction_structure_binding_matches_current": (
+                    summary.get("construction_structure_binding_matches_current")
+                    if is_latest
+                    else None
+                ),
                 "structure_binding_matches_current": (
                     summary.get("structure_binding_matches_current") if is_latest else None
+                ),
+                "structure_binding_scope": (
+                    summary.get("structure_binding_scope") if is_latest else None
+                ),
+                "castep_relaxation_transition_verified": (
+                    summary.get("castep_relaxation_transition_verified")
+                    if is_latest
+                    else None
                 ),
                 "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
                 "commensurability_verified": (
                     summary.get("commensurability_verified") if is_latest else None
                 ),
-                "requires_geometry_relaxation": entry.get("requires_geometry_relaxation"),
-                "geometry_relaxed": entry.get("geometry_relaxed"),
+                "requires_geometry_relaxation": (
+                    summary.get("requires_geometry_relaxation") if is_latest else None
+                ),
+                "geometry_relaxed": summary.get("geometry_relaxed") if is_latest else None,
                 "calculation_ready": summary.get("calculation_ready") if is_latest else None,
                 "quality": summary.get("quality") if is_latest else None,
                 "warning_count": summary.get("warning_count") if is_latest else None,
@@ -5035,6 +5179,18 @@ def _semiconductor_health_summary(
                 "Crystal layer rotation is a non-commensurate visual-review scaffold; build a commensurate "
                 "supercell and relax it before calculation."
             )
+    castep_geometry_optimization_summary = _castep_geometry_optimization_summary(
+        spec,
+        metadata,
+    )
+    if (
+        castep_geometry_optimization_summary
+        and not castep_geometry_optimization_summary.get("transition_verified")
+    ):
+        warnings.append(
+            "CASTEP geometry-optimization metadata is not bound to the current immutable "
+            "revision; inspect castep_geometry_optimization_summary."
+        )
     commensurate_twist_summary = _commensurate_tmd_twist_summary(spec, metadata)
     if commensurate_twist_summary:
         if not commensurate_twist_summary.get("metadata_consistent"):
@@ -5183,6 +5339,7 @@ def _semiconductor_health_summary(
         "layer_profile_summary": layer_profile_summary,
         "layer_translation_summary": layer_translation_summary,
         "layer_rotation_summary": layer_rotation_summary,
+        "castep_geometry_optimization_summary": castep_geometry_optimization_summary,
         "commensurate_twist_summary": commensurate_twist_summary,
         "commensurate_heterobilayer_summary": commensurate_heterobilayer_summary,
         "interface_scaffold_summary": interface_scaffold_summary,
@@ -5948,6 +6105,13 @@ def _two_dimensional_electrostatic_summary(
         heterobilayer.get("requires_geometry_relaxation")
         and heterobilayer.get("geometry_relaxed") is not True
     )
+    castep_relaxation_transition = (
+        heterobilayer.get("castep_relaxation_transition") or {}
+    )
+    geometry_relaxation_verified = bool(
+        heterobilayer.get("castep_relaxation_transition_verified") is True
+        and heterobilayer.get("geometry_relaxed") is True
+    )
     quantitative_calculation_ready = bool(
         model_geometry_verified
         and dipole_setting_verified
@@ -6066,6 +6230,16 @@ def _two_dimensional_electrostatic_summary(
         "dipole_correction_setting_verified": dipole_setting_verified,
         "dipole_correction_review_method": "structured_materialscript_setting_verified_against_ms20_1_help",
         "geometry_relaxation_required": geometry_relaxation_required,
+        "geometry_relaxation_verified": geometry_relaxation_verified,
+        "geometry_relaxation_source_revision": castep_relaxation_transition.get(
+            "source_revision"
+        ),
+        "geometry_relaxation_target_revision": castep_relaxation_transition.get(
+            "target_revision"
+        ),
+        "geometry_relaxation_output_structure_sha256": (
+            castep_relaxation_transition.get("output_structure_sha256")
+        ),
         "calculation_review_required": not dipole_setting_verified,
         "quantitative_electrostatic_calculation_ready": quantitative_calculation_ready,
         "calculation_blocking_reasons": calculation_blocking_reasons,
@@ -6792,6 +6966,181 @@ def _crystal_layer_rotation_summary(
     }
 
 
+def _castep_geometry_optimization_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+    *,
+    expected_source_structure_sha256: str | None = None,
+) -> dict[str, Any] | None:
+    """Verify the immutable structure transition recorded after CASTEP relaxation."""
+
+    history = [
+        dict(item)
+        for item in metadata.get("castep_geometry_optimization_history", []) or []
+        if isinstance(item, dict)
+    ]
+    latest_value = metadata.get("last_castep_geometry_optimization")
+    latest = dict(latest_value) if isinstance(latest_value, dict) else None
+    if latest is None and history:
+        latest = dict(history[-1])
+    if latest is None:
+        return None
+
+    entries = list(history)
+    if latest not in entries:
+        entries.append(dict(latest))
+    current_structure_sha256 = (
+        crystal_structure_sha256(spec.model)
+        if isinstance(spec.model, CrystalSpec)
+        else None
+    )
+    source_structure_sha256 = str(latest.get("source_structure_sha256") or "")
+    output_structure_sha256 = str(latest.get("output_structure_sha256") or "")
+    source_atom_id_sha256 = str(latest.get("source_atom_id_sha256") or "")
+    output_atom_id_sha256 = str(latest.get("output_atom_id_sha256") or "")
+    expected_source = str(expected_source_structure_sha256 or "")
+    source_revision = _optional_int(latest.get("source_revision"))
+    target_revision = _optional_int(latest.get("target_revision"))
+
+    schema_verified = latest.get("schema_version") == CASTEP_RELAXATION_RECEIPT_SCHEMA
+    history_binding_verified = bool(history and latest == history[-1])
+    project_binding_verified = latest.get("source_project_id") == spec.project_id
+    revision_binding_verified = bool(
+        source_revision is not None
+        and target_revision is not None
+        and source_revision < target_revision
+        and target_revision == spec.revision
+    )
+    task_verified = latest.get("task") == CastepTask.GEOMETRY_OPTIMIZATION.value
+    backend_verified = (
+        latest.get("backend")
+        == "Materials Studio 20.1 CASTEP GeometryOptimization"
+    )
+    convergence_verified = latest.get("converged") is True
+    receipt_verification_flag = latest.get("geometry_relaxation_verified") is True
+    atom_identity_verified = bool(
+        latest.get("atom_identity_preserved") is True
+        and latest.get("atom_elements_preserved") is True
+        and _is_sha256(source_atom_id_sha256)
+        and source_atom_id_sha256 == output_atom_id_sha256
+    )
+    source_structure_hash_valid = _is_sha256(source_structure_sha256)
+    output_structure_hash_valid = _is_sha256(output_structure_sha256)
+    source_binding_verified = bool(
+        source_structure_hash_valid
+        and (not expected_source or source_structure_sha256 == expected_source)
+    )
+    output_binding_verified = bool(
+        output_structure_hash_valid
+        and current_structure_sha256 is not None
+        and output_structure_sha256 == current_structure_sha256
+    )
+    script_binding_verified = _is_sha256(str(latest.get("script_sha256") or ""))
+    cell_optimization = str(latest.get("cell_optimization") or "")
+    fixed_cell_verified = bool(
+        cell_optimization == "None"
+        and latest.get("lattice_changed") is False
+        and (_optional_float(latest.get("max_lattice_delta")) or 0.0) <= 1.0e-6
+    )
+    matching_operation = None
+    if isinstance(spec.model, CrystalSpec):
+        for operation in reversed(spec.model.operations):
+            if operation.type != "castep_geometry_optimization":
+                continue
+            parameters = operation.parameters or {}
+            if (
+                _optional_int(parameters.get("source_revision")) == source_revision
+                and parameters.get("converged") is True
+                and str(parameters.get("cell_optimization") or "") == cell_optimization
+                and parameters.get("materials_studio_api_contract")
+                == "Materials Studio 20.1"
+            ):
+                matching_operation = operation
+                break
+    operation_binding_verified = matching_operation is not None
+    simulation_binding_verified = bool(
+        isinstance(spec.simulation, CastepEnergySpec)
+        and spec.simulation.task is CastepTask.GEOMETRY_OPTIMIZATION
+        and (
+            spec.simulation.cell_optimization.value
+            if spec.simulation.cell_optimization is not None
+            else "None"
+        )
+        == cell_optimization
+    )
+
+    checks = (
+        (schema_verified, "castep_relaxation_receipt_schema_mismatch"),
+        (history_binding_verified, "castep_relaxation_history_binding_mismatch"),
+        (project_binding_verified, "castep_relaxation_project_binding_mismatch"),
+        (revision_binding_verified, "castep_relaxation_revision_binding_mismatch"),
+        (task_verified, "castep_relaxation_task_mismatch"),
+        (backend_verified, "castep_relaxation_backend_mismatch"),
+        (convergence_verified, "castep_relaxation_not_converged"),
+        (receipt_verification_flag, "castep_relaxation_verification_flag_missing"),
+        (atom_identity_verified, "castep_relaxation_atom_identity_mismatch"),
+        (source_binding_verified, "castep_relaxation_source_structure_mismatch"),
+        (output_binding_verified, "castep_relaxation_output_structure_mismatch"),
+        (script_binding_verified, "castep_relaxation_script_binding_invalid"),
+        (operation_binding_verified, "castep_relaxation_operation_binding_mismatch"),
+        (simulation_binding_verified, "castep_relaxation_simulation_binding_mismatch"),
+    )
+    blocking_reasons = [reason for condition, reason in checks if not condition]
+    transition_verified = not blocking_reasons
+    fixed_cell_transition_verified = transition_verified and fixed_cell_verified
+    warnings = [
+        "CASTEP geometry-optimization receipt failed immutable transition verification: "
+        + ", ".join(blocking_reasons)
+    ] if blocking_reasons else []
+    if transition_verified and not fixed_cell_verified:
+        warnings.append(
+            "CASTEP relaxation is bound to the current revision, but it did not preserve a fixed cell."
+        )
+
+    return {
+        "available": True,
+        "quality": (
+            "fixed_cell_relaxation_verified"
+            if fixed_cell_transition_verified
+            else "relaxation_verified"
+            if transition_verified
+            else "review_required"
+        ),
+        "entry_count": len(entries),
+        "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+        "latest": latest,
+        "schema_verified": schema_verified,
+        "history_binding_verified": history_binding_verified,
+        "project_binding_verified": project_binding_verified,
+        "revision_binding_verified": revision_binding_verified,
+        "task_verified": task_verified,
+        "backend_verified": backend_verified,
+        "convergence_verified": convergence_verified,
+        "receipt_verification_flag": receipt_verification_flag,
+        "atom_identity_verified": atom_identity_verified,
+        "source_structure_hash_valid": source_structure_hash_valid,
+        "source_structure_sha256": source_structure_sha256 or None,
+        "expected_source_structure_sha256": expected_source or None,
+        "source_binding_verified": source_binding_verified,
+        "output_structure_hash_valid": output_structure_hash_valid,
+        "output_structure_sha256": output_structure_sha256 or None,
+        "current_structure_sha256": current_structure_sha256,
+        "output_binding_verified": output_binding_verified,
+        "script_binding_verified": script_binding_verified,
+        "operation_binding_verified": operation_binding_verified,
+        "simulation_binding_verified": simulation_binding_verified,
+        "cell_optimization": cell_optimization or None,
+        "fixed_cell_verified": fixed_cell_verified,
+        "source_revision": source_revision,
+        "target_revision": target_revision,
+        "transition_verified": transition_verified,
+        "fixed_cell_transition_verified": fixed_cell_transition_verified,
+        "blocking_reasons": blocking_reasons,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
 def _commensurate_tmd_twist_summary(
     spec: ModelSpec,
     metadata: dict[str, Any],
@@ -6948,8 +7297,6 @@ def _commensurate_tmd_twist_summary(
         and expected_interlayer_distance is not None
         and abs(current_interlayer_distance - expected_interlayer_distance) <= 1e-6
     )
-    if not interlayer_distance_verified:
-        warnings.append("Current TMD metal-plane separation differs from the recorded interlayer distance.")
 
     bottom_chalcogens = [atom for atom in bottom_atoms if atom.element in TMD_CHALCOGENS]
     top_chalcogens = [atom for atom in top_atoms if atom.element in TMD_CHALCOGENS]
@@ -6968,17 +7315,44 @@ def _commensurate_tmd_twist_summary(
         and expected_interlayer_gap is not None
         and abs(current_interlayer_gap - expected_interlayer_gap) <= 1e-6
     )
-    if not interlayer_gap_verified:
-        warnings.append("Current opposing-chalcogen gap differs from the commensurate twist receipt.")
 
     expected_structure_sha256 = str(latest.get("structure_sha256") or "")
     current_structure_sha256 = _diagnostic_crystal_structure_sha256(spec.model)
-    structure_binding_matches = bool(
+    construction_structure_binding_matches = bool(
         len(expected_structure_sha256) == 64
         and current_structure_sha256 == expected_structure_sha256
     )
+    castep_relaxation_transition = _castep_geometry_optimization_summary(
+        spec,
+        metadata,
+        expected_source_structure_sha256=expected_structure_sha256,
+    )
+    fixed_cell_relaxation_verified = bool(
+        castep_relaxation_transition
+        and castep_relaxation_transition.get("fixed_cell_transition_verified") is True
+    )
+    structure_binding_matches = bool(
+        construction_structure_binding_matches or fixed_cell_relaxation_verified
+    )
+    geometry_measurement_binding_verified = bool(
+        (
+            interlayer_distance_verified
+            and interlayer_gap_verified
+            and construction_structure_binding_matches
+        )
+        or fixed_cell_relaxation_verified
+    )
+    if not interlayer_distance_verified and not fixed_cell_relaxation_verified:
+        warnings.append("Current TMD metal-plane separation differs from the recorded interlayer distance.")
+    if not interlayer_gap_verified and not fixed_cell_relaxation_verified:
+        warnings.append("Current opposing-chalcogen gap differs from the commensurate twist receipt.")
     if not structure_binding_matches:
-        warnings.append("Current crystal SHA-256 differs from the generated commensurate twist structure.")
+        warnings.append(
+            "Current crystal SHA-256 matches neither the generated commensurate structure nor "
+            "a verified fixed-cell CASTEP relaxation output."
+        )
+    if castep_relaxation_transition and not fixed_cell_relaxation_verified:
+        warnings.extend(str(item) for item in castep_relaxation_transition.get("warnings", []) or [])
 
     metadata_consistent = bool(
         indices_valid
@@ -6987,20 +7361,18 @@ def _commensurate_tmd_twist_summary(
         and angle_verified
         and lattice_verified
         and layer_atom_ids_verified
-        and interlayer_distance_verified
-        and interlayer_gap_verified
+        and geometry_measurement_binding_verified
         and structure_binding_matches
     )
     commensurability_verified = bool(
         metadata_consistent and latest.get("commensurability_verified") is True
     )
-    requires_geometry_relaxation = latest.get("requires_geometry_relaxation") is not False
-    geometry_relaxed = latest.get("geometry_relaxed") is True
+    geometry_relaxed = fixed_cell_relaxation_verified
+    requires_geometry_relaxation = not geometry_relaxed
     calculation_ready = bool(
         commensurability_verified
         and geometry_relaxed
         and not requires_geometry_relaxation
-        and latest.get("calculation_ready") is True
     )
     if requires_geometry_relaxation or not geometry_relaxed:
         warnings.append("Commensurate twisted bilayer remains a pre-relaxation structure.")
@@ -7038,13 +7410,26 @@ def _commensurate_tmd_twist_summary(
             _round(current_interlayer_gap) if current_interlayer_gap is not None else None
         ),
         "interlayer_gap_verified": interlayer_gap_verified,
+        "geometry_measurement_binding_verified": geometry_measurement_binding_verified,
         "expected_structure_sha256": expected_structure_sha256 or None,
         "current_structure_sha256": current_structure_sha256,
+        "construction_structure_binding_matches_current": (
+            construction_structure_binding_matches
+        ),
         "structure_binding_matches_current": structure_binding_matches,
+        "structure_binding_scope": (
+            "verified_fixed_cell_castep_relaxation_output"
+            if fixed_cell_relaxation_verified
+            else "commensurate_construction_receipt"
+            if construction_structure_binding_matches
+            else "unverified"
+        ),
+        "castep_relaxation_transition": castep_relaxation_transition,
+        "castep_relaxation_transition_verified": fixed_cell_relaxation_verified,
         "metadata_consistent": metadata_consistent,
         "commensurability_verified": commensurability_verified,
-        "pre_relaxation_scaffold": latest.get("pre_relaxation_scaffold") is not False,
-        "visual_review_only": latest.get("visual_review_only") is True,
+        "pre_relaxation_scaffold": not geometry_relaxed,
+        "visual_review_only": not calculation_ready,
         "visual_hotload_ready": latest.get("visual_hotload_ready") is True,
         "requires_geometry_relaxation": requires_geometry_relaxation,
         "geometry_relaxed": geometry_relaxed,
@@ -7225,13 +7610,13 @@ def _commensurate_tmd_heterobilayer_summary(
         and latest.get("commensurability_model")
         == "exact_integer_coincidence_after_explicit_biaxial_strain"
     )
-    requires_geometry_relaxation = latest.get("requires_geometry_relaxation") is not False
-    geometry_relaxed = latest.get("geometry_relaxed") is True
+    requires_geometry_relaxation = common.get("requires_geometry_relaxation") is not False
+    geometry_relaxed = common.get("geometry_relaxed") is True
     calculation_ready = bool(
         commensurability_verified
         and geometry_relaxed
         and not requires_geometry_relaxation
-        and latest.get("calculation_ready") is True
+        and common.get("calculation_ready") is True
     )
     if requires_geometry_relaxation or not geometry_relaxed:
         warnings.append(
@@ -7378,27 +7763,11 @@ def _diagnostic_atom_id_list_sha256(atom_ids: list[str]) -> str:
 
 
 def _diagnostic_crystal_structure_sha256(crystal: CrystalSpec) -> str:
-    payload = {
-        "lattice": {
-            key: round(float(getattr(crystal.lattice, key)), 12)
-            for key in ("a", "b", "c", "alpha", "beta", "gamma")
-        },
-        "atoms": [
-            {
-                "id": atom.id,
-                "element": atom.element,
-                "fractional": [
-                    round(float(atom.fractional.x), 12),
-                    round(float(atom.fractional.y), 12),
-                    round(float(atom.fractional.z), 12),
-                ],
-            }
-            for atom in sorted(crystal.basis_atoms, key=lambda item: item.id)
-        ],
-    }
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    return crystal_structure_sha256(crystal)
+
+
+def _is_sha256(value: str) -> bool:
+    return re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _crystal_atom_coordinate_sha256(spec: ModelSpec, atom_ids: Sequence[str]) -> str | None:

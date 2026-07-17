@@ -6777,6 +6777,17 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert calculation_preflight_command["operation"] == "inspect_current_calculation_preflight"
     assert "DFT/CASTEP" in calculation_preflight_command["pattern"]
     assert "Does not create a new revision" in calculation_preflight_command["history_policy"]
+    castep_command = next(
+        item
+        for item in capabilities["natural_language"]["session_commands"]
+        if item["template_id"] == "castep_geometry_optimization"
+    )
+    assert castep_command["operation"] == "castep_relaxation"
+    relaxation_capability = capabilities["castep_geometry_optimization"]
+    assert relaxation_capability["tool"] == "material_studio_castep_relax_current"
+    assert relaxation_capability["default_execution_mode"] == "preview"
+    assert relaxation_capability["promotion_requires_converged"] is True
+    assert relaxation_capability["hotload_reuses_existing_window_only"] is True
     assert "make_supercell" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "superlattice_period" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "quantum_well_layers" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6853,6 +6864,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert heterobilayer_safety["dipole_correction_direction_property_exposed"] is False
     assert heterobilayer_safety["dipole_correction_setting_verified_from_model_spec"] is True
     assert heterobilayer_safety["quantitative_electrostatic_calculation_ready"] is False
+    assert heterobilayer_safety["geometry_relaxation_tool"] == "material_studio_castep_relax_current"
+    assert heterobilayer_safety["geometry_relaxation_transition_receipt_required"] is True
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]

@@ -39,6 +39,7 @@ enabled_tools = [
   "material_studio_import_export",
   "material_studio_forcite_geometry_optimization",
   "material_studio_castep_energy_script",
+  "material_studio_castep_relax_current",
   "material_studio_list_script_templates"
 ]
 
@@ -74,6 +75,9 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_execute_view_replay]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_castep_relax_current]
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_run_script]

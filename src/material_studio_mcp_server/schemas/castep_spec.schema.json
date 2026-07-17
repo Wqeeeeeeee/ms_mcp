@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "CastepCellOptimization": {
+      "description": "Geometry-optimization cell modes documented by MS 20.1.",
+      "enum": [
+        "None",
+        "Full",
+        "Fixed Volume",
+        "Fixed Shape"
+      ],
+      "title": "CastepCellOptimization",
+      "type": "string"
+    },
     "CastepDipoleCorrection": {
       "description": "Dipole-correction modes documented by Materials Studio 20.1.",
       "enum": [
@@ -8,6 +19,17 @@
         "Self-consistent"
       ],
       "title": "CastepDipoleCorrection",
+      "type": "string"
+    },
+    "CastepOptimizationAlgorithm": {
+      "description": "Geometry-optimization algorithms documented by MS 20.1.",
+      "enum": [
+        "LBFGS",
+        "BFGS",
+        "Damped MD",
+        "TPSD"
+      ],
+      "title": "CastepOptimizationAlgorithm",
       "type": "string"
     },
     "CastepTask": {
@@ -27,7 +49,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "CASTEP task settings rendered against the Materials Studio 20.1 API. The compatibility class dispatches property calculations through Energy and uses dedicated GeometryOptimization and ElasticConstants task APIs. kpoint_separation controls the primary SCF grid.",
+  "description": "CASTEP task settings rendered against the Materials Studio 20.1 API.\n\nThe class name is retained for public compatibility. Property calculations\nare dispatched through the Energy task with documented property flags;\ngeometry optimization and elastic constants use their dedicated task APIs.\n``kpoint_separation`` controls the primary SCF grid, not the separate\nproperty-grid setting.",
   "properties": {
     "module": {
       "const": "CASTEP",
@@ -110,6 +132,84 @@
       "anyOf": [
         {
           "$ref": "#/$defs/CastepDipoleCorrection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "max_iterations": {
+      "anyOf": [
+        {
+          "maximum": 1000000,
+          "minimum": 3,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Iterations"
+    },
+    "displacement_convergence_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Displacement Convergence Angstrom"
+    },
+    "energy_convergence_ev_per_atom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-09,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Energy Convergence Ev Per Atom"
+    },
+    "force_convergence_ev_per_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-07,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Force Convergence Ev Per Angstrom"
+    },
+    "cell_optimization": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepCellOptimization"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "optimization_algorithm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepOptimizationAlgorithm"
         },
         {
           "type": "null"

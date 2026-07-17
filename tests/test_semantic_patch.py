@@ -1387,3 +1387,69 @@ def test_castep_patch_can_update_task_without_mutating_original() -> None:
     assert new_spec.simulation.task == "BandStructure"
     assert new_spec.simulation.cutoff_energy_ev == 520
     assert base.simulation.task == "Energy"
+
+
+def test_castep_patch_applies_geometry_settings_without_mutating_original() -> None:
+    base = load_example("silicon_diamond_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "set_castep_energy",
+                "task": "GeometryOptimization",
+                "functional": "PBE",
+                "quality": "Fine",
+                "cutoff_energy_ev": 600,
+                "kpoints": [6, 6, 4],
+                "max_iterations": 240,
+                "displacement_convergence_angstrom": 0.001,
+                "energy_convergence_ev_per_atom": 1.0e-5,
+                "force_convergence_ev_per_angstrom": 0.02,
+                "cell_optimization": "Fixed Shape",
+                "optimization_algorithm": "BFGS",
+            }
+        ],
+    )
+
+    updated, diff = apply_semantic_patch(base, patch)
+
+    assert diff == ["set_castep_energy"]
+    assert updated.simulation is not None
+    assert updated.simulation.task.value == "GeometryOptimization"
+    assert updated.simulation.max_iterations == 240
+    assert updated.simulation.cell_optimization.value == "Fixed Shape"
+    assert updated.simulation.optimization_algorithm.value == "BFGS"
+    assert base.simulation is not None
+    assert base.simulation.task.value == "Energy"
+    assert base.simulation.max_iterations is None
+
+
+def test_natural_language_distinguishes_castep_relaxation_execution_from_configuration() -> None:
+    current = load_example("silicon_diamond_spec.json")
+    execution = infer_modeling_plan(
+        "Run CASTEP geometry optimization on the current model for 180 cycles "
+        "with fixed cell and LBFGS.",
+        current_spec=current,
+    )
+
+    assert execution.kind == "castep_relaxation"
+    assert execution.template_id == "castep_geometry_optimization_current_revision"
+    assert execution.payload["project_id"] == current.project_id
+    assert execution.payload["base_revision"] == current.revision
+    assert execution.payload["task"] == "GeometryOptimization"
+    assert execution.payload["max_iterations"] == 180
+    assert execution.payload["cell_optimization"] == "None"
+    assert execution.payload["optimization_algorithm"] == "LBFGS"
+    assert execution.payload["explicit_execution_intent"] is True
+
+    configuration = infer_modeling_plan(
+        "Preview CASTEP geometry optimization with fixed volume and BFGS.",
+        current_spec=current,
+    )
+    assert configuration.kind == "patch"
+    assert configuration.template_id == "castep_settings"
+    operation = configuration.payload["operations"][0]
+    assert operation["task"] == "GeometryOptimization"
+    assert operation["cell_optimization"] == "Fixed Volume"
+    assert operation["optimization_algorithm"] == "BFGS"

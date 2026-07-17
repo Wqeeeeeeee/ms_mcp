@@ -14,9 +14,11 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from .castep import (
+    CastepCellOptimizationValue,
     CastepDipoleCorrection,
     CastepDipoleCorrectionValue,
     CastepEnergySpec,
+    CastepOptimizationAlgorithmValue,
     CastepTask,
     CastepTaskValue,
 )
@@ -112,6 +114,23 @@ class SemanticPatchOperation(StrictModel):
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
     dipole_correction: CastepDipoleCorrectionValue | None = None
+    displacement_convergence_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    energy_convergence_ev_per_atom: float | None = Field(
+        default=None,
+        gt=1.0e-9,
+        le=100,
+    )
+    force_convergence_ev_per_angstrom: float | None = Field(
+        default=None,
+        gt=1.0e-7,
+        le=100,
+    )
+    cell_optimization: CastepCellOptimizationValue | None = None
+    optimization_algorithm: CastepOptimizationAlgorithmValue | None = None
     matrix: tuple[int, int, int] | None = None
     axis: Literal["a", "b", "c", "x", "y", "z"] | None = None
     distance_angstrom: float | None = Field(default=None, ge=-1_000, le=1_000)
@@ -3114,6 +3133,16 @@ def _castep_from_operation(operation: SemanticPatchOperation) -> CastepEnergySpe
         kpoint_separation=operation.kpoint_separation,
         kpoints=operation.kpoints,
         dipole_correction=operation.dipole_correction,
+        max_iterations=operation.max_iterations,
+        displacement_convergence_angstrom=(
+            operation.displacement_convergence_angstrom
+        ),
+        energy_convergence_ev_per_atom=operation.energy_convergence_ev_per_atom,
+        force_convergence_ev_per_angstrom=(
+            operation.force_convergence_ev_per_angstrom
+        ),
+        cell_optimization=operation.cell_optimization,
+        optimization_algorithm=operation.optimization_algorithm,
     )
 
 

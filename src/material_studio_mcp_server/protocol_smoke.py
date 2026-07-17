@@ -685,6 +685,32 @@ async def _run_preview_calls(
                 "capabilities_castep_electronic_convergence_boundary_missing"
             )
         if castep_electronic_capability.get(
+            "scientific_band_gap_verified"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_castep_electronic_band_gap_boundary_missing"
+            )
+        sampled_band_edge_capability = castep_electronic_capability.get(
+            "sampled_band_edge_audit"
+        )
+        if not isinstance(sampled_band_edge_capability, dict):
+            validation_errors.append(
+                "capabilities_castep_sampled_band_edge_audit_missing"
+            )
+            sampled_band_edge_capability = {}
+        if sampled_band_edge_capability.get("source") != (
+            "hash_bound_native_castep_bands"
+        ):
+            validation_errors.append(
+                "capabilities_castep_sampled_band_edge_source_missing"
+            )
+        if sampled_band_edge_capability.get(
+            "scientific_band_gap_verified"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_castep_sampled_band_edge_overclaim"
+            )
+        if castep_electronic_capability.get(
             "numeric_curve_data_exported"
         ) != "conditional_on_native_bands":
             validation_errors.append(
@@ -887,6 +913,16 @@ async def _run_preview_calls(
             validation_errors.append(
                 "castep_electronic_preview_claimed_numeric_export"
             )
+        if electronic_preview.get("scientific_band_gap_verified") is not False:
+            validation_errors.append(
+                "castep_electronic_preview_claimed_scientific_band_gap"
+            )
+        if electronic_preview.get(
+            "sampled_band_edge_audit_after_execution"
+        ) != "conditional_on_hash_bound_native_bands":
+            validation_errors.append(
+                "castep_electronic_preview_band_edge_plan_missing"
+            )
         if electronic_preview.get("numeric_export_after_execution") is not None:
             validation_errors.append(
                 "castep_electronic_energy_preview_numeric_plan_mismatch"
@@ -1064,6 +1100,14 @@ async def _run_preview_calls(
                 "castep_electronic_preview_numeric_export_after_execution": (
                     electronic_preview.get("numeric_export_after_execution")
                 ),
+                "castep_electronic_preview_scientific_band_gap_verified": (
+                    electronic_preview.get("scientific_band_gap_verified")
+                ),
+                "castep_electronic_preview_band_edge_audit_after_execution": (
+                    electronic_preview.get(
+                        "sampled_band_edge_audit_after_execution"
+                    )
+                ),
                 "gui_opened": created.get("gui_open") is not None,
                 "view_names": view_names,
                 "view_bundle_manifest_path": exported.get("view_bundle_manifest_path"),
@@ -1137,6 +1181,14 @@ async def _run_preview_calls(
                 "capabilities_castep_electronic_numeric_export_mode": (
                     castep_electronic_capability.get(
                         "numeric_curve_data_exported"
+                    )
+                ),
+                "capabilities_castep_sampled_band_edge_source": (
+                    sampled_band_edge_capability.get("source")
+                ),
+                "capabilities_castep_sampled_band_edge_scientific_gap_verified": (
+                    sampled_band_edge_capability.get(
+                        "scientific_band_gap_verified"
                     )
                 ),
                 "capabilities_castep_electronic_band_export": (

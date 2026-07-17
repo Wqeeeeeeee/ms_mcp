@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from material_studio_mcp_server import server
 from material_studio_mcp_server.castep_electronic import (
     RESULT_DOCUMENT_BY_TASK,
     verify_castep_electronic_receipt,
+)
+from material_studio_mcp_server.parsers import (
+    CASTEP_NATIVE_OUTPUT_AUDIT_LEGACY_SCHEMA,
+    HARTREE_TO_EV,
 )
 from material_studio_mcp_server.parsers.castep_log import (
     CASTEP_ELECTRONIC_RESULT_SCHEMA,
@@ -107,12 +114,14 @@ class _ElectronicRunner:
         missing_result_document: bool = False,
         payload_revision: int | None = None,
         change_structure: bool = False,
+        native_bands_text: str = _NATIVE_BANDS,
     ) -> None:
         self.source = source
         self.task = task
         self.missing_result_document = missing_result_document
         self.payload_revision = payload_revision
         self.change_structure = change_structure
+        self.native_bands_text = native_bands_text
         self.call_count = 0
 
     def run_script(
@@ -196,7 +205,7 @@ class _ElectronicRunner:
         native_artifact = fake_job_dir / f"{self.task.value}.castep"
         native_artifact.write_text(_NATIVE_CASTEP_OUTPUT, encoding="utf-8")
         native_bands = fake_job_dir / f"{self.task.value}.bands"
-        native_bands.write_text(_NATIVE_BANDS, encoding="utf-8")
+        native_bands.write_text(self.native_bands_text, encoding="utf-8")
         return ScriptRunResult(
             command=["fake-RunMatScript.bat", str(fake_script)],
             job_id=f"fake-{self.task.value}",
@@ -547,6 +556,13 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert result["native_scf_status"] == "completed_below_max_cycles"
     assert result["native_scf_last_iteration"] == 8
     assert result["native_scf_maximum_cycles_reached"] is False
+    assert result["scientific_band_gap_verified"] is False
+    assert result["sampled_band_edge_status"] == "sampled_gap"
+    assert result["sampled_band_gap_ev"] == pytest.approx(
+        0.12 * HARTREE_TO_EV
+    )
+    assert result["sampled_fermi_crossing_observed"] is False
+    assert result["reported_band_gap_crosscheck_status"] == "review_difference"
     assert fake_runner.call_count == 1
     current = ProjectStore(tmp_path).load_current(source.project_id)
     assert current.revision == 1
@@ -556,6 +572,7 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert summary["binding_verified"] is True
     assert summary["task"] == "Energy"
     assert summary["scientific_convergence_verified"] is False
+    assert summary["scientific_band_gap_verified"] is False
     assert summary["numeric_curve_data_exported"] is False
     assert summary["native_artifact_count"] == 2
     assert summary["native_output_audit"]["status"] == "complete"
@@ -563,6 +580,14 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
         "completed_below_max_cycles"
     )
     assert summary["derived_artifact_count"] == 0
+    assert summary["sampled_band_edge_status"] == "sampled_gap"
+    assert summary["sampled_band_gap_ev"] == pytest.approx(
+        0.12 * HARTREE_TO_EV
+    )
+    assert summary["sampled_fermi_crossing_observed"] is False
+    assert summary["reported_band_gap_crosscheck"]["status"] == (
+        "review_difference"
+    )
     receipt = current.metadata["last_castep_electronic_calculation"]
     script_path = Path(receipt["script_path"])
     payload_path = Path(receipt["result_payload_path"])
@@ -597,6 +622,13 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
         "native_output_audit_file_sha256",
         "derived_artifact_count",
         "derived_artifacts",
+        "scientific_band_gap_verified",
+        "scientific_band_gap_claimed",
+        "sampled_band_edge_status",
+        "sampled_band_gap_ev",
+        "sampled_fermi_crossing_observed",
+        "reported_band_gap_crosscheck_status",
+        "reported_band_gap_difference_ev",
     ):
         legacy_receipt.pop(key, None)
     legacy_receipt["numeric_curve_data_exported"] = False
@@ -627,7 +659,158 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert "native_output_audit_status" in csv_text
     assert "completed_below_max_cycles" in csv_text
     assert "native_band_eigenvalue_count" in csv_text
+    assert "sampled_band_edge_status" in csv_text
+    assert "sampled_vbm_kpoint_index" in csv_text
+    assert "sampled_cbm_kpoint_index" in csv_text
+    assert "reported_band_gap_crosscheck_status" in csv_text
+    assert "review_difference" in csv_text
     assert "False" in csv_text
+
+
+def test_native_fermi_crossing_surfaces_in_receipt_and_modeling_health(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_fermi_crossing")
+    crossing_bands = _NATIVE_BANDS.replace("0.08\n", "0.15\n")
+    fake_runner = _ElectronicRunner(
+        source,
+        CastepTask.ENERGY,
+        native_bands_text=crossing_bands,
+    )
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["scientific_band_gap_verified"] is False
+    assert result["sampled_band_edge_status"] == "sampled_fermi_crossing"
+    assert result["sampled_band_gap_ev"] == 0.0
+    assert result["sampled_fermi_crossing_observed"] is True
+    current = ProjectStore(tmp_path).load_current(source.project_id)
+    verified = verify_castep_electronic_receipt(current)
+    assert verified is not None
+    assert verified["binding_verified"] is True
+    assert verified["sampled_fermi_crossing_observed"] is True
+    checks = result["modeling_health"]["checks"]
+    assert checks["semiconductor_castep_sampled_fermi_crossing_observed"] is True
+    assert any(
+        "Fermi-level crossing" in warning
+        for warning in result["modeling_health"]["warnings"]
+    )
+
+
+def test_prior_native_audit_v1_remains_hash_bound_and_verifiable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_native_audit_v1")
+    fake_runner = _ElectronicRunner(source, CastepTask.ENERGY)
+    monkeypatch.setattr(server, "runner", fake_runner)
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+    assert result["ok"] is True
+
+    current = ProjectStore(tmp_path).load_current(source.project_id)
+    receipt = dict(current.metadata["last_castep_electronic_calculation"])
+    legacy_audit = json.loads(json.dumps(receipt["native_output_audit"]))
+    legacy_audit["schema_version"] = CASTEP_NATIVE_OUTPUT_AUDIT_LEGACY_SCHEMA
+    output_audit = legacy_audit.get("castep_output_audit")
+    assert isinstance(output_audit, dict)
+    output_audit["schema_version"] = CASTEP_NATIVE_OUTPUT_AUDIT_LEGACY_SCHEMA
+    legacy_audit.pop("sampled_band_edges", None)
+    legacy_audit.pop("scientific_band_gap_verified", None)
+
+    audit_path = Path(receipt["native_output_audit_path"])
+    original_audit_bytes = audit_path.read_bytes()
+    legacy_audit_bytes = (
+        json.dumps(
+            legacy_audit,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    canonical_audit_bytes = json.dumps(
+        legacy_audit,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    audit_path.write_bytes(legacy_audit_bytes)
+    try:
+        receipt["native_output_audit"] = legacy_audit
+        receipt["native_output_audit_payload_sha256"] = hashlib.sha256(
+            canonical_audit_bytes
+        ).hexdigest()
+        receipt["native_output_audit_file_sha256"] = hashlib.sha256(
+            legacy_audit_bytes
+        ).hexdigest()
+        for key in (
+            "scientific_band_gap_verified",
+            "scientific_band_gap_claimed",
+            "sampled_band_edge_status",
+            "sampled_band_gap_ev",
+            "sampled_fermi_crossing_observed",
+            "reported_band_gap_crosscheck_status",
+            "reported_band_gap_difference_ev",
+        ):
+            receipt.pop(key, None)
+        metadata = dict(current.metadata)
+        metadata["last_castep_electronic_calculation"] = receipt
+        metadata["castep_electronic_calculation_history"] = [receipt]
+        legacy_spec = ModelSpec.model_validate(
+            current.model_copy(update={"metadata": metadata}).model_dump(
+                mode="json"
+            )
+        )
+
+        verified = verify_castep_electronic_receipt(legacy_spec)
+        assert verified is not None
+        assert verified["binding_verified"] is True
+        assert verified["checks"]["native_output_audit_contract"] is True
+        assert verified["native_output_audit"]["schema_version"].endswith("_v1")
+        assert verified["sampled_band_edges"] is None
+        assert verified["scientific_band_gap_verified"] is False
+
+        forged_audit = dict(legacy_audit)
+        forged_audit["sampled_band_edges"] = {
+            "status": "sampled_gap",
+            "sampled_gap_ev": 9.99,
+        }
+        forged_receipt = dict(receipt)
+        forged_receipt["native_output_audit"] = forged_audit
+        forged_metadata = dict(metadata)
+        forged_metadata["last_castep_electronic_calculation"] = forged_receipt
+        forged_metadata["castep_electronic_calculation_history"] = [forged_receipt]
+        forged_spec = ModelSpec.model_validate(
+            current.model_copy(update={"metadata": forged_metadata}).model_dump(
+                mode="json"
+            )
+        )
+        forged = verify_castep_electronic_receipt(forged_spec)
+        assert forged is not None
+        assert forged["binding_verified"] is False
+        assert forged["checks"]["native_output_audit_contract"] is False
+        assert forged["sampled_band_edges"] is None
+    finally:
+        audit_path.write_bytes(original_audit_bytes)
 
 
 def test_property_task_requires_verified_geometry_relaxation_before_runner(
@@ -685,6 +868,11 @@ def test_band_structure_after_verified_relaxation_records_required_chart(
     assert receipt["numeric_curve_data_exported"] is True
     assert receipt["numeric_curve_kind"] == "native_castep_band_eigenvalues"
     assert receipt["native_band_kpoint_path_exported"] is True
+    assert receipt["scientific_band_gap_verified"] is False
+    assert receipt["sampled_band_edge_status"] == "sampled_gap"
+    assert receipt["sampled_band_gap_ev"] == pytest.approx(
+        0.12 * HARTREE_TO_EV
+    )
     assert Path(receipt["derived_artifacts"][0]["path"]).is_file()
     current = ProjectStore(tmp_path).load_current(source.project_id)
     verified = verify_castep_electronic_receipt(current)

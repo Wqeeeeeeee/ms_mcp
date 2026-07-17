@@ -1222,6 +1222,18 @@ DOS. PDOS projection weights remain unsupported and fail-closed until the local
 `.pdos_weights` layout is verified. Receipt v2 hash-binds the native audit and
 all derived CSVs; an artifact mismatch makes the numeric export unverified.
 
+For a hash-bound `.bands` file, read the compact sampled-band fields together:
+`sampled_band_edge_status`, `sampled_band_gap_ev`,
+`sampled_fermi_crossing_observed`,
+`reported_band_gap_crosscheck_status`, and
+`reported_band_gap_difference_ev`. The full receipt preserves per-spin VBM/CBM
+states and native k-point coordinates. A Fermi crossing forces the sampled gap
+to zero and requires metallic/semimetallic review. Even when the sampled gap and
+Materials Studio `BandGap` agree, `scientific_band_gap_verified` remains false:
+the result does not independently verify the analytic path, direct/indirect gap,
+SCF convergence, or k-point convergence. Historical native-audit v1 receipts
+remain readable but intentionally expose no trusted sampled-band summary.
+
 The active user config is not rewritten by the doctor or protocol smoke. After
 merging the example snippet manually and restarting Codex, validate discovery
 with:

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 from .castep_relaxation import crystal_structure_sha256
-from .parsers.castep_native import CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA
+from .parsers.castep_native import (
+    CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA,
+    CASTEP_NATIVE_OUTPUT_AUDIT_SUPPORTED_SCHEMAS,
+    CASTEP_SAMPLED_BAND_EDGE_SCHEMA,
+)
 from .parsers.cif import validate_crystal_cif_against_spec
 from .specs.castep import CastepEnergySpec, CastepTask
 from .specs.crystal import CrystalSpec
@@ -137,6 +142,7 @@ def build_electronic_result_revision_spec(
         task=simulation.task.value,
         native_artifacts=normalized_native_artifacts,
         derived_artifacts=normalized_derived_artifacts,
+        reported_band_gap_ev=result_payload.get("band_gap_ev"),
     )
     if audit_contract_errors:
         raise ValueError(
@@ -146,6 +152,14 @@ def build_electronic_result_revision_spec(
     numeric_curve_data_exported = native_output_audit[
         "numeric_curve_data_exported"
     ]
+    sampled_band_edges = native_output_audit.get("sampled_band_edges")
+    if not isinstance(sampled_band_edges, dict):
+        sampled_band_edges = {}
+    reported_gap_crosscheck = sampled_band_edges.get(
+        "reported_band_gap_crosscheck"
+    )
+    if not isinstance(reported_gap_crosscheck, dict):
+        reported_gap_crosscheck = {}
     structure_hash = crystal_structure_sha256(base_spec.model)
     simulation_payload = simulation.model_dump(mode="json")
     receipt = {
@@ -171,6 +185,8 @@ def build_electronic_result_revision_spec(
         "calculation_result_verified": True,
         "scientific_convergence_verified": False,
         "scientific_convergence_claimed": False,
+        "scientific_band_gap_verified": False,
+        "scientific_band_gap_claimed": False,
         "required_result_document": expected_document,
         "result_document_name": chart_name,
         "result_document_available": bool(chart_name),
@@ -183,6 +199,17 @@ def build_electronic_result_revision_spec(
             "pdos_projection_weights_exported"
         ),
         "band_path_binding_verified": False,
+        "sampled_band_edge_status": sampled_band_edges.get("status"),
+        "sampled_band_gap_ev": sampled_band_edges.get("sampled_gap_ev"),
+        "sampled_fermi_crossing_observed": sampled_band_edges.get(
+            "fermi_crossing_observed"
+        ),
+        "reported_band_gap_crosscheck_status": reported_gap_crosscheck.get(
+            "status"
+        ),
+        "reported_band_gap_difference_ev": reported_gap_crosscheck.get(
+            "absolute_difference_ev"
+        ),
         "total_energy_kcal_per_mol": result_payload.get(
             "total_energy_kcal_per_mol"
         ),
@@ -306,6 +333,10 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
             receipt.get("scientific_convergence_verified") is False
             and receipt.get("scientific_convergence_claimed") is False
         ),
+        "band_gap_not_overclaimed": (
+            receipt.get("scientific_band_gap_verified") in (None, False)
+            and receipt.get("scientific_band_gap_claimed") in (None, False)
+        ),
         "numeric_curve_contract": (
             receipt.get("numeric_curve_data_exported") is False
             if legacy_receipt
@@ -370,6 +401,7 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
                     task=str(receipt.get("task") or ""),
                     native_artifacts=receipt.get("native_artifacts"),
                     derived_artifacts=receipt.get("derived_artifacts"),
+                    reported_band_gap_ev=receipt.get("band_gap_ev"),
                 ),
             }
         )
@@ -413,6 +445,15 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
     ]
     numeric_export_claimed = receipt.get("numeric_curve_data_exported") is True
     numeric_exported = binding_verified and numeric_export_claimed
+    sampled_band_edges = (
+        native_output_audit.get("sampled_band_edges")
+        if isinstance(native_output_audit, dict)
+        and native_output_audit.get("schema_version")
+        == CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA
+        and isinstance(native_output_audit.get("sampled_band_edges"), dict)
+        else None
+    )
+    trusted_band_edges = sampled_band_edges if binding_verified else None
     if numeric_exported:
         warnings.append(
             "Numeric data provenance comes from the native CASTEP .bands file, "
@@ -430,6 +471,20 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
             "The native .bands k-points are exported when available, but they are "
             "not asserted to equal the MCP analytic band-path preview."
         )
+    if trusted_band_edges is not None:
+        if trusted_band_edges.get("fermi_crossing_observed") is True:
+            warnings.append(
+                "Native sampled bands show a Fermi-level crossing; review metallic "
+                "or semimetallic behavior before using a band-gap value."
+            )
+        crosscheck = trusted_band_edges.get("reported_band_gap_crosscheck")
+        if isinstance(crosscheck, dict) and crosscheck.get("status") == (
+            "review_difference"
+        ):
+            warnings.append(
+                "The native sampled gap and Materials Studio BandGap result differ "
+                "beyond the recorded comparison tolerance."
+            )
     if not binding_verified:
         warnings.insert(
             0,
@@ -446,6 +501,7 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
         "target_revision": receipt.get("target_revision"),
         "backend_run_completed": receipt.get("backend_run_completed"),
         "scientific_convergence_verified": False,
+        "scientific_band_gap_verified": False,
         "numeric_curve_data_exported": numeric_exported,
         "numeric_curve_data_claimed": numeric_export_claimed,
         "numeric_curve_kind": (
@@ -461,6 +517,27 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
             and receipt.get("pdos_projection_weights_exported") is True
         ),
         "band_path_binding_verified": receipt.get("band_path_binding_verified"),
+        "sampled_band_edges": trusted_band_edges,
+        "sampled_band_edge_status": (
+            trusted_band_edges.get("status")
+            if trusted_band_edges is not None
+            else None
+        ),
+        "sampled_band_gap_ev": (
+            trusted_band_edges.get("sampled_gap_ev")
+            if trusted_band_edges is not None
+            else None
+        ),
+        "sampled_fermi_crossing_observed": (
+            trusted_band_edges.get("fermi_crossing_observed")
+            if trusted_band_edges is not None
+            else None
+        ),
+        "reported_band_gap_crosscheck": (
+            trusted_band_edges.get("reported_band_gap_crosscheck")
+            if trusted_band_edges is not None
+            else None
+        ),
         "required_result_document": receipt.get("required_result_document"),
         "result_document_name": receipt.get("result_document_name"),
         "total_energy_kcal_per_mol": receipt.get("total_energy_kcal_per_mol"),
@@ -539,11 +616,13 @@ def _native_output_audit_contract_errors(
     task: str,
     native_artifacts: Any,
     derived_artifacts: Any,
+    reported_band_gap_ev: Any,
 ) -> list[str]:
     errors: list[str] = []
     if not isinstance(audit, dict):
         return ["audit payload is not an object"]
-    if audit.get("schema_version") != CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA:
+    audit_schema = audit.get("schema_version")
+    if audit_schema not in CASTEP_NATIVE_OUTPUT_AUDIT_SUPPORTED_SCHEMAS:
         errors.append("audit schema is unsupported")
     if audit.get("task") != task:
         errors.append("audit task does not match the receipt task")
@@ -607,10 +686,25 @@ def _native_output_audit_contract_errors(
             errors.append(f"{component_name} source is not bound to native artifacts")
     output_audit = audit.get("castep_output_audit")
     if isinstance(output_audit, dict):
-        if output_audit.get("schema_version") != CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA:
+        if output_audit.get(
+            "schema_version"
+        ) not in CASTEP_NATIVE_OUTPUT_AUDIT_SUPPORTED_SCHEMAS:
             errors.append("nested CASTEP output audit schema is unsupported")
         if output_audit.get("scientific_convergence_verified") is not False:
             errors.append("nested CASTEP output audit overclaims convergence")
+    sampled_band_edges = audit.get("sampled_band_edges")
+    if audit_schema == CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA:
+        errors.extend(
+            _sampled_band_edge_contract_errors(
+                sampled_band_edges,
+                bands_summary=audit.get("bands_summary"),
+                reported_band_gap_ev=reported_band_gap_ev,
+            )
+        )
+        if audit.get("scientific_band_gap_verified") is not False:
+            errors.append("native audit overclaims scientific band-gap verification")
+    elif sampled_band_edges is not None:
+        errors.append("legacy native audit cannot carry sampled band-edge evidence")
 
     kinds = {
         item.get("artifact_kind")
@@ -650,6 +744,70 @@ def _native_output_audit_contract_errors(
             errors.append("PDOS derived-artifact set is invalid")
     else:
         errors.append("receipt task is not a supported electronic task")
+    return errors
+
+
+def _sampled_band_edge_contract_errors(
+    summary: Any,
+    *,
+    bands_summary: Any,
+    reported_band_gap_ev: Any,
+) -> list[str]:
+    if bands_summary is None:
+        return [] if summary is None else ["band-edge audit exists without .bands data"]
+    if not isinstance(summary, dict):
+        return ["current native audit is missing sampled band-edge evidence"]
+    errors: list[str] = []
+    if summary.get("schema_version") != CASTEP_SAMPLED_BAND_EDGE_SCHEMA:
+        errors.append("sampled band-edge schema is unsupported")
+    if summary.get("status") not in {
+        "sampled_gap",
+        "sampled_fermi_crossing",
+        "partial",
+        "insufficient_states",
+    }:
+        errors.append("sampled band-edge status is unsupported")
+    if summary.get("scientific_band_gap_verified") is not False:
+        errors.append("sampled band-edge audit overclaims a scientific gap")
+    if not isinstance(bands_summary, dict):
+        errors.append("bands summary is not an object")
+    else:
+        if summary.get("number_of_kpoints") != bands_summary.get(
+            "number_of_kpoints"
+        ):
+            errors.append("sampled band-edge k-point count mismatch")
+        if summary.get("number_of_spin_components") != bands_summary.get(
+            "number_of_spin_components"
+        ):
+            errors.append("sampled band-edge spin count mismatch")
+    crossing = summary.get("fermi_crossing_observed")
+    if not isinstance(crossing, bool):
+        errors.append("sampled Fermi-crossing flag is not boolean")
+    sampled_gap = summary.get("sampled_gap_ev")
+    if sampled_gap is not None and (
+        not isinstance(sampled_gap, (int, float))
+        or isinstance(sampled_gap, bool)
+        or not math.isfinite(float(sampled_gap))
+        or float(sampled_gap) < 0
+    ):
+        errors.append("sampled band gap is not a non-negative finite value")
+    if crossing is True and sampled_gap != 0.0:
+        errors.append("sampled Fermi crossing must force the sampled gap to zero")
+    crosscheck = summary.get("reported_band_gap_crosscheck")
+    if not isinstance(crosscheck, dict):
+        errors.append("reported BandGap crosscheck is missing")
+    else:
+        if crosscheck.get("status") not in {
+            "reported_gap_unavailable",
+            "sampled_gap_unavailable",
+            "within_tolerance",
+            "review_difference",
+        }:
+            errors.append("reported BandGap crosscheck status is unsupported")
+        if crosscheck.get("scientific_consistency_verified") is not False:
+            errors.append("reported BandGap crosscheck overclaims consistency")
+        if crosscheck.get("reported_band_gap_ev") != reported_band_gap_ev:
+            errors.append("reported BandGap crosscheck is not bound to result payload")
     return errors
 
 

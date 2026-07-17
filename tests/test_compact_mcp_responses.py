@@ -88,6 +88,7 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
             "ok": True,
             "status": "castep_electronic_result_recorded",
             "scientific_convergence_verified": False,
+            "scientific_band_gap_verified": False,
             "numeric_curve_data_exported": True,
             "numeric_curve_kind": "native_castep_band_eigenvalues",
             "native_output_audit_status": "complete",
@@ -95,6 +96,14 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
             "native_scf_status": "completed_below_max_cycles",
             "native_scf_last_iteration": 12,
             "native_scf_maximum_cycles_reached": False,
+            "sampled_band_edge_status": "sampled_gap",
+            "sampled_band_gap_ev": 1.12,
+            "sampled_fermi_crossing_observed": False,
+            "reported_band_gap_crosscheck_status": "within_tolerance",
+            "reported_band_gap_difference_ev": 0.01,
+            "sampled_band_edge_audit_after_execution": (
+                "conditional_on_hash_bound_native_bands"
+            ),
             "derived_artifact_count": 1,
         },
         "compact",
@@ -106,6 +115,15 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
     assert compact["native_scf_status"] == "completed_below_max_cycles"
     assert compact["native_scf_last_iteration"] == 12
     assert compact["native_scf_maximum_cycles_reached"] is False
+    assert compact["scientific_band_gap_verified"] is False
+    assert compact["sampled_band_edge_status"] == "sampled_gap"
+    assert compact["sampled_band_gap_ev"] == 1.12
+    assert compact["sampled_fermi_crossing_observed"] is False
+    assert compact["reported_band_gap_crosscheck_status"] == "within_tolerance"
+    assert compact["reported_band_gap_difference_ev"] == 0.01
+    assert compact["sampled_band_edge_audit_after_execution"] == (
+        "conditional_on_hash_bound_native_bands"
+    )
     assert compact["derived_artifact_count"] == 1
 
 

@@ -17,11 +17,23 @@ from ..specs.common import StrictModel
 
 
 HARTREE_TO_EV = 27.211386245988
-CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA = "material_studio_castep_native_output_audit_v1"
+CASTEP_NATIVE_OUTPUT_AUDIT_LEGACY_SCHEMA = (
+    "material_studio_castep_native_output_audit_v1"
+)
+CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA = "material_studio_castep_native_output_audit_v2"
+CASTEP_NATIVE_OUTPUT_AUDIT_SUPPORTED_SCHEMAS = frozenset(
+    {
+        CASTEP_NATIVE_OUTPUT_AUDIT_LEGACY_SCHEMA,
+        CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA,
+    }
+)
+CASTEP_SAMPLED_BAND_EDGE_SCHEMA = "material_studio_castep_sampled_band_edges_v1"
 MAX_CASTEP_BANDS_BYTES = 512 * 1024 * 1024
 MAX_CASTEP_OUTPUT_BYTES = 128 * 1024 * 1024
 MAX_CASTEP_BAND_VALUES = 10_000_000
 DEFAULT_DOS_GRID_POINTS = 2001
+DEFAULT_FERMI_TOLERANCE_EV = 1.0e-5
+MAX_BAND_EDGE_DETAIL_ROWS = 100
 
 _FLOAT_TOKEN = r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[EeDd][+-]?\d+)?"
 _FLOAT_RE = re.compile(rf"^{_FLOAT_TOKEN}$")
@@ -358,6 +370,146 @@ def parse_castep_output_text(text: str) -> dict[str, Any]:
     }
 
 
+def analyze_castep_sampled_band_edges(
+    data: CastepBandsData,
+    *,
+    fermi_tolerance_ev: float = DEFAULT_FERMI_TOLERANCE_EV,
+    reported_band_gap_ev: float | None = None,
+) -> dict[str, Any]:
+    """Summarize Fermi-referenced sampled band edges without a gap claim."""
+
+    if isinstance(fermi_tolerance_ev, bool) or (
+        not math.isfinite(fermi_tolerance_ev)
+        or fermi_tolerance_ev <= 0
+        or fermi_tolerance_ev > 1.0
+    ):
+        raise ValueError("Fermi tolerance must be finite and between 0 and 1 eV")
+    if reported_band_gap_ev is not None and (
+        isinstance(reported_band_gap_ev, bool)
+        or not math.isfinite(reported_band_gap_ev)
+        or reported_band_gap_ev < 0
+    ):
+        raise ValueError("Reported band gap must be a non-negative finite value")
+
+    fermi_values = _expand_spin_values(
+        data.fermi_energy_hartree_per_spin,
+        data.number_of_spin_components,
+    )
+    spin_channels = [
+        _sampled_spin_channel_band_edges(
+            data,
+            spin_index=spin_index,
+            fermi_hartree=fermi_values[spin_index],
+            fermi_tolerance_ev=fermi_tolerance_ev,
+        )
+        for spin_index in range(data.number_of_spin_components)
+    ]
+    crossing_observed = any(
+        channel["fermi_crossing_observed"] for channel in spin_channels
+    )
+    complete_channels = [
+        channel for channel in spin_channels if channel.get("sampled_gap_ev") is not None
+    ]
+    if crossing_observed:
+        status = "sampled_fermi_crossing"
+        sampled_gap_ev: float | None = 0.0
+        gap_channel = next(
+            channel
+            for channel in spin_channels
+            if channel["fermi_crossing_observed"]
+        )
+    elif len(complete_channels) == data.number_of_spin_components:
+        status = "sampled_gap"
+        gap_channel = min(
+            complete_channels,
+            key=lambda item: float(item["sampled_gap_ev"]),
+        )
+        sampled_gap_ev = float(gap_channel["sampled_gap_ev"])
+    elif complete_channels:
+        status = "partial"
+        gap_channel = min(
+            complete_channels,
+            key=lambda item: float(item["sampled_gap_ev"]),
+        )
+        sampled_gap_ev = float(gap_channel["sampled_gap_ev"])
+    else:
+        status = "insufficient_states"
+        gap_channel = None
+        sampled_gap_ev = None
+
+    same_kpoint_candidates = [
+        (
+            float(channel["minimum_same_kpoint_fermi_separation_ev"]),
+            channel.get("minimum_same_kpoint_location"),
+        )
+        for channel in spin_channels
+        if channel.get("minimum_same_kpoint_fermi_separation_ev") is not None
+    ]
+    if same_kpoint_candidates:
+        same_kpoint_gap, same_kpoint_location = min(
+            same_kpoint_candidates,
+            key=lambda item: item[0],
+        )
+    else:
+        same_kpoint_gap = None
+        same_kpoint_location = None
+    minimum_abs_values = [
+        float(channel["minimum_abs_energy_minus_fermi_ev"])
+        for channel in spin_channels
+        if channel.get("minimum_abs_energy_minus_fermi_ev") is not None
+    ]
+    crosscheck = _reported_band_gap_crosscheck(
+        sampled_gap_ev,
+        reported_band_gap_ev=reported_band_gap_ev,
+        fermi_tolerance_ev=fermi_tolerance_ev,
+    )
+    warnings = [
+        "This is Fermi-referenced evidence from sampled native .bands data, not "
+        "an independently verified scientific band gap."
+    ]
+    if crossing_observed:
+        warnings.append(
+            "At least one sampled spin-channel band reaches or spans the Fermi "
+            "level; review metallic or semimetallic behavior."
+        )
+    if crosscheck["status"] == "review_difference":
+        warnings.append(
+            "The sampled native-band gap differs from the Materials Studio BandGap "
+            "result beyond the comparison tolerance; sampling and result provenance "
+            "must be reviewed."
+        )
+    return {
+        "schema_version": CASTEP_SAMPLED_BAND_EDGE_SCHEMA,
+        "status": status,
+        "method": "fermi_referenced_native_bands_sampling",
+        "scientific_band_gap_verified": False,
+        "fermi_tolerance_ev": fermi_tolerance_ev,
+        "number_of_kpoints": data.number_of_kpoints,
+        "number_of_spin_components": data.number_of_spin_components,
+        "fermi_energy_ev_per_spin": [
+            value * HARTREE_TO_EV for value in fermi_values
+        ],
+        "fermi_crossing_observed": crossing_observed,
+        "sampled_gap_ev": sampled_gap_ev,
+        "gap_spin_component": (
+            gap_channel.get("spin_component") if gap_channel is not None else None
+        ),
+        "vbm": gap_channel.get("vbm") if gap_channel is not None else None,
+        "cbm": gap_channel.get("cbm") if gap_channel is not None else None,
+        "minimum_same_kpoint_fermi_separation_ev": same_kpoint_gap,
+        "minimum_same_kpoint_location": same_kpoint_location,
+        "minimum_abs_energy_minus_fermi_ev": (
+            min(minimum_abs_values) if minimum_abs_values else None
+        ),
+        "crossing_band_count": sum(
+            int(channel["crossing_band_count"]) for channel in spin_channels
+        ),
+        "spin_channels": spin_channels,
+        "reported_band_gap_crosscheck": crosscheck,
+        "warnings": warnings,
+    }
+
+
 def write_castep_band_eigenvalues_csv(
     data: CastepBandsData,
     path: str | Path,
@@ -498,6 +650,7 @@ def audit_castep_native_artifacts(
     dos_integration_method: str | None = None,
     dos_smearing_width_ev: float | None = None,
     dos_energy_max_ev: float | None = None,
+    reported_band_gap_ev: float | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Parse trusted native files and export bounded, provenance-rich CSV data."""
 
@@ -511,6 +664,7 @@ def audit_castep_native_artifacts(
     errors: list[str] = []
     output_audit: dict[str, Any] | None = None
     bands_summary: dict[str, Any] | None = None
+    sampled_band_edges: dict[str, Any] | None = None
     parsed_bands: CastepBandsData | None = None
     derived_artifacts: list[dict[str, Any]] = []
 
@@ -530,6 +684,10 @@ def audit_castep_native_artifacts(
         try:
             parsed_bands = parse_castep_bands_file(bands_paths[0])
             bands_summary = _bands_summary(parsed_bands, bands_paths[0])
+            sampled_band_edges = analyze_castep_sampled_band_edges(
+                parsed_bands,
+                reported_band_gap_ev=reported_band_gap_ev,
+            )
         except (OSError, ValueError) as exc:
             errors.append(f"Native CASTEP .bands parse failed: {exc}")
     elif not bands_paths:
@@ -603,6 +761,8 @@ def audit_castep_native_artifacts(
             "Native CASTEP output does not show a completed SCF run below the "
             "configured maximum cycle count."
         )
+    if sampled_band_edges is not None:
+        warnings.extend(sampled_band_edges.get("warnings") or [])
 
     available_components = sum(
         value is not None for value in (output_audit, bands_summary)
@@ -624,7 +784,9 @@ def audit_castep_native_artifacts(
         "native_bands_candidate_count": len(bands_paths),
         "castep_output_audit": output_audit,
         "bands_summary": bands_summary,
+        "sampled_band_edges": sampled_band_edges,
         "scientific_convergence_verified": False,
+        "scientific_band_gap_verified": False,
         "numeric_curve_data_exported": numeric_curve_data_exported,
         "numeric_curve_kind": numeric_curve_kind,
         "native_band_kpoint_path_exported": native_band_kpoint_path_exported,
@@ -726,6 +888,218 @@ def _expand_spin_values(values: list[float], spins: int) -> list[float]:
     if len(values) == 1:
         return [float(values[0])] * spins
     raise ValueError("CASTEP spin-dependent value count is inconsistent")
+
+
+def _sampled_spin_channel_band_edges(
+    data: CastepBandsData,
+    *,
+    spin_index: int,
+    fermi_hartree: float,
+    fermi_tolerance_ev: float,
+) -> dict[str, Any]:
+    vbm: dict[str, Any] | None = None
+    cbm: dict[str, Any] | None = None
+    minimum_abs: float | None = None
+    minimum_same_kpoint: float | None = None
+    minimum_same_kpoint_location: dict[str, Any] | None = None
+    extrema = [
+        {"minimum_ev": math.inf, "maximum_ev": -math.inf, "near_count": 0}
+        for _ in range(data.eigenvalues_per_spin[spin_index])
+    ]
+
+    for point in data.kpoints:
+        point_vbm: dict[str, Any] | None = None
+        point_cbm: dict[str, Any] | None = None
+        point_near: dict[str, Any] | None = None
+        for band_index, eigenvalue in enumerate(
+            point.eigenvalues_hartree[spin_index],
+            start=1,
+        ):
+            relative_ev = (float(eigenvalue) - fermi_hartree) * HARTREE_TO_EV
+            state = _sampled_band_state(
+                point,
+                spin_component=spin_index + 1,
+                band_index=band_index,
+                eigenvalue_hartree=float(eigenvalue),
+                fermi_hartree=fermi_hartree,
+            )
+            absolute_relative = abs(relative_ev)
+            if minimum_abs is None or absolute_relative < minimum_abs:
+                minimum_abs = absolute_relative
+            band_extrema = extrema[band_index - 1]
+            band_extrema["minimum_ev"] = min(
+                float(band_extrema["minimum_ev"]),
+                relative_ev,
+            )
+            band_extrema["maximum_ev"] = max(
+                float(band_extrema["maximum_ev"]),
+                relative_ev,
+            )
+            if absolute_relative <= fermi_tolerance_ev:
+                band_extrema["near_count"] = int(band_extrema["near_count"]) + 1
+                if point_near is None or absolute_relative < abs(
+                    float(point_near["energy_minus_fermi_ev"])
+                ):
+                    point_near = state
+            elif relative_ev < 0:
+                if vbm is None or relative_ev > float(vbm["energy_minus_fermi_ev"]):
+                    vbm = state
+                if point_vbm is None or relative_ev > float(
+                    point_vbm["energy_minus_fermi_ev"]
+                ):
+                    point_vbm = state
+            else:
+                if cbm is None or relative_ev < float(cbm["energy_minus_fermi_ev"]):
+                    cbm = state
+                if point_cbm is None or relative_ev < float(
+                    point_cbm["energy_minus_fermi_ev"]
+                ):
+                    point_cbm = state
+
+        if point_near is not None:
+            point_separation = 0.0
+            point_location = {
+                "spin_component": spin_index + 1,
+                "kpoint_index": point.index,
+                "fractional": list(point.fractional),
+                "near_fermi_state": point_near,
+            }
+        elif point_vbm is not None and point_cbm is not None:
+            point_separation = float(point_cbm["energy_minus_fermi_ev"]) - float(
+                point_vbm["energy_minus_fermi_ev"]
+            )
+            point_location = {
+                "spin_component": spin_index + 1,
+                "kpoint_index": point.index,
+                "fractional": list(point.fractional),
+                "vbm": point_vbm,
+                "cbm": point_cbm,
+            }
+        else:
+            continue
+        if minimum_same_kpoint is None or point_separation < minimum_same_kpoint:
+            minimum_same_kpoint = point_separation
+            minimum_same_kpoint_location = point_location
+
+    crossing_bands: list[dict[str, Any]] = []
+    crossing_band_count = 0
+    for band_index, band_extrema in enumerate(extrema, start=1):
+        minimum_ev = float(band_extrema["minimum_ev"])
+        maximum_ev = float(band_extrema["maximum_ev"])
+        near_count = int(band_extrema["near_count"])
+        crossing = near_count > 0 or (
+            minimum_ev < -fermi_tolerance_ev
+            and maximum_ev > fermi_tolerance_ev
+        )
+        if not crossing:
+            continue
+        crossing_band_count += 1
+        if len(crossing_bands) < MAX_BAND_EDGE_DETAIL_ROWS:
+            crossing_bands.append(
+                {
+                    "spin_component": spin_index + 1,
+                    "band_index": band_index,
+                    "minimum_energy_minus_fermi_ev": minimum_ev,
+                    "maximum_energy_minus_fermi_ev": maximum_ev,
+                    "near_fermi_state_count": near_count,
+                }
+            )
+    crossing_observed = crossing_band_count > 0
+    if crossing_observed:
+        status = "sampled_fermi_crossing"
+        sampled_gap_ev: float | None = 0.0
+    elif vbm is not None and cbm is not None:
+        status = "sampled_gap"
+        sampled_gap_ev = float(cbm["energy_minus_fermi_ev"]) - float(
+            vbm["energy_minus_fermi_ev"]
+        )
+    else:
+        status = "insufficient_states"
+        sampled_gap_ev = None
+    return {
+        "spin_component": spin_index + 1,
+        "status": status,
+        "fermi_energy_hartree": fermi_hartree,
+        "fermi_energy_ev": fermi_hartree * HARTREE_TO_EV,
+        "fermi_crossing_observed": crossing_observed,
+        "sampled_gap_ev": sampled_gap_ev,
+        "vbm": vbm,
+        "cbm": cbm,
+        "minimum_same_kpoint_fermi_separation_ev": minimum_same_kpoint,
+        "minimum_same_kpoint_location": minimum_same_kpoint_location,
+        "minimum_abs_energy_minus_fermi_ev": minimum_abs,
+        "crossing_band_count": crossing_band_count,
+        "crossing_bands_truncated": crossing_band_count > len(crossing_bands),
+        "crossing_bands": crossing_bands,
+    }
+
+
+def _sampled_band_state(
+    point: CastepBandKPoint,
+    *,
+    spin_component: int,
+    band_index: int,
+    eigenvalue_hartree: float,
+    fermi_hartree: float,
+) -> dict[str, Any]:
+    return {
+        "spin_component": spin_component,
+        "kpoint_index": point.index,
+        "kpoint_fractional": list(point.fractional),
+        "kpoint_weight": float(point.weight),
+        "band_index": band_index,
+        "eigenvalue_hartree": eigenvalue_hartree,
+        "eigenvalue_ev": eigenvalue_hartree * HARTREE_TO_EV,
+        "fermi_energy_ev": fermi_hartree * HARTREE_TO_EV,
+        "energy_minus_fermi_ev": (
+            eigenvalue_hartree - fermi_hartree
+        )
+        * HARTREE_TO_EV,
+    }
+
+
+def _reported_band_gap_crosscheck(
+    sampled_gap_ev: float | None,
+    *,
+    reported_band_gap_ev: float | None,
+    fermi_tolerance_ev: float,
+) -> dict[str, Any]:
+    if reported_band_gap_ev is None:
+        return {
+            "status": "reported_gap_unavailable",
+            "scientific_consistency_verified": False,
+            "reported_band_gap_ev": None,
+            "sampled_gap_ev": sampled_gap_ev,
+            "absolute_difference_ev": None,
+            "comparison_tolerance_ev": None,
+        }
+    if sampled_gap_ev is None:
+        return {
+            "status": "sampled_gap_unavailable",
+            "scientific_consistency_verified": False,
+            "reported_band_gap_ev": reported_band_gap_ev,
+            "sampled_gap_ev": None,
+            "absolute_difference_ev": None,
+            "comparison_tolerance_ev": None,
+        }
+    difference = abs(reported_band_gap_ev - sampled_gap_ev)
+    comparison_tolerance = max(
+        0.05,
+        0.05 * max(reported_band_gap_ev, sampled_gap_ev),
+        fermi_tolerance_ev,
+    )
+    return {
+        "status": (
+            "within_tolerance"
+            if difference <= comparison_tolerance
+            else "review_difference"
+        ),
+        "scientific_consistency_verified": False,
+        "reported_band_gap_ev": reported_band_gap_ev,
+        "sampled_gap_ev": sampled_gap_ev,
+        "absolute_difference_ev": difference,
+        "comparison_tolerance_ev": comparison_tolerance,
+    }
 
 
 def _gaussian_dos_on_grid(

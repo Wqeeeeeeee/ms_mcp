@@ -8,6 +8,7 @@ import pytest
 
 from material_studio_mcp_server.parsers import (
     HARTREE_TO_EV,
+    analyze_castep_sampled_band_edges,
     audit_castep_native_artifacts,
     parse_castep_bands_text,
     parse_castep_output_text,
@@ -114,6 +115,79 @@ def test_parse_castep_bands_two_spin_counts() -> None:
     assert len(parsed.kpoints[0].eigenvalues_hartree[1]) == 3
 
 
+def test_sampled_band_edges_report_gapped_native_evidence() -> None:
+    parsed = parse_castep_bands_text(_BANDS_ONE_SPIN)
+
+    summary = analyze_castep_sampled_band_edges(
+        parsed,
+        reported_band_gap_ev=3.3,
+    )
+
+    assert summary["status"] == "sampled_gap"
+    assert summary["scientific_band_gap_verified"] is False
+    assert summary["fermi_crossing_observed"] is False
+    assert summary["gap_spin_component"] == 1
+    assert summary["sampled_gap_ev"] == pytest.approx(0.12 * HARTREE_TO_EV)
+    assert summary["vbm"]["kpoint_index"] == 2
+    assert summary["vbm"]["band_index"] == 2
+    assert summary["cbm"]["kpoint_index"] == 1
+    assert summary["cbm"]["band_index"] == 3
+    assert summary["minimum_same_kpoint_fermi_separation_ev"] == pytest.approx(
+        0.15 * HARTREE_TO_EV
+    )
+    assert summary["reported_band_gap_crosscheck"]["status"] == (
+        "within_tolerance"
+    )
+
+
+def test_sampled_band_edges_keep_spin_channels_separate() -> None:
+    parsed = parse_castep_bands_text(_BANDS_TWO_SPIN)
+
+    summary = analyze_castep_sampled_band_edges(parsed)
+
+    assert summary["status"] == "sampled_gap"
+    assert summary["gap_spin_component"] == 2
+    assert summary["sampled_gap_ev"] == pytest.approx(0.3 * HARTREE_TO_EV)
+    assert [item["spin_component"] for item in summary["spin_channels"]] == [
+        1,
+        2,
+    ]
+    assert summary["reported_band_gap_crosscheck"]["status"] == (
+        "reported_gap_unavailable"
+    )
+
+
+def test_sampled_band_edges_detect_fermi_crossing_without_gap_claim() -> None:
+    parsed = parse_castep_bands_text(
+        _BANDS_ONE_SPIN.replace("    0.08000000", "    0.15000000")
+    )
+
+    summary = analyze_castep_sampled_band_edges(
+        parsed,
+        reported_band_gap_ev=1.12,
+    )
+
+    assert summary["status"] == "sampled_fermi_crossing"
+    assert summary["sampled_gap_ev"] == 0.0
+    assert summary["fermi_crossing_observed"] is True
+    assert summary["crossing_band_count"] == 1
+    assert summary["spin_channels"][0]["crossing_bands"][0]["band_index"] == 2
+    assert summary["reported_band_gap_crosscheck"]["status"] == (
+        "review_difference"
+    )
+
+
+def test_sampled_band_edges_reject_invalid_tolerance() -> None:
+    parsed = parse_castep_bands_text(_BANDS_ONE_SPIN)
+
+    with pytest.raises(ValueError, match="Fermi tolerance"):
+        analyze_castep_sampled_band_edges(parsed, fermi_tolerance_ev=0.0)
+    with pytest.raises(ValueError, match="Fermi tolerance"):
+        analyze_castep_sampled_band_edges(parsed, fermi_tolerance_ev=True)
+    with pytest.raises(ValueError, match="Reported band gap"):
+        analyze_castep_sampled_band_edges(parsed, reported_band_gap_ev=False)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -211,12 +285,18 @@ def test_native_artifact_audit_exports_band_and_total_dos_data(
         manifest,
         task="BandStructure",
         destination=tmp_path / "band_derived",
+        reported_band_gap_ev=3.3,
     )
     assert band_audit["status"] == "complete"
     assert band_audit["numeric_curve_data_exported"] is True
     assert band_audit["numeric_curve_kind"] == "native_castep_band_eigenvalues"
     assert band_audit["native_band_kpoint_path_exported"] is True
     assert band_audit["scientific_convergence_verified"] is False
+    assert band_audit["scientific_band_gap_verified"] is False
+    assert band_audit["sampled_band_edges"]["status"] == "sampled_gap"
+    assert band_audit["sampled_band_edges"]["reported_band_gap_crosscheck"][
+        "status"
+    ] == "within_tolerance"
     assert len(band_artifacts) == 1
     assert Path(band_artifacts[0]["path"]).is_file()
 

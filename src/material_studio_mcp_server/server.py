@@ -3649,6 +3649,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "scientific_convergence_limit": (
                 "MS 20.1 Energy Results expose no independent SCF convergence boolean."
             ),
+            "scientific_band_gap_verified": False,
+            "sampled_band_edge_audit": {
+                "source": "hash_bound_native_castep_bands",
+                "method": "fermi_referenced_spin_channel_sampling",
+                "outputs": [
+                    "sampled_gap_ev",
+                    "vbm",
+                    "cbm",
+                    "minimum_same_kpoint_fermi_separation_ev",
+                    "fermi_crossing_observed",
+                    "reported_band_gap_crosscheck",
+                ],
+                "scientific_band_gap_verified": False,
+                "analytic_band_path_binding_required_for_path_claims": True,
+            },
             "numeric_curve_data_exported": "conditional_on_native_bands",
             "native_bands_format_contract": (
                 "Materials Studio 20.1 CASTEP file-format help"
@@ -3666,6 +3681,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "native_output_audit_fields": [
                 "castep_output_audit",
                 "bands_summary",
+                "sampled_band_edges",
                 "numeric_curve_kind",
                 "derived_artifacts",
             ],
@@ -34749,6 +34765,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "task",
             "run_directory",
             "scientific_convergence_verified",
+            "scientific_band_gap_verified",
             "numeric_curve_data_exported",
             "numeric_export_after_execution",
             "pdos_projection_weights_exported",
@@ -34758,6 +34775,12 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "native_scf_status",
             "native_scf_last_iteration",
             "native_scf_maximum_cycles_reached",
+            "sampled_band_edge_status",
+            "sampled_band_gap_ev",
+            "sampled_fermi_crossing_observed",
+            "reported_band_gap_crosscheck_status",
+            "reported_band_gap_difference_ev",
+            "sampled_band_edge_audit_after_execution",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -34923,6 +34946,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "task",
             "run_directory",
             "scientific_convergence_verified",
+            "scientific_band_gap_verified",
             "numeric_curve_data_exported",
             "numeric_export_after_execution",
             "pdos_projection_weights_exported",
@@ -34932,6 +34956,12 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "native_scf_status",
             "native_scf_last_iteration",
             "native_scf_maximum_cycles_reached",
+            "sampled_band_edge_status",
+            "sampled_band_gap_ev",
+            "sampled_fermi_crossing_observed",
+            "reported_band_gap_crosscheck_status",
+            "reported_band_gap_difference_ev",
+            "sampled_band_edge_audit_after_execution",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -35322,6 +35352,7 @@ def _compact_live_response(
             "task",
             "run_directory",
             "scientific_convergence_verified",
+            "scientific_band_gap_verified",
             "numeric_curve_data_exported",
             "numeric_export_after_execution",
             "pdos_projection_weights_exported",
@@ -35331,6 +35362,12 @@ def _compact_live_response(
             "native_scf_status",
             "native_scf_last_iteration",
             "native_scf_maximum_cycles_reached",
+            "sampled_band_edge_status",
+            "sampled_band_gap_ev",
+            "sampled_fermi_crossing_observed",
+            "reported_band_gap_crosscheck_status",
+            "reported_band_gap_difference_ev",
+            "sampled_band_edge_audit_after_execution",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -40333,6 +40370,7 @@ def _castep_electronic_preflight(
             "total_energy_required": True,
             "structure_must_remain_unchanged": True,
             "scientific_convergence_verified": False,
+            "scientific_band_gap_verified": False,
             "numeric_curve_data_exported": False,
             "numeric_export_after_execution": (
                 "native_castep_band_eigenvalues"
@@ -40347,6 +40385,9 @@ def _castep_electronic_preflight(
                 )
             ),
             "pdos_projection_weights_exported": False,
+            "sampled_band_edge_audit_after_execution": (
+                "conditional_on_hash_bound_native_bands"
+            ),
         },
     }
 
@@ -40695,11 +40736,15 @@ def material_studio_castep_run_current(
             "new_process_launch_allowed": False,
             "single_window_hotload_required": bool(open_in_gui),
             "scientific_convergence_verified": False,
+            "scientific_band_gap_verified": False,
             "numeric_curve_data_exported": False,
             "numeric_export_after_execution": preflight["result_contract"].get(
                 "numeric_export_after_execution"
             ),
             "pdos_projection_weights_exported": False,
+            "sampled_band_edge_audit_after_execution": preflight[
+                "result_contract"
+            ].get("sampled_band_edge_audit_after_execution"),
         }
         if mode is ExecutionMode.PREVIEW:
             response["status"] = (
@@ -41054,6 +41099,7 @@ def material_studio_castep_run_current(
                 ),
                 dos_smearing_width_ev=simulation.dos_smearing_width_ev,
                 dos_energy_max_ev=simulation.dos_energy_max_ev,
+                reported_band_gap_ev=validated_result_payload.get("band_gap_ev"),
             )
             _write_json_artifact(final_native_audit_path, native_output_audit)
             final_structure_validation = validate_crystal_cif_against_spec(
@@ -41118,6 +41164,7 @@ def material_studio_castep_run_current(
             "success": True,
             "backend_run_completed": True,
             "scientific_convergence_verified": False,
+            "scientific_band_gap_verified": False,
             "numeric_curve_data_exported": electronic_receipt.get(
                 "numeric_curve_data_exported"
             ),
@@ -41128,6 +41175,9 @@ def material_studio_castep_run_current(
             "structure_artifact_validation": final_structure_validation,
             "native_artifacts": copied_native_manifest,
             "native_output_audit": native_output_audit,
+            "sampled_band_edges": native_output_audit.get(
+                "sampled_band_edges"
+            ),
             "derived_artifacts": derived_artifacts,
             "native_artifact_warnings": native_warnings,
         }
@@ -41148,6 +41198,14 @@ def material_studio_castep_run_current(
         native_scf_audit = native_output_audit.get("castep_output_audit")
         if not isinstance(native_scf_audit, dict):
             native_scf_audit = {}
+        sampled_band_edges = native_output_audit.get("sampled_band_edges")
+        if not isinstance(sampled_band_edges, dict):
+            sampled_band_edges = {}
+        reported_gap_crosscheck = sampled_band_edges.get(
+            "reported_band_gap_crosscheck"
+        )
+        if not isinstance(reported_gap_crosscheck, dict):
+            reported_gap_crosscheck = {}
         response.update(
             {
                 "ok": True,
@@ -41158,6 +41216,7 @@ def material_studio_castep_run_current(
                 "project_resolution": _explicit_project_resolution(recorded_spec),
                 "electronic_receipt": electronic_receipt,
                 "scientific_convergence_verified": False,
+                "scientific_band_gap_verified": False,
                 "numeric_curve_data_exported": electronic_receipt.get(
                     "numeric_curve_data_exported"
                 ),
@@ -41172,6 +41231,19 @@ def material_studio_castep_run_current(
                 ),
                 "native_scf_maximum_cycles_reached": native_scf_audit.get(
                     "maximum_scf_cycles_reached"
+                ),
+                "sampled_band_edge_status": sampled_band_edges.get("status"),
+                "sampled_band_gap_ev": sampled_band_edges.get(
+                    "sampled_gap_ev"
+                ),
+                "sampled_fermi_crossing_observed": sampled_band_edges.get(
+                    "fermi_crossing_observed"
+                ),
+                "reported_band_gap_crosscheck_status": (
+                    reported_gap_crosscheck.get("status")
+                ),
+                "reported_band_gap_difference_ev": reported_gap_crosscheck.get(
+                    "absolute_difference_ev"
                 ),
                 "derived_artifact_count": len(derived_artifacts),
                 "structure_artifact_validation": final_structure_validation,
@@ -41192,11 +41264,21 @@ def material_studio_castep_run_current(
                     "success": True,
                     "backend_run_completed": True,
                     "scientific_convergence_verified": False,
+                    "scientific_band_gap_verified": False,
                     "numeric_curve_data_exported": electronic_receipt.get(
                         "numeric_curve_data_exported"
                     ),
                     "numeric_curve_kind": electronic_receipt.get(
                         "numeric_curve_kind"
+                    ),
+                    "sampled_band_edge_status": sampled_band_edges.get(
+                        "status"
+                    ),
+                    "sampled_band_gap_ev": sampled_band_edges.get(
+                        "sampled_gap_ev"
+                    ),
+                    "sampled_fermi_crossing_observed": sampled_band_edges.get(
+                        "fermi_crossing_observed"
                     ),
                     "recorded_revision": info.revision,
                 },

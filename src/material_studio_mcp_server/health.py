@@ -837,6 +837,9 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_castep_electronic_scientific_convergence_verified"] = (
             castep_electronic.get("scientific_convergence_verified")
         )
+        checks["semiconductor_castep_electronic_scientific_band_gap_verified"] = (
+            castep_electronic.get("scientific_band_gap_verified")
+        )
         checks["semiconductor_castep_electronic_numeric_curve_data_exported"] = (
             castep_electronic.get("numeric_curve_data_exported")
         )
@@ -859,6 +862,12 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         native_bands = (
             raw_native_bands if isinstance(raw_native_bands, dict) else {}
         )
+        raw_band_edges = native_output.get("sampled_band_edges")
+        band_edges = raw_band_edges if isinstance(raw_band_edges, dict) else {}
+        raw_gap_crosscheck = band_edges.get("reported_band_gap_crosscheck")
+        gap_crosscheck = (
+            raw_gap_crosscheck if isinstance(raw_gap_crosscheck, dict) else {}
+        )
         checks["semiconductor_castep_native_output_audit_status"] = (
             native_output.get("status")
         )
@@ -876,6 +885,24 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         )
         checks["semiconductor_castep_native_band_eigenvalue_count"] = (
             native_bands.get("eigenvalue_count")
+        )
+        checks["semiconductor_castep_sampled_band_edge_status"] = (
+            band_edges.get("status")
+        )
+        checks["semiconductor_castep_sampled_band_gap_ev"] = band_edges.get(
+            "sampled_gap_ev"
+        )
+        checks["semiconductor_castep_sampled_fermi_crossing_observed"] = (
+            band_edges.get("fermi_crossing_observed")
+        )
+        checks["semiconductor_castep_sampled_band_gap_spin_component"] = (
+            band_edges.get("gap_spin_component")
+        )
+        checks["semiconductor_castep_reported_band_gap_crosscheck_status"] = (
+            gap_crosscheck.get("status")
+        )
+        checks["semiconductor_castep_reported_band_gap_difference_ev"] = (
+            gap_crosscheck.get("absolute_difference_ev")
         )
         checks["semiconductor_castep_electronic_result_document_name"] = (
             castep_electronic.get("result_document_name")
@@ -906,6 +933,22 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         ):
             warnings.append(
                 "The requested CASTEP numeric property curve was not exported."
+            )
+        if (
+            castep_electronic.get("binding_verified") is True
+            and band_edges.get("fermi_crossing_observed") is True
+        ):
+            warnings.append(
+                "Native sampled CASTEP bands show a Fermi-level crossing; review "
+                "metallic or semimetallic behavior."
+            )
+        if (
+            castep_electronic.get("binding_verified") is True
+            and gap_crosscheck.get("status") == "review_difference"
+        ):
+            warnings.append(
+                "Native sampled CASTEP band edges differ from the reported BandGap "
+                "beyond the recorded comparison tolerance."
             )
 
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}

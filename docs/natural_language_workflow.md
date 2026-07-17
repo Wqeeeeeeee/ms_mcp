@@ -1134,6 +1134,24 @@ so PDOS keeps `numeric_curve_data_exported=false` until `.pdos_weights` is
 verified. Fresh diagnostics expose `castep_electronic_result_summary` and write
 `semiconductor_castep_electronic_result.csv`.
 
+When valid native `.bands` data exist, the native audit also derives a
+Fermi-referenced sampled band-edge receipt. Every spin channel uses its own
+Fermi value and retains its own sampled VBM, CBM, k-point, and band index. A
+sampled band that reaches the configured Fermi tolerance or spans Fermi across
+the native k-points sets `sampled_fermi_crossing_observed=true` and
+`sampled_gap_ev=0`. Otherwise the response reports the smallest complete
+per-spin sampled separation. The scalar Materials Studio `BandGap` result is
+compared with that sampled value and yields `within_tolerance`,
+`review_difference`, or an unavailable state.
+
+These fields are a review aid, not a scientific band-gap claim. Always inspect
+`scientific_band_gap_verified=false`, the actual native k-points, SCF audit,
+k-point convergence, and the reported-gap crosscheck before drawing an
+electronic-structure conclusion. A v1 historical native audit remains valid but
+returns no trusted sampled band-edge summary. Fresh view bundles include the
+sampled status, gap, spin component, VBM/CBM states, Fermi-crossing count, and
+reported-gap comparison in `semiconductor_castep_electronic_result.csv`.
+
 ## Rollback
 
 Use `material_studio_project_rollback` to create a new revision copied from a previous revision. Rollback must not delete historical revisions.

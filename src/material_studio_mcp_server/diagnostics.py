@@ -3347,6 +3347,16 @@ def _semiconductor_castep_electronic_result_csv_row(
         if isinstance(native.get("bands_summary"), dict)
         else {}
     )
+    band_edges = (
+        native.get("sampled_band_edges")
+        if isinstance(native.get("sampled_band_edges"), dict)
+        else {}
+    )
+    gap_crosscheck = (
+        band_edges.get("reported_band_gap_crosscheck")
+        if isinstance(band_edges.get("reported_band_gap_crosscheck"), dict)
+        else {}
+    )
     return {
         "available": summary.get("available"),
         "status": summary.get("status"),
@@ -3357,6 +3367,9 @@ def _semiconductor_castep_electronic_result_csv_row(
         "backend_run_completed": summary.get("backend_run_completed"),
         "scientific_convergence_verified": summary.get(
             "scientific_convergence_verified"
+        ),
+        "scientific_band_gap_verified": summary.get(
+            "scientific_band_gap_verified"
         ),
         "numeric_curve_data_exported": summary.get(
             "numeric_curve_data_exported"
@@ -3413,11 +3426,57 @@ def _semiconductor_castep_electronic_result_csv_row(
         ),
         "native_band_eigenvalue_count": bands.get("eigenvalue_count"),
         "native_band_kpoint_weight_sum": bands.get("kpoint_weight_sum"),
+        "sampled_band_edge_status": band_edges.get("status"),
+        "sampled_band_gap_ev": band_edges.get("sampled_gap_ev"),
+        "sampled_band_gap_spin_component": band_edges.get(
+            "gap_spin_component"
+        ),
+        "sampled_fermi_crossing_observed": band_edges.get(
+            "fermi_crossing_observed"
+        ),
+        "sampled_crossing_band_count": band_edges.get("crossing_band_count"),
+        "sampled_minimum_same_kpoint_separation_ev": band_edges.get(
+            "minimum_same_kpoint_fermi_separation_ev"
+        ),
+        "sampled_minimum_abs_energy_minus_fermi_ev": band_edges.get(
+            "minimum_abs_energy_minus_fermi_ev"
+        ),
+        "reported_band_gap_crosscheck_status": gap_crosscheck.get("status"),
+        "reported_band_gap_difference_ev": gap_crosscheck.get(
+            "absolute_difference_ev"
+        ),
+        "reported_band_gap_comparison_tolerance_ev": gap_crosscheck.get(
+            "comparison_tolerance_ev"
+        ),
+        **_castep_band_edge_state_csv_values("sampled_vbm", band_edges.get("vbm")),
+        **_castep_band_edge_state_csv_values("sampled_cbm", band_edges.get("cbm")),
         "checks": json.dumps(checks, sort_keys=True, separators=(",", ":")),
         "warning_count": len(summary.get("warnings") or []),
         "warnings": json.dumps(
             summary.get("warnings") or [],
             separators=(",", ":"),
+        ),
+    }
+
+
+def _castep_band_edge_state_csv_values(
+    prefix: str,
+    value: Any,
+) -> dict[str, Any]:
+    state = value if isinstance(value, dict) else {}
+    fractional = state.get("kpoint_fractional")
+    if not isinstance(fractional, list) or len(fractional) != 3:
+        fractional = [None, None, None]
+    return {
+        f"{prefix}_spin_component": state.get("spin_component"),
+        f"{prefix}_kpoint_index": state.get("kpoint_index"),
+        f"{prefix}_kx_fractional": fractional[0],
+        f"{prefix}_ky_fractional": fractional[1],
+        f"{prefix}_kz_fractional": fractional[2],
+        f"{prefix}_band_index": state.get("band_index"),
+        f"{prefix}_eigenvalue_ev": state.get("eigenvalue_ev"),
+        f"{prefix}_energy_minus_fermi_ev": state.get(
+            "energy_minus_fermi_ev"
         ),
     }
 
@@ -5326,6 +5385,25 @@ def _semiconductor_health_summary(
                 warnings.append(
                     "The requested CASTEP numeric property curve was not exported."
                 )
+            sampled_band_edges = castep_electronic_result_summary.get(
+                "sampled_band_edges"
+            )
+            if isinstance(sampled_band_edges, dict):
+                if sampled_band_edges.get("fermi_crossing_observed") is True:
+                    warnings.append(
+                        "Native sampled CASTEP bands show a Fermi-level crossing; "
+                        "review metallic or semimetallic behavior."
+                    )
+                gap_crosscheck = sampled_band_edges.get(
+                    "reported_band_gap_crosscheck"
+                )
+                if isinstance(gap_crosscheck, dict) and gap_crosscheck.get(
+                    "status"
+                ) == "review_difference":
+                    warnings.append(
+                        "Native sampled CASTEP band edges differ from the reported "
+                        "BandGap beyond the recorded comparison tolerance."
+                    )
     commensurate_twist_summary = _commensurate_tmd_twist_summary(spec, metadata)
     if commensurate_twist_summary:
         if not commensurate_twist_summary.get("metadata_consistent"):

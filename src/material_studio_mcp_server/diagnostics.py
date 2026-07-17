@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
+from .castep_electronic import verify_castep_electronic_receipt
 from .castep_relaxation import (
     CASTEP_RELAXATION_RECEIPT_SCHEMA,
     crystal_structure_sha256,
@@ -1406,6 +1407,20 @@ def write_view_audit_bundle(
                 "warning_count",
             ],
             [_semiconductor_castep_geometry_optimization_csv_row(castep_relaxation)],
+        )
+
+    castep_electronic = semiconductor.get("castep_electronic_result_summary") or {}
+    if castep_electronic:
+        files["semiconductor_castep_electronic_result_csv"] = str(
+            bundle_dir / "semiconductor_castep_electronic_result.csv"
+        )
+        electronic_row = _semiconductor_castep_electronic_result_csv_row(
+            castep_electronic
+        )
+        row_counts["semiconductor_castep_electronic_result"] = _write_csv(
+            bundle_dir / "semiconductor_castep_electronic_result.csv",
+            list(electronic_row),
+            [electronic_row],
         )
 
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
@@ -3313,6 +3328,51 @@ def _semiconductor_castep_geometry_optimization_csv_row(
     return row
 
 
+def _semiconductor_castep_electronic_result_csv_row(
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    checks = summary.get("checks") if isinstance(summary.get("checks"), dict) else {}
+    return {
+        "available": summary.get("available"),
+        "status": summary.get("status"),
+        "binding_verified": summary.get("binding_verified"),
+        "task": summary.get("task"),
+        "source_revision": summary.get("source_revision"),
+        "target_revision": summary.get("target_revision"),
+        "backend_run_completed": summary.get("backend_run_completed"),
+        "scientific_convergence_verified": summary.get(
+            "scientific_convergence_verified"
+        ),
+        "numeric_curve_data_exported": summary.get(
+            "numeric_curve_data_exported"
+        ),
+        "band_path_binding_verified": summary.get(
+            "band_path_binding_verified"
+        ),
+        "required_result_document": summary.get("required_result_document"),
+        "result_document_name": summary.get("result_document_name"),
+        "total_energy_kcal_per_mol": summary.get(
+            "total_energy_kcal_per_mol"
+        ),
+        "free_energy_kcal_per_mol": summary.get("free_energy_kcal_per_mol"),
+        "band_gap_ev": summary.get("band_gap_ev"),
+        "fermi_level_ev": summary.get("fermi_level_ev"),
+        "work_function_ev": summary.get("work_function_ev"),
+        "work_function_top_ev": summary.get("work_function_top_ev"),
+        "work_function_bottom_ev": summary.get("work_function_bottom_ev"),
+        "output_structure": summary.get("output_structure"),
+        "output_report": summary.get("output_report"),
+        "result_metadata": summary.get("result_metadata"),
+        "native_artifact_count": summary.get("native_artifact_count"),
+        "checks": json.dumps(checks, sort_keys=True, separators=(",", ":")),
+        "warning_count": len(summary.get("warnings") or []),
+        "warnings": json.dumps(
+            summary.get("warnings") or [],
+            separators=(",", ":"),
+        ),
+    }
+
+
 def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     entries = summary.get("entries", []) or []
     latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
@@ -5191,6 +5251,20 @@ def _semiconductor_health_summary(
             "CASTEP geometry-optimization metadata is not bound to the current immutable "
             "revision; inspect castep_geometry_optimization_summary."
         )
+    castep_electronic_result_summary = verify_castep_electronic_receipt(spec)
+    if castep_electronic_result_summary:
+        if not castep_electronic_result_summary.get("binding_verified"):
+            warnings.append(
+                "CASTEP electronic-result metadata is not bound to the current "
+                "immutable revision; inspect castep_electronic_result_summary."
+            )
+        else:
+            warnings.extend(
+                [
+                    "CASTEP electronic backend completion does not independently verify SCF convergence in MS 20.1.",
+                    "CASTEP band/DOS Chart Documents are recorded by name; numeric curve data were not exported.",
+                ]
+            )
     commensurate_twist_summary = _commensurate_tmd_twist_summary(spec, metadata)
     if commensurate_twist_summary:
         if not commensurate_twist_summary.get("metadata_consistent"):
@@ -5340,6 +5414,7 @@ def _semiconductor_health_summary(
         "layer_translation_summary": layer_translation_summary,
         "layer_rotation_summary": layer_rotation_summary,
         "castep_geometry_optimization_summary": castep_geometry_optimization_summary,
+        "castep_electronic_result_summary": castep_electronic_result_summary,
         "commensurate_twist_summary": commensurate_twist_summary,
         "commensurate_heterobilayer_summary": commensurate_heterobilayer_summary,
         "interface_scaffold_summary": interface_scaffold_summary,

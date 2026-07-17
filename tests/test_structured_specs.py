@@ -220,7 +220,20 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
         "Damped MD",
         "TPSD",
     ]
+    assert castep_schema["$defs"]["CastepDosIntegrationMethod"]["enum"] == [
+        "Smearing",
+        "Interpolation",
+    ]
     for field in (
+        "properties_kpoint_separation",
+        "band_structure_energy_max_ev",
+        "band_structure_extra_bands",
+        "band_structure_energy_tolerance_ev",
+        "dos_energy_max_ev",
+        "dos_extra_bands",
+        "dos_energy_tolerance_ev",
+        "dos_smearing_width_ev",
+        "dos_integration_method",
         "max_iterations",
         "displacement_convergence_angstrom",
         "energy_convergence_ev_per_atom",

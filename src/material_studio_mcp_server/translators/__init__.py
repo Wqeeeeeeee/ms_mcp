@@ -4,13 +4,17 @@
 """
 
 from .crystal_to_cif import crystal_cif_summary, write_crystal_cif
-from .castep_to_perl import render_castep_geometry_optimization_script
+from .castep_to_perl import (
+    render_castep_electronic_script,
+    render_castep_geometry_optimization_script,
+)
 from .project_to_perl import GeneratedScript, planned_output_file, render_model_to_perl
 
 __all__ = [
     "GeneratedScript",
     "crystal_cif_summary",
     "planned_output_file",
+    "render_castep_electronic_script",
     "render_castep_geometry_optimization_script",
     "render_model_to_perl",
     "write_crystal_cif",

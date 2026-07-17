@@ -20,11 +20,13 @@ from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
 from .castep import (
     CastepCellOptimization,
     CastepDipoleCorrection,
+    CastepDosIntegrationMethod,
     CastepEnergySpec,
     CastepOptimizationAlgorithm,
     CastepTask,
     normalize_castep_cell_optimization,
     normalize_castep_dipole_correction,
+    normalize_castep_dos_integration_method,
     normalize_castep_optimization_algorithm,
     normalize_castep_task,
 )
@@ -45,6 +47,7 @@ __all__ = [
     "CastepCellOptimization",
     "CastepEnergySpec",
     "CastepDipoleCorrection",
+    "CastepDosIntegrationMethod",
     "CastepOptimizationAlgorithm",
     "CastepTask",
     "CrystalOperation",
@@ -75,5 +78,6 @@ __all__ = [
     "normalize_castep_cell_optimization",
     "normalize_castep_task",
     "normalize_castep_dipole_correction",
+    "normalize_castep_dos_integration_method",
     "normalize_castep_optimization_algorithm",
 ]

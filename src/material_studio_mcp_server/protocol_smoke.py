@@ -31,6 +31,7 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_live_project_status",
     "material_studio_live_update_with_patch",
     "material_studio_castep_relax_current",
+    "material_studio_castep_run_current",
     "material_studio_model_export_view_bundle",
     "material_studio_project_history",
     "material_studio_project_rollback",
@@ -62,6 +63,10 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_modeling_request": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_live_update_with_patch": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_castep_relax_current": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    },
+    "material_studio_castep_run_current": {
         "readOnlyHint": False,
         "destructiveHint": True,
     },
@@ -127,6 +132,36 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "force_convergence_ev_per_angstrom",
             "cell_optimization",
             "optimization_algorithm",
+            "open_in_gui",
+            "take_snapshot",
+            "export_view_audit",
+            "views",
+            "working_dir",
+            "timeout_seconds",
+            "response_mode",
+        },
+        "required": set(),
+    },
+    "material_studio_castep_run_current": {
+        "properties": {
+            "project_id",
+            "execution_mode",
+            "task",
+            "quality",
+            "functional",
+            "cutoff_energy_ev",
+            "kpoint_separation",
+            "kpoints",
+            "properties_kpoint_separation",
+            "band_structure_energy_max_ev",
+            "band_structure_extra_bands",
+            "band_structure_energy_tolerance_ev",
+            "dos_energy_max_ev",
+            "dos_extra_bands",
+            "dos_energy_tolerance_ev",
+            "dos_smearing_width_ev",
+            "dos_integration_method",
+            "dipole_correction",
             "open_in_gui",
             "take_snapshot",
             "export_view_audit",
@@ -508,6 +543,21 @@ async def _run_preview_calls(
             },
             timeout,
         )
+        electronic_preview = await _call_tool(
+            session,
+            "material_studio_castep_run_current",
+            {
+                "project_id": project_id,
+                "execution_mode": "preview",
+                "task": "Energy",
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": False,
+                "working_dir": str(workspace),
+                "response_mode": "compact",
+            },
+            timeout,
+        )
         prepared_replay = await _call_tool(
             session,
             "material_studio_gui_prepare_view_replay",
@@ -570,6 +620,9 @@ async def _run_preview_calls(
             "castep_relaxation_preview": len(
                 json.dumps(relaxation_preview, ensure_ascii=False).encode("utf-8")
             ),
+            "castep_electronic_preview": len(
+                json.dumps(electronic_preview, ensure_ascii=False).encode("utf-8")
+            ),
             "prepare_view_replay": len(
                 json.dumps(prepared_replay, ensure_ascii=False).encode("utf-8")
             ),
@@ -603,6 +656,40 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_castep_relaxation_default_not_preview")
         if castep_relaxation_capability.get("promotion_requires_converged") is not True:
             validation_errors.append("capabilities_castep_relaxation_convergence_gate_missing")
+        castep_electronic_capability = capabilities.get(
+            "castep_electronic_calculation"
+        )
+        if not isinstance(castep_electronic_capability, dict):
+            validation_errors.append("capabilities_castep_electronic_missing")
+            castep_electronic_capability = {}
+        if castep_electronic_capability.get("tool") != (
+            "material_studio_castep_run_current"
+        ):
+            validation_errors.append(
+                "capabilities_castep_electronic_tool_mismatch"
+            )
+        if castep_electronic_capability.get("default_execution_mode") != "preview":
+            validation_errors.append(
+                "capabilities_castep_electronic_default_not_preview"
+            )
+        if castep_electronic_capability.get(
+            "successful_result_creates_metadata_only_revision"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_electronic_revision_contract_missing"
+            )
+        if castep_electronic_capability.get(
+            "scientific_convergence_verified"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_castep_electronic_convergence_boundary_missing"
+            )
+        if castep_electronic_capability.get(
+            "numeric_curve_data_exported"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_castep_electronic_curve_boundary_missing"
+            )
         replay_policy = capabilities.get("view_replay_automation_policy")
         if not isinstance(replay_policy, dict):
             validation_errors.append("capabilities_replay_policy_missing")
@@ -745,6 +832,39 @@ async def _run_preview_calls(
             validation_errors.append("castep_relaxation_preview_structure_path_missing")
         elif relaxation_structure.exists():
             validation_errors.append("castep_relaxation_preview_materialized_structure")
+        electronic_structure_value = str(
+            (electronic_preview.get("planned_outputs") or {}).get("structure")
+            or ""
+        )
+        electronic_structure = (
+            Path(electronic_structure_value)
+            if electronic_structure_value
+            else None
+        )
+        electronic_run_value = str(electronic_preview.get("run_directory") or "")
+        electronic_run_dir = (
+            Path(electronic_run_value) if electronic_run_value else None
+        )
+        if electronic_preview.get("ok") is not True:
+            validation_errors.append("castep_electronic_preview_not_ok")
+        if electronic_preview.get("workflow") != "castep_electronic_calculation":
+            validation_errors.append("castep_electronic_preview_workflow_mismatch")
+        if electronic_preview.get("execution_mode") != "preview":
+            validation_errors.append("castep_electronic_preview_mode_changed")
+        if electronic_preview.get("execution_started") is not False:
+            validation_errors.append("castep_electronic_preview_started_execution")
+        if electronic_preview.get("revision_created") is not False:
+            validation_errors.append("castep_electronic_preview_created_revision")
+        if electronic_preview.get("task") != "Energy":
+            validation_errors.append("castep_electronic_preview_task_mismatch")
+        if electronic_structure is None:
+            validation_errors.append("castep_electronic_preview_structure_path_missing")
+        elif electronic_structure.exists():
+            validation_errors.append("castep_electronic_preview_materialized_structure")
+        if electronic_run_dir is None:
+            validation_errors.append("castep_electronic_preview_run_path_missing")
+        elif electronic_run_dir.exists():
+            validation_errors.append("castep_electronic_preview_created_run_directory")
         if prepared_replay.get("ok") is not True:
             validation_errors.append("view_replay_prepare_not_ok")
         if execution_preview.get("ok") is not True:
@@ -845,6 +965,7 @@ async def _run_preview_calls(
                 "create",
                 "status",
                 "castep_relaxation_preview",
+                "castep_electronic_preview",
                 "prepare_view_replay",
                 "resumed_preflight",
                 "view_bundle",
@@ -880,6 +1001,23 @@ async def _run_preview_calls(
                 "castep_relaxation_preview_structure_exists": (
                     relaxation_structure.exists()
                     if relaxation_structure is not None
+                    else None
+                ),
+                "castep_electronic_preview_status": electronic_preview.get(
+                    "status"
+                ),
+                "castep_electronic_preview_task": electronic_preview.get("task"),
+                "castep_electronic_preview_execution_started": (
+                    electronic_preview.get("execution_started")
+                ),
+                "castep_electronic_preview_structure_exists": (
+                    electronic_structure.exists()
+                    if electronic_structure is not None
+                    else None
+                ),
+                "castep_electronic_preview_run_directory_exists": (
+                    electronic_run_dir.exists()
+                    if electronic_run_dir is not None
                     else None
                 ),
                 "gui_opened": created.get("gui_open") is not None,
@@ -948,6 +1086,9 @@ async def _run_preview_calls(
                 ),
                 "capabilities_castep_relaxation_tool": (
                     castep_relaxation_capability.get("tool")
+                ),
+                "capabilities_castep_electronic_tool": (
+                    castep_electronic_capability.get("tool")
                 ),
                 "capabilities_transactional_miller_implemented": (
                     replay_runtime.get("transactional_miller_implemented")

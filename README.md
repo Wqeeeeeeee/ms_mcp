@@ -76,6 +76,8 @@ $env:MATERIAL_STUDIO_RUNNER = "<MS安装目录>\etc\Scripting\bin\RunMatScript.b
 - `material_studio_project_rollback`：非破坏式回滚
 - `material_studio_project_reconcile_dopant_metadata`：在新 revision 中调和失效掺杂位点元数据，并验证结构与 simulation 未变化
 - `material_studio_forcite_dynamics_from_spec`：结构化 Forcite Dynamics 预览/显式执行
+- `material_studio_castep_relax_current`：预览或显式执行当前晶体的 CASTEP 几何优化，仅提升已验证收敛结果
+- `material_studio_castep_run_current`：预览或显式执行 Energy、BandStructure、DOS、PDOS，并以结构不变的 metadata revision 记录结果
 
 ### 扩展工具（本地 crystal/interface builders）
 

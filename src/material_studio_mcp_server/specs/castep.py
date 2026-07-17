@@ -50,6 +50,13 @@ class CastepOptimizationAlgorithm(str, Enum):
     TPSD = "TPSD"
 
 
+class CastepDosIntegrationMethod(str, Enum):
+    """DOS integration methods documented by Materials Studio 20.1."""
+
+    SMEARING = "Smearing"
+    INTERPOLATION = "Interpolation"
+
+
 CASTEP_DIPOLE_CORRECTION_API_PROPERTY = "DipoleCorrection"
 CASTEP_DIPOLE_CORRECTION_API_CONTRACT = "Materials Studio 20.1 CASTEP DipoleCorrection"
 CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM = 8.0
@@ -179,6 +186,14 @@ def normalize_castep_optimization_algorithm(value: Any) -> CastepOptimizationAlg
     )  # type: ignore[return-value]
 
 
+def normalize_castep_dos_integration_method(value: Any) -> CastepDosIntegrationMethod:
+    return _normalize_documented_enum(
+        value,
+        enum_type=CastepDosIntegrationMethod,
+        label="CASTEP DOS integration method",
+    )  # type: ignore[return-value]
+
+
 CastepCellOptimizationValue = Annotated[
     CastepCellOptimization,
     BeforeValidator(normalize_castep_cell_optimization),
@@ -186,6 +201,10 @@ CastepCellOptimizationValue = Annotated[
 CastepOptimizationAlgorithmValue = Annotated[
     CastepOptimizationAlgorithm,
     BeforeValidator(normalize_castep_optimization_algorithm),
+]
+CastepDosIntegrationMethodValue = Annotated[
+    CastepDosIntegrationMethod,
+    BeforeValidator(normalize_castep_dos_integration_method),
 ]
 
 
@@ -206,6 +225,23 @@ class CastepEnergySpec(StrictModel):
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
+    properties_kpoint_separation: float | None = Field(default=None, gt=0, le=10)
+    band_structure_energy_max_ev: float | None = Field(default=None, ge=0, le=100)
+    band_structure_extra_bands: int | None = Field(default=None, ge=0, le=999)
+    band_structure_energy_tolerance_ev: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    dos_energy_max_ev: float | None = Field(default=None, ge=0, le=100)
+    dos_extra_bands: int | None = Field(default=None, ge=0, le=999)
+    dos_energy_tolerance_ev: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    dos_smearing_width_ev: float | None = Field(default=None, ge=0.005, le=100)
+    dos_integration_method: CastepDosIntegrationMethodValue | None = None
     dipole_correction: CastepDipoleCorrectionValue | None = None
     max_iterations: int | None = Field(default=None, ge=3, le=1_000_000)
     displacement_convergence_angstrom: float | None = Field(
@@ -235,6 +271,54 @@ class CastepEnergySpec(StrictModel):
             raise ValueError("k-point grid values must be positive integers")
         if self.kpoints is not None and self.kpoint_separation is not None:
             raise ValueError("Use either kpoints or kpoint_separation, not both")
+        property_tasks = {
+            CastepTask.BAND_STRUCTURE,
+            CastepTask.DENSITY_OF_STATES,
+            CastepTask.PROJECTED_DENSITY_OF_STATES,
+            CastepTask.OPTICS,
+            CastepTask.PHONON,
+        }
+        if (
+            self.properties_kpoint_separation is not None
+            and self.task not in property_tasks
+        ):
+            raise ValueError(
+                "properties_kpoint_separation requires a CASTEP property task"
+            )
+        band_fields = {
+            "band_structure_energy_max_ev": self.band_structure_energy_max_ev,
+            "band_structure_extra_bands": self.band_structure_extra_bands,
+            "band_structure_energy_tolerance_ev": (
+                self.band_structure_energy_tolerance_ev
+            ),
+        }
+        supplied_band_fields = [
+            name for name, value in band_fields.items() if value is not None
+        ]
+        if supplied_band_fields and self.task is not CastepTask.BAND_STRUCTURE:
+            raise ValueError(
+                "CASTEP band-structure settings require task BandStructure: "
+                + ", ".join(supplied_band_fields)
+            )
+        dos_fields = {
+            "dos_energy_max_ev": self.dos_energy_max_ev,
+            "dos_extra_bands": self.dos_extra_bands,
+            "dos_energy_tolerance_ev": self.dos_energy_tolerance_ev,
+            "dos_smearing_width_ev": self.dos_smearing_width_ev,
+            "dos_integration_method": self.dos_integration_method,
+        }
+        supplied_dos_fields = [
+            name for name, value in dos_fields.items() if value is not None
+        ]
+        if supplied_dos_fields and self.task not in {
+            CastepTask.DENSITY_OF_STATES,
+            CastepTask.PROJECTED_DENSITY_OF_STATES,
+        }:
+            raise ValueError(
+                "CASTEP DOS settings require task DensityOfStates or "
+                "ProjectedDensityOfStates: "
+                + ", ".join(supplied_dos_fields)
+            )
         if (
             self.dipole_correction is CastepDipoleCorrection.NON_SELF_CONSISTENT
             and self.task is not CastepTask.ENERGY

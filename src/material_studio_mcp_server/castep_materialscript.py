@@ -122,6 +122,35 @@ def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialSc
                 ("ParameterC", spec.kpoints[2]),
             ]
         )
+    if spec.properties_kpoint_separation is not None:
+        settings.append(
+            ("PropertiesKPointSeparation", spec.properties_kpoint_separation)
+        )
+    if spec.band_structure_energy_max_ev is not None:
+        settings.append(("BandStructureEmax", spec.band_structure_energy_max_ev))
+    if spec.band_structure_extra_bands is not None:
+        settings.append(
+            ("BandStructureNumExtraBands", spec.band_structure_extra_bands)
+        )
+    if spec.band_structure_energy_tolerance_ev is not None:
+        settings.append(
+            (
+                "BandStructureEnergyTolerance",
+                spec.band_structure_energy_tolerance_ev,
+            )
+        )
+    if spec.dos_energy_max_ev is not None:
+        settings.append(("DOSEmax", spec.dos_energy_max_ev))
+    if spec.dos_extra_bands is not None:
+        settings.append(("DOSNumExtraBands", spec.dos_extra_bands))
+    if spec.dos_energy_tolerance_ev is not None:
+        settings.append(("DOSEnergyTolerance", spec.dos_energy_tolerance_ev))
+    if spec.dos_smearing_width_ev is not None:
+        settings.append(("DOSSmearingWidth", spec.dos_smearing_width_ev))
+    if spec.dos_integration_method is not None:
+        settings.append(
+            ("DOSPreferredIntegrationMethod", spec.dos_integration_method.value)
+        )
 
     property_setting = _PROPERTY_SETTING_BY_TASK.get(task)
     if property_setting is not None:

@@ -1086,6 +1086,45 @@ output binding and restores the blocker. The view bundle writes
 `semiconductor_castep_geometry_optimization.csv` together with the updated
 commensurate and two-dimensional electrostatic CSVs.
 
+### Executing CASTEP Electronic Properties
+
+Explicit requests such as `Run CASTEP energy on the current model`, `Execute
+PDOS for the current relaxed structure`, `Calculate DOS now`, or `运行能带计算`
+route to `material_studio_castep_run_current`. The reviewed execution scope is
+`Energy`, `BandStructure`, `DensityOfStates`, and
+`ProjectedDensityOfStates`. Requests that only set or preview electronic
+parameters continue to create `set_castep_energy` semantic patches. The tool
+defaults to preview, and an explicit `execution_mode=preview` overrides any run
+wording.
+
+Preview returns the exact `Modules->CASTEP->Energy->Run` script, resolved
+settings, output plan, and fail-closed preflight. It does not create a run
+directory, call `RunMatScript.bat`, create a revision, materialize a structure,
+or touch the GUI. BandStructure, DOS, and PDOS execution requires a verified
+geometry-optimization receipt bound to the current structure. Energy does not
+use that property-specific gate, but cutoff, primary and property k-point
+sampling, structural/semiconductor health, slab-normal sampling, vacuum, and
+dipole-correction gates still apply.
+
+A valid completed run records a new metadata-only revision. The exported CIF
+must remain identical to the source structure, and the result receipt binds the
+source and recorded revision, task, simulation settings, generated script,
+tagged result, report, and safe native artifacts. Failed or malformed results,
+changed structures, path-escaping artifacts, or a project that advanced while
+CASTEP was running preserve the run evidence but do not advance `current.json`.
+When GUI loading is requested, preflight requires exactly one existing Materials
+Studio process/window before execution and reuses that same window afterward.
+
+Treat `backend_run_completed=true` only as backend completion. Materials Studio
+20.1 does not provide an independent SCF `Converged` result on the Energy API,
+so `scientific_convergence_verified` remains false. A returned
+`BandStructureChart`, `DOSChart`, or `PartialDOSChart` name proves a native Chart
+document exists but does not export numeric curve arrays; consequently
+`numeric_curve_data_exported` remains false. Review the CASTEP Report and native
+Chart document before reporting scientific convergence or quantitative curves.
+Fresh diagnostics expose `castep_electronic_result_summary` and write
+`semiconductor_castep_electronic_result.csv`.
+
 ## Rollback
 
 Use `material_studio_project_rollback` to create a new revision copied from a previous revision. Rollback must not delete historical revisions.

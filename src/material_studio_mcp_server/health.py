@@ -817,6 +817,48 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "CASTEP geometry-optimization receipt is not bound to the current immutable revision."
             )
 
+    castep_electronic = semiconductor.get("castep_electronic_result_summary") or {}
+    if castep_electronic:
+        checks["semiconductor_castep_electronic_task"] = castep_electronic.get(
+            "task"
+        )
+        checks["semiconductor_castep_electronic_source_revision"] = (
+            castep_electronic.get("source_revision")
+        )
+        checks["semiconductor_castep_electronic_target_revision"] = (
+            castep_electronic.get("target_revision")
+        )
+        checks["semiconductor_castep_electronic_binding_verified"] = (
+            castep_electronic.get("binding_verified")
+        )
+        checks["semiconductor_castep_electronic_backend_run_completed"] = (
+            castep_electronic.get("backend_run_completed")
+        )
+        checks["semiconductor_castep_electronic_scientific_convergence_verified"] = (
+            castep_electronic.get("scientific_convergence_verified")
+        )
+        checks["semiconductor_castep_electronic_numeric_curve_data_exported"] = (
+            castep_electronic.get("numeric_curve_data_exported")
+        )
+        checks["semiconductor_castep_electronic_result_document_name"] = (
+            castep_electronic.get("result_document_name")
+        )
+        checks["semiconductor_castep_electronic_total_energy_kcal_per_mol"] = (
+            castep_electronic.get("total_energy_kcal_per_mol")
+        )
+        checks["semiconductor_castep_electronic_band_gap_ev"] = (
+            castep_electronic.get("band_gap_ev")
+        )
+        if castep_electronic.get("binding_verified") is False:
+            warnings.append(
+                "CASTEP electronic-result receipt is not bound to the current immutable revision."
+            )
+        else:
+            warnings.append(
+                "CASTEP electronic backend completion is recorded, but independent "
+                "SCF convergence and numeric band/DOS curve export remain unverified."
+            )
+
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
         latest_twist = commensurate_twist.get("latest") or {}

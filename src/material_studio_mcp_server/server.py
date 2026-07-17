@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -19,6 +20,11 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .castep_materialscript import build_castep_materialscript_plan
+from .castep_electronic import (
+    RESULT_DOCUMENT_BY_TASK,
+    SUPPORTED_CASTEP_ELECTRONIC_TASKS,
+    build_electronic_result_revision_spec,
+)
 from .castep_relaxation import (
     build_relaxed_revision_spec,
     crystal_structure_sha256,
@@ -56,7 +62,10 @@ from .natural_language import (
     supported_templates,
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
-from .parsers.castep_log import validate_castep_geometry_result
+from .parsers.castep_log import (
+    validate_castep_electronic_result,
+    validate_castep_geometry_result,
+)
 from .parsers.cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .parsers.structure_summary import parse_structure_summary
 from .scripts import (
@@ -74,6 +83,7 @@ from .specs.castep import (
     CastepCellOptimizationValue,
     CastepDipoleCorrection,
     CastepDipoleCorrectionValue,
+    CastepDosIntegrationMethodValue,
     CastepEnergySpec,
     CastepOptimizationAlgorithmValue,
     CastepTask,
@@ -102,6 +112,7 @@ from .state.store import (
 )
 from .translators import (
     crystal_cif_summary,
+    render_castep_electronic_script,
     render_castep_geometry_optimization_script,
     render_model_to_perl,
     write_crystal_cif,
@@ -2916,6 +2927,16 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_castep_relaxation_fixed_cell_verified",
     "semiconductor_castep_relaxation_output_binding_verified",
     "semiconductor_castep_relaxation_atom_identity_verified",
+    "semiconductor_castep_electronic_task",
+    "semiconductor_castep_electronic_source_revision",
+    "semiconductor_castep_electronic_target_revision",
+    "semiconductor_castep_electronic_binding_verified",
+    "semiconductor_castep_electronic_backend_run_completed",
+    "semiconductor_castep_electronic_scientific_convergence_verified",
+    "semiconductor_castep_electronic_numeric_curve_data_exported",
+    "semiconductor_castep_electronic_result_document_name",
+    "semiconductor_castep_electronic_total_energy_kcal_per_mol",
+    "semiconductor_castep_electronic_band_gap_ev",
     "semiconductor_commensurate_twist_count",
     "semiconductor_commensurate_twist_quality",
     "semiconductor_commensurate_twist_metadata_consistent",
@@ -3590,6 +3611,58 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "verified_transition_field": "transition_verified",
             "fixed_cell_transition_field": "fixed_cell_transition_verified",
         },
+        "castep_electronic_calculation": {
+            "tool": "material_studio_castep_run_current",
+            "natural_language_entry_tool": "material_studio_live_modeling_request",
+            "default_execution_mode": "preview",
+            "execute_requires_explicit_confirmation": True,
+            "explicit_natural_language_execution_intent_supported": True,
+            "materials_studio_api_contract": "Materials Studio 20.1",
+            "run_api": "Modules->CASTEP->Energy->Run",
+            "supported_tasks": [
+                "Energy",
+                "BandStructure",
+                "DensityOfStates",
+                "ProjectedDensityOfStates",
+            ],
+            "result_properties": [
+                "Structure",
+                "Report",
+                "TotalEnergy",
+                "FreeEnergy",
+                "BandGap",
+                "FermiLevel",
+                "WorkFunction",
+                "WorkFunctionTop",
+                "WorkFunctionBottom",
+                "BandStructureChart",
+                "DOSChart",
+                "PartialDOSChart",
+            ],
+            "property_tasks_require_verified_geometry_relaxation": True,
+            "result_requires_current_revision_unchanged": True,
+            "result_requires_structure_unchanged": True,
+            "successful_result_creates_metadata_only_revision": True,
+            "failed_or_malformed_result_creates_revision": False,
+            "scientific_convergence_verified": False,
+            "scientific_convergence_limit": (
+                "MS 20.1 Energy Results expose no independent SCF convergence boolean."
+            ),
+            "numeric_curve_data_exported": False,
+            "numeric_curve_export_limit": (
+                "Documented Chart Documents expose no verified Export or SaveAs API."
+            ),
+            "band_path_binding_verified": False,
+            "band_path_limit": (
+                "BandStructure uses the Materials Studio native automatic path."
+            ),
+            "hotload_reuses_existing_window_only": True,
+            "launches_new_gui_process": False,
+            "diagnostic_summary_field": (
+                "semiconductor_health.castep_electronic_result_summary"
+            ),
+            "diagnostic_csv": "semiconductor_castep_electronic_result.csv",
+        },
         "recommended_calculation_settings_receipt_recovery_field": (
             "recommended_calculation_settings_receipt_recovery"
         ),
@@ -3629,6 +3702,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "material_studio_live_modeling_request",
                 "material_studio_live_update_with_patch",
                 "material_studio_castep_relax_current",
+                "material_studio_castep_run_current",
                 "material_studio_live_project_status",
                 "material_studio_model_export_view_bundle",
                 "material_studio_gui_apply_current_revision",
@@ -4450,6 +4524,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "history_policy": (
                         "Preview creates no revision. Execute preserves failed or unconverged "
                         "evidence and creates one new revision only for a verified converged result."
+                    ),
+                },
+                {
+                    "template_id": "castep_electronic_calculation",
+                    "operation": "castep_electronic_calculation",
+                    "requires_existing_project": True,
+                    "pattern": (
+                        "Preview or explicitly run CASTEP Energy, BandStructure, DOS, or "
+                        "PDOS on the current revision, e.g. 'run CASTEP band structure "
+                        "on the current model now'."
+                    ),
+                    "history_policy": (
+                        "Preview creates no revision. Execute preserves failed evidence "
+                        "and creates one metadata-only revision only after strict result "
+                        "binding and unchanged-structure validation."
                     ),
                 },
             ],
@@ -34634,6 +34723,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
+            "task",
+            "run_directory",
+            "scientific_convergence_verified",
+            "numeric_curve_data_exported",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -34795,6 +34888,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
+            "task",
+            "run_directory",
+            "scientific_convergence_verified",
+            "numeric_curve_data_exported",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -34951,6 +35048,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
             "castep_geometry_optimization",
+            "castep_electronic_calculation",
             "default_execution_mode",
             "response_modes",
             "response_mode",
@@ -35180,6 +35278,10 @@ def _compact_live_response(
             "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
+            "task",
+            "run_directory",
+            "scientific_convergence_verified",
+            "numeric_curve_data_exported",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -35847,6 +35949,7 @@ def _compact_capabilities_response(
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
             "castep_geometry_optimization",
+            "castep_electronic_calculation",
             "default_execution_mode",
             "response_modes",
             "visual_confirmation_entry",
@@ -39861,6 +39964,418 @@ def _castep_relaxation_preflight(
     }
 
 
+def _effective_castep_electronic_spec(
+    base_spec: ModelSpec,
+    *,
+    task: Any | None,
+    quality: str | None,
+    functional: str | None,
+    cutoff_energy_ev: int | None,
+    kpoint_separation: float | None,
+    kpoints: tuple[int, int, int] | None,
+    properties_kpoint_separation: float | None,
+    band_structure_energy_max_ev: float | None,
+    band_structure_extra_bands: int | None,
+    band_structure_energy_tolerance_ev: float | None,
+    dos_energy_max_ev: float | None,
+    dos_extra_bands: int | None,
+    dos_energy_tolerance_ev: float | None,
+    dos_smearing_width_ev: float | None,
+    dos_integration_method: Any | None,
+    dipole_correction: Any | None,
+) -> CastepEnergySpec:
+    """Resolve a reviewable Energy/property spec against current settings."""
+
+    current = (
+        base_spec.simulation
+        if isinstance(base_spec.simulation, CastepEnergySpec)
+        else None
+    )
+
+    def selected(name: str, override: Any, default: Any = None) -> Any:
+        if override is not None:
+            return override
+        current_value = getattr(current, name, None) if current is not None else None
+        return current_value if current_value is not None else default
+
+    selected_task = task
+    if selected_task is None:
+        selected_task = (
+            current.task
+            if current is not None
+            and current.task in SUPPORTED_CASTEP_ELECTRONIC_TASKS
+            else CastepTask.ENERGY
+        )
+    selected_kpoints = selected("kpoints", kpoints)
+    selected_separation = selected("kpoint_separation", kpoint_separation)
+    if kpoints is not None:
+        selected_separation = None
+    elif kpoint_separation is not None:
+        selected_kpoints = None
+    selected_property_separation = selected(
+        "properties_kpoint_separation",
+        properties_kpoint_separation,
+    )
+    normalized_task = CastepEnergySpec(task=selected_task).task
+    if (
+        normalized_task is not CastepTask.ENERGY
+        and selected_property_separation is None
+    ):
+        selected_property_separation = selected_separation
+    band_task = normalized_task is CastepTask.BAND_STRUCTURE
+    dos_task = normalized_task in {
+        CastepTask.DENSITY_OF_STATES,
+        CastepTask.PROJECTED_DENSITY_OF_STATES,
+    }
+    return CastepEnergySpec(
+        task=normalized_task,
+        quality=selected("quality", quality, "Medium"),
+        functional=selected("functional", functional, "PBE"),
+        cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
+        kpoint_separation=selected_separation,
+        kpoints=selected_kpoints,
+        properties_kpoint_separation=(
+            selected_property_separation
+            if normalized_task is not CastepTask.ENERGY
+            else None
+        ),
+        band_structure_energy_max_ev=(
+            selected(
+                "band_structure_energy_max_ev",
+                band_structure_energy_max_ev,
+                10.0,
+            )
+            if band_task
+            else None
+        ),
+        band_structure_extra_bands=(
+            selected(
+                "band_structure_extra_bands",
+                band_structure_extra_bands,
+                12,
+            )
+            if band_task
+            else None
+        ),
+        band_structure_energy_tolerance_ev=(
+            selected(
+                "band_structure_energy_tolerance_ev",
+                band_structure_energy_tolerance_ev,
+                1.0e-5,
+            )
+            if band_task
+            else None
+        ),
+        dos_energy_max_ev=(
+            selected("dos_energy_max_ev", dos_energy_max_ev, 10.0)
+            if dos_task
+            else None
+        ),
+        dos_extra_bands=(
+            selected("dos_extra_bands", dos_extra_bands, 12)
+            if dos_task
+            else None
+        ),
+        dos_energy_tolerance_ev=(
+            selected("dos_energy_tolerance_ev", dos_energy_tolerance_ev, 1.0e-5)
+            if dos_task
+            else None
+        ),
+        dos_smearing_width_ev=(
+            selected("dos_smearing_width_ev", dos_smearing_width_ev, 0.2)
+            if dos_task
+            else None
+        ),
+        dos_integration_method=(
+            selected("dos_integration_method", dos_integration_method, "Smearing")
+            if dos_task
+            else None
+        ),
+        dipole_correction=selected(
+            "dipole_correction",
+            dipole_correction,
+        ),
+    )
+
+
+def _castep_electronic_task_slug(task: CastepTask) -> str:
+    return {
+        CastepTask.ENERGY: "energy",
+        CastepTask.BAND_STRUCTURE: "band_structure",
+        CastepTask.DENSITY_OF_STATES: "density_of_states",
+        CastepTask.PROJECTED_DENSITY_OF_STATES: "projected_density_of_states",
+    }[task]
+
+
+def _next_castep_electronic_run_dir(task_root: Path) -> Path:
+    sequence = 1
+    if task_root.is_dir():
+        used = [
+            int(match.group(1))
+            for item in task_root.iterdir()
+            if item.is_dir()
+            and (match := re.fullmatch(r"run_(\d{4,})", item.name)) is not None
+        ]
+        sequence = max(used, default=0) + 1
+    return task_root / f"run_{sequence:04d}"
+
+
+def _castep_electronic_preflight(
+    spec: ModelSpec,
+    simulation: CastepEnergySpec,
+    *,
+    script_validation: dict[str, Any],
+    audit: dict[str, Any],
+    input_structure: Path,
+    output_structure: Path,
+    output_report: Path,
+) -> dict[str, Any]:
+    """Build a fail-closed semiconductor Energy/property execution gate."""
+
+    metadata = dict(spec.metadata or {})
+    health = dict(audit.get("health") or {})
+    semiconductor = dict(health.get("semiconductor_health") or {})
+    calculation = dict(semiconductor.get("calculation_preflight_summary") or {})
+    lattice = dict(semiconductor.get("lattice_summary") or {})
+    relaxation = dict(
+        semiconductor.get("castep_geometry_optimization_summary") or {}
+    )
+    property_task = simulation.task is not CastepTask.ENERGY
+    prior_relaxation_verified = bool(
+        metadata.get("geometry_relaxed") is True
+        and relaxation.get("transition_verified") is True
+        and relaxation.get("output_binding_verified") is True
+    )
+    cutoff_ready = bool(
+        simulation.cutoff_energy_ev is not None
+        and simulation.cutoff_energy_ev >= 300
+    )
+    kpoint_ready = bool(
+        simulation.kpoints is not None
+        or (
+            simulation.kpoint_separation is not None
+            and simulation.kpoint_separation <= 0.05
+        )
+    )
+    property_kpoint_ready = bool(
+        not property_task
+        or (
+            simulation.properties_kpoint_separation is not None
+            and simulation.properties_kpoint_separation <= 0.05
+        )
+    )
+    slab_model = bool(lattice.get("is_slab"))
+    slab_axis_value = calculation.get("slab_kpoint_axis_value")
+    slab_kpoint_ready = bool(
+        not slab_model
+        or simulation.kpoints is None
+        or slab_axis_value == 1
+    )
+    asymmetric_slab = bool(
+        metadata.get("surface_asymmetry_expected")
+        or metadata.get("commensurate_tmd_heterobilayer")
+    )
+    vacuum_value = next(
+        (
+            float(value)
+            for value in (
+                metadata.get("vacuum_angstrom"),
+                metadata.get("vacuum_thickness_angstrom"),
+                metadata.get("surface_vacuum_angstrom"),
+                lattice.get("declared_vacuum_angstrom"),
+            )
+            if isinstance(value, (int, float))
+        ),
+        None,
+    )
+    dipole_ready = bool(
+        not asymmetric_slab
+        or simulation.dipole_correction is CastepDipoleCorrection.SELF_CONSISTENT
+    )
+    vacuum_ready = bool(
+        not asymmetric_slab
+        or (vacuum_value is not None and vacuum_value >= 8.0)
+    )
+    expected_document = RESULT_DOCUMENT_BY_TASK[simulation.task]
+    checks = {
+        "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
+        "task_supported": simulation.task in SUPPORTED_CASTEP_ELECTRONIC_TASKS,
+        "generated_script_valid": bool(script_validation.get("valid")),
+        "structural_health_ok": health.get("ok") is True,
+        "semiconductor_health_ok": (
+            not semiconductor or semiconductor.get("ok") is True
+        ),
+        "cutoff_energy_at_least_300_ev": cutoff_ready,
+        "primary_kpoint_sampling_explicit_and_conservative": kpoint_ready,
+        "property_kpoint_separation_explicit_and_conservative": (
+            property_kpoint_ready
+        ),
+        "property_task_has_verified_prior_relaxation": (
+            not property_task or prior_relaxation_verified
+        ),
+        "slab_surface_normal_kpoint_count_is_one": slab_kpoint_ready,
+        "asymmetric_slab_self_consistent_dipole_correction": dipole_ready,
+        "asymmetric_slab_minimum_8_angstrom_vacuum": vacuum_ready,
+    }
+    blockers = [
+        reason
+        for condition, reason in (
+            (not checks["current_model_is_crystal"], "crystal_model_required"),
+            (not checks["task_supported"], "unsupported_castep_electronic_task"),
+            (not checks["generated_script_valid"], "generated_script_invalid"),
+            (not checks["structural_health_ok"], "structural_health_failed"),
+            (
+                not checks["semiconductor_health_ok"],
+                "semiconductor_health_failed",
+            ),
+            (not cutoff_ready, "minimum_300_ev_cutoff_required"),
+            (not kpoint_ready, "conservative_primary_kpoint_sampling_required"),
+            (
+                not property_kpoint_ready,
+                "conservative_property_kpoint_separation_required",
+            ),
+            (
+                property_task and not prior_relaxation_verified,
+                "verified_geometry_relaxation_required_for_property_task",
+            ),
+            (
+                not slab_kpoint_ready,
+                "slab_surface_normal_kpoint_count_must_be_one",
+            ),
+            (
+                not dipole_ready,
+                "asymmetric_slab_requires_self_consistent_dipole_correction",
+            ),
+            (
+                not vacuum_ready,
+                "asymmetric_slab_requires_at_least_8_angstrom_vacuum",
+            ),
+        )
+        if condition
+    ]
+    warnings = [
+        "The MS 20.1 Energy Results object does not expose an independent SCF convergence boolean.",
+        "Chart Documents do not expose documented Export/SaveAs support; numeric band/DOS curve data are not promised.",
+    ]
+    if simulation.task is CastepTask.BAND_STRUCTURE:
+        warnings.append(
+            "BandStructure uses the Materials Studio native automatic path; MCP analytic band-path binding remains unverified."
+        )
+    return {
+        "schema_version": "material_studio_castep_electronic_preflight_v1",
+        "execution_ready": not blockers,
+        "checks": checks,
+        "blocking_reasons": blockers,
+        "warnings": warnings,
+        "property_task": property_task,
+        "prior_relaxation_verified": prior_relaxation_verified,
+        "slab_model": slab_model,
+        "asymmetric_slab": asymmetric_slab,
+        "vacuum_angstrom": vacuum_value,
+        "input_structure": str(input_structure),
+        "input_structure_exists": input_structure.is_file(),
+        "output_structure": str(output_structure),
+        "output_report": str(output_report),
+        "result_contract": {
+            "api": "Modules->CASTEP->Energy->Run",
+            "materials_studio_api_contract": "Materials Studio 20.1",
+            "required_result_document": expected_document,
+            "total_energy_required": True,
+            "structure_must_remain_unchanged": True,
+            "scientific_convergence_verified": False,
+            "numeric_curve_data_exported": False,
+        },
+    }
+
+
+def _capture_castep_native_artifacts(
+    runner_result: dict[str, Any],
+    destination: Path,
+    *,
+    excluded_paths: set[Path],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Copy only runner-created files rooted in the isolated job directory."""
+
+    warnings: list[str] = []
+    raw_job_dir = runner_result.get("job_dir")
+    if not isinstance(raw_job_dir, str):
+        return [], ["CASTEP runner did not report a job directory."]
+    job_dir = Path(raw_job_dir).expanduser().resolve()
+    manifest: list[dict[str, Any]] = []
+    for raw_path in sorted(
+        {str(item) for item in runner_result.get("created_files", []) or []}
+    ):
+        source_candidate = Path(raw_path).expanduser()
+        source = (
+            source_candidate.resolve()
+            if source_candidate.is_absolute()
+            else (job_dir / source_candidate).resolve()
+        )
+        if source in excluded_paths:
+            continue
+        if not source.is_file():
+            warnings.append(f"Runner-created artifact was not a readable file: {source}")
+            continue
+        try:
+            relative = source.relative_to(job_dir)
+        except ValueError:
+            warnings.append(
+                f"Runner-created artifact was outside the isolated job directory and was not copied: {source}"
+            )
+            continue
+        target = (destination / relative).resolve()
+        try:
+            target.relative_to(destination.resolve())
+        except ValueError as exc:
+            raise ValueError("CASTEP native artifact path escaped its destination") from exc
+        if target.exists():
+            raise ValueError(
+                f"CASTEP native artifact destination already exists: {target}"
+            )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        manifest.append(
+            {
+                "path": str(target),
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "size_bytes": target.stat().st_size,
+            }
+        )
+    return manifest, warnings
+
+
+def _copy_castep_artifact_manifest(
+    manifest: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    destination_root: Path,
+) -> list[dict[str, Any]]:
+    copied: list[dict[str, Any]] = []
+    for item in manifest:
+        source = Path(str(item.get("path"))).expanduser().resolve()
+        try:
+            relative = source.relative_to(source_root.resolve())
+        except ValueError as exc:
+            raise ValueError("CASTEP native artifact manifest escaped its source root") from exc
+        target = (destination_root / relative).resolve()
+        try:
+            target.relative_to(destination_root.resolve())
+        except ValueError as exc:
+            raise ValueError("CASTEP native artifact manifest escaped its destination") from exc
+        if target.exists():
+            raise ValueError(f"CASTEP target artifact already exists: {target}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        copied.append(
+            {
+                "path": str(target),
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "size_bytes": target.stat().st_size,
+            }
+        )
+    return copied
+
+
 def _write_json_artifact(path: Path, payload: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(
@@ -39868,6 +40383,747 @@ def _write_json_artifact(path: Path, payload: dict[str, Any]) -> Path:
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
     )
     return path
+
+
+@mcp.tool(
+    name="material_studio_castep_run_current",
+    annotations={
+        "title": "Preview or run a CASTEP electronic calculation for the current revision",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def material_studio_castep_run_current(
+    project_id: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Current structured crystal project; omitted uses the latest "
+                "current project."
+            ),
+            min_length=1,
+            max_length=120,
+        ),
+    ] = None,
+    execution_mode: Annotated[
+        ExecutionMode,
+        Field(
+            description=(
+                "preview returns the exact Energy/property script and gates; "
+                "execute runs CASTEP and records a metadata-only result revision."
+            )
+        ),
+    ] = ExecutionMode.PREVIEW,
+    task: Annotated[
+        CastepTaskValue | None,
+        Field(
+            description=(
+                "Energy, BandStructure, DensityOfStates, or "
+                "ProjectedDensityOfStates."
+            )
+        ),
+    ] = None,
+    quality: Annotated[
+        str | None,
+        Field(description="Optional CASTEP quality override.", min_length=1, max_length=100),
+    ] = None,
+    functional: Annotated[
+        str | None,
+        Field(
+            description="Optional exchange-correlation functional override.",
+            min_length=1,
+            max_length=100,
+        ),
+    ] = None,
+    cutoff_energy_ev: Annotated[
+        int | None,
+        Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000),
+    ] = None,
+    kpoint_separation: Annotated[
+        float | None,
+        Field(description="Optional primary SCF k-point separation.", gt=0, le=10),
+    ] = None,
+    kpoints: Annotated[
+        tuple[int, int, int] | None,
+        Field(description="Optional primary SCF custom k-point grid."),
+    ] = None,
+    properties_kpoint_separation: Annotated[
+        float | None,
+        Field(description="Optional property k-point separation.", gt=0, le=10),
+    ] = None,
+    band_structure_energy_max_ev: Annotated[
+        float | None,
+        Field(description="Optional band-structure upper energy in eV.", ge=0, le=100),
+    ] = None,
+    band_structure_extra_bands: Annotated[
+        int | None,
+        Field(description="Optional number of extra band-structure bands.", ge=0, le=999),
+    ] = None,
+    band_structure_energy_tolerance_ev: Annotated[
+        float | None,
+        Field(
+            description="Optional band-structure energy tolerance in eV.",
+            gt=1.0e-8,
+            le=100,
+        ),
+    ] = None,
+    dos_energy_max_ev: Annotated[
+        float | None,
+        Field(description="Optional DOS upper energy in eV.", ge=0, le=100),
+    ] = None,
+    dos_extra_bands: Annotated[
+        int | None,
+        Field(description="Optional number of extra DOS bands.", ge=0, le=999),
+    ] = None,
+    dos_energy_tolerance_ev: Annotated[
+        float | None,
+        Field(description="Optional DOS energy tolerance in eV.", gt=1.0e-8, le=100),
+    ] = None,
+    dos_smearing_width_ev: Annotated[
+        float | None,
+        Field(description="Optional DOS smearing width in eV.", ge=0.005, le=100),
+    ] = None,
+    dos_integration_method: Annotated[
+        CastepDosIntegrationMethodValue | None,
+        Field(description="Optional documented DOS integration method."),
+    ] = None,
+    dipole_correction: Annotated[
+        CastepDipoleCorrectionValue | None,
+        Field(description="Optional MS 20.1 dipole-correction override."),
+    ] = None,
+    open_in_gui: Annotated[
+        bool,
+        Field(
+            description=(
+                "Hot-load the immutable result revision into the one verified "
+                "existing Materials Studio window."
+            )
+        ),
+    ] = False,
+    take_snapshot: Annotated[
+        bool,
+        Field(description="Capture a GUI snapshot after hot-loading."),
+    ] = True,
+    export_view_audit: Annotated[
+        bool,
+        Field(description="Export structural and semiconductor diagnostics."),
+    ] = True,
+    views: Annotated[
+        list[str] | None,
+        Field(description="Optional diagnostic view names."),
+    ] = None,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+    timeout_seconds: Annotated[
+        int | None,
+        Field(description="CASTEP execution timeout in seconds.", ge=1, le=7 * 24 * 3600),
+    ] = None,
+    response_mode: Annotated[
+        McpResponseMode,
+        Field(description="full result or compact MCP receipt."),
+    ] = McpResponseMode.FULL,
+) -> dict[str, Any]:
+    """Run a fail-closed CASTEP Energy/Band/DOS/PDOS result workflow."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        store = _structured_store(working_dir)
+        project_resolution: dict[str, Any]
+        if project_id is None:
+            latest = _latest_live_project(store)
+            if latest is None:
+                return _compact_live_response(
+                    _error(ValueError("No current structured project exists.")),
+                    response_mode,
+                )
+            base_spec, project_resolution = latest
+            project_id = base_spec.project_id
+        else:
+            base_spec, current_pointer = store.resolve_current(project_id)
+            project_resolution = _explicit_project_resolution(
+                base_spec,
+                current_pointer,
+            )
+        if not isinstance(base_spec.model, CrystalSpec):
+            raise ValueError("CASTEP electronic calculation requires a crystal project")
+
+        simulation = _effective_castep_electronic_spec(
+            base_spec,
+            task=task,
+            quality=quality,
+            functional=functional,
+            cutoff_energy_ev=cutoff_energy_ev,
+            kpoint_separation=kpoint_separation,
+            kpoints=kpoints,
+            properties_kpoint_separation=properties_kpoint_separation,
+            band_structure_energy_max_ev=band_structure_energy_max_ev,
+            band_structure_extra_bands=band_structure_extra_bands,
+            band_structure_energy_tolerance_ev=band_structure_energy_tolerance_ev,
+            dos_energy_max_ev=dos_energy_max_ev,
+            dos_extra_bands=dos_extra_bands,
+            dos_energy_tolerance_ev=dos_energy_tolerance_ev,
+            dos_smearing_width_ev=dos_smearing_width_ev,
+            dos_integration_method=dos_integration_method,
+            dipole_correction=dipole_correction,
+        )
+        task_slug = _castep_electronic_task_slug(simulation.task)
+        source_output_dir = (
+            store.project_dir(base_spec.project_id)
+            / "outputs"
+            / f"r{base_spec.revision:03d}"
+        )
+        task_root = source_output_dir / "castep_electronic" / task_slug
+        run_dir = _next_castep_electronic_run_dir(task_root)
+        input_structure = run_dir / "input_structure.cif"
+        output_structure = run_dir / "result_structure.cif"
+        output_report = run_dir / "castep_report.txt"
+        script_path = run_dir / "run_castep_electronic.pl"
+        run_result_metadata_path = run_dir / "result_metadata.json"
+        native_capture_dir = run_dir / "native_artifacts"
+        script = render_castep_electronic_script(
+            simulation,
+            input_structure,
+            output_structure,
+            output_report,
+            project_id=base_spec.project_id,
+            base_revision=base_spec.revision,
+        )
+        script_validation = validate_generated_script(script)
+        audit = model_view_audit(base_spec, views)
+        preflight = _castep_electronic_preflight(
+            base_spec,
+            simulation,
+            script_validation=script_validation,
+            audit=audit,
+            input_structure=input_structure,
+            output_structure=output_structure,
+            output_report=output_report,
+        )
+        response: dict[str, Any] = {
+            "ok": True,
+            "workflow": "castep_electronic_calculation",
+            "project_id": base_spec.project_id,
+            "project_resolution": project_resolution,
+            "base_revision": base_spec.revision,
+            "revision": base_spec.revision,
+            "revision_created": False,
+            "execution_mode": mode.value,
+            "execution_started": False,
+            "task": simulation.task.value,
+            "simulation": simulation.model_dump(mode="json"),
+            "script": script,
+            "script_sha256": text_sha256(script),
+            "script_path": str(script_path),
+            "script_validation": script_validation,
+            "validation": script_validation,
+            "preflight": preflight,
+            "run_directory": str(run_dir),
+            "planned_outputs": {
+                "structure": str(output_structure),
+                "report": str(output_report),
+                "result_metadata": str(run_result_metadata_path),
+                "native_artifacts": str(native_capture_dir),
+            },
+            "explicit_execute_required": True,
+            "new_process_launch_allowed": False,
+            "single_window_hotload_required": bool(open_in_gui),
+            "scientific_convergence_verified": False,
+            "numeric_curve_data_exported": False,
+        }
+        if mode is ExecutionMode.PREVIEW:
+            response["status"] = (
+                "ready_for_explicit_execute"
+                if preflight["execution_ready"]
+                else "castep_electronic_preflight_blocked"
+            )
+            response["required_next_step"] = (
+                "Review the exact script and call again with execution_mode=execute."
+                if preflight["execution_ready"]
+                else "Resolve every CASTEP electronic preflight blocker before execution."
+            )
+            return _compact_live_response(
+                _attach_modeling_health(
+                    response,
+                    execution_mode=mode,
+                    store=None,
+                    spec=base_spec,
+                ),
+                response_mode,
+            )
+        if not preflight["execution_ready"]:
+            response.update(
+                {
+                    "ok": False,
+                    "status": "castep_electronic_preflight_blocked",
+                    "error": "CASTEP electronic execution preflight failed.",
+                    "required_next_step": (
+                        "Resolve every CASTEP electronic preflight blocker before execution."
+                    ),
+                }
+            )
+            return _compact_live_response(response, response_mode)
+
+        gui = _gui_controller(working_dir)
+        gui_status: dict[str, Any] | None = None
+        if open_in_gui:
+            gui_status = gui.status(
+                project_id=base_spec.project_id,
+                revision=base_spec.revision,
+            )
+            response["gui_status"] = gui_status
+            if (
+                gui_status.get("window_found") is not True
+                or gui_status.get("single_window_policy_ok") is not True
+            ):
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "single_window_gui_preflight_blocked",
+                        "error": (
+                            "CASTEP was not started because one verified existing "
+                            "Materials Studio window is required for the requested hot-load."
+                        ),
+                        "gui_preflight_required": True,
+                        "recommended_tool": "material_studio_gui_status",
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+
+        terminal_attempt: dict[str, Any] | None = None
+        terminal_receipt: dict[str, Any] | None = None
+        runner_result: dict[str, Any] | None = None
+        result_validation: dict[str, Any] | None = None
+        structure_validation: dict[str, Any] | None = None
+        native_manifest: list[dict[str, Any]] = []
+        native_warnings: list[str] = []
+        current_after_run: ModelSpec | None = None
+        current_pointer_after_run: dict[str, Any] | None = None
+        with _revision_execution_transaction(
+            store=store,
+            spec=base_spec,
+            coverage=(
+                "castep_electronic_calculation",
+                "immutable_revision_binding",
+                "current_revision_revalidation",
+                "metadata_only_result_revision",
+            ),
+        ) as execution_transaction:
+            if run_dir.exists():
+                raise ValueError(
+                    "CASTEP electronic run directory already exists; refusing to "
+                    "overwrite prior calculation evidence."
+                )
+            run_dir.mkdir(parents=True, exist_ok=False)
+            atomic_write_text(script_path, script)
+            write_crystal_cif(base_spec.model, input_structure)
+            input_validation = validate_crystal_cif_against_spec(
+                base_spec.model,
+                input_structure,
+            )
+            response["input_structure_validation"] = input_validation
+            if not input_validation.get("ok"):
+                raise ValueError(
+                    "CASTEP electronic input CIF failed ModelSpec validation"
+                )
+            spec_path = (
+                store.project_dir(base_spec.project_id)
+                / "revisions"
+                / f"r{base_spec.revision:03d}_model_spec.json"
+            )
+            attempt_receipt = begin_execution_attempt(
+                run_dir,
+                project_id=base_spec.project_id,
+                revision=base_spec.revision,
+                backend=f"castep_{task_slug}",
+                lock_path=Path(str(execution_transaction["path"])),
+                spec_path=spec_path,
+                spec_payload=base_spec.model_dump(mode="json"),
+                script_path=script_path,
+                script=script,
+                planned_structure_path=str(output_structure),
+                current_revision_at_start=base_spec.revision,
+            )
+            running_attempt = attempt_receipt["attempt"]
+            try:
+                run = runner.run_script(
+                    script,
+                    working_dir=run_dir,
+                    timeout_seconds=timeout_seconds,
+                    job_prefix=(
+                        f"{base_spec.project_id}_r{base_spec.revision:03d}_"
+                        f"castep_{task_slug}"
+                    ),
+                    keep_script_name="run_castep_electronic.pl",
+                )
+                runner_result = run.to_dict()
+                atomic_write_text(
+                    run_dir / "stdout.log",
+                    str(
+                        runner_result.get("stdout")
+                        or runner_result.get("materials_output")
+                        or ""
+                    ),
+                )
+                atomic_write_text(
+                    run_dir / "stderr.log",
+                    str(
+                        runner_result.get("stderr")
+                        or runner_result.get("materials_log")
+                        or ""
+                    ),
+                )
+                result_validation = validate_castep_electronic_result(
+                    runner_result.get("parsed_json"),
+                    project_id=base_spec.project_id,
+                    base_revision=base_spec.revision,
+                    task=simulation.task.value,
+                    input_structure=input_structure,
+                    output_structure=output_structure,
+                    output_report=output_report,
+                )
+                structure_validation = validate_crystal_cif_against_spec(
+                    base_spec.model,
+                    output_structure,
+                )
+                excluded_paths = {
+                    input_structure.resolve(),
+                    output_structure.resolve(),
+                    output_report.resolve(),
+                    script_path.resolve(),
+                    (run_dir / "stdout.log").resolve(),
+                    (run_dir / "stderr.log").resolve(),
+                    run_result_metadata_path.resolve(),
+                }
+                runner_script_path = runner_result.get("script_path")
+                if isinstance(runner_script_path, str) and runner_script_path:
+                    excluded_paths.add(
+                        Path(runner_script_path).expanduser().resolve()
+                    )
+                native_manifest, native_warnings = _capture_castep_native_artifacts(
+                    runner_result,
+                    native_capture_dir,
+                    excluded_paths=excluded_paths,
+                )
+                current_after_run, current_pointer_after_run = store.resolve_current(
+                    base_spec.project_id
+                )
+                calculation_success = bool(
+                    runner_result.get("success")
+                    and result_validation.get("ok")
+                    and structure_validation.get("ok")
+                )
+                execution_metadata = {
+                    "schema_version": "material_studio_castep_electronic_execution_v1",
+                    "project_id": base_spec.project_id,
+                    "base_revision": base_spec.revision,
+                    "task": simulation.task.value,
+                    "script_path": str(script_path),
+                    "script_sha256": text_sha256(script),
+                    "simulation": simulation.model_dump(mode="json"),
+                    "runner": runner_result,
+                    "result_validation": result_validation,
+                    "structure_artifact_validation": structure_validation,
+                    "native_artifacts": native_manifest,
+                    "native_artifact_warnings": native_warnings,
+                    "scientific_convergence_verified": False,
+                    "numeric_curve_data_exported": False,
+                    "success": calculation_success,
+                }
+                _write_json_artifact(
+                    run_result_metadata_path,
+                    execution_metadata,
+                )
+                current_revision_after_execution = current_after_run.revision
+                current_revision_still_current = (
+                    current_revision_after_execution == base_spec.revision
+                )
+                terminal_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=current_revision_after_execution,
+                    current_revision_still_current=current_revision_still_current,
+                    result_success=calculation_success,
+                    result_metadata_path=run_result_metadata_path,
+                )
+                terminal_receipt = publish_terminal_execution_attempt(
+                    run_dir,
+                    terminal_model.model_dump(mode="json"),
+                )
+                terminal_attempt = terminal_model.model_dump(mode="json")
+            except Exception as exc:
+                failed_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=base_spec.revision,
+                    current_revision_still_current=True,
+                    result_success=None,
+                    result_metadata_path=None,
+                    error=exc,
+                )
+                try:
+                    terminal_receipt = publish_terminal_execution_attempt(
+                        run_dir,
+                        failed_model.model_dump(mode="json"),
+                    )
+                finally:
+                    terminal_attempt = failed_model.model_dump(mode="json")
+                raise
+
+            assert runner_result is not None
+            assert result_validation is not None
+            assert structure_validation is not None
+            assert current_after_run is not None
+            response.update(
+                {
+                    "execution_started": True,
+                    "execution_transaction": execution_transaction,
+                    "execution_attempt": terminal_attempt,
+                    "execution_attempt_state_path": (
+                        terminal_receipt or {}
+                    ).get("state_path"),
+                    "execution_attempt_events_path": (
+                        terminal_receipt or {}
+                    ).get("events_path"),
+                    "runner_result": runner_result,
+                    "result_validation": result_validation,
+                    "structure_artifact_validation": structure_validation,
+                    "native_artifacts": native_manifest,
+                    "native_artifact_warnings": native_warnings,
+                    "result_metadata_path": str(run_result_metadata_path),
+                }
+            )
+            if (
+                not runner_result.get("success")
+                or not result_validation.get("ok")
+                or not structure_validation.get("ok")
+            ):
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "castep_electronic_execution_failed",
+                        "error": (
+                            "CASTEP runner, tagged result validation, or unchanged-"
+                            "structure validation failed; no revision was created."
+                        ),
+                        "result": {**runner_result, "success": False},
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+            if current_after_run.revision != base_spec.revision:
+                response.update(
+                    {
+                        "ok": False,
+                        "status": "castep_electronic_revision_superseded",
+                        "error": (
+                            "CASTEP completed, but the current project advanced during "
+                            "execution; the result was preserved and not recorded as a revision."
+                        ),
+                        "current_revision": current_after_run.revision,
+                        "current_pointer": current_pointer_after_run,
+                    }
+                )
+                return _compact_live_response(response, response_mode)
+
+            candidate_revision = store.next_revision_number(base_spec.project_id)
+            candidate_output_dir = (
+                store.project_dir(base_spec.project_id)
+                / "outputs"
+                / f"r{candidate_revision:03d}"
+            )
+            candidate_result_dir = (
+                candidate_output_dir / "castep_electronic" / task_slug
+            )
+            final_structure = (
+                candidate_output_dir
+                / f"structure_r{candidate_revision:03d}.cif"
+            )
+            final_report = candidate_result_dir / "castep_report.txt"
+            final_result_metadata_path = (
+                candidate_result_dir / "result_metadata.json"
+            )
+            final_result_payload_path = candidate_result_dir / "tagged_result.json"
+            final_script_path = candidate_result_dir / "run_castep_electronic.pl"
+            final_native_dir = candidate_result_dir / "native_artifacts"
+            if (
+                final_structure.exists()
+                or final_report.exists()
+                or final_result_metadata_path.exists()
+                or final_result_payload_path.exists()
+                or final_script_path.exists()
+                or candidate_result_dir.exists()
+            ):
+                raise ValueError(
+                    "Candidate CASTEP electronic result output already exists; "
+                    "refusing to overwrite orphan evidence."
+                )
+            candidate_result_dir.mkdir(parents=True, exist_ok=False)
+            shutil.copy2(output_structure, final_structure)
+            shutil.copy2(output_report, final_report)
+            shutil.copy2(script_path, final_script_path)
+            validated_result_payload = dict(result_validation.get("result") or {})
+            _write_json_artifact(
+                final_result_payload_path,
+                validated_result_payload,
+            )
+            copied_native_manifest = _copy_castep_artifact_manifest(
+                native_manifest,
+                source_root=native_capture_dir,
+                destination_root=final_native_dir,
+            )
+            final_structure_validation = validate_crystal_cif_against_spec(
+                base_spec.model,
+                final_structure,
+            )
+            if not final_structure_validation.get("ok"):
+                raise ValueError(
+                    "Copied CASTEP electronic structure failed unchanged-structure validation"
+                )
+            result_spec, electronic_receipt = (
+                build_electronic_result_revision_spec(
+                    base_spec,
+                    simulation=simulation,
+                    result_payload=validated_result_payload,
+                    output_structure=final_structure,
+                    output_report=final_report,
+                    result_metadata=final_result_metadata_path,
+                    result_payload_path=final_result_payload_path,
+                    script_path=final_script_path,
+                    script_sha256=text_sha256(script),
+                    native_artifacts=copied_native_manifest,
+                    target_revision=candidate_revision,
+                )
+            )
+            generated = _generate_structured_script(result_spec, store)
+            if not generated["script_validation"].get("valid"):
+                raise ValueError(
+                    "Recorded CASTEP result revision generated an invalid build script"
+                )
+            info = store.save_revision(
+                base_spec.project_id,
+                result_spec,
+                user_text=(
+                    f"CASTEP {simulation.task.value} verified result recording"
+                ),
+                action=f"castep_electronic:{task_slug}",
+                generated_script=generated["script"],
+                calculation_preview_script=generated.get(
+                    "calculation_preview_script"
+                ),
+                diff=[
+                    "castep_electronic_result "
+                    f"task={simulation.task.value} "
+                    f"source=r{base_spec.revision:03d} "
+                    f"target=r{candidate_revision:03d} structure_unchanged=true"
+                ],
+                expected_revision=base_spec.revision,
+                expected_new_revision=candidate_revision,
+            )
+
+        recorded_spec = store.get_revision(base_spec.project_id, info.revision)
+        final_execution_metadata = {
+            "schema_version": "material_studio_castep_electronic_execution_v1",
+            "project_id": base_spec.project_id,
+            "base_revision": base_spec.revision,
+            "recorded_revision": info.revision,
+            "task": simulation.task.value,
+            "success": True,
+            "backend_run_completed": True,
+            "scientific_convergence_verified": False,
+            "numeric_curve_data_exported": False,
+            "electronic_receipt": electronic_receipt,
+            "runner": runner_result,
+            "result_validation": result_validation,
+            "structure_artifact_validation": final_structure_validation,
+            "native_artifacts": copied_native_manifest,
+            "native_artifact_warnings": native_warnings,
+        }
+        _write_json_artifact(
+            run_result_metadata_path,
+            final_execution_metadata,
+        )
+        _write_json_artifact(
+            final_result_metadata_path,
+            final_execution_metadata,
+        )
+        recorded_audit = model_view_audit(recorded_spec, views)
+        audit_artifacts: list[dict[str, Any]] = []
+        warnings = list(result_validation.get("warnings") or [])
+        warnings.extend(native_warnings)
+        response.update(
+            {
+                "ok": True,
+                "status": "castep_electronic_result_recorded",
+                "revision_created": True,
+                "new_revision": info.revision,
+                "revision": info.revision,
+                "project_resolution": _explicit_project_resolution(recorded_spec),
+                "electronic_receipt": electronic_receipt,
+                "structure_artifact_validation": final_structure_validation,
+                "planned_outputs": {
+                    "structure": str(final_structure),
+                    "report": str(final_report),
+                    "result_metadata": str(final_result_metadata_path),
+                    "tagged_result": str(final_result_payload_path),
+                    "script": str(final_script_path),
+                    "native_artifacts": str(final_native_dir),
+                },
+                "result": {
+                    **(runner_result or {}),
+                    "success": True,
+                    "backend_run_completed": True,
+                    "scientific_convergence_verified": False,
+                    "numeric_curve_data_exported": False,
+                    "recorded_revision": info.revision,
+                },
+                "view_audit": recorded_audit,
+                "warnings": warnings,
+                "required_next_step": (
+                    "Review the CASTEP report and native chart document in "
+                    "Materials Studio before making scientific convergence claims."
+                ),
+            }
+        )
+        if export_view_audit:
+            report_path = write_view_audit_report(
+                store.outputs_dir(base_spec.project_id, info.revision),
+                recorded_spec,
+                recorded_audit,
+                gui_status=gui_status,
+                gui_artifacts=audit_artifacts,
+            )
+            response["view_audit_report_path"] = str(report_path)
+        if open_in_gui:
+            finalized = _finalize_high_level_gui_hotload(
+                response=response,
+                store=store,
+                spec=recorded_spec,
+                gui=gui,
+                structure_path=final_structure,
+                take_snapshot=take_snapshot,
+                audit_artifacts=audit_artifacts,
+                execution_mode=mode,
+                working_dir=working_dir,
+                workflow="castep_electronic_calculation",
+                record_gui_open_artifact=export_view_audit,
+                refresh_view_audit_report=export_view_audit,
+            )
+            return _compact_live_response(finalized, response_mode)
+        return _compact_live_response(
+            _attach_modeling_health(
+                response,
+                execution_mode=mode,
+                store=store if export_view_audit else None,
+                spec=recorded_spec,
+                gui_artifacts=audit_artifacts,
+            ),
+            response_mode,
+        )
+    except ValidationError as exc:
+        return _compact_live_response(_validation_error(exc), response_mode)
+    except Exception as exc:
+        return _compact_live_response(_error(exc), response_mode)
 
 
 @mcp.tool(
@@ -40763,6 +42019,7 @@ def material_studio_live_modeling_request(
                 in {
                     "patch",
                     "apply_recommended_kpoint_grid",
+                    "castep_electronic_calculation",
                     "castep_relaxation",
                     "redo",
                     "rollback",
@@ -40790,6 +42047,95 @@ def material_studio_live_modeling_request(
                     if isinstance(planned_spec.model, CrystalSpec) and _explicit_live_gui_open_requested(user_request):
                         mode = ExecutionMode.EXECUTE
                         execution_mode_source = "explicit_live_intent"
+            elif plan.kind == "castep_electronic_calculation":
+                if project_id is None or current_spec is None:
+                    return finish(
+                        _attach_live_failure_contract(
+                            {
+                                "ok": False,
+                                "workflow": "castep_electronic_calculation",
+                                "error": (
+                                    "A CASTEP electronic calculation was inferred, but "
+                                    "no current structured crystal project exists."
+                                ),
+                                "user_request": user_request,
+                                "nl_plan": nl_plan,
+                                "project_resolution": project_resolution,
+                            },
+                            status="missing_current_project",
+                            recommended_action="create_or_select_crystal_project",
+                            payload_hint={"project_id": "existing crystal project id"},
+                        )
+                    )
+                electronic_payload = dict(plan.payload or {})
+                if (
+                    execution_mode is None
+                    and electronic_payload.get("explicit_execution_intent") is True
+                ):
+                    mode = ExecutionMode.EXECUTE
+                    execution_mode_source = (
+                        "explicit_castep_electronic_execution_intent"
+                    )
+                result = material_studio_castep_run_current(
+                    project_id=project_id,
+                    execution_mode=mode,
+                    task=electronic_payload.get("task"),
+                    quality=electronic_payload.get("quality"),
+                    functional=electronic_payload.get("functional"),
+                    cutoff_energy_ev=electronic_payload.get("cutoff_energy_ev"),
+                    kpoint_separation=electronic_payload.get("kpoint_separation"),
+                    kpoints=electronic_payload.get("kpoints"),
+                    properties_kpoint_separation=electronic_payload.get(
+                        "properties_kpoint_separation"
+                    ),
+                    band_structure_energy_max_ev=electronic_payload.get(
+                        "band_structure_energy_max_ev"
+                    ),
+                    band_structure_extra_bands=electronic_payload.get(
+                        "band_structure_extra_bands"
+                    ),
+                    band_structure_energy_tolerance_ev=electronic_payload.get(
+                        "band_structure_energy_tolerance_ev"
+                    ),
+                    dos_energy_max_ev=electronic_payload.get("dos_energy_max_ev"),
+                    dos_extra_bands=electronic_payload.get("dos_extra_bands"),
+                    dos_energy_tolerance_ev=electronic_payload.get(
+                        "dos_energy_tolerance_ev"
+                    ),
+                    dos_smearing_width_ev=electronic_payload.get(
+                        "dos_smearing_width_ev"
+                    ),
+                    dos_integration_method=electronic_payload.get(
+                        "dos_integration_method"
+                    ),
+                    dipole_correction=electronic_payload.get("dipole_correction"),
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    export_view_audit=export_view_audit,
+                    views=views,
+                    working_dir=working_dir,
+                    timeout_seconds=timeout_seconds,
+                    response_mode=McpResponseMode.FULL,
+                )
+                result.update(
+                    {
+                        "workflow": "castep_electronic_calculation",
+                        "user_request": user_request,
+                        "nl_plan": nl_plan,
+                        "execution_mode": mode.value,
+                        "execution_mode_source": execution_mode_source,
+                        "project_resolution": (
+                            result.get("project_resolution") or project_resolution
+                        ),
+                        "diagnostic_export_requested": (
+                            _diagnostic_export_requested_from_text(user_request)
+                        ),
+                        "normality_check_requested": (
+                            _normality_check_requested_from_text(user_request)
+                        ),
+                    }
+                )
+                return finish(result)
             elif plan.kind == "castep_relaxation":
                 if project_id is None or current_spec is None:
                     return finish(

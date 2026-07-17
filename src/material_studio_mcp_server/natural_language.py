@@ -3364,6 +3364,12 @@ def infer_modeling_plan(
         )
         if recommended_kpoint_plan is not None:
             return recommended_kpoint_plan
+        electronic_plan = _infer_castep_electronic_execution_plan(
+            user_request,
+            current_spec,
+        )
+        if electronic_plan is not None:
+            return electronic_plan
         relaxation_plan = _infer_castep_relaxation_plan(user_request, current_spec)
         if relaxation_plan is not None:
             return relaxation_plan
@@ -3392,6 +3398,104 @@ def infer_modeling_plan(
         notes=[
             "No conservative local template matched the request.",
             "Provide a ModelSpec for new structures or a SemanticPatch for modifications.",
+        ],
+    )
+
+
+def _infer_castep_electronic_execution_plan(
+    text: str,
+    current_spec: ModelSpec,
+) -> NaturalLanguagePlan | None:
+    """Infer an explicit Energy/Band/DOS/PDOS execution request."""
+
+    if not isinstance(current_spec.model, CrystalSpec):
+        return None
+    lowered = " ".join(text.lower().split())
+    compact = re.sub(r"[\s,.;:!?()\[\]{}_-]+", "", lowered)
+    task = _match_castep_task(text)
+    supported_tasks = {
+        CastepTask.ENERGY.value,
+        CastepTask.BAND_STRUCTURE.value,
+        CastepTask.DENSITY_OF_STATES.value,
+        CastepTask.PROJECTED_DENSITY_OF_STATES.value,
+    }
+    if task not in supported_tasks:
+        return None
+
+    configuration_only = bool(
+        re.search(
+            r"^(?:please\s+)?(?:configure|set|change|prepare|preview|generate|"
+            r"show\s+the\s+script)\b",
+            lowered,
+        )
+    ) or any(
+        compact.startswith(token)
+        for token in (
+            "\u8bbe\u7f6e",
+            "\u914d\u7f6e",
+            "\u51c6\u5907",
+            "\u9884\u89c8",
+            "\u751f\u6210\u811a\u672c",
+        )
+    )
+    execute_intent = bool(
+        re.search(
+            r"\b(?:run|execute|perform|start|launch|submit)\b.{0,64}"
+            r"\b(?:castep|single[- ]point|static\s+energy|energy|band"
+            r"\s*structure|bands?|density\s+of\s+states|dos|pdos)\b",
+            lowered,
+        )
+        or re.search(
+            r"\b(?:calculate|compute)\b.{0,64}"
+            r"\b(?:now|immediately|on\s+the\s+current|for\s+the\s+current)\b",
+            lowered,
+        )
+    ) or any(
+        token in compact
+        for token in (
+            "\u8fd0\u884ccastep\u5355\u70b9\u80fd",
+            "\u6267\u884ccastep\u5355\u70b9\u80fd",
+            "\u8fd0\u884c\u5355\u70b9\u80fd\u8ba1\u7b97",
+            "\u6267\u884c\u5355\u70b9\u80fd\u8ba1\u7b97",
+            "\u8fd0\u884c\u80fd\u5e26\u8ba1\u7b97",
+            "\u6267\u884c\u80fd\u5e26\u8ba1\u7b97",
+            "\u8fd0\u884c\u6001\u5bc6\u5ea6\u8ba1\u7b97",
+            "\u6267\u884c\u6001\u5bc6\u5ea6\u8ba1\u7b97",
+            "\u8fd0\u884c\u6295\u5f71\u6001\u5bc6\u5ea6\u8ba1\u7b97",
+            "\u6267\u884c\u6295\u5f71\u6001\u5bc6\u5ea6\u8ba1\u7b97",
+            "\u7acb\u5373\u8ba1\u7b97\u80fd\u5e26",
+            "\u73b0\u5728\u8ba1\u7b97\u80fd\u5e26",
+            "\u7acb\u5373\u8ba1\u7b97\u6001\u5bc6\u5ea6",
+            "\u73b0\u5728\u8ba1\u7b97\u6001\u5bc6\u5ea6",
+        )
+    )
+    if configuration_only or not execute_intent:
+        return None
+
+    operation = _match_castep_settings(text, current_spec) or {
+        "type": "set_castep_energy",
+        "task": task,
+    }
+    operation["task"] = task
+    payload = {
+        key: value for key, value in operation.items() if key != "type"
+    }
+    payload.update(
+        {
+            "project_id": current_spec.project_id,
+            "base_revision": current_spec.revision,
+            "explicit_execution_intent": True,
+        }
+    )
+    return NaturalLanguagePlan(
+        kind="castep_electronic_calculation",
+        payload=payload,
+        confidence=0.96,
+        template_id=f"castep_{task.lower()}_current_revision",
+        notes=[
+            "Use the reviewed Materials Studio 20.1 CASTEP Energy Results contract.",
+            "Record a new immutable metadata-only revision only after strict result and unchanged-structure validation.",
+            "Backend completion is not an independent SCF convergence proof, and Chart Documents are not numeric curve exports.",
         ],
     )
 

@@ -1376,6 +1376,10 @@ def test_castep_patch_can_update_task_without_mutating_original() -> None:
                 "quality": "Medium",
                 "cutoff_energy_ev": 520,
                 "kpoint_separation": 0.04,
+                "properties_kpoint_separation": 0.03,
+                "band_structure_energy_max_ev": 8.0,
+                "band_structure_extra_bands": 16,
+                "band_structure_energy_tolerance_ev": 1.0e-5,
             }
         ],
     )
@@ -1386,7 +1390,12 @@ def test_castep_patch_can_update_task_without_mutating_original() -> None:
     assert new_spec.simulation is not None
     assert new_spec.simulation.task == "BandStructure"
     assert new_spec.simulation.cutoff_energy_ev == 520
+    assert new_spec.simulation.properties_kpoint_separation == 0.03
+    assert new_spec.simulation.band_structure_energy_max_ev == 8.0
+    assert new_spec.simulation.band_structure_extra_bands == 16
+    assert new_spec.simulation.band_structure_energy_tolerance_ev == 1.0e-5
     assert base.simulation.task == "Energy"
+    assert base.simulation.properties_kpoint_separation is None
 
 
 def test_castep_patch_applies_geometry_settings_without_mutating_original() -> None:

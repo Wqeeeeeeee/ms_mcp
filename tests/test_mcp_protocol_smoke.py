@@ -57,6 +57,13 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["capabilities_transactional_miller_implemented"] is True
     assert calls["capabilities_exact_collinear_direction_implemented"] is True
     assert calls["capabilities_non_collinear_direction_implemented"] is False
+    assert calls["capabilities_castep_electronic_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert calls["castep_electronic_preview_task"] == "Energy"
+    assert calls["castep_electronic_preview_execution_started"] is False
+    assert calls["castep_electronic_preview_structure_exists"] is False
+    assert calls["castep_electronic_preview_run_directory_exists"] is False
     assert calls["view_names"] == ["front", "top", "isometric"]
     assert calls["view_bundle_row_counts"]["view_summary"] == 3
     assert calls["view_bundle_row_counts"]["view_projections"] == 24

@@ -1181,6 +1181,39 @@ present:
 - for fixed-cell slabs,
   `fixed_cell_transition_verified=true`.
 
+## CASTEP Electronic Results Tool
+
+The recommended config also enables `material_studio_castep_run_current` with
+approval mode `prompt`. It handles only `Energy`, `BandStructure`,
+`DensityOfStates`, and `ProjectedDensityOfStates` for the current crystal and is
+preview-safe by default:
+
+```text
+@mcp Run CASTEP band structure on the current model, but keep execution_mode=preview.
+```
+
+Preview returns the exact script and all calculation gates without creating a
+run directory, revision, structure, or GUI action. BandStructure, DOS, and PDOS
+execute only after a verified geometry-optimization result is bound to the
+current structure. Energy does not require that property-specific receipt, but
+all other structural, semiconductor, cutoff, k-point, slab, and dipole gates
+still apply.
+
+An accepted execution has `status="castep_electronic_result_recorded"`,
+`revision_created=true`, and
+`electronic_receipt.receipt_binding_verified=true`. The new revision is
+metadata-only: its CIF must remain bound to the unchanged source structure.
+Runner-created native artifacts are accepted only from the isolated job
+directory. With `open_in_gui=true`, preflight requires exactly one existing
+Materials Studio window and the workflow never starts another GUI process.
+
+Do not interpret backend completion as scientific convergence. The Materials
+Studio 20.1 Energy Results API has no independent SCF convergence flag, so the
+receipt intentionally reports `scientific_convergence_verified=false`. Native
+Chart object names are retained for BandStructure, DOS, and PDOS, but numeric
+curve arrays are not exported and `numeric_curve_data_exported=false`. Review
+the CASTEP Report and native chart before quantitative interpretation.
+
 The active user config is not rewritten by the doctor or protocol smoke. After
 merging the example snippet manually and restarting Codex, validate discovery
 with:

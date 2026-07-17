@@ -17,6 +17,7 @@ from .castep import (
     CastepCellOptimizationValue,
     CastepDipoleCorrection,
     CastepDipoleCorrectionValue,
+    CastepDosIntegrationMethodValue,
     CastepEnergySpec,
     CastepOptimizationAlgorithmValue,
     CastepTask,
@@ -113,6 +114,23 @@ class SemanticPatchOperation(StrictModel):
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
+    properties_kpoint_separation: float | None = Field(default=None, gt=0, le=10)
+    band_structure_energy_max_ev: float | None = Field(default=None, ge=0, le=100)
+    band_structure_extra_bands: int | None = Field(default=None, ge=0, le=999)
+    band_structure_energy_tolerance_ev: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    dos_energy_max_ev: float | None = Field(default=None, ge=0, le=100)
+    dos_extra_bands: int | None = Field(default=None, ge=0, le=999)
+    dos_energy_tolerance_ev: float | None = Field(
+        default=None,
+        gt=1.0e-8,
+        le=100,
+    )
+    dos_smearing_width_ev: float | None = Field(default=None, ge=0.005, le=100)
+    dos_integration_method: CastepDosIntegrationMethodValue | None = None
     dipole_correction: CastepDipoleCorrectionValue | None = None
     displacement_convergence_angstrom: float | None = Field(
         default=None,
@@ -3132,6 +3150,17 @@ def _castep_from_operation(operation: SemanticPatchOperation) -> CastepEnergySpe
         cutoff_energy_ev=operation.cutoff_energy_ev,
         kpoint_separation=operation.kpoint_separation,
         kpoints=operation.kpoints,
+        properties_kpoint_separation=operation.properties_kpoint_separation,
+        band_structure_energy_max_ev=operation.band_structure_energy_max_ev,
+        band_structure_extra_bands=operation.band_structure_extra_bands,
+        band_structure_energy_tolerance_ev=(
+            operation.band_structure_energy_tolerance_ev
+        ),
+        dos_energy_max_ev=operation.dos_energy_max_ev,
+        dos_extra_bands=operation.dos_extra_bands,
+        dos_energy_tolerance_ev=operation.dos_energy_tolerance_ev,
+        dos_smearing_width_ev=operation.dos_smearing_width_ev,
+        dos_integration_method=operation.dos_integration_method,
         dipole_correction=operation.dipole_correction,
         max_iterations=operation.max_iterations,
         displacement_convergence_angstrom=(

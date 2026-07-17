@@ -119,6 +119,7 @@
             "translate_crystal_atoms",
             "rotate_crystal_atoms",
             "make_commensurate_twisted_bilayer",
+            "make_commensurate_tmd_heterobilayer",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -573,6 +574,51 @@
           ],
           "default": null,
           "title": "Max Atoms"
+        },
+        "top_layer_material": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "minLength": 3,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top Layer Material"
+        },
+        "strain_policy": {
+          "anyOf": [
+            {
+              "enum": [
+                "balanced",
+                "bottom_fixed",
+                "top_fixed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strain Policy"
+        },
+        "max_strain_percent": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Strain Percent"
         },
         "thickness_angstrom": {
           "anyOf": [

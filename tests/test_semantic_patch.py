@@ -467,6 +467,165 @@ def test_new_tmd_template_applies_inline_commensurate_twisted_bilayer() -> None:
     assert any("make_commensurate_twisted_bilayer m=2 n=1" in note for note in plan.notes)
 
 
+def test_commensurate_tmd_heterobilayer_builds_strain_controlled_periodic_cell() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "make_commensurate_tmd_heterobilayer",
+                "top_layer_material": "WSe2",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.32,
+                "strain_policy": "balanced",
+            }
+        ],
+    )
+
+    heterobilayer, diff = apply_semantic_patch(base, patch)
+
+    assert len(base.model.basis_atoms) == 12
+    assert base.metadata["material"] == "MoS2"
+    assert len(heterobilayer.model.basis_atoms) == 42
+    assert heterobilayer.metadata["material"] == "MoS2/WSe2"
+    assert heterobilayer.metadata["materials"] == ["MoS2", "WSe2"]
+    assert heterobilayer.metadata["structure_family"] == "commensurate twisted 2d tmd heterobilayer"
+    assert diff[0].startswith(
+        "make_commensurate_tmd_heterobilayer bottom=MoS2 top=WSe2 m=2 n=1 "
+        "angle=21.786789298deg strain_policy=balanced"
+    )
+    receipt = heterobilayer.metadata["last_commensurate_heterobilayer"]
+    expected_common_a = 2.0 * 3.16 * 3.282 / (3.16 + 3.282)
+    assert receipt["bottom_material"] == "MoS2"
+    assert receipt["top_material"] == "WSe2"
+    assert receipt["commensurate_m"] == 2
+    assert receipt["commensurate_n"] == 1
+    assert receipt["supercell_index"] == 7
+    assert receipt["bottom_supercell_matrix"] == [[3, 2], [-2, 1]]
+    assert receipt["top_supercell_matrix"] == [[3, 1], [-1, 2]]
+    assert receipt["common_primitive_lattice_a_angstrom"] == pytest.approx(expected_common_a)
+    assert heterobilayer.model.lattice.a == pytest.approx(expected_common_a * math.sqrt(7))
+    assert receipt["bottom_biaxial_strain_percent"] > 0
+    assert receipt["top_biaxial_strain_percent"] < 0
+    assert receipt["max_abs_biaxial_strain_percent"] < 2.0
+    assert receipt["strain_within_limit"] is True
+    assert receipt["interlayer_chalcogen_gap_angstrom"] > 1.5
+    assert receipt["commensurability_verified"] is True
+    assert receipt["requires_geometry_relaxation"] is True
+    assert receipt["calculation_ready"] is False
+    assert len(receipt["structure_sha256"]) == 64
+    assert {atom.element for atom in heterobilayer.model.basis_atoms if "_L1_" in atom.id} == {"Mo", "S"}
+    assert {atom.element for atom in heterobilayer.model.basis_atoms if "_L2_" in atom.id} == {"W", "Se"}
+    assert any("strain review" in note for note in heterobilayer.acceptance.notes)
+
+
+def test_commensurate_tmd_heterobilayer_rejects_homobilayer_and_excess_strain() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+
+    same_material = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "make_commensurate_tmd_heterobilayer",
+                "top_layer_material": "MoS2",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.15,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="use make_commensurate_twisted_bilayer"):
+        apply_semantic_patch(base, same_material)
+
+    fixed_bottom = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "make_commensurate_tmd_heterobilayer",
+                "top_layer_material": "WSe2",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.32,
+                "strain_policy": "bottom_fixed",
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="above max_strain_percent=3"):
+        apply_semantic_patch(base, fixed_bottom)
+
+    reviewed_limit = fixed_bottom.model_copy(deep=True)
+    reviewed_limit.operations[0].max_strain_percent = 5.0
+    strained, _ = apply_semantic_patch(base, reviewed_limit)
+    assert strained.metadata["last_commensurate_heterobilayer"]["strain_policy"] == "bottom_fixed"
+    assert strained.metadata["last_commensurate_heterobilayer"]["max_abs_biaxial_strain_percent"] > 3.0
+
+
+def test_commensurate_tmd_heterobilayer_infers_new_and_current_requests() -> None:
+    new_plan = infer_modeling_plan(
+        "Build MoS2/WSe2 commensurate twisted heterobilayer with m=2, n=1 and prepare preview."
+    )
+
+    assert new_plan.kind == "spec"
+    assert new_plan.template_id == "commensurate_tmd_heterobilayer"
+    new_spec = ModelSpec.model_validate(new_plan.payload)
+    new_receipt = new_spec.metadata["last_commensurate_heterobilayer"]
+    assert new_receipt["bottom_material"] == "MoS2"
+    assert new_receipt["top_material"] == "WSe2"
+    assert new_receipt["strain_policy"] == "balanced"
+    assert new_receipt["interlayer_distance_angstrom"] == pytest.approx(6.32)
+    assert new_receipt["atom_count"] == 42
+
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    current_plan = infer_modeling_plan(
+        "\u628a\u5f53\u524d\u6a21\u578b\u6784\u5efa\u4e3a WSe2 \u9876\u5c42\u7684\u5171\u683c\u626d\u8f6c\u5f02\u8d28\u53cc\u5c42\uff0c"
+        "m=2,n=1\uff0c\u6700\u5927\u5e94\u53d8 3\uff05\u3002",
+        current_spec=base,
+    )
+    assert current_plan.kind == "patch"
+    assert current_plan.template_id == "commensurate_tmd_heterobilayer"
+    assert current_plan.payload["operations"] == [
+        {
+            "type": "make_commensurate_tmd_heterobilayer",
+            "top_layer_material": "WSe2",
+            "commensurate_m": 2,
+            "commensurate_n": 1,
+            "interlayer_distance_angstrom": 6.32,
+            "twist_orientation": "counterclockwise",
+            "strain_policy": "balanced",
+            "max_strain_percent": 3.0,
+            "max_atoms": 2000,
+        }
+    ]
+
+
+def test_commensurate_tmd_heterobilayer_respects_material_order_and_angle_selection() -> None:
+    reversed_plan = infer_modeling_plan(
+        "Build WSe2/MoS2 commensurate twisted heterobilayer at twist angle 5 degrees."
+    )
+
+    assert reversed_plan.kind == "spec"
+    reversed_spec = ModelSpec.model_validate(reversed_plan.payload)
+    receipt = reversed_spec.metadata["last_commensurate_heterobilayer"]
+    assert receipt["bottom_material"] == "WSe2"
+    assert receipt["top_material"] == "MoS2"
+    assert receipt["commensurate_m"] == 7
+    assert receipt["commensurate_n"] == 6
+    assert receipt["twist_angle_degrees"] == pytest.approx(5.085848, abs=1e-6)
+    assert receipt["atom_count"] == 762
+
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    wrong_bottom = infer_modeling_plan(
+        "Make the current model a WS2/MoS2 commensurate twisted heterobilayer with m=2,n=1.",
+        current_spec=base,
+    )
+    assert wrong_bottom.kind == "unsupported"
+    assert "current monolayer is MoS2" in wrong_bottom.notes[1]
+
+
 def test_semiconductor_layer_translation_infers_explicit_atom_ids_in_english_and_chinese() -> None:
     base = load_example("silicon_germanium_001_heterostructure_spec.json")
 

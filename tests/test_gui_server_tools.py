@@ -6574,6 +6574,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "make_commensurate_twisted_bilayer"
     ]
     assert "exact integer commensurate" in patch_commands["commensurate_tmd_twisted_bilayer"]["pattern"]
+    assert patch_commands["commensurate_tmd_heterobilayer"]["operations"] == [
+        "make_commensurate_tmd_heterobilayer"
+    ]
+    assert "strain-controlled exact integer coincidence" in patch_commands[
+        "commensurate_tmd_heterobilayer"
+    ]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
@@ -6783,6 +6789,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "make_commensurate_twisted_bilayer"
         in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     )
+    assert (
+        "make_commensurate_tmd_heterobilayer"
+        in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    )
     assert "apply_strain" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "auto_site_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "sublattice_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6816,6 +6826,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert commensurate_safety["default_max_atoms"] == 2000
     assert commensurate_safety["commensurability_verified_before_hotload"] is True
     assert commensurate_safety["geometry_relaxation_required_before_calculation"] is True
+    heterobilayer_safety = capabilities["natural_language"]["new_structure_inline_modifiers"][
+        "commensurate_tmd_heterobilayer_safety"
+    ]
+    assert heterobilayer_safety["requires_two_distinct_materials"] is True
+    assert heterobilayer_safety["strain_policies"] == ["balanced", "bottom_fixed", "top_fixed"]
+    assert heterobilayer_safety["default_max_abs_biaxial_strain_percent"] == 3.0
+    assert heterobilayer_safety["default_max_atoms"] == 2000
+    assert heterobilayer_safety["material_composition_and_strain_reverified_before_hotload"] is True
+    assert heterobilayer_safety["geometry_relaxation_required_before_calculation"] is True
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7147,6 +7166,16 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ]["summary_keys"]
     assert "semiconductor_commensurate_twist_csv" in diagnostic_profiles[
         "commensurate_twisted_bilayer"
+    ]["csv_keys"]
+    assert "commensurate_tmd_heterobilayer" in diagnostic_profiles
+    assert "inspection.semiconductor_health.commensurate_heterobilayer_summary" in diagnostic_profiles[
+        "commensurate_tmd_heterobilayer"
+    ]["summary_keys"]
+    assert "semiconductor_review.commensurate_heterobilayer" in diagnostic_profiles[
+        "commensurate_tmd_heterobilayer"
+    ]["summary_keys"]
+    assert "semiconductor_commensurate_heterobilayer_csv" in diagnostic_profiles[
+        "commensurate_tmd_heterobilayer"
     ]["csv_keys"]
     assert "modeling_report_summary_csv" in diagnostic_profiles["comprehensive_model_parameters"]["csv_keys"]
     assert "semiconductor_calculation_readiness" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
@@ -7747,6 +7776,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_commensurate_twist_csv" in capabilities["diagnostics"][
         "change_receipt_artifact_fields"
     ]
+    assert "semiconductor_commensurate_heterobilayer_csv" in capabilities["diagnostics"][
+        "change_receipt_artifact_fields"
+    ]
     assert "view_projections" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "view_quality" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_calculation_preflight" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
@@ -7758,6 +7790,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_p_gan_gate_cap" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_layer_rotation" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_commensurate_twist" in capabilities["diagnostics"][
+        "change_receipt_diagnostic_row_count_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer" in capabilities["diagnostics"][
         "change_receipt_diagnostic_row_count_fields"
     ]
     assert "gui_loaded_current_revision" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
@@ -7778,6 +7813,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "modeling_health_summary_fields"
     ]
     assert "semiconductor_commensurate_twist_calculation_ready" in capabilities["diagnostics"][
+        "modeling_health_summary_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer_quality" in capabilities["diagnostics"][
+        "modeling_health_summary_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer_strain_partition_verified" in capabilities[
+        "diagnostics"
+    ]["modeling_health_summary_fields"]
+    assert "semiconductor_commensurate_heterobilayer_calculation_ready" in capabilities["diagnostics"][
         "modeling_health_summary_fields"
     ]
     assert "modeling_report_summary_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
@@ -7853,6 +7897,18 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "modeling_report_summary_fields"
     ]
     assert "semiconductor_commensurate_twist_calculation_ready" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer_bottom_material" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer_top_material" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_heterobilayer_strain_partition_verified" in capabilities[
+        "diagnostics"
+    ]["modeling_report_summary_fields"]
+    assert "semiconductor_commensurate_heterobilayer_calculation_ready" in capabilities["diagnostics"][
         "modeling_report_summary_fields"
     ]
     assert "requested_diagnostic_focus_missing_csv_keys" in capabilities["diagnostics"]["modeling_report_summary_fields"]
@@ -20653,6 +20709,15 @@ def test_live_request_detects_calculation_readiness_preflight_focus() -> None:
     ) == ["spin_charge_preflight"]
 
 
+def test_live_request_detects_any_supported_commensurate_tmd_heterobilayer_pair() -> None:
+    assert server._requested_diagnostic_focuses_from_text(
+        "Build WSe2/MoSe2 commensurate twisted bilayer with m=2, n=1."
+    ) == ["commensurate_tmd_heterobilayer", "tmd_2d_monolayer"]
+    assert server._requested_diagnostic_focuses_from_text(
+        "构建二硫化钨/二硒化钼共格扭转双层，m=2,n=1。"
+    ) == ["commensurate_tmd_heterobilayer", "tmd_2d_monolayer"]
+
+
 def test_live_modeling_request_exports_comprehensive_model_parameter_focus(monkeypatch, tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     monkeypatch.setattr(
@@ -25614,6 +25679,89 @@ def test_live_modeling_request_hotloads_chinese_commensurate_tmd_twisted_bilayer
     risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
     assert "commensurate_twisted_bilayer_requires_geometry_relaxation" in risk_flags
     assert "layer_rotation_requires_commensurate_supercell" not in risk_flags
+    assert result["modeling_report"]["live_readiness"]["ready_for_calculation"] is False
+    assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    assert result["modeling_report"]["gui"]["single_window_policy_ok"] is True
+    assert len(isolated_fake_gui.opened) == 1
+    assert isolated_fake_gui.opened[0].suffix == ".cif"
+
+
+def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_strain_diagnostics(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "Build MoS2/WSe2 commensurate twisted heterobilayer with m=2, n=1, "
+        "prepare preview, and export heterobilayer strain diagnostics.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "commensurate_tmd_heterobilayer"
+    assert result["view_audit"]["model"]["atom_count"] == 42
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "commensurate_heterobilayer_summary"
+    ]
+    assert summary["quality"] == "commensurate_strained_pre_relaxation"
+    assert summary["bottom_material"] == "MoS2"
+    assert summary["top_material"] == "WSe2"
+    assert summary["layer_materials_verified"] is True
+    assert summary["strain_partition_verified"] is True
+    assert summary["commensurability_verified"] is True
+    assert summary["structure_binding_matches_current"] is True
+    assert summary["requires_geometry_relaxation"] is True
+    assert summary["calculation_ready"] is False
+    assert "commensurate_tmd_heterobilayer" in result["requested_diagnostic_focuses"]
+    assert "commensurate_twisted_bilayer" not in result["requested_diagnostic_focuses"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    csv_path = Path(
+        result["modeling_report"]["diagnostics"][
+            "semiconductor_commensurate_heterobilayer_csv"
+        ]
+    )
+    assert csv_path.exists()
+    receipt = result["modeling_report"]["change_receipt"]["semiconductor"][
+        "commensurate_heterobilayer"
+    ]
+    assert receipt["bottom_material"] == "MoS2"
+    assert receipt["top_material"] == "WSe2"
+    assert receipt["strain_partition_verified"] is True
+    assert receipt["calculation_ready"] is False
+    assert "commensurate_heterobilayer" in result["change_verification"]["domain_tags"]
+    assert "tmd_heterostructure" in result["change_verification"]["domain_tags"]
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_hotloads_chinese_commensurate_tmd_heterobilayer_in_one_window(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "\u6784\u5efa MoS2/WS2 \u5171\u683c\u626d\u8f6c\u5f02\u8d28\u53cc\u5c42\uff0cm=2,n=1\uff0c"
+        "\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\uff0c\u5bfc\u51fa\u5e94\u53d8\u4e0e\u5171\u683c\u8bca\u65ad\u3002",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "commensurate_heterobilayer_summary"
+    ]
+    assert summary["bottom_material"] == "MoS2"
+    assert summary["top_material"] == "WS2"
+    assert summary["commensurability_verified"] is True
+    assert summary["strain_partition_verified"] is True
+    assert summary["calculation_ready"] is False
+    checks = result["modeling_health"]["checks"]
+    assert checks["semiconductor_commensurate_heterobilayer_m"] == 2
+    assert checks["semiconductor_commensurate_heterobilayer_n"] == 1
+    assert checks["semiconductor_commensurate_heterobilayer_layer_materials_verified"] is True
+    assert checks["semiconductor_commensurate_heterobilayer_strain_partition_verified"] is True
+    risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "commensurate_tmd_heterobilayer_requires_geometry_relaxation" in risk_flags
+    assert "commensurate_tmd_heterobilayer_strain_unverified" not in risk_flags
     assert result["modeling_report"]["live_readiness"]["ready_for_calculation"] is False
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
     assert result["modeling_report"]["gui"]["single_window_policy_ok"] is True

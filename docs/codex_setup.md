@@ -663,7 +663,8 @@ from the Pydantic models and can be used by external MCP clients to construct
 valid `ModelSpec`, molecule, crystal, simulation, and `SemanticPatch` payloads.
 `patch_spec.schema.json` enumerates the supported patch operations, including
 `set_bond_type`, `translate_crystal_atoms`, `rotate_crystal_atoms`,
-`make_commensurate_twisted_bilayer`, and `set_metadata`.
+`make_commensurate_twisted_bilayer`, `make_commensurate_tmd_heterobilayer`, and
+`set_metadata`.
 
 For open-GUI workflows, start with `material_studio_gui_status`.  When no
 project is supplied, it resolves the latest current structured project when
@@ -942,6 +943,19 @@ has a candidate within 0.1 degrees and the default 2000-atom bound. Request the
 neighbor, local-environment, and view evidence. Exact integer
 commensurability permits same-window hot-loading but does not clear the
 geometry-relaxation calculation blocker.
+For distinct TMD materials, use `commensurate_tmd_heterobilayer` or the
+structured `make_commensurate_tmd_heterobilayer` patch. The first named material
+is the bottom layer and the second is the top layer. Supported pairs draw from
+MoS2, WS2, MoSe2, and WSe2, and must contain two different materials. The patch
+accepts coprime indices or a bounded target angle plus `balanced`,
+`bottom_fixed`, or `top_fixed` biaxial-strain allocation. The default limits are
+3% maximum absolute layer strain and 2000 atoms. Request the
+`commensurate_tmd_heterobilayer` diagnostic focus to require
+`commensurate_heterobilayer_summary`,
+`semiconductor_commensurate_heterobilayer.csv`, composition, strain,
+commensurability, neighbor, local-environment, and view evidence. Exact periodic
+coincidence is established only after the explicit strain is recorded; the
+result remains a pre-relaxation scaffold and is not calculation-ready.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

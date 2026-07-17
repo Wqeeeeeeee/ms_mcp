@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .specs.castep import normalize_castep_task
-from .specs.crystal import CrystalSpec, LatticeSpec
+from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
 
@@ -195,6 +195,12 @@ II_VI_CATIONS = {"Zn", "Cd"}
 II_VI_ANIONS = {"O", "S", "Se", "Te"}
 TMD_METALS = {"Mo", "W"}
 TMD_CHALCOGENS = {"S", "Se", "Te"}
+TMD_HETEROBILAYER_ELEMENTS = {
+    "MoS2": ("Mo", "S"),
+    "WS2": ("W", "S"),
+    "MoSe2": ("Mo", "Se"),
+    "WSe2": ("W", "Se"),
+}
 HALIDE_PEROVSKITE_B_CATIONS = {"Pb", "Sn"}
 HALIDE_PEROVSKITE_HALIDES = {"F", "Cl", "Br", "I"}
 SURFACE_PASSIVANTS = {"H"}
@@ -1396,6 +1402,72 @@ def write_view_audit_bundle(
                 "source",
             ],
             twist_rows,
+        )
+
+    commensurate_heterobilayer = semiconductor.get("commensurate_heterobilayer_summary") or {}
+    if commensurate_heterobilayer:
+        heterobilayer_rows = _semiconductor_commensurate_heterobilayer_csv_rows(
+            commensurate_heterobilayer
+        )
+        files["semiconductor_commensurate_heterobilayer_csv"] = str(
+            bundle_dir / "semiconductor_commensurate_heterobilayer.csv"
+        )
+        row_counts["semiconductor_commensurate_heterobilayer"] = _write_csv(
+            bundle_dir / "semiconductor_commensurate_heterobilayer.csv",
+            [
+                "index",
+                "is_latest",
+                "bottom_material",
+                "top_material",
+                "commensurate_m",
+                "commensurate_n",
+                "supercell_index",
+                "bottom_supercell_matrix",
+                "top_supercell_matrix",
+                "twist_orientation",
+                "twist_angle_degrees",
+                "requested_twist_angle_degrees",
+                "twist_angle_error_degrees",
+                "bottom_primitive_lattice_a_angstrom",
+                "top_primitive_lattice_a_angstrom",
+                "unstrained_lattice_mismatch_percent",
+                "strain_policy",
+                "common_primitive_lattice_a_angstrom",
+                "bottom_biaxial_strain_percent",
+                "top_biaxial_strain_percent",
+                "max_abs_biaxial_strain_percent",
+                "max_strain_percent",
+                "common_lattice_a_angstrom",
+                "common_lattice_b_angstrom",
+                "interlayer_distance_angstrom",
+                "bottom_monolayer_thickness_angstrom",
+                "top_monolayer_thickness_angstrom",
+                "interlayer_chalcogen_gap_angstrom",
+                "vacuum_angstrom",
+                "atom_count",
+                "bottom_layer_element_counts",
+                "top_layer_element_counts",
+                "layer_materials_verified",
+                "strain_partition_verified",
+                "strain_within_limit",
+                "matrix_determinant_verified",
+                "angle_verified",
+                "lattice_verified",
+                "interlayer_distance_verified",
+                "interlayer_gap_verified",
+                "structure_sha256",
+                "current_structure_sha256",
+                "structure_binding_matches_current",
+                "metadata_consistent",
+                "commensurability_verified",
+                "requires_geometry_relaxation",
+                "geometry_relaxed",
+                "calculation_ready",
+                "quality",
+                "warning_count",
+                "source",
+            ],
+            heterobilayer_rows,
         )
 
     interface_profile = semiconductor.get("interface_profile_summary") or {}
@@ -3054,6 +3126,116 @@ def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[
     return rows
 
 
+def _semiconductor_commensurate_heterobilayer_csv_rows(
+    summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    entries = summary.get("entries", []) or []
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    rows = []
+    for index, entry in enumerate(entries, start=1):
+        is_latest = index == len(entries) and entry == latest
+        rows.append(
+            {
+                "index": index,
+                "is_latest": is_latest,
+                "bottom_material": entry.get("bottom_material"),
+                "top_material": entry.get("top_material"),
+                "commensurate_m": entry.get("commensurate_m"),
+                "commensurate_n": entry.get("commensurate_n"),
+                "supercell_index": entry.get("supercell_index"),
+                "bottom_supercell_matrix": json.dumps(
+                    entry.get("bottom_supercell_matrix"), separators=(",", ":")
+                ),
+                "top_supercell_matrix": json.dumps(
+                    entry.get("top_supercell_matrix"), separators=(",", ":")
+                ),
+                "twist_orientation": entry.get("twist_orientation"),
+                "twist_angle_degrees": entry.get("twist_angle_degrees"),
+                "requested_twist_angle_degrees": entry.get("requested_twist_angle_degrees"),
+                "twist_angle_error_degrees": entry.get("twist_angle_error_degrees"),
+                "bottom_primitive_lattice_a_angstrom": entry.get(
+                    "bottom_primitive_lattice_a_angstrom"
+                ),
+                "top_primitive_lattice_a_angstrom": entry.get(
+                    "top_primitive_lattice_a_angstrom"
+                ),
+                "unstrained_lattice_mismatch_percent": entry.get(
+                    "unstrained_lattice_mismatch_percent"
+                ),
+                "strain_policy": entry.get("strain_policy"),
+                "common_primitive_lattice_a_angstrom": entry.get(
+                    "common_primitive_lattice_a_angstrom"
+                ),
+                "bottom_biaxial_strain_percent": entry.get("bottom_biaxial_strain_percent"),
+                "top_biaxial_strain_percent": entry.get("top_biaxial_strain_percent"),
+                "max_abs_biaxial_strain_percent": entry.get(
+                    "max_abs_biaxial_strain_percent"
+                ),
+                "max_strain_percent": entry.get("max_strain_percent"),
+                "common_lattice_a_angstrom": entry.get("common_lattice_a_angstrom"),
+                "common_lattice_b_angstrom": entry.get("common_lattice_b_angstrom"),
+                "interlayer_distance_angstrom": entry.get("interlayer_distance_angstrom"),
+                "bottom_monolayer_thickness_angstrom": entry.get(
+                    "bottom_monolayer_thickness_angstrom"
+                ),
+                "top_monolayer_thickness_angstrom": entry.get(
+                    "top_monolayer_thickness_angstrom"
+                ),
+                "interlayer_chalcogen_gap_angstrom": entry.get(
+                    "interlayer_chalcogen_gap_angstrom"
+                ),
+                "vacuum_angstrom": entry.get("vacuum_angstrom"),
+                "atom_count": entry.get("atom_count"),
+                "bottom_layer_element_counts": json.dumps(
+                    summary.get("bottom_layer_element_counts") if is_latest else None,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "top_layer_element_counts": json.dumps(
+                    summary.get("top_layer_element_counts") if is_latest else None,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "layer_materials_verified": (
+                    summary.get("layer_materials_verified") if is_latest else None
+                ),
+                "strain_partition_verified": (
+                    summary.get("strain_partition_verified") if is_latest else None
+                ),
+                "strain_within_limit": summary.get("strain_within_limit") if is_latest else None,
+                "matrix_determinant_verified": (
+                    summary.get("matrix_determinant_verified") if is_latest else None
+                ),
+                "angle_verified": summary.get("angle_verified") if is_latest else None,
+                "lattice_verified": summary.get("lattice_verified") if is_latest else None,
+                "interlayer_distance_verified": (
+                    summary.get("interlayer_distance_verified") if is_latest else None
+                ),
+                "interlayer_gap_verified": (
+                    summary.get("interlayer_gap_verified") if is_latest else None
+                ),
+                "structure_sha256": entry.get("structure_sha256"),
+                "current_structure_sha256": (
+                    summary.get("current_structure_sha256") if is_latest else None
+                ),
+                "structure_binding_matches_current": (
+                    summary.get("structure_binding_matches_current") if is_latest else None
+                ),
+                "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
+                "commensurability_verified": (
+                    summary.get("commensurability_verified") if is_latest else None
+                ),
+                "requires_geometry_relaxation": entry.get("requires_geometry_relaxation"),
+                "geometry_relaxed": entry.get("geometry_relaxed"),
+                "calculation_ready": summary.get("calculation_ready") if is_latest else None,
+                "quality": summary.get("quality") if is_latest else None,
+                "warning_count": summary.get("warning_count") if is_latest else None,
+                "source": entry.get("source"),
+            }
+        )
+    return rows
+
+
 def _semiconductor_interface_profile_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for layer in summary.get("layers", []) or []:
@@ -4687,6 +4869,19 @@ def _semiconductor_health_summary(
                 "Commensurate TMD twisted bilayer is an exact periodic pre-relaxation structure; "
                 "complete geometry relaxation before production calculations."
             )
+    commensurate_heterobilayer_summary = _commensurate_tmd_heterobilayer_summary(spec, metadata)
+    if commensurate_heterobilayer_summary:
+        if not commensurate_heterobilayer_summary.get("metadata_consistent"):
+            warnings.append(
+                "Commensurate TMD heterobilayer receipt no longer matches the current materials, "
+                "strain partition, lattice, or atom coordinates; inspect "
+                "commensurate_heterobilayer_summary."
+            )
+        elif commensurate_heterobilayer_summary.get("requires_geometry_relaxation"):
+            warnings.append(
+                "Commensurate TMD heterobilayer is periodic only after the recorded biaxial strain "
+                "partition and remains pre-relaxation; review strain and relax before production calculations."
+            )
     interface_scaffold_summary = _interface_scaffold_summary(metadata, lattice_summary, layer_profile_summary)
     superlattice_period_summary = _superlattice_period_summary(metadata, layer_profile_summary)
     interface_profile_summary = _interface_profile_summary(metadata, layer_profile_summary, heterostructure_summary)
@@ -4792,6 +4987,7 @@ def _semiconductor_health_summary(
         "layer_translation_summary": layer_translation_summary,
         "layer_rotation_summary": layer_rotation_summary,
         "commensurate_twist_summary": commensurate_twist_summary,
+        "commensurate_heterobilayer_summary": commensurate_heterobilayer_summary,
         "interface_scaffold_summary": interface_scaffold_summary,
         "interface_profile_summary": interface_profile_summary,
         "superlattice_period_summary": superlattice_period_summary,
@@ -6421,6 +6617,278 @@ def _commensurate_tmd_twist_summary(
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+def _commensurate_tmd_heterobilayer_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    entries = [
+        dict(item)
+        for item in metadata.get("commensurate_heterobilayer_history", []) or []
+        if isinstance(item, dict)
+    ]
+    latest = metadata.get("last_commensurate_heterobilayer")
+    if isinstance(latest, dict) and latest not in entries:
+        entries.append(dict(latest))
+    if not entries:
+        return None
+
+    latest = entries[-1]
+    common_metadata = {
+        **metadata,
+        "commensurate_twist_history": entries,
+        "last_commensurate_twist": latest,
+    }
+    common = _commensurate_tmd_twist_summary(spec, common_metadata) or {}
+    warnings = [
+        str(item)
+        for item in common.get("warnings", []) or []
+        if "Commensurate twisted bilayer remains" not in str(item)
+    ]
+    if not isinstance(spec.model, CrystalSpec):
+        warnings.append("Commensurate TMD heterobilayer metadata requires a crystal model.")
+        return {
+            **common,
+            "available": True,
+            "quality": "review_required",
+            "entry_count": len(entries),
+            "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+            "latest": latest,
+            "metadata_consistent": False,
+            "commensurability_verified": False,
+            "calculation_ready": False,
+            "calculation_blocking_reasons": ["commensurate_tmd_heterobilayer_requires_crystal_model"],
+            "warning_count": len(warnings),
+            "warnings": warnings,
+        }
+
+    bottom_material = _canonical_diagnostic_tmd_material(latest.get("bottom_material"))
+    top_material = _canonical_diagnostic_tmd_material(latest.get("top_material"))
+    materials_distinct = bool(
+        bottom_material is not None
+        and top_material is not None
+        and bottom_material != top_material
+    )
+    if not materials_distinct:
+        warnings.append("Recorded TMD heterobilayer materials are missing, unsupported, or identical.")
+
+    atoms = list(spec.model.basis_atoms)
+    bottom_atoms = [atom for atom in atoms if "_L1_" in atom.id]
+    top_atoms = [atom for atom in atoms if "_L2_" in atom.id]
+    bottom_counts = _element_count_map(bottom_atoms)
+    top_counts = _element_count_map(top_atoms)
+    supercell_index = _optional_int(latest.get("supercell_index"))
+    bottom_elements_verified = _tmd_layer_composition_verified(
+        bottom_counts,
+        bottom_material,
+        supercell_index,
+    )
+    top_elements_verified = _tmd_layer_composition_verified(
+        top_counts,
+        top_material,
+        supercell_index,
+    )
+    layer_materials_verified = bool(
+        materials_distinct and bottom_elements_verified and top_elements_verified
+    )
+    if not layer_materials_verified:
+        warnings.append("Current layer element counts do not match the recorded TMD material pair.")
+
+    bottom_reference_a = _optional_float(latest.get("bottom_primitive_lattice_a_angstrom"))
+    top_reference_a = _optional_float(latest.get("top_primitive_lattice_a_angstrom"))
+    common_primitive_a = _optional_float(latest.get("common_primitive_lattice_a_angstrom"))
+    strain_policy = str(latest.get("strain_policy") or "")
+    strain_policy_valid = strain_policy in {"balanced", "bottom_fixed", "top_fixed"}
+    expected_common_primitive_a = None
+    if bottom_reference_a and top_reference_a and strain_policy_valid:
+        if strain_policy == "balanced":
+            expected_common_primitive_a = (
+                2.0 * bottom_reference_a * top_reference_a
+                / (bottom_reference_a + top_reference_a)
+            )
+        elif strain_policy == "bottom_fixed":
+            expected_common_primitive_a = bottom_reference_a
+        else:
+            expected_common_primitive_a = top_reference_a
+    common_primitive_verified = bool(
+        common_primitive_a is not None
+        and expected_common_primitive_a is not None
+        and abs(common_primitive_a - expected_common_primitive_a) <= 1e-6
+    )
+
+    expected_bottom_strain = (
+        100.0 * (common_primitive_a / bottom_reference_a - 1.0)
+        if common_primitive_a is not None and bottom_reference_a
+        else None
+    )
+    expected_top_strain = (
+        100.0 * (common_primitive_a / top_reference_a - 1.0)
+        if common_primitive_a is not None and top_reference_a
+        else None
+    )
+    recorded_bottom_strain = _optional_float(latest.get("bottom_biaxial_strain_percent"))
+    recorded_top_strain = _optional_float(latest.get("top_biaxial_strain_percent"))
+    bottom_strain_verified = bool(
+        expected_bottom_strain is not None
+        and recorded_bottom_strain is not None
+        and abs(expected_bottom_strain - recorded_bottom_strain) <= 1e-5
+    )
+    top_strain_verified = bool(
+        expected_top_strain is not None
+        and recorded_top_strain is not None
+        and abs(expected_top_strain - recorded_top_strain) <= 1e-5
+    )
+    expected_max_abs_strain = max(
+        abs(expected_bottom_strain or 0.0),
+        abs(expected_top_strain or 0.0),
+    )
+    recorded_max_abs_strain = _optional_float(latest.get("max_abs_biaxial_strain_percent"))
+    strain_limit = _optional_float(latest.get("max_strain_percent"))
+    max_strain_verified = bool(
+        recorded_max_abs_strain is not None
+        and abs(recorded_max_abs_strain - expected_max_abs_strain) <= 1e-5
+    )
+    strain_within_limit = bool(
+        strain_limit is not None
+        and recorded_max_abs_strain is not None
+        and recorded_max_abs_strain <= strain_limit + 1e-9
+        and latest.get("strain_within_limit") is True
+    )
+    strain_partition_verified = bool(
+        strain_policy_valid
+        and common_primitive_verified
+        and bottom_strain_verified
+        and top_strain_verified
+        and max_strain_verified
+        and strain_within_limit
+    )
+    if not strain_partition_verified:
+        warnings.append("Recorded TMD heterobilayer strain partition or limit does not verify.")
+
+    common_metadata_consistent = common.get("metadata_consistent") is True
+    metadata_consistent = bool(
+        common_metadata_consistent
+        and layer_materials_verified
+        and strain_partition_verified
+    )
+    commensurability_verified = bool(
+        metadata_consistent
+        and latest.get("commensurability_verified") is True
+        and latest.get("commensurability_model")
+        == "exact_integer_coincidence_after_explicit_biaxial_strain"
+    )
+    requires_geometry_relaxation = latest.get("requires_geometry_relaxation") is not False
+    geometry_relaxed = latest.get("geometry_relaxed") is True
+    calculation_ready = bool(
+        commensurability_verified
+        and geometry_relaxed
+        and not requires_geometry_relaxation
+        and latest.get("calculation_ready") is True
+    )
+    if requires_geometry_relaxation or not geometry_relaxed:
+        warnings.append(
+            "Commensurate TMD heterobilayer remains a strained pre-relaxation structure."
+        )
+
+    blocking_reasons = [
+        reason
+        for condition, reason in (
+            (not materials_distinct, "commensurate_tmd_heterobilayer_material_pair_invalid"),
+            (not layer_materials_verified, "commensurate_tmd_heterobilayer_layer_composition_mismatch"),
+            (not strain_partition_verified, "commensurate_tmd_heterobilayer_strain_unverified"),
+            (not common_metadata_consistent, "commensurate_tmd_heterobilayer_structure_binding_mismatch"),
+            (not commensurability_verified, "commensurate_tmd_heterobilayer_commensurability_unverified"),
+            (
+                requires_geometry_relaxation or not geometry_relaxed,
+                "commensurate_tmd_heterobilayer_requires_geometry_relaxation",
+            ),
+        )
+        if condition
+    ]
+    return {
+        **common,
+        "available": True,
+        "quality": (
+            "calculation_preflight_ready"
+            if calculation_ready
+            else "commensurate_strained_pre_relaxation"
+            if metadata_consistent and commensurability_verified
+            else "review_required"
+        ),
+        "entry_count": len(entries),
+        "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+        "latest": latest,
+        "bottom_material": bottom_material,
+        "top_material": top_material,
+        "materials_distinct": materials_distinct,
+        "bottom_layer_element_counts": bottom_counts,
+        "top_layer_element_counts": top_counts,
+        "bottom_layer_composition_verified": bottom_elements_verified,
+        "top_layer_composition_verified": top_elements_verified,
+        "layer_materials_verified": layer_materials_verified,
+        "strain_policy": strain_policy or None,
+        "strain_policy_valid": strain_policy_valid,
+        "expected_common_primitive_lattice_a_angstrom": (
+            _round(expected_common_primitive_a)
+            if expected_common_primitive_a is not None
+            else None
+        ),
+        "common_primitive_lattice_verified": common_primitive_verified,
+        "expected_bottom_biaxial_strain_percent": (
+            _round(expected_bottom_strain) if expected_bottom_strain is not None else None
+        ),
+        "expected_top_biaxial_strain_percent": (
+            _round(expected_top_strain) if expected_top_strain is not None else None
+        ),
+        "bottom_biaxial_strain_verified": bottom_strain_verified,
+        "top_biaxial_strain_verified": top_strain_verified,
+        "max_abs_biaxial_strain_percent": (
+            _round(recorded_max_abs_strain) if recorded_max_abs_strain is not None else None
+        ),
+        "max_strain_percent": _round(strain_limit) if strain_limit is not None else None,
+        "max_strain_verified": max_strain_verified,
+        "strain_within_limit": strain_within_limit,
+        "strain_partition_verified": strain_partition_verified,
+        "metadata_consistent": metadata_consistent,
+        "commensurability_verified": commensurability_verified,
+        "commensurability_model": latest.get("commensurability_model"),
+        "requires_geometry_relaxation": requires_geometry_relaxation,
+        "geometry_relaxed": geometry_relaxed,
+        "calculation_ready": calculation_ready,
+        "calculation_blocking_reasons": blocking_reasons,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
+def _canonical_diagnostic_tmd_material(value: Any) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    for material in TMD_HETEROBILAYER_ELEMENTS:
+        if normalized == re.sub(r"[^a-z0-9]+", "", material.lower()):
+            return material
+    return None
+
+
+def _element_count_map(atoms: list[BasisAtomSpec]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for atom in atoms:
+        counts[atom.element] = counts.get(atom.element, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _tmd_layer_composition_verified(
+    counts: dict[str, int],
+    material: str | None,
+    supercell_index: int | None,
+) -> bool:
+    if material is None or supercell_index is None or supercell_index <= 0:
+        return False
+    elements = TMD_HETEROBILAYER_ELEMENTS.get(material)
+    if elements is None:
+        return False
+    metal, chalcogen = elements
+    return counts == {metal: supercell_index, chalcogen: 2 * supercell_index}
 
 
 def _two_by_two_integer_matrix(

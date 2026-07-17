@@ -1826,6 +1826,19 @@ TMD_COMMENSURATE_TWIST_DEFAULT_INTERLAYER_ANGSTROM = {
     "mose2": 6.47,
     "wse2": 6.49,
 }
+TMD_TEMPLATE_BY_MATERIAL = {
+    "MoS2": "molybdenum_disulfide_2d_mos2_monolayer",
+    "WS2": "tungsten_disulfide_2d_ws2_monolayer",
+    "MoSe2": "molybdenum_diselenide_2d_mose2_monolayer",
+    "WSe2": "tungsten_diselenide_2d_wse2_monolayer",
+}
+TMD_EXAMPLE_BY_MATERIAL = {
+    "MoS2": "molybdenum_disulfide_2d_mos2_monolayer_spec.json",
+    "WS2": "tungsten_disulfide_2d_ws2_monolayer_spec.json",
+    "MoSe2": "molybdenum_diselenide_2d_mose2_monolayer_spec.json",
+    "WSe2": "tungsten_diselenide_2d_wse2_monolayer_spec.json",
+}
+COMMENSURATE_HETEROBILAYER_DEFAULT_MAX_STRAIN_PERCENT = 3.0
 COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS = 2_000
 COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES = 0.1
 TMD_METAL_SITE_DOPANTS = {"Mo", "W", "Nb", "Ta", "Re"}
@@ -3266,6 +3279,16 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             ),
         },
         {
+            "template_id": "commensurate_tmd_heterobilayer",
+            "operations": ["make_commensurate_tmd_heterobilayer"],
+            "requires_existing_project": False,
+            "pattern": (
+                "Build a strain-controlled exact integer coincidence TMD heterobilayer from two reviewed "
+                "MoS2/WS2/MoSe2/WSe2 monolayers, e.g. 'build MoS2/WS2 commensurate twisted "
+                "heterobilayer with m=2, n=1' or '构建 MoS2/WSe2 共格扭转异质双层，m=2,n=1'."
+            ),
+        },
+        {
             "template_id": "commensurate_tmd_twisted_bilayer",
             "operations": ["make_commensurate_twisted_bilayer"],
             "requires_existing_project": True,
@@ -4120,6 +4143,20 @@ def _explicit_revision_target(text: str) -> int | None:
 def _looks_like_new_structure_request(text: str) -> bool:
     """Return True when text appears to ask for a new model instead of editing the current one."""
 
+    if _match_commensurate_tmd_heterobilayer(text) is not None and (
+        re.search(r"\b(?:current|existing)\s+(?:model|structure|project)\b", text, flags=re.IGNORECASE)
+        or any(
+            term in text
+            for term in (
+                "\u5f53\u524d\u6a21\u578b",
+                "\u73b0\u6709\u6a21\u578b",
+                "\u5f53\u524d\u7ed3\u6784",
+                "\u73b0\u6709\u7ed3\u6784",
+                "\u5f53\u524d\u9879\u76ee",
+            )
+        )
+    ):
+        return False
     if _looks_like_current_crystal_modifier_request(text):
         return False
     if _contains_new_structure_verb(text) and (
@@ -4140,6 +4177,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_crystal_lattice_parameters,
             _match_crystal_layer_translation,
             _match_crystal_layer_rotation,
+            _match_commensurate_tmd_heterobilayer,
             _match_commensurate_tmd_twisted_bilayer,
             _match_crystal_strain,
             _match_crystal_vacancy,
@@ -7226,6 +7264,14 @@ def _is_semiconductor_heterostructure_request(text: str) -> bool:
 
 
 def _infer_template(text: str, *, user_request: str, project_id: str | None) -> NaturalLanguagePlan | None:
+    tmd_heterobilayer_plan = _infer_commensurate_tmd_heterobilayer_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if tmd_heterobilayer_plan is not None:
+        return tmd_heterobilayer_plan
+
     sic_6h_contact_plan = _infer_sic_6h_schottky_contact_template(
         text,
         user_request=user_request,
@@ -10459,11 +10505,20 @@ def _apply_new_crystal_composite_operations(
         return True
 
     try:
-        commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
-        if commensurate_twist_match is not None:
+        commensurate_heterobilayer_match = _match_commensurate_tmd_heterobilayer(text)
+        if commensurate_heterobilayer_match is not None:
             apply_operations(
-                _commensurate_tmd_twisted_bilayer_operations(working, commensurate_twist_match)
+                _commensurate_tmd_heterobilayer_operations(
+                    working,
+                    commensurate_heterobilayer_match,
+                )
             )
+        else:
+            commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
+            if commensurate_twist_match is not None:
+                apply_operations(
+                    _commensurate_tmd_twisted_bilayer_operations(working, commensurate_twist_match)
+                )
 
         supercell_match = None if skip_supercell else _match_make_supercell(text)
         if supercell_match is not None:
@@ -11220,29 +11275,55 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
         )
 
     try:
-        commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
-        if commensurate_twist_match is not None:
-            twist_operations = _commensurate_tmd_twisted_bilayer_operations(
+        commensurate_heterobilayer_match = _match_commensurate_tmd_heterobilayer(text)
+        if commensurate_heterobilayer_match is not None:
+            heterobilayer_operations = _commensurate_tmd_heterobilayer_operations(
                 working,
-                commensurate_twist_match,
+                commensurate_heterobilayer_match,
             )
-            preview_twist, _ = apply_semantic_patch(
+            preview_heterobilayer, _ = apply_semantic_patch(
                 working,
                 SemanticPatch(
                     project_id=working.project_id,
                     base_revision=working.revision,
-                    operations=twist_operations,
+                    operations=heterobilayer_operations,
                 ),
             )
-            twist_record = preview_twist.metadata["last_commensurate_twist"]
+            heterobilayer_record = preview_heterobilayer.metadata["last_commensurate_heterobilayer"]
             apply_group(
-                twist_operations,
+                heterobilayer_operations,
                 (
-                    f"build m={twist_record['commensurate_m']}, n={twist_record['commensurate_n']} "
-                    f"commensurate TMD twisted bilayer at "
-                    f"{twist_record['twist_angle_degrees']:g} degrees"
+                    f"build {heterobilayer_record['bottom_material']}/"
+                    f"{heterobilayer_record['top_material']} m={heterobilayer_record['commensurate_m']}, "
+                    f"n={heterobilayer_record['commensurate_n']} commensurate TMD heterobilayer at "
+                    f"{heterobilayer_record['twist_angle_degrees']:g} degrees with "
+                    f"{heterobilayer_record['max_abs_biaxial_strain_percent']:g}% maximum strain"
                 ),
             )
+        else:
+            commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
+            if commensurate_twist_match is not None:
+                twist_operations = _commensurate_tmd_twisted_bilayer_operations(
+                    working,
+                    commensurate_twist_match,
+                )
+                preview_twist, _ = apply_semantic_patch(
+                    working,
+                    SemanticPatch(
+                        project_id=working.project_id,
+                        base_revision=working.revision,
+                        operations=twist_operations,
+                    ),
+                )
+                twist_record = preview_twist.metadata["last_commensurate_twist"]
+                apply_group(
+                    twist_operations,
+                    (
+                        f"build m={twist_record['commensurate_m']}, n={twist_record['commensurate_n']} "
+                        f"commensurate TMD twisted bilayer at "
+                        f"{twist_record['twist_angle_degrees']:g} degrees"
+                    ),
+                )
 
         supercell_match = _match_make_supercell(text)
         if supercell_match is not None:
@@ -11682,6 +11763,45 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                     f"Rotate crystal layer {record['layer_index']} by {record['angle_degrees']:g} degrees "
                     f"around {record['rotation_axis']} as a non-commensurate visual-review scaffold; "
                     "build a commensurate supercell and relax before calculation."
+                ),
+            )
+
+        commensurate_heterobilayer_match = _match_commensurate_tmd_heterobilayer(text)
+        if commensurate_heterobilayer_match is not None:
+            try:
+                operations = _commensurate_tmd_heterobilayer_operations(
+                    current_spec,
+                    commensurate_heterobilayer_match,
+                )
+                preview_heterobilayer, _ = apply_semantic_patch(
+                    current_spec,
+                    SemanticPatch(
+                        project_id=current_spec.project_id,
+                        base_revision=current_spec.revision,
+                        operations=operations,
+                    ),
+                )
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="commensurate_tmd_heterobilayer",
+                    notes=[
+                        "A commensurate TMD heterobilayer request matched but could not be applied safely.",
+                        str(exc),
+                    ],
+                )
+            record = preview_heterobilayer.metadata["last_commensurate_heterobilayer"]
+            return _patch_plan(
+                operations,
+                "commensurate_tmd_heterobilayer",
+                (
+                    f"Build {record['bottom_material']}/{record['top_material']} exact integer "
+                    f"coincidence heterobilayer with m={record['commensurate_m']}, "
+                    f"n={record['commensurate_n']}, twist={record['twist_angle_degrees']:g} degrees, "
+                    f"and max biaxial strain={record['max_abs_biaxial_strain_percent']:g}%; "
+                    "geometry relaxation remains required."
                 ),
             )
 
@@ -13248,6 +13368,102 @@ def _match_contact_length_value(text: str, term_patterns: Sequence[str]) -> floa
     return None
 
 
+def _infer_commensurate_tmd_heterobilayer_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    request = _match_commensurate_tmd_heterobilayer(text)
+    if request is None:
+        return None
+    bottom_material = request.get("bottom_material")
+    top_material = request.get("top_material")
+    if bottom_material is None or top_material is None:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id="commensurate_tmd_heterobilayer",
+            notes=[
+                "A new commensurate TMD heterobilayer request must name both bottom and top materials.",
+                "Supported materials are MoS2, WS2, MoSe2, and WSe2.",
+                "Put the bottom material first, for example 'build MoS2/WS2 commensurate twisted heterobilayer with m=2, n=1'.",
+            ],
+        )
+    example_name = TMD_EXAMPLE_BY_MATERIAL.get(str(bottom_material))
+    if example_name is None:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id="commensurate_tmd_heterobilayer",
+            notes=["The requested bottom TMD material has no reviewed local monolayer template."],
+        )
+
+    raw_spec = _load_example(example_name)
+    chosen_project_id = project_id or _project_id("commensurate_tmd_heterobilayer", user_request)
+    raw_spec = {
+        **raw_spec,
+        "project_id": chosen_project_id,
+        "revision": 0,
+        "metadata": {
+            **dict(raw_spec.get("metadata") or {}),
+            "nl_template": "commensurate_tmd_heterobilayer",
+            "nl_source": "local_template_plus_semantic_patch",
+            "nl_user_request": user_request,
+        },
+    }
+    base = ModelSpec.model_validate(raw_spec)
+    try:
+        operations = _commensurate_tmd_heterobilayer_operations(base, request)
+        built, diff = apply_semantic_patch(
+            base,
+            SemanticPatch(
+                project_id=base.project_id,
+                base_revision=base.revision,
+                operations=operations,
+            ),
+        )
+    except ValueError as exc:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id="commensurate_tmd_heterobilayer",
+            notes=[
+                "A commensurate TMD heterobilayer request matched but could not be constructed safely.",
+                str(exc),
+            ],
+        )
+    built = built.model_copy(
+        update={
+            "revision": 0,
+            "metadata": {
+                **dict(built.metadata or {}),
+                "nl_composite_operations": diff,
+            },
+        }
+    )
+    receipt = built.metadata["last_commensurate_heterobilayer"]
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=built.model_dump(mode="json"),
+        confidence=0.9,
+        template_id="commensurate_tmd_heterobilayer",
+        notes=[
+            (
+                f"Built {bottom_material}/{top_material} exact integer coincidence heterobilayer "
+                f"with m={receipt['commensurate_m']}, n={receipt['commensurate_n']}, "
+                f"twist={receipt['twist_angle_degrees']:g} degrees, and "
+                f"max biaxial strain={receipt['max_abs_biaxial_strain_percent']:g}%."
+            ),
+            "The cell is periodic after the recorded strain partition and remains a pre-relaxation scaffold.",
+            "Same-window hot-load is supported; production calculations remain blocked until reviewed geometry relaxation.",
+        ],
+    )
+
+
 def _match_crystal_layer_translation(text: str) -> dict[str, Any] | None:
     if re.search(
         r"\b(?:shift|translate|slide|displace|move)\b|(?:平移|横移|移动)",
@@ -13377,7 +13593,7 @@ def _match_crystal_layer_rotation(text: str) -> dict[str, Any] | None:
     }
 
 
-def _match_commensurate_tmd_twisted_bilayer(text: str) -> dict[str, Any] | None:
+def _match_commensurate_tmd_twist_request(text: str) -> dict[str, Any] | None:
     if re.search(r"\bcommensurate\b|\u5171\u683c", text, flags=re.IGNORECASE) is None:
         return None
     if re.search(
@@ -13440,6 +13656,120 @@ def _match_commensurate_tmd_twisted_bilayer(text: str) -> dict[str, Any] | None:
         "interlayer_distance_angstrom": interlayer_distance,
         "twist_orientation": orientation,
     }
+
+
+def _match_commensurate_tmd_twisted_bilayer(text: str) -> dict[str, Any] | None:
+    request = _match_commensurate_tmd_twist_request(text)
+    if request is None:
+        return None
+    if len(_mentioned_tmd_materials(text)) >= 2 or _looks_like_tmd_heterobilayer_text(text):
+        return None
+    return request
+
+
+def _match_commensurate_tmd_heterobilayer(text: str) -> dict[str, Any] | None:
+    request = _match_commensurate_tmd_twist_request(text)
+    if request is None:
+        return None
+    materials = _mentioned_tmd_materials(text)
+    hetero_intent = _looks_like_tmd_heterobilayer_text(text)
+    if len(materials) < 2 and not (hetero_intent and len(materials) == 1):
+        return None
+    if len(materials) > 2:
+        return {
+            **request,
+            "bottom_material": materials[0],
+            "top_material": materials[1],
+            "extra_materials": materials[2:],
+        }
+
+    strain_policy = "balanced"
+    if re.search(
+        r"\b(?:bottom|lower)\s+(?:layer\s+)?(?:fixed|unstrained)\b|"
+        r"\b(?:fix|keep)\s+(?:the\s+)?(?:bottom|lower)\s+layer\b|"
+        r"(?:\u56fa\u5b9a\u5e95\u5c42|\u5e95\u5c42\u4e0d\u5e94\u53d8)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        strain_policy = "bottom_fixed"
+    elif re.search(
+        r"\b(?:top|upper)\s+(?:layer\s+)?(?:fixed|unstrained)\b|"
+        r"\b(?:fix|keep)\s+(?:the\s+)?(?:top|upper)\s+layer\b|"
+        r"(?:\u56fa\u5b9a\u9876\u5c42|\u9876\u5c42\u4e0d\u5e94\u53d8)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        strain_policy = "top_fixed"
+
+    max_strain_percent = None
+    max_strain_match = re.search(
+        r"\bmax(?:imum)?\s+(?:biaxial\s+)?strain\s*(?:of|=|:)?\s*"
+        r"(?P<value>\d+(?:\.\d+)?)\s*%|"
+        r"(?:\u6700\u5927|\u4e0a\u9650)(?:\u53cc\u8f74)?\u5e94\u53d8\s*(?:=|:|\u4e3a)?\s*"
+        r"(?P<cjk_value>\d+(?:\.\d+)?)\s*(?:%|\uff05)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if max_strain_match is not None:
+        max_strain_percent = float(
+            max_strain_match.group("value") or max_strain_match.group("cjk_value")
+        )
+
+    return {
+        **request,
+        "bottom_material": materials[0] if len(materials) >= 2 else None,
+        "top_material": materials[1] if len(materials) >= 2 else materials[0],
+        "strain_policy": strain_policy,
+        "max_strain_percent": max_strain_percent,
+        "extra_materials": [],
+    }
+
+
+def _looks_like_tmd_heterobilayer_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:heterobilayer|hetero[-\s]?bilayer|van\s+der\s+waals\s+hetero(?:structure|bilayer)|"
+            r"tmd\s+hetero(?:structure|bilayer))\b|"
+            r"(?:\u5f02\u8d28\u53cc\u5c42|\u5f02\u8d28\u4e8c\u7ef4\u53cc\u5c42|\u8303\u5fb7\u534e\u5f02\u8d28\u7ed3)",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _mentioned_tmd_materials(text: str) -> list[str]:
+    patterns = {
+        "MoS2": (
+            r"(?<![a-z0-9])mos2(?![a-z0-9])",
+            r"\bmolybdenum\s+disul(?:fide|phide)\b",
+            r"\u4e8c\u786b\u5316\u94bc",
+        ),
+        "WS2": (
+            r"(?<![a-z0-9])ws2(?![a-z0-9])",
+            r"\btungsten\s+disul(?:fide|phide)\b",
+            r"\u4e8c\u786b\u5316\u94a8",
+        ),
+        "MoSe2": (
+            r"(?<![a-z0-9])mose2(?![a-z0-9])",
+            r"\bmolybdenum\s+diselenide\b",
+            r"\u4e8c\u7852\u5316\u94bc",
+        ),
+        "WSe2": (
+            r"(?<![a-z0-9])wse2(?![a-z0-9])",
+            r"\btungsten\s+diselenide\b",
+            r"\u4e8c\u7852\u5316\u94a8",
+        ),
+    }
+    mentions: list[tuple[int, str]] = []
+    for material, material_patterns in patterns.items():
+        positions = [
+            match.start()
+            for pattern in material_patterns
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE)
+        ]
+        if positions:
+            mentions.append((min(positions), material))
+    return [material for _position, material in sorted(mentions)]
 
 
 def _commensurate_tmd_twisted_bilayer_operations(
@@ -13510,6 +13840,119 @@ def _commensurate_tmd_twisted_bilayer_operations(
     if requested_angle is not None:
         operation["angle_degrees"] = round(float(requested_angle), 9)
     return [operation]
+
+
+def _commensurate_tmd_heterobilayer_operations(
+    current_spec: ModelSpec,
+    request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("commensurate TMD heterobilayer requires a crystal model.")
+    metadata = dict(current_spec.metadata or {})
+    family = str(metadata.get("structure_family") or "").lower()
+    if metadata.get("domain") != "semiconductor" or "tmd" not in family or "monolayer" not in family:
+        raise ValueError("commensurate TMD heterobilayer requires a pristine semiconductor TMD monolayer.")
+
+    if request.get("extra_materials"):
+        raise ValueError(
+            "commensurate TMD heterobilayer accepts exactly two materials; extra materials: "
+            + ", ".join(str(item) for item in request["extra_materials"])
+        )
+    current_material = _canonical_tmd_material(metadata.get("material"))
+    if current_material is None:
+        current_material = _tmd_material_from_crystal_atoms(current_spec.model)
+    requested_bottom = request.get("bottom_material")
+    if requested_bottom is not None and requested_bottom != current_material:
+        raise ValueError(
+            f"request names {requested_bottom} as the bottom layer, but the current monolayer is "
+            f"{current_material}; start a new {requested_bottom}/{request.get('top_material')} model "
+            "or reverse the material order"
+        )
+    top_material = _canonical_tmd_material(request.get("top_material"))
+    if top_material is None:
+        raise ValueError("top TMD material must be one of MoS2, WS2, MoSe2, or WSe2.")
+    if top_material == current_material:
+        raise ValueError(
+            "commensurate TMD heterobilayer requires two different materials; "
+            "use the homobilayer command for identical layers."
+        )
+
+    max_atoms = COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS
+    indices = request.get("indices")
+    requested_angle = request.get("requested_angle_degrees")
+    if indices is None:
+        if requested_angle is None:
+            raise ValueError(
+                "commensurate TMD heterobilayer requires either explicit coprime m,n indices "
+                "or a twist angle that maps within 0.1 degrees under the atom-count limit."
+            )
+        m, n, _actual_angle = _select_commensurate_twist_indices(
+            float(requested_angle),
+            max_atoms=max_atoms,
+        )
+    else:
+        m, n = (int(value) for value in indices)
+    if m <= n or n < 0 or math.gcd(m, n) != 1:
+        raise ValueError("commensurate heterobilayer indices must be coprime and satisfy m > n >= 0.")
+
+    actual_angle = commensurate_twist_angle_degrees(m, n)
+    orientation = request.get("twist_orientation") or "counterclockwise"
+    if requested_angle is not None:
+        requested_angle = float(requested_angle)
+        requested_orientation = "counterclockwise" if requested_angle > 0 else "clockwise"
+        if requested_orientation != orientation:
+            raise ValueError("requested heterobilayer twist-angle sign conflicts with the requested orientation.")
+        error = abs(abs(requested_angle) - actual_angle)
+        if error > COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES + 1e-12:
+            raise ValueError(
+                f"indices m={m}, n={n} produce {actual_angle:.9f} degrees, "
+                f"not requested {abs(requested_angle):.9f} degrees "
+                f"(error {error:.9f} > {COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES:g})."
+            )
+
+    interlayer_distance = request.get("interlayer_distance_angstrom")
+    if interlayer_distance is None:
+        bottom_default = TMD_COMMENSURATE_TWIST_DEFAULT_INTERLAYER_ANGSTROM[
+            re.sub(r"[^a-z0-9]+", "", current_material.lower())
+        ]
+        top_default = TMD_COMMENSURATE_TWIST_DEFAULT_INTERLAYER_ANGSTROM[
+            re.sub(r"[^a-z0-9]+", "", top_material.lower())
+        ]
+        interlayer_distance = 0.5 * (bottom_default + top_default)
+
+    max_strain_percent = request.get("max_strain_percent")
+    if max_strain_percent is None:
+        max_strain_percent = COMMENSURATE_HETEROBILAYER_DEFAULT_MAX_STRAIN_PERCENT
+    operation: dict[str, Any] = {
+        "type": "make_commensurate_tmd_heterobilayer",
+        "top_layer_material": top_material,
+        "commensurate_m": m,
+        "commensurate_n": n,
+        "interlayer_distance_angstrom": round(float(interlayer_distance), 9),
+        "twist_orientation": orientation,
+        "strain_policy": request.get("strain_policy") or "balanced",
+        "max_strain_percent": round(float(max_strain_percent), 9),
+        "max_atoms": max_atoms,
+    }
+    if requested_angle is not None:
+        operation["angle_degrees"] = round(float(requested_angle), 9)
+    return [operation]
+
+
+def _canonical_tmd_material(value: Any) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    for material in TMD_TEMPLATE_BY_MATERIAL:
+        if normalized == re.sub(r"[^a-z0-9]+", "", material.lower()):
+            return material
+    return None
+
+
+def _tmd_material_from_crystal_atoms(crystal: CrystalSpec) -> str | None:
+    metals = sorted({atom.element for atom in crystal.basis_atoms if atom.element in TMD_METALS})
+    chalcogens = sorted({atom.element for atom in crystal.basis_atoms if atom.element in TMD_CHALCOGENS})
+    if len(metals) != 1 or len(chalcogens) != 1:
+        return None
+    return _canonical_tmd_material(f"{metals[0]}{chalcogens[0]}2")
 
 
 def _select_commensurate_twist_indices(

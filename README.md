@@ -337,5 +337,13 @@ MoS2/WS2/MoSe2/WSe2 单层模板构造精确整数共格同质双层。可直接
 和 `semiconductor_commensurate_twist.csv` 会重新验证整数矩阵、理论扭角、公共晶格、层原子绑定、
 层间距和完整结构 SHA-256。该结果是精确周期共格的预弛豫结构，可在已验证的单一 MS 窗口中热加载，
 但 `requires_geometry_relaxation=true`，完成并绑定可信弛豫结果前仍不会标记为可计算。
+不同 TMD 材料组成的共格异质双层使用 `make_commensurate_tmd_heterobilayer`，例如
+`构建 MoS2/WSe2 共格扭转异质双层，m=2,n=1，并热加载到 Materials Studio`。材料书写顺序固定为
+底层/顶层；支持 `balanced`、`bottom_fixed`、`top_fixed` 三种面内双轴应变分配策略，默认最大绝对应变
+为 3%，原子数上限仍为 2000。只有在明确记录应变后才形成精确整数重合晶格，超出阈值会被拒绝，
+不会偷偷改变材料、角度或应变策略。`commensurate_heterobilayer_summary` 与
+`semiconductor_commensurate_heterobilayer.csv` 会复核两层组成、应变分配、整数矩阵、扭角、层间距、
+真空和结构 SHA-256。该模型可在预检通过后热加载到同一个 MS 窗口，但始终标记为预弛豫结构，
+完成可信几何弛豫并重新审计前不能声称模型正常或可计算。
 晶体 execute/hot-load 还会重新解析生成的 CIF，逐项核对原子 ID、元素、分数坐标和六个晶格参数。
 已有 CIF 与当前 `CrystalSpec` 不一致时，即使路径和窗口 revision 正确也会阻断正常性结论；重新物化需要显式确认且不会创建空 revision。

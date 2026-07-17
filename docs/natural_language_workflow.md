@@ -757,6 +757,30 @@ it does not inherit the arbitrary-rotation `requires_commensurate_supercell`
 blocker. It remains a pre-relaxation structure: same-window visual hot-loading
 is allowed after normal GUI preflight, but calculation readiness remains false
 until a trusted geometry-relaxation result is bound and re-audited.
+
+Commensurate heterobilayers use `make_commensurate_tmd_heterobilayer`. Name two
+distinct reviewed materials from MoS2, WS2, MoSe2, and WSe2; the first material
+is the bottom layer and the second is the top layer. For example,
+`Build MoS2/WSe2 commensurate twisted heterobilayer with m=2, n=1` and
+`构建 MoS2/WS2 共格扭转异质双层，m=2,n=1，并热加载到 Materials Studio`
+route through the same structured path. Requests may provide coprime indices or
+a bounded target angle, an interlayer distance, a 2000-atom default cap, and one
+of three biaxial-strain policies: `balanced`, `bottom_fixed`, or `top_fixed`.
+The default maximum absolute layer strain is 3%; no candidate is accepted by
+silently relaxing that bound.
+
+The coincidence cell is exact only after the recorded strain partition is
+applied. `semiconductor_health.commensurate_heterobilayer_summary` independently
+checks the material-specific layer compositions, reference and common lattice
+constants, per-layer strain, integer matrices, theoretical angle, atom-ID
+hashes, interface gaps, vacuum, and current structure SHA-256.
+`semiconductor_commensurate_heterobilayer.csv` exports the compact evidence, and
+the `commensurate_tmd_heterobilayer` diagnostic focus makes it required. A valid
+model may be hot-loaded into the verified single existing Materials Studio
+window. It remains a coherent pre-relaxation scaffold, so normality and
+calculation readiness stay blocked until a trusted geometry relaxation is bound
+and re-audited.
+
 Lattice summaries are exported as `semiconductor_lattice.csv` and report cell
 volume, atom density, volume per non-passivant atom, and slab vacuum fractions
 when surface metadata is present.

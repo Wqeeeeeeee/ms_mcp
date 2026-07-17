@@ -32,6 +32,7 @@ PatchOperationType = Literal[
     "translate_crystal_atoms",
     "rotate_crystal_atoms",
     "make_commensurate_twisted_bilayer",
+    "make_commensurate_tmd_heterobilayer",
     "set_total_charge",
     "set_spin_multiplicity",
     "set_forcite_optimization",
@@ -115,6 +116,9 @@ class SemanticPatchOperation(StrictModel):
     interlayer_distance_angstrom: float | None = Field(default=None, gt=0, le=100)
     twist_orientation: Literal["counterclockwise", "clockwise"] | None = None
     max_atoms: int | None = Field(default=None, ge=6, le=20_000)
+    top_layer_material: str | None = Field(default=None, min_length=3, max_length=16)
+    strain_policy: Literal["balanced", "bottom_fixed", "top_fixed"] | None = None
+    max_strain_percent: float | None = Field(default=None, gt=0, le=10)
     thickness_angstrom: float | None = Field(default=None, gt=0)
     target_layer: Literal["gate", "oxide", "channel", "well", "barrier"] | None = None
     lattice: LatticeSpec | None = None
@@ -156,6 +160,7 @@ class SemanticPatchOperation(StrictModel):
             "translate_crystal_atoms",
             "rotate_crystal_atoms",
             "make_commensurate_twisted_bilayer",
+            "make_commensurate_tmd_heterobilayer",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -207,6 +212,26 @@ class SemanticPatchOperation(StrictModel):
                 and 1e-12 < abs(float(self.angle_degrees)) <= 60.0 + 1e-12
             ):
                 raise ValueError("commensurate twisted bilayer requested angle must be in (0, 60] degrees")
+        if self.operation == "make_commensurate_tmd_heterobilayer":
+            if (
+                self.commensurate_m is None
+                or self.commensurate_n is None
+                or self.interlayer_distance_angstrom is None
+                or self.top_layer_material is None
+            ):
+                raise ValueError(
+                    "make_commensurate_tmd_heterobilayer requires commensurate_m, "
+                    "commensurate_n, interlayer_distance_angstrom, and top_layer_material"
+                )
+            if self.commensurate_m <= self.commensurate_n:
+                raise ValueError("commensurate heterobilayer indices must satisfy m > n >= 0")
+            if math.gcd(self.commensurate_m, self.commensurate_n) != 1:
+                raise ValueError("commensurate heterobilayer indices m and n must be coprime")
+            if self.angle_degrees is not None and not (
+                math.isfinite(float(self.angle_degrees))
+                and 1e-12 < abs(float(self.angle_degrees)) <= 60.0 + 1e-12
+            ):
+                raise ValueError("commensurate TMD heterobilayer requested angle must be in (0, 60] degrees")
         return self
 
 
@@ -450,6 +475,15 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
             atoms = _apply_crystal_atom_rotation_patch(lattice, atoms, operation, diff)
         elif op == "make_commensurate_twisted_bilayer":
             lattice, atoms, model_name = _apply_commensurate_twisted_bilayer_patch(
+                spec,
+                lattice,
+                atoms,
+                operation,
+                diff,
+                source_model_name=model_name,
+            )
+        elif op == "make_commensurate_tmd_heterobilayer":
+            lattice, atoms, model_name = _apply_commensurate_tmd_heterobilayer_patch(
                 spec,
                 lattice,
                 atoms,
@@ -758,8 +792,35 @@ _COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS = 2_000
 _COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM = 5.0
 _COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM = 1.5
 _COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES = 0.1
+_COMMENSURATE_HETEROBILAYER_DEFAULT_MAX_STRAIN_PERCENT = 3.0
 _TMD_METALS = {"Mo", "W"}
 _TMD_CHALCOGENS = {"S", "Se", "Te"}
+_TMD_HETEROBILAYER_PROFILES: dict[str, dict[str, float | str]] = {
+    "MoS2": {
+        "metal": "Mo",
+        "chalcogen": "S",
+        "lattice_a_angstrom": 3.160,
+        "monolayer_thickness_angstrom": 3.1196,
+    },
+    "WS2": {
+        "metal": "W",
+        "chalcogen": "S",
+        "lattice_a_angstrom": 3.153,
+        "monolayer_thickness_angstrom": 3.1196,
+    },
+    "MoSe2": {
+        "metal": "Mo",
+        "chalcogen": "Se",
+        "lattice_a_angstrom": 3.288,
+        "monolayer_thickness_angstrom": 3.3220,
+    },
+    "WSe2": {
+        "metal": "W",
+        "chalcogen": "Se",
+        "lattice_a_angstrom": 3.282,
+        "monolayer_thickness_angstrom": 3.3176,
+    },
+}
 
 
 def _apply_commensurate_twisted_bilayer_patch(
@@ -981,6 +1042,390 @@ def _apply_commensurate_twisted_bilayer_patch(
     suffix = f"_commensurate_twisted_bilayer_m{m}_n{n}"
     model_name = (source_model_name + suffix)[:120]
     return twisted_lattice, twisted_atoms, model_name
+
+
+def _apply_commensurate_tmd_heterobilayer_patch(
+    spec: ModelSpec,
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    operation: SemanticPatchOperation,
+    diff: list[str],
+    *,
+    source_model_name: str,
+) -> tuple[LatticeSpec, list[BasisAtomSpec], str]:
+    """Construct a strain-controlled periodic TMD heterobilayer coincidence cell."""
+
+    if (
+        operation.commensurate_m is None
+        or operation.commensurate_n is None
+        or operation.interlayer_distance_angstrom is None
+        or operation.top_layer_material is None
+    ):
+        raise ValueError(
+            "make_commensurate_tmd_heterobilayer requires commensurate_m, "
+            "commensurate_n, interlayer_distance_angstrom, and top_layer_material"
+        )
+    m = int(operation.commensurate_m)
+    n = int(operation.commensurate_n)
+    if m <= n or n < 0 or math.gcd(m, n) != 1:
+        raise ValueError("commensurate heterobilayer indices must be coprime and satisfy m > n >= 0")
+
+    metadata = dict(spec.metadata or {})
+    bottom_basis, bottom_primitive_a, source_supercell = _commensurate_tmd_primitive_basis(
+        metadata,
+        lattice,
+        atoms,
+    )
+    bottom_material = _tmd_material_from_primitive_basis(bottom_basis)
+    recorded_bottom_material = _canonical_supported_tmd_material(metadata.get("material"))
+    if recorded_bottom_material is not None and recorded_bottom_material != bottom_material:
+        raise ValueError(
+            "current TMD atom table does not match metadata material: "
+            f"atoms={bottom_material}, metadata={recorded_bottom_material}"
+        )
+    top_material = _canonical_supported_tmd_material(operation.top_layer_material)
+    if top_material is None:
+        raise ValueError(
+            "top_layer_material must be one of "
+            + ", ".join(sorted(_TMD_HETEROBILAYER_PROFILES))
+        )
+    if top_material == bottom_material:
+        raise ValueError(
+            "make_commensurate_tmd_heterobilayer requires two different TMD materials; "
+            "use make_commensurate_twisted_bilayer for a homobilayer"
+        )
+
+    top_profile = _TMD_HETEROBILAYER_PROFILES[top_material]
+    top_primitive_a = float(top_profile["lattice_a_angstrom"])
+    bottom_profile = _TMD_HETEROBILAYER_PROFILES[bottom_material]
+    reference_bottom_a = float(bottom_profile["lattice_a_angstrom"])
+    if abs(bottom_primitive_a - reference_bottom_a) > max(reference_bottom_a * 0.03, 1e-6):
+        raise ValueError(
+            f"current {bottom_material} primitive lattice a={bottom_primitive_a:.6f} angstrom "
+            f"differs by more than 3% from the reviewed reference {reference_bottom_a:.6f}; "
+            "start from a pristine reviewed TMD monolayer or explicitly restore its lattice"
+        )
+
+    strain_policy = operation.strain_policy or "balanced"
+    if strain_policy == "balanced":
+        common_primitive_a = (
+            2.0 * bottom_primitive_a * top_primitive_a
+            / (bottom_primitive_a + top_primitive_a)
+        )
+    elif strain_policy == "bottom_fixed":
+        common_primitive_a = bottom_primitive_a
+    elif strain_policy == "top_fixed":
+        common_primitive_a = top_primitive_a
+    else:  # pragma: no cover - Pydantic rejects this path
+        raise ValueError(f"unsupported heterobilayer strain_policy: {strain_policy}")
+    bottom_strain_percent = 100.0 * (common_primitive_a / bottom_primitive_a - 1.0)
+    top_strain_percent = 100.0 * (common_primitive_a / top_primitive_a - 1.0)
+    max_abs_strain_percent = max(abs(bottom_strain_percent), abs(top_strain_percent))
+    strain_limit_percent = float(
+        operation.max_strain_percent
+        or _COMMENSURATE_HETEROBILAYER_DEFAULT_MAX_STRAIN_PERCENT
+    )
+    if max_abs_strain_percent > strain_limit_percent + 1e-12:
+        raise ValueError(
+            f"{bottom_material}/{top_material} with strain_policy={strain_policy} requires "
+            f"{max_abs_strain_percent:.6f}% maximum biaxial strain, above "
+            f"max_strain_percent={strain_limit_percent:g}; choose balanced strain, "
+            "increase the limit only after review, or provide a larger domain-matched ModelSpec"
+        )
+
+    supercell_index = m * m + m * n + n * n
+    expected_atom_count = 6 * supercell_index
+    max_atoms = int(operation.max_atoms or _COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS)
+    if expected_atom_count > max_atoms:
+        raise ValueError(
+            "commensurate TMD heterobilayer would contain "
+            f"{expected_atom_count} atoms, above max_atoms={max_atoms}; "
+            "choose smaller coprime indices or explicitly review a larger max_atoms value"
+        )
+
+    requested_angle = float(operation.angle_degrees) if operation.angle_degrees is not None else None
+    angle_magnitude = commensurate_twist_angle_degrees(m, n)
+    orientation = operation.twist_orientation or (
+        "clockwise" if requested_angle is not None and requested_angle < 0 else "counterclockwise"
+    )
+    signed_angle = angle_magnitude if orientation == "counterclockwise" else -angle_magnitude
+    if requested_angle is not None:
+        requested_orientation = "counterclockwise" if requested_angle > 0 else "clockwise"
+        if requested_orientation != orientation:
+            raise ValueError("requested heterobilayer twist-angle sign conflicts with twist_orientation")
+        angle_error = abs(abs(requested_angle) - angle_magnitude)
+        if angle_error > _COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES + 1e-12:
+            raise ValueError(
+                f"commensurate indices (m={m}, n={n}) produce {angle_magnitude:.9f} degrees, "
+                f"which differs from requested {abs(requested_angle):.9f} degrees by "
+                f"{angle_error:.9f} degrees; tolerance is "
+                f"{_COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES:g} degrees"
+            )
+    else:
+        angle_error = None
+
+    matrix_a = ((m + n, n), (-n, m))
+    matrix_b = ((m + n, m), (-m, n))
+    if orientation == "counterclockwise":
+        bottom_matrix, top_matrix = matrix_b, matrix_a
+    else:
+        bottom_matrix, top_matrix = matrix_a, matrix_b
+    if _integer_matrix_determinant(bottom_matrix) != supercell_index:
+        raise ValueError("bottom heterobilayer matrix determinant does not match the supercell index")
+    if _integer_matrix_determinant(top_matrix) != supercell_index:
+        raise ValueError("top heterobilayer matrix determinant does not match the supercell index")
+
+    bottom_metals = [atom for atom in bottom_basis if atom.element in _TMD_METALS]
+    if len(bottom_metals) != 1:
+        raise ValueError("commensurate TMD primitive basis must contain exactly one transition-metal atom")
+    source_center_fractional = float(bottom_metals[0].fractional.z)
+    bottom_z_values = [float(atom.fractional.z) for atom in bottom_basis]
+    bottom_thickness = (max(bottom_z_values) - min(bottom_z_values)) * float(lattice.c)
+    top_thickness = float(top_profile["monolayer_thickness_angstrom"])
+    top_basis = _heterobilayer_top_primitive_basis(
+        bottom_basis,
+        top_material=top_material,
+        source_center_fractional=source_center_fractional,
+        c_length=float(lattice.c),
+        thickness_angstrom=top_thickness,
+    )
+
+    interlayer_distance = float(operation.interlayer_distance_angstrom)
+    opposing_half_thickness = 0.5 * (bottom_thickness + top_thickness)
+    interlayer_gap = interlayer_distance - opposing_half_thickness
+    if interlayer_gap < _COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM - 1e-9:
+        raise ValueError(
+            "interlayer_distance_angstrom leaves only "
+            f"{interlayer_gap:.6f} angstrom between opposing chalcogen planes; "
+            f"at least {_COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM:g} angstrom is required"
+        )
+    total_slab_thickness = interlayer_distance + opposing_half_thickness
+    vacuum_angstrom = float(lattice.c) - total_slab_thickness
+    if vacuum_angstrom < _COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM - 1e-9:
+        raise ValueError(
+            "current c lattice leaves only "
+            f"{vacuum_angstrom:.6f} angstrom vacuum around the TMD heterobilayer; "
+            f"at least {_COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM:g} angstrom is required"
+        )
+
+    bottom_center_fractional = 0.5 - interlayer_distance / (2.0 * float(lattice.c))
+    top_center_fractional = 0.5 + interlayer_distance / (2.0 * float(lattice.c))
+    bottom_atoms = _commensurate_layer_atoms(
+        bottom_basis,
+        bottom_matrix,
+        layer_number=1,
+        layer_center_fractional=bottom_center_fractional,
+        source_center_fractional=source_center_fractional,
+    )
+    top_atoms = _commensurate_layer_atoms(
+        top_basis,
+        top_matrix,
+        layer_number=2,
+        layer_center_fractional=top_center_fractional,
+        source_center_fractional=source_center_fractional,
+    )
+    heterobilayer_atoms = bottom_atoms + top_atoms
+    if len(heterobilayer_atoms) != expected_atom_count:
+        raise ValueError(
+            f"commensurate heterobilayer construction generated {len(heterobilayer_atoms)} atoms; "
+            f"expected {expected_atom_count}"
+        )
+
+    common_length = common_primitive_a * math.sqrt(supercell_index)
+    heterobilayer_lattice = LatticeSpec(
+        a=common_length,
+        b=common_length,
+        c=float(lattice.c),
+        alpha=90.0,
+        beta=90.0,
+        gamma=120.0,
+    )
+    structure_sha256 = _crystal_structure_sha256(heterobilayer_lattice, heterobilayer_atoms)
+    bottom_ids = [atom.id for atom in bottom_atoms]
+    top_ids = [atom.id for atom in top_atoms]
+    lattice_mismatch_percent = 100.0 * (top_primitive_a / bottom_primitive_a - 1.0)
+    receipt = {
+        "source": "semantic_patch_make_commensurate_tmd_heterobilayer",
+        "source_revision": int(spec.revision),
+        "source_model_name": source_model_name,
+        "source_template_supercell": list(source_supercell),
+        "bottom_material": bottom_material,
+        "top_material": top_material,
+        "bottom_primitive_lattice_a_angstrom": _round_patch_float(bottom_primitive_a),
+        "top_primitive_lattice_a_angstrom": _round_patch_float(top_primitive_a),
+        "unstrained_lattice_mismatch_percent": _round_patch_float(lattice_mismatch_percent),
+        "strain_policy": strain_policy,
+        "common_primitive_lattice_a_angstrom": _round_patch_float(common_primitive_a),
+        "bottom_biaxial_strain_percent": _round_patch_float(bottom_strain_percent),
+        "top_biaxial_strain_percent": _round_patch_float(top_strain_percent),
+        "max_abs_biaxial_strain_percent": _round_patch_float(max_abs_strain_percent),
+        "max_strain_percent": _round_patch_float(strain_limit_percent),
+        "strain_within_limit": True,
+        "commensurate_m": m,
+        "commensurate_n": n,
+        "supercell_index": supercell_index,
+        "bottom_supercell_matrix": [list(row) for row in bottom_matrix],
+        "top_supercell_matrix": [list(row) for row in top_matrix],
+        "matrix_determinant_verified": True,
+        "twist_orientation": orientation,
+        "twist_angle_degrees": _round_patch_float(signed_angle),
+        "twist_angle_magnitude_degrees": _round_patch_float(angle_magnitude),
+        "requested_twist_angle_degrees": (
+            _round_patch_float(requested_angle) if requested_angle is not None else None
+        ),
+        "twist_angle_error_degrees": (
+            _round_patch_float(angle_error) if angle_error is not None else None
+        ),
+        "twist_angle_tolerance_degrees": _COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES,
+        "twist_angle_formula": "acos((m^2+4mn+n^2)/(2(m^2+mn+n^2)))",
+        "commensurability_model": "exact_integer_coincidence_after_explicit_biaxial_strain",
+        "commensurability_verified": True,
+        "common_lattice_a_angstrom": _round_patch_float(common_length),
+        "common_lattice_b_angstrom": _round_patch_float(common_length),
+        "common_lattice_gamma_degrees": 120.0,
+        "interlayer_distance_angstrom": _round_patch_float(interlayer_distance),
+        "bottom_monolayer_thickness_angstrom": _round_patch_float(bottom_thickness),
+        "top_monolayer_thickness_angstrom": _round_patch_float(top_thickness),
+        "interlayer_chalcogen_gap_angstrom": _round_patch_float(interlayer_gap),
+        "total_slab_thickness_angstrom": _round_patch_float(total_slab_thickness),
+        "vacuum_angstrom": _round_patch_float(vacuum_angstrom),
+        "atom_count": len(heterobilayer_atoms),
+        "atoms_per_layer": len(bottom_atoms),
+        "bottom_layer_atom_count": len(bottom_atoms),
+        "top_layer_atom_count": len(top_atoms),
+        "bottom_layer_atom_id_sha256": _atom_id_list_sha256(bottom_ids),
+        "top_layer_atom_id_sha256": _atom_id_list_sha256(top_ids),
+        "structure_sha256": structure_sha256,
+        "pre_relaxation_scaffold": True,
+        "visual_review_only": False,
+        "visual_hotload_ready": True,
+        "requires_geometry_relaxation": True,
+        "geometry_relaxed": False,
+        "calculation_ready": False,
+        "calculation_blocking_reason": "commensurate_tmd_heterobilayer_requires_geometry_relaxation",
+    }
+    history = [
+        dict(item)
+        for item in metadata.get("commensurate_heterobilayer_history", []) or []
+        if isinstance(item, dict)
+    ]
+    history.append(receipt)
+    bottom_key = re.sub(r"[^a-z0-9]+", "", bottom_material.lower())
+    top_key = re.sub(r"[^a-z0-9]+", "", top_material.lower())
+    metadata.update(
+        {
+            "structure_family": "commensurate twisted 2d tmd heterobilayer",
+            "material": f"{bottom_material}/{top_material}",
+            "materials": [bottom_material, top_material],
+            "substrate": bottom_material,
+            "interface": f"{bottom_material}/{top_material} van der Waals heterointerface",
+            "heterostructure": True,
+            "interface_orientation": "(0001)/(0001)",
+            "interface_axis": "c",
+            "surface_axis": "c",
+            "layer_count": 2,
+            "twisted_bilayer": True,
+            "commensurate_tmd_heterobilayer": True,
+            "template_supercell": [1, 1, 1],
+            "in_plane_lattice_angstrom": _round_patch_float(common_primitive_a),
+            f"{bottom_key}_reference_lattice_angstrom": _round_patch_float(bottom_primitive_a),
+            f"{top_key}_reference_lattice_angstrom": _round_patch_float(top_primitive_a),
+            "coherent_strain_model": f"{strain_policy}_biaxial_tmd_commensurate_cell",
+            "slab_thickness_angstrom": _round_patch_float(total_slab_thickness),
+            "vacuum_angstrom": _round_patch_float(vacuum_angstrom),
+            "pre_relaxation_scaffold": True,
+            "unrelaxed_interface": True,
+            "requires_geometry_relaxation": True,
+            "commensurate_heterobilayer_history": history,
+            "last_commensurate_heterobilayer": receipt,
+        }
+    )
+    spec.metadata = metadata
+    acceptance_note = (
+        "Exact integer coincidence TMD heterobilayer with explicit biaxial strain; "
+        "geometry relaxation and strain review are required before production calculation."
+    )
+    acceptance_notes = [
+        note
+        for note in spec.acceptance.notes
+        if "monolayer template" not in note.lower()
+        and "commensurate tmd heterobilayer" not in note.lower()
+        and "2d monolayer template" not in note.lower()
+    ]
+    acceptance_notes.append(acceptance_note)
+    spec.acceptance = spec.acceptance.model_copy(update={"notes": acceptance_notes})
+    diff.append(
+        "make_commensurate_tmd_heterobilayer "
+        f"bottom={bottom_material} top={top_material} m={m} n={n} "
+        f"angle={signed_angle:.9f}deg strain_policy={strain_policy} "
+        f"max_strain={max_abs_strain_percent:.6f}% atoms={len(heterobilayer_atoms)} "
+        f"interlayer={interlayer_distance:g}A"
+    )
+    suffix = f"_{bottom_material}_{top_material}_commensurate_m{m}_n{n}"
+    model_name = (source_model_name + suffix)[:120]
+    return heterobilayer_lattice, heterobilayer_atoms, model_name
+
+
+def _canonical_supported_tmd_material(value: Any) -> str | None:
+    normalized = re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+    for material in _TMD_HETEROBILAYER_PROFILES:
+        if normalized == re.sub(r"[^a-z0-9]+", "", material.lower()):
+            return material
+    return None
+
+
+def _tmd_material_from_primitive_basis(primitive_atoms: list[BasisAtomSpec]) -> str:
+    metals = sorted({atom.element for atom in primitive_atoms if atom.element in _TMD_METALS})
+    chalcogens = sorted({atom.element for atom in primitive_atoms if atom.element in _TMD_CHALCOGENS})
+    if len(metals) != 1 or len(chalcogens) != 1:
+        raise ValueError("TMD primitive basis must contain one metal species and one chalcogen species")
+    material = f"{metals[0]}{chalcogens[0]}2"
+    if material not in _TMD_HETEROBILAYER_PROFILES:
+        raise ValueError(
+            "commensurate TMD heterobilayer currently supports pristine MoS2, WS2, MoSe2, and WSe2"
+        )
+    return material
+
+
+def _heterobilayer_top_primitive_basis(
+    bottom_basis: list[BasisAtomSpec],
+    *,
+    top_material: str,
+    source_center_fractional: float,
+    c_length: float,
+    thickness_angstrom: float,
+) -> list[BasisAtomSpec]:
+    profile = _TMD_HETEROBILAYER_PROFILES[top_material]
+    metal = str(profile["metal"])
+    chalcogen = str(profile["chalcogen"])
+    half_fractional_thickness = thickness_angstrom / (2.0 * c_length)
+    top_basis: list[BasisAtomSpec] = []
+    for atom in bottom_basis:
+        if atom.element in _TMD_METALS:
+            element = metal
+            atom_id = f"{metal}1"
+            z = source_center_fractional
+        elif atom.element in _TMD_CHALCOGENS:
+            element = chalcogen
+            above = float(atom.fractional.z) > source_center_fractional
+            atom_id = f"{chalcogen}{'top' if above else 'bot'}1"
+            z = source_center_fractional + (half_fractional_thickness if above else -half_fractional_thickness)
+        else:  # pragma: no cover - source validation rejects this path
+            raise ValueError(f"unsupported atom {atom.id} in TMD primitive basis")
+        top_basis.append(
+            BasisAtomSpec(
+                id=atom_id,
+                element=element,
+                fractional=FractionalVector3(
+                    x=float(atom.fractional.x),
+                    y=float(atom.fractional.y),
+                    z=_canonical_fractional(z),
+                ),
+            )
+        )
+    if len({atom.id for atom in top_basis}) != len(top_basis):
+        raise ValueError("generated TMD heterobilayer top primitive basis has duplicate atom IDs")
+    return top_basis
 
 
 def _commensurate_tmd_primitive_basis(

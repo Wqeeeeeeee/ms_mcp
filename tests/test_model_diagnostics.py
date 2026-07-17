@@ -3774,6 +3774,109 @@ def test_commensurate_tmd_twist_diagnostics_verify_integer_cell_and_detect_stale
     assert stale_summary["commensurability_verified"] is False
 
 
+def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_structure(
+    tmp_path: Path,
+) -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    heterobilayer, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_tmd_heterobilayer",
+                    "top_layer_material": "WSe2",
+                    "commensurate_m": 2,
+                    "commensurate_n": 1,
+                    "interlayer_distance_angstrom": 6.32,
+                    "strain_policy": "balanced",
+                    "max_strain_percent": 3.0,
+                }
+            ],
+        ),
+    )
+
+    audit = model_view_audit(heterobilayer)
+    summary = audit["health"]["semiconductor_health"]["commensurate_heterobilayer_summary"]
+    assert summary["quality"] == "commensurate_strained_pre_relaxation"
+    assert summary["bottom_material"] == "MoS2"
+    assert summary["top_material"] == "WSe2"
+    assert summary["materials_distinct"] is True
+    assert summary["bottom_layer_element_counts"] == {"Mo": 7, "S": 14}
+    assert summary["top_layer_element_counts"] == {"Se": 14, "W": 7}
+    assert summary["layer_materials_verified"] is True
+    assert summary["strain_policy"] == "balanced"
+    assert summary["common_primitive_lattice_verified"] is True
+    assert summary["bottom_biaxial_strain_verified"] is True
+    assert summary["top_biaxial_strain_verified"] is True
+    assert summary["strain_partition_verified"] is True
+    assert summary["strain_within_limit"] is True
+    assert summary["matrix_determinant_verified"] is True
+    assert summary["angle_verified"] is True
+    assert summary["lattice_verified"] is True
+    assert summary["interlayer_distance_verified"] is True
+    assert summary["interlayer_gap_verified"] is True
+    assert summary["structure_binding_matches_current"] is True
+    assert summary["metadata_consistent"] is True
+    assert summary["commensurability_verified"] is True
+    assert summary["calculation_ready"] is False
+    assert summary["calculation_blocking_reasons"] == [
+        "commensurate_tmd_heterobilayer_requires_geometry_relaxation"
+    ]
+
+    modeling_health = build_modeling_health(
+        {"ok": True, "view_audit": audit},
+        execution_mode="preview",
+    )
+    checks = modeling_health["checks"]
+    assert checks["semiconductor_commensurate_heterobilayer_bottom_material"] == "MoS2"
+    assert checks["semiconductor_commensurate_heterobilayer_top_material"] == "WSe2"
+    assert checks["semiconductor_commensurate_heterobilayer_m"] == 2
+    assert checks["semiconductor_commensurate_heterobilayer_n"] == 1
+    assert checks["semiconductor_commensurate_heterobilayer_layer_materials_verified"] is True
+    assert checks["semiconductor_commensurate_heterobilayer_strain_partition_verified"] is True
+    assert checks["semiconductor_commensurate_heterobilayer_calculation_ready"] is False
+
+    bundle = write_view_audit_bundle(tmp_path, heterobilayer, audit)
+    csv_path = Path(bundle["files"]["semiconductor_commensurate_heterobilayer_csv"])
+    assert csv_path.exists()
+    assert bundle["row_counts"]["semiconductor_commensurate_heterobilayer"] == 1
+    rows = list(csv.DictReader(csv_path.open(encoding="utf-8", newline="")))
+    assert rows[0]["bottom_material"] == "MoS2"
+    assert rows[0]["top_material"] == "WSe2"
+    assert rows[0]["strain_policy"] == "balanced"
+    assert rows[0]["layer_materials_verified"] == "True"
+    assert rows[0]["strain_partition_verified"] == "True"
+    assert rows[0]["structure_binding_matches_current"] == "True"
+    assert rows[0]["calculation_ready"] == "False"
+
+    target = next(atom for atom in heterobilayer.model.basis_atoms if atom.id.startswith("Setop1_L2_"))
+    stale, _ = apply_semantic_patch(
+        heterobilayer,
+        SemanticPatch(
+            project_id=heterobilayer.project_id,
+            base_revision=heterobilayer.revision,
+            operations=[
+                {
+                    "type": "substitute_atom",
+                    "atom_id": target.id,
+                    "new_element": "S",
+                }
+            ],
+        ),
+    )
+    stale_summary = model_view_audit(stale)["health"]["semiconductor_health"][
+        "commensurate_heterobilayer_summary"
+    ]
+    assert stale_summary["quality"] == "review_required"
+    assert stale_summary["top_layer_composition_verified"] is False
+    assert stale_summary["layer_materials_verified"] is False
+    assert stale_summary["structure_binding_matches_current"] is False
+    assert stale_summary["metadata_consistent"] is False
+    assert stale_summary["commensurability_verified"] is False
+
+
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:
     hetero = load_example("gallium_arsenide_aluminum_arsenide_001_heterostructure_spec.json")
     hetero_bundle = write_view_audit_bundle(tmp_path / "hetero", hetero, model_view_audit(hetero))

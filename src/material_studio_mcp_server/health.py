@@ -831,6 +831,71 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "Commensurate TMD twisted bilayer is periodic and verified but still requires geometry relaxation."
             )
 
+    commensurate_heterobilayer = semiconductor.get("commensurate_heterobilayer_summary") or {}
+    if commensurate_heterobilayer:
+        latest_heterobilayer = commensurate_heterobilayer.get("latest") or {}
+        checks["semiconductor_commensurate_heterobilayer_count"] = commensurate_heterobilayer.get(
+            "entry_count"
+        )
+        checks["semiconductor_commensurate_heterobilayer_quality"] = commensurate_heterobilayer.get(
+            "quality"
+        )
+        checks["semiconductor_commensurate_heterobilayer_metadata_consistent"] = (
+            commensurate_heterobilayer.get("metadata_consistent")
+        )
+        checks["semiconductor_commensurate_heterobilayer_bottom_material"] = (
+            commensurate_heterobilayer.get("bottom_material")
+        )
+        checks["semiconductor_commensurate_heterobilayer_top_material"] = (
+            commensurate_heterobilayer.get("top_material")
+        )
+        checks["semiconductor_commensurate_heterobilayer_m"] = latest_heterobilayer.get(
+            "commensurate_m"
+        )
+        checks["semiconductor_commensurate_heterobilayer_n"] = latest_heterobilayer.get(
+            "commensurate_n"
+        )
+        checks["semiconductor_commensurate_heterobilayer_angle_degrees"] = (
+            latest_heterobilayer.get("twist_angle_degrees")
+        )
+        checks["semiconductor_commensurate_heterobilayer_atom_count"] = latest_heterobilayer.get(
+            "atom_count"
+        )
+        checks["semiconductor_commensurate_heterobilayer_layer_materials_verified"] = (
+            commensurate_heterobilayer.get("layer_materials_verified")
+        )
+        checks["semiconductor_commensurate_heterobilayer_strain_policy"] = (
+            commensurate_heterobilayer.get("strain_policy")
+        )
+        checks["semiconductor_commensurate_heterobilayer_max_abs_strain_percent"] = (
+            commensurate_heterobilayer.get("max_abs_biaxial_strain_percent")
+        )
+        checks["semiconductor_commensurate_heterobilayer_strain_partition_verified"] = (
+            commensurate_heterobilayer.get("strain_partition_verified")
+        )
+        checks["semiconductor_commensurate_heterobilayer_structure_binding_matches_current"] = (
+            commensurate_heterobilayer.get("structure_binding_matches_current")
+        )
+        checks["semiconductor_commensurate_heterobilayer_commensurability_verified"] = (
+            commensurate_heterobilayer.get("commensurability_verified")
+        )
+        checks["semiconductor_commensurate_heterobilayer_requires_geometry_relaxation"] = (
+            commensurate_heterobilayer.get("requires_geometry_relaxation")
+        )
+        checks["semiconductor_commensurate_heterobilayer_calculation_ready"] = (
+            commensurate_heterobilayer.get("calculation_ready")
+        )
+        if commensurate_heterobilayer.get("metadata_consistent") is False:
+            warnings.append(
+                "Commensurate TMD heterobilayer receipt does not match the current materials, strain, "
+                "or structure; inspect commensurate_heterobilayer_summary."
+            )
+        elif commensurate_heterobilayer.get("requires_geometry_relaxation"):
+            warnings.append(
+                "Commensurate TMD heterobilayer is periodic after verified strain partition but still "
+                "requires geometry relaxation."
+            )
+
     interface_quality = semiconductor.get("interface_quality_summary") or {}
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:

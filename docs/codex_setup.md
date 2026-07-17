@@ -1234,6 +1234,22 @@ the result does not independently verify the analytic path, direct/indirect gap,
 SCF convergence, or k-point convergence. Historical native-audit v1 receipts
 remain readable but intentionally expose no trusted sampled-band summary.
 
+For a recorded result, inspect
+`inspection.semiconductor_health.castep_electronic_result_assessment` or
+`semiconductor_review.electronic_result`. A verified artifact binding is not a
+scientific convergence or band-gap conclusion. Result-review reasons are kept
+separate in `live_readiness.calculation_result_review_reasons` and do not block
+structure normality. The assessment's rerun payload always uses
+`execution_mode="preview"`; execute requires a separate explicit request.
+
+The natural-language request `Inspect the current CASTEP electronic result and
+export native band edges` selects `castep_electronic_results` and runs the
+read-only current-revision inspection path. A complete focus exposes
+`semiconductor_castep_electronic_result.csv` and
+`semiconductor_castep_band_edges.csv`; the latter contains aggregate, per-spin,
+and Fermi-crossing provenance rows. This inspection does not rerun CASTEP or
+create a revision.
+
 The active user config is not rewritten by the doctor or protocol smoke. After
 merging the example snippet manually and restarting Codex, validate discovery
 with:

@@ -79,6 +79,22 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
         calls["capabilities_castep_sampled_band_edge_scientific_gap_verified"]
         is False
     )
+    assert calls["capabilities_castep_result_assessment_requires_binding"] is True
+    assert (
+        calls[
+            "capabilities_castep_result_assessment_structure_normality_blocked"
+        ]
+        is False
+    )
+    assert calls["capabilities_castep_result_assessment_preview_mode"] == (
+        "preview"
+    )
+    assert calls["capabilities_castep_band_edge_csv"] == (
+        "semiconductor_castep_band_edges.csv"
+    )
+    assert calls[
+        "capabilities_castep_result_diagnostic_focus_present"
+    ] is True
     assert calls["castep_electronic_preview_task"] == "Energy"
     assert calls["castep_electronic_preview_execution_started"] is False
     assert calls["castep_electronic_preview_structure_exists"] is False

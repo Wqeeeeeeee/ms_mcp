@@ -24,6 +24,9 @@ CASTEP_ELECTRONIC_RECEIPT_LEGACY_SCHEMA = (
     "material_studio_castep_electronic_receipt_v1"
 )
 CASTEP_ELECTRONIC_RECEIPT_SCHEMA = "material_studio_castep_electronic_receipt_v2"
+CASTEP_ELECTRONIC_RESULT_ASSESSMENT_SCHEMA = (
+    "material_studio_castep_electronic_result_assessment_v1"
+)
 SUPPORTED_CASTEP_ELECTRONIC_TASKS = frozenset(
     {
         CastepTask.ENERGY,
@@ -559,6 +562,210 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
         "derived_artifacts": receipt.get("derived_artifacts"),
         "structure_artifact_validation": structure_artifact_validation,
         "warnings": warnings,
+    }
+
+
+def assess_castep_electronic_result(
+    spec: ModelSpec,
+    *,
+    receipt_summary: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return an actionable result-review assessment without a science claim."""
+
+    summary = (
+        receipt_summary
+        if receipt_summary is not None
+        else verify_castep_electronic_receipt(spec)
+    )
+    if summary is None:
+        return None
+
+    binding_verified = summary.get("binding_verified") is True
+    native_audit = (
+        summary.get("native_output_audit")
+        if isinstance(summary.get("native_output_audit"), dict)
+        else {}
+    )
+    scf_audit = (
+        native_audit.get("castep_output_audit")
+        if isinstance(native_audit.get("castep_output_audit"), dict)
+        else {}
+    )
+    band_edges = (
+        summary.get("sampled_band_edges")
+        if isinstance(summary.get("sampled_band_edges"), dict)
+        else {}
+    )
+    gap_crosscheck = (
+        band_edges.get("reported_band_gap_crosscheck")
+        if isinstance(band_edges.get("reported_band_gap_crosscheck"), dict)
+        else {}
+    )
+    task = str(summary.get("task") or "")
+    native_status = native_audit.get("status")
+    scf_status = scf_audit.get("status")
+    sampled_status = band_edges.get("status")
+    crossing_observed = band_edges.get("fermi_crossing_observed") is True
+    gap_crosscheck_status = gap_crosscheck.get("status")
+
+    review_reasons: list[str] = ["scientific_convergence_unverified"]
+    if not binding_verified:
+        review_reasons.insert(0, "receipt_binding_mismatch")
+    if not native_audit:
+        review_reasons.append("native_output_audit_unavailable")
+    elif native_status != "complete":
+        review_reasons.append(f"native_output_audit_{native_status or 'unknown'}")
+    if scf_status != "completed_below_max_cycles":
+        review_reasons.append("native_scf_completion_review_required")
+    if band_edges:
+        review_reasons.append("scientific_band_gap_unverified")
+        if crossing_observed:
+            review_reasons.append("sampled_fermi_crossing_observed")
+        if gap_crosscheck_status == "review_difference":
+            review_reasons.append("reported_band_gap_difference")
+        if sampled_status not in {"sampled_gap", "sampled_fermi_crossing"}:
+            review_reasons.append("sampled_band_edge_evidence_incomplete")
+    else:
+        review_reasons.append("sampled_band_edge_evidence_unavailable")
+    if task == CastepTask.BAND_STRUCTURE.value and summary.get(
+        "band_path_binding_verified"
+    ) is not True:
+        review_reasons.append("analytic_band_path_unbound")
+    if task in {
+        CastepTask.BAND_STRUCTURE.value,
+        CastepTask.DENSITY_OF_STATES.value,
+        CastepTask.PROJECTED_DENSITY_OF_STATES.value,
+    } and summary.get("numeric_curve_data_exported") is not True:
+        review_reasons.append("numeric_property_curve_unavailable")
+    if task == CastepTask.PROJECTED_DENSITY_OF_STATES.value and summary.get(
+        "pdos_projection_weights_exported"
+    ) is not True:
+        review_reasons.append("pdos_projection_weights_unavailable")
+    review_reasons = list(dict.fromkeys(review_reasons))
+
+    if not binding_verified:
+        status = "binding_mismatch"
+        trust_status = "untrusted"
+        action_id = "preview_castep_electronic_rerun_after_binding_review"
+        recommended_action = (
+            "review_artifact_binding_then_preview_the_current_castep_task_again"
+        )
+        recommended_task = task
+    elif native_status != "complete":
+        status = "native_output_review_required"
+        trust_status = "artifact_bound_review_required"
+        action_id = "review_native_castep_output_before_rerun"
+        recommended_action = (
+            "inspect_native_output_errors_and_settings_then_preview_a_rerun"
+        )
+        recommended_task = task
+    elif scf_status != "completed_below_max_cycles":
+        status = "native_scf_review_required"
+        trust_status = "artifact_bound_review_required"
+        action_id = "review_native_scf_evidence_before_rerun"
+        recommended_action = (
+            "review_scf_markers_and_settings_then_preview_a_rerun"
+        )
+        recommended_task = task
+    elif crossing_observed:
+        status = "sampled_fermi_crossing_review"
+        trust_status = "sampled_evidence_review_required"
+        action_id = "review_sampled_fermi_crossing"
+        recommended_action = (
+            "review_metallic_or_semimetallic_behavior_with_band_structure_and_dos_sampling"
+        )
+        recommended_task = CastepTask.BAND_STRUCTURE.value
+    elif gap_crosscheck_status == "review_difference":
+        status = "reported_band_gap_difference_review"
+        trust_status = "sampled_evidence_review_required"
+        action_id = "review_reported_band_gap_difference"
+        recommended_action = (
+            "review_native_kpoint_sampling_and_reported_band_gap_before_rerun"
+        )
+        recommended_task = CastepTask.BAND_STRUCTURE.value
+    elif sampled_status == "sampled_gap":
+        status = "sampled_band_edges_available"
+        trust_status = "sampled_evidence_review_required"
+        action_id = "review_band_gap_convergence"
+        recommended_action = (
+            "review_scf_and_kpoint_convergence_before_any_scientific_band_gap_claim"
+        )
+        recommended_task = CastepTask.BAND_STRUCTURE.value
+    else:
+        status = "sampled_band_edges_unavailable"
+        trust_status = "artifact_bound_review_required"
+        action_id = "preview_band_structure_for_band_edge_evidence"
+        recommended_action = (
+            "preview_reviewed_band_structure_sampling_for_band_edge_evidence"
+        )
+        recommended_task = CastepTask.BAND_STRUCTURE.value
+
+    preview_payload = {
+        "project_id": spec.project_id,
+        "task": recommended_task or task or CastepTask.ENERGY.value,
+        "execution_mode": "preview",
+        "open_in_gui": False,
+        "take_snapshot": False,
+        "export_view_audit": True,
+    }
+    return {
+        "schema_version": CASTEP_ELECTRONIC_RESULT_ASSESSMENT_SCHEMA,
+        "available": True,
+        "status": status,
+        "trust_status": trust_status,
+        "receipt_binding_verified": binding_verified,
+        "backend_run_completed": summary.get("backend_run_completed") is True,
+        "artifact_evidence_verified": bool(
+            binding_verified and native_status == "complete"
+        ),
+        "scientific_convergence_verified": False,
+        "scientific_band_gap_verified": False,
+        "scientific_result_verified": False,
+        "structure_normality_blocked": False,
+        "structure_normality_impact": "none",
+        "calculation_result_review_required": True,
+        "calculation_readiness_impact": "result_review_only",
+        "task": task or None,
+        "source_revision": summary.get("source_revision"),
+        "target_revision": summary.get("target_revision"),
+        "native_output_audit_status": native_status,
+        "native_scf_status": scf_status,
+        "native_scf_maximum_cycles_reached": scf_audit.get(
+            "maximum_scf_cycles_reached"
+        ),
+        "sampled_band_edge_status": sampled_status,
+        "sampled_gap_ev": band_edges.get("sampled_gap_ev"),
+        "sampled_gap_spin_component": band_edges.get("gap_spin_component"),
+        "sampled_fermi_crossing_observed": (
+            crossing_observed if band_edges else None
+        ),
+        "reported_band_gap_crosscheck_status": gap_crosscheck_status,
+        "reported_band_gap_difference_ev": gap_crosscheck.get(
+            "absolute_difference_ev"
+        ),
+        "reported_band_gap_comparison_tolerance_ev": gap_crosscheck.get(
+            "comparison_tolerance_ev"
+        ),
+        "numeric_curve_data_exported": summary.get(
+            "numeric_curve_data_exported"
+        ),
+        "native_band_kpoint_path_exported": summary.get(
+            "native_band_kpoint_path_exported"
+        ),
+        "band_path_binding_verified": summary.get(
+            "band_path_binding_verified"
+        ),
+        "pdos_projection_weights_exported": summary.get(
+            "pdos_projection_weights_exported"
+        ),
+        "result_review_reasons": review_reasons,
+        "result_review_reason_count": len(review_reasons),
+        "recommended_action_id": action_id,
+        "recommended_tool": "material_studio_castep_run_current",
+        "recommended_action": recommended_action,
+        "recommended_preview_payload": preview_payload,
+        "preview_safe": True,
+        "execute_requires_explicit_confirmation": True,
     }
 
 

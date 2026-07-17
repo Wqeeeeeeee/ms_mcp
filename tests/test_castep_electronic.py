@@ -10,7 +10,9 @@ import pytest
 
 from material_studio_mcp_server import server
 from material_studio_mcp_server.castep_electronic import (
+    CASTEP_ELECTRONIC_RESULT_ASSESSMENT_SCHEMA,
     RESULT_DOCUMENT_BY_TASK,
+    assess_castep_electronic_result,
     verify_castep_electronic_receipt,
 )
 from material_studio_mcp_server.parsers import (
@@ -530,6 +532,110 @@ def test_castep_electronic_preview_never_runs_or_materializes(
     assert ProjectStore(tmp_path).load_current(source.project_id).revision == 0
 
 
+def test_electronic_result_assessment_is_absent_before_a_result(
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_assessment_absent")
+
+    assert assess_castep_electronic_result(source) is None
+
+
+def test_castep_result_diagnostic_focus_is_distinct_from_preflight() -> None:
+    focuses = server._requested_diagnostic_focuses_from_text(
+        "Check the current CASTEP electronic result and export native band edges."
+    )
+    assert "castep_electronic_results" in focuses
+    assert "electronic_structure_preflight" not in focuses
+
+    chinese_focuses = server._requested_diagnostic_focuses_from_text(
+        "\u68c0\u67e5\u5f53\u524d CASTEP \u7535\u5b50\u8ba1\u7b97\u7ed3\u679c\u662f\u5426\u6b63\u5e38\uff0c\u5bfc\u51fa\u539f\u751f\u80fd\u5e26\u8fb9\u7f18\u3002"
+    )
+    assert "castep_electronic_results" in chinese_focuses
+    assert "electronic_structure_preflight" not in chinese_focuses
+
+    readiness_focuses = server._requested_diagnostic_focuses_from_text(
+        "Review the current CASTEP result and check whether it is ready for another calculation."
+    )
+    assert "castep_electronic_results" in readiness_focuses
+    assert "electronic_structure_preflight" in readiness_focuses
+
+    capabilities = server.material_studio_live_capabilities()
+    profile = capabilities["diagnostics"]["diagnostic_focus_profiles"][
+        "castep_electronic_results"
+    ]
+    assert (
+        "inspection.semiconductor_health.castep_electronic_result_assessment"
+        in profile["summary_keys"]
+    )
+    assert "semiconductor_castep_electronic_result_csv" in profile[
+        "csv_keys"
+    ]
+    assert "semiconductor_castep_band_edges_csv" in profile["csv_keys"]
+
+
+def test_electronic_result_next_action_is_preview_safe() -> None:
+    report = {
+        "project_id": "electronic_next_action",
+        "revision": 4,
+        "normality": "review_warnings",
+        "live_readiness": {
+            "state": "hot_loaded_with_review",
+            "recommended_tool": "material_studio_live_modeling_request",
+            "recommended_action": "review_flags_then_continue_next_model_edit",
+            "needs_user_confirmation": False,
+            "ready_for_hotload": False,
+            "ready_for_next_edit": True,
+            "ready_for_calculation": True,
+            "blocking_reasons": [],
+            "review_reasons": [
+                "castep_result:reported_band_gap_difference"
+            ],
+            "visual_review_reasons": [],
+            "calculation_blocking_reasons": [],
+            "calculation_result_review_reasons": [
+                "castep_result:reported_band_gap_difference"
+            ],
+        },
+        "semiconductor_review": {
+            "available": True,
+            "risk_flags": [],
+            "electronic_result": {
+                "available": True,
+                "calculation_result_review_required": True,
+                "recommended_action_id": "review_reported_band_gap_difference",
+                "recommended_tool": "material_studio_castep_run_current",
+                "recommended_action": (
+                    "review_native_kpoint_sampling_and_reported_band_gap_before_rerun"
+                ),
+                "recommended_preview_payload": {
+                    "project_id": "electronic_next_action",
+                    "task": "BandStructure",
+                    "execution_mode": "preview",
+                    "open_in_gui": False,
+                },
+            },
+        },
+        "diagnostics": {},
+        "structure": {},
+        "gui": {"hot_loaded": True},
+    }
+
+    plan = server._modeling_report_next_action_plan(report)
+
+    assert plan["action_id"] == "review_reported_band_gap_difference"
+    assert plan["recommended_tool"] == "material_studio_castep_run_current"
+    assert plan["recommended_action"] == (
+        "review_native_kpoint_sampling_and_reported_band_gap_before_rerun"
+    )
+    assert plan["needs_user_confirmation"] is False
+    assert plan["safe_to_call_without_confirmation"] is True
+    assert plan["payload_hint"]["execution_mode"] == "preview"
+    assert plan["payload_hint"]["task"] == "BandStructure"
+    assert plan["calculation_result_review_reasons"] == [
+        "castep_result:reported_band_gap_difference"
+    ]
+
+
 def test_energy_result_records_metadata_only_revision_and_diagnostics(
     monkeypatch,
     tmp_path: Path,
@@ -563,6 +669,21 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     )
     assert result["sampled_fermi_crossing_observed"] is False
     assert result["reported_band_gap_crosscheck_status"] == "review_difference"
+    assert result["electronic_result_assessment_status"] == (
+        "reported_band_gap_difference_review"
+    )
+    assert result["electronic_result_trust_status"] == (
+        "sampled_evidence_review_required"
+    )
+    assert "reported_band_gap_difference" in result[
+        "electronic_result_review_reasons"
+    ]
+    assert result["electronic_result_recommended_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert result["electronic_result_recommended_preview_payload"][
+        "execution_mode"
+    ] == "preview"
     assert fake_runner.call_count == 1
     current = ProjectStore(tmp_path).load_current(source.project_id)
     assert current.revision == 1
@@ -588,6 +709,30 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert summary["reported_band_gap_crosscheck"]["status"] == (
         "review_difference"
     )
+    assessment = assess_castep_electronic_result(
+        current,
+        receipt_summary=summary,
+    )
+    assert assessment is not None
+    assert assessment["schema_version"] == (
+        CASTEP_ELECTRONIC_RESULT_ASSESSMENT_SCHEMA
+    )
+    assert assessment["status"] == "reported_band_gap_difference_review"
+    assert assessment["trust_status"] == "sampled_evidence_review_required"
+    assert assessment["artifact_evidence_verified"] is True
+    assert assessment["scientific_result_verified"] is False
+    assert assessment["structure_normality_blocked"] is False
+    assert assessment["calculation_result_review_required"] is True
+    assert "reported_band_gap_difference" in assessment["result_review_reasons"]
+    assert assessment["recommended_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert assessment["recommended_preview_payload"]["execution_mode"] == (
+        "preview"
+    )
+    assert assessment["recommended_preview_payload"]["task"] == (
+        "BandStructure"
+    )
     receipt = current.metadata["last_castep_electronic_calculation"]
     script_path = Path(receipt["script_path"])
     payload_path = Path(receipt["result_payload_path"])
@@ -599,6 +744,15 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert tampered_script is not None
     assert tampered_script["binding_verified"] is False
     assert tampered_script["checks"]["script_file"] is False
+    tampered_assessment = assess_castep_electronic_result(
+        current,
+        receipt_summary=tampered_script,
+    )
+    assert tampered_assessment is not None
+    assert tampered_assessment["status"] == "binding_mismatch"
+    assert tampered_assessment["trust_status"] == "untrusted"
+    assert tampered_assessment["artifact_evidence_verified"] is False
+    assert tampered_assessment["structure_normality_blocked"] is False
     script_path.write_bytes(original_script)
     original_payload = payload_path.read_bytes()
     payload_path.write_bytes(original_payload + b"\n")
@@ -648,6 +802,33 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
         "castep_electronic_result_summary"
     ]
     assert diagnostic_summary["binding_verified"] is True
+    diagnostic_assessment = result["view_audit"]["health"][
+        "semiconductor_health"
+    ]["castep_electronic_result_assessment"]
+    assert diagnostic_assessment["status"] == (
+        "reported_band_gap_difference_review"
+    )
+    semiconductor_review = result["modeling_report"]["semiconductor_review"]
+    assert semiconductor_review["electronic_result"]["status"] == (
+        "reported_band_gap_difference_review"
+    )
+    assert semiconductor_review["electronic_result"][
+        "structure_normality_blocked"
+    ] is False
+    assert "reported_band_gap_difference" in semiconductor_review[
+        "result_review_flags"
+    ]
+    readiness = result["modeling_report"]["live_readiness"]
+    assert "castep_result:reported_band_gap_difference" in readiness[
+        "calculation_result_review_reasons"
+    ]
+    normality_gate = result["modeling_report"]["normality_gate"]
+    assert "castep_result:reported_band_gap_difference" in normality_gate[
+        "calculation_only_review_reasons"
+    ]
+    assert "castep_result:reported_band_gap_difference" not in normality_gate[
+        "must_not_claim_normal_reasons"
+    ]
     csv_path = Path(
         result["view_bundle_files"][
             "semiconductor_castep_electronic_result_csv"
@@ -665,6 +846,77 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert "reported_band_gap_crosscheck_status" in csv_text
     assert "review_difference" in csv_text
     assert "False" in csv_text
+    band_edges_csv_path = Path(
+        result["view_bundle_files"]["semiconductor_castep_band_edges_csv"]
+    )
+    assert band_edges_csv_path.is_file()
+    band_edges_csv = band_edges_csv_path.read_text(encoding="utf-8-sig")
+    assert "native_bands_source_sha256" in band_edges_csv
+    assert "aggregate" in band_edges_csv
+    assert "spin_channel" in band_edges_csv
+    assert result["view_bundle_row_counts"][
+        "semiconductor_castep_band_edges"
+    ] == 2
+    assert result["requested_diagnostic_focuses"] == [
+        "castep_electronic_results"
+    ]
+    focus_status = result["requested_diagnostic_focus_status"]
+    assert focus_status["ok"] is True
+    result_focus = focus_status["focuses"][0]
+    assert result_focus["focus"] == "castep_electronic_results"
+    assert result_focus["missing_summary_keys"] == []
+    assert result_focus["missing_csv_keys"] == []
+    assert set(result_focus["existing_csv_keys"]) == {
+        "semiconductor_castep_electronic_result_csv",
+        "semiconductor_castep_band_edges_csv",
+    }
+    assert result["semiconductor_castep_electronic_result_csv"] == str(
+        csv_path
+    )
+    assert result["semiconductor_castep_band_edges_csv"] == str(
+        band_edges_csv_path
+    )
+    assert result["modeling_report"]["diagnostics"][
+        "semiconductor_castep_band_edges_csv"
+    ] == str(band_edges_csv_path)
+    assert result["modeling_report"]["change_receipt"]["artifacts"][
+        "semiconductor_castep_electronic_result_csv"
+    ] == str(csv_path)
+    assert result["modeling_report"]["change_receipt"]["diagnostic_row_counts"][
+        "semiconductor_castep_band_edges"
+    ] == 2
+    health_summary_text = Path(
+        result["view_bundle_files"]["modeling_health_summary_csv"]
+    ).read_text(encoding="utf-8-sig")
+    assert "semiconductor_castep_electronic_assessment_status" in (
+        health_summary_text
+    )
+    assert "reported_band_gap_difference_review" in health_summary_text
+    assert "assessment_trust_status" in csv_text
+    assert "sampled_evidence_review_required" in csv_text
+
+    inspected = server.material_studio_live_modeling_request(
+        "Inspect the current CASTEP electronic result and export native band edges.",
+        project_id=source.project_id,
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+    assert inspected["ok"] is True
+    assert inspected["workflow"] == "inspect_current"
+    assert ProjectStore(tmp_path).load_current(source.project_id).revision == 1
+    assert fake_runner.call_count == 1
+    assert "castep_electronic_results" in inspected[
+        "requested_diagnostic_focuses"
+    ]
+    inspected_focus = next(
+        item
+        for item in inspected["requested_diagnostic_focus_status"]["focuses"]
+        if item["focus"] == "castep_electronic_results"
+    )
+    assert inspected_focus["ok"] is True
 
 
 def test_native_fermi_crossing_surfaces_in_receipt_and_modeling_health(
@@ -700,12 +952,32 @@ def test_native_fermi_crossing_surfaces_in_receipt_and_modeling_health(
     assert verified is not None
     assert verified["binding_verified"] is True
     assert verified["sampled_fermi_crossing_observed"] is True
+    assessment = assess_castep_electronic_result(
+        current,
+        receipt_summary=verified,
+    )
+    assert assessment is not None
+    assert assessment["status"] == "sampled_fermi_crossing_review"
+    assert "sampled_fermi_crossing_observed" in assessment[
+        "result_review_reasons"
+    ]
+    assert assessment["recommended_preview_payload"]["task"] == (
+        "BandStructure"
+    )
     checks = result["modeling_health"]["checks"]
     assert checks["semiconductor_castep_sampled_fermi_crossing_observed"] is True
     assert any(
         "Fermi-level crossing" in warning
         for warning in result["modeling_health"]["warnings"]
     )
+    crossing_csv_path = Path(
+        result["view_bundle_files"]["semiconductor_castep_band_edges_csv"]
+    )
+    crossing_csv = crossing_csv_path.read_text(encoding="utf-8-sig")
+    assert "crossing_band" in crossing_csv
+    assert result["view_bundle_row_counts"][
+        "semiconductor_castep_band_edges"
+    ] == 3
 
 
 def test_prior_native_audit_v1_remains_hash_bound_and_verifiable(
@@ -1093,6 +1365,18 @@ def test_live_natural_language_electronic_execution_and_preview_override(
     assert preview["execution_mode"] == "preview"
     assert preview["execution_started"] is False
     assert preview["revision_created"] is False
+    assert preview["user_request"] == (
+        "Run CASTEP single-point energy on the current model now."
+    )
+    assert preview["nl_plan"]["kind"] == "castep_electronic_calculation"
+    assert preview["requested_diagnostic_focuses"] == [
+        "electronic_structure_preflight"
+    ]
+    assert preview["modeling_report"]["user_request"] == preview["user_request"]
+    assert preview["modeling_report"]["nl_plan"] == preview["nl_plan"]
+    assert preview["modeling_report"]["requested_diagnostic_focuses"] == [
+        "electronic_structure_preflight"
+    ]
     assert ProjectStore(tmp_path).load_current(preview_source.project_id).revision == 0
 
     execute_source = _create_silicon(tmp_path, "electronic_nl_execute")
@@ -1103,7 +1387,7 @@ def test_live_natural_language_electronic_execution_and_preview_override(
         project_id=execute_source.project_id,
         open_in_gui=False,
         take_snapshot=False,
-        export_view_audit=False,
+        export_view_audit=True,
         working_dir=str(tmp_path),
     )
     assert executed["ok"] is True
@@ -1113,5 +1397,14 @@ def test_live_natural_language_electronic_execution_and_preview_override(
         "explicit_castep_electronic_execution_intent"
     )
     assert executed["nl_plan"]["kind"] == "castep_electronic_calculation"
+    assert executed["requested_diagnostic_focuses"] == [
+        "electronic_structure_preflight",
+        "castep_electronic_results",
+    ]
+    assert executed["modeling_report"]["user_request"] == executed["user_request"]
+    assert executed["modeling_report"]["nl_plan"] == executed["nl_plan"]
+    assert executed["modeling_report"]["requested_diagnostic_focuses"] == (
+        executed["requested_diagnostic_focuses"]
+    )
     assert fake_runner.call_count == 1
     assert ProjectStore(tmp_path).load_current(execute_source.project_id).revision == 1

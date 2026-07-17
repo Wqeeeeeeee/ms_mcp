@@ -642,6 +642,19 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_response_not_compact")
         if capabilities.get("response_schema") != EXPECTED_CAPABILITIES_COMPACT_SCHEMA:
             validation_errors.append("capabilities_compact_schema_mismatch")
+        diagnostic_capability = capabilities.get("diagnostics")
+        if not isinstance(diagnostic_capability, dict):
+            validation_errors.append("capabilities_diagnostics_missing")
+            diagnostic_capability = {}
+        diagnostic_focus_ids = diagnostic_capability.get(
+            "diagnostic_focus_ids"
+        )
+        if not isinstance(diagnostic_focus_ids, list):
+            diagnostic_focus_ids = []
+        if "castep_electronic_results" not in diagnostic_focus_ids:
+            validation_errors.append(
+                "capabilities_castep_result_diagnostic_focus_missing"
+            )
         castep_relaxation_capability = capabilities.get(
             "castep_geometry_optimization"
         )
@@ -709,6 +722,44 @@ async def _run_preview_calls(
         ) is not False:
             validation_errors.append(
                 "capabilities_castep_sampled_band_edge_overclaim"
+            )
+        electronic_result_assessment = castep_electronic_capability.get(
+            "result_assessment"
+        )
+        if not isinstance(electronic_result_assessment, dict):
+            validation_errors.append(
+                "capabilities_castep_result_assessment_missing"
+            )
+            electronic_result_assessment = {}
+        if electronic_result_assessment.get(
+            "requires_receipt_binding"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_result_assessment_binding_missing"
+            )
+        if electronic_result_assessment.get(
+            "structure_normality_blocked_by_result_review"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_castep_result_assessment_normality_boundary_missing"
+            )
+        if electronic_result_assessment.get(
+            "recommended_payload_execution_mode"
+        ) != "preview":
+            validation_errors.append(
+                "capabilities_castep_result_assessment_preview_boundary_missing"
+            )
+        if electronic_result_assessment.get(
+            "execute_requires_explicit_confirmation"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_result_assessment_execute_gate_missing"
+            )
+        if castep_electronic_capability.get(
+            "band_edge_diagnostic_csv"
+        ) != "semiconductor_castep_band_edges.csv":
+            validation_errors.append(
+                "capabilities_castep_band_edge_csv_missing"
             )
         if castep_electronic_capability.get(
             "numeric_curve_data_exported"
@@ -1190,6 +1241,29 @@ async def _run_preview_calls(
                     sampled_band_edge_capability.get(
                         "scientific_band_gap_verified"
                     )
+                ),
+                "capabilities_castep_result_assessment_requires_binding": (
+                    electronic_result_assessment.get(
+                        "requires_receipt_binding"
+                    )
+                ),
+                "capabilities_castep_result_assessment_structure_normality_blocked": (
+                    electronic_result_assessment.get(
+                        "structure_normality_blocked_by_result_review"
+                    )
+                ),
+                "capabilities_castep_result_assessment_preview_mode": (
+                    electronic_result_assessment.get(
+                        "recommended_payload_execution_mode"
+                    )
+                ),
+                "capabilities_castep_band_edge_csv": (
+                    castep_electronic_capability.get(
+                        "band_edge_diagnostic_csv"
+                    )
+                ),
+                "capabilities_castep_result_diagnostic_focus_present": (
+                    "castep_electronic_results" in diagnostic_focus_ids
                 ),
                 "capabilities_castep_electronic_band_export": (
                     electronic_exports.get("BandStructure")

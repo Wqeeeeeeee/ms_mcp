@@ -79,6 +79,8 @@ $env:MATERIAL_STUDIO_RUNNER = "<MS安装目录>\etc\Scripting\bin\RunMatScript.b
 - `material_studio_castep_relax_current`：预览或显式执行当前晶体的 CASTEP 几何优化，仅提升已验证收敛结果
 - `material_studio_castep_run_current`：预览或显式执行 Energy、BandStructure、DOS、PDOS，以结构不变的 metadata revision 记录结果，并审计原生 `.castep`/`.bands` 数值证据
 - CASTEP 原生带边审计按自旋通道使用各自 Fermi 能级，导出采样 VBM/CBM、采样间隔、Fermi 穿越和 `BandGap` 交叉核对；这些字段始终保持 `scientific_band_gap_verified=false`，不能替代完整能带路径、收敛性或科学带隙验证
+- `castep_electronic_result_assessment` 将 revision/hash 绑定的产物证据与科学收敛、科学带隙结论分开；结果复核不会被误报为结构异常，建议重算始终先返回 `execution_mode="preview"`
+- `castep_electronic_results` 诊断焦点支持“检查当前 CASTEP 结果”等只读请求，并导出结果摘要及 aggregate/per-spin/crossing-band 的 `semiconductor_castep_band_edges.csv`
 
 ### 扩展工具（本地 crystal/interface builders）
 

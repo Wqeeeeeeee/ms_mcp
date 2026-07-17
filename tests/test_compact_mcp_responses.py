@@ -104,6 +104,27 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
             "sampled_band_edge_audit_after_execution": (
                 "conditional_on_hash_bound_native_bands"
             ),
+            "electronic_result_assessment_status": (
+                "reported_band_gap_difference_review"
+            ),
+            "electronic_result_trust_status": (
+                "sampled_evidence_review_required"
+            ),
+            "electronic_result_review_reasons": [
+                "scientific_convergence_unverified",
+                "reported_band_gap_difference",
+            ],
+            "electronic_result_recommended_action_id": (
+                "review_reported_band_gap_difference"
+            ),
+            "electronic_result_recommended_tool": (
+                "material_studio_castep_run_current"
+            ),
+            "electronic_result_recommended_preview_payload": {
+                "project_id": "electronic_result",
+                "task": "BandStructure",
+                "execution_mode": "preview",
+            },
             "derived_artifact_count": 1,
         },
         "compact",
@@ -124,6 +145,24 @@ def test_compact_preserves_castep_native_output_audit_receipt() -> None:
     assert compact["sampled_band_edge_audit_after_execution"] == (
         "conditional_on_hash_bound_native_bands"
     )
+    assert compact["electronic_result_assessment_status"] == (
+        "reported_band_gap_difference_review"
+    )
+    assert compact["electronic_result_trust_status"] == (
+        "sampled_evidence_review_required"
+    )
+    assert "reported_band_gap_difference" in compact[
+        "electronic_result_review_reasons"
+    ]
+    assert compact["electronic_result_recommended_action_id"] == (
+        "review_reported_band_gap_difference"
+    )
+    assert compact["electronic_result_recommended_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert compact["electronic_result_recommended_preview_payload"][
+        "execution_mode"
+    ] == "preview"
     assert compact["derived_artifact_count"] == 1
 
 
@@ -160,6 +199,9 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["domain_focus"]["semiconductor_virtual_template_count"] >= 1
     assert "front" in compact["diagnostics"]["supported_view_names"]
     assert "electronic_structure_preflight" in compact["diagnostics"]["diagnostic_focus_ids"]
+    assert "castep_electronic_results" in compact["diagnostics"][
+        "diagnostic_focus_ids"
+    ]
     assert "diagnostic_focus_profiles" not in compact["diagnostics"]
     assert compact["diagnostics"]["diagnostic_focus_profile_count"] >= 20
     assert compact["natural_language"]["patch_command_count"] == len(

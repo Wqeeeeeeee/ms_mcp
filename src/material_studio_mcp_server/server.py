@@ -23,6 +23,7 @@ from .castep_materialscript import build_castep_materialscript_plan
 from .castep_electronic import (
     RESULT_DOCUMENT_BY_TASK,
     SUPPORTED_CASTEP_ELECTRONIC_TASKS,
+    assess_castep_electronic_result,
     build_electronic_result_revision_spec,
 )
 from .castep_relaxation import (
@@ -1757,6 +1758,54 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "castep_electronic_results",
+            "default_tool": "material_studio_live_modeling_request",
+            "execution_policy": (
+                "read_only_current_revision_review; any rerun remains preview_by_default "
+                "and execution_mode_execute_requires_explicit_confirmation"
+            ),
+            "requires_existing_result": True,
+            "request_terms": [
+                "CASTEP result",
+                "electronic calculation result",
+                "band gap result",
+                "native bands",
+                "sampled band edges",
+                "Fermi crossing",
+                "SCF convergence result",
+            ],
+            "cjk_terms": [
+                "CASTEP \u7ed3\u679c",
+                "\u7535\u5b50\u8ba1\u7b97\u7ed3\u679c",
+                "\u80fd\u5e26\u7ed3\u679c",
+                "\u5e26\u9699\u7ed3\u679c",
+                "\u8d39\u7c73\u80fd\u7ea7\u7a7f\u8d8a",
+                "SCF \u6536\u655b\u7ed3\u679c",
+            ],
+            "examples": [
+                "Check whether the current CASTEP electronic result is normal and export native band edges.",
+                "Review the sampled band gap and Fermi crossing without rerunning CASTEP.",
+                "\u68c0\u67e5\u5f53\u524d CASTEP \u7535\u5b50\u8ba1\u7b97\u7ed3\u679c\u662f\u5426\u6b63\u5e38\uff0c\u5bfc\u51fa\u80fd\u5e26\u8fb9\u7f18\u8bc1\u636e\u3002",
+            ],
+            "diagnostic_summaries": [
+                "castep_electronic_result_summary",
+                "castep_electronic_result_assessment",
+                "semiconductor_review.electronic_result",
+                "semiconductor_calculation_readiness",
+            ],
+            "diagnostic_csvs": [
+                "semiconductor_castep_electronic_result_csv",
+                "semiconductor_castep_band_edges_csv",
+            ],
+            "result_contract": {
+                "revision_and_hash_binding_required": True,
+                "artifact_evidence_is_not_scientific_verification": True,
+                "structure_normality_blocked_by_result_review": False,
+                "recommended_rerun_tool": "material_studio_castep_run_current",
+                "recommended_rerun_execution_mode": "preview",
+            },
+        },
+        {
             "id": "electronic_structure_preflight",
             "default_tool": "material_studio_live_modeling_request",
             "execution_policy": "preview_by_default_execute_only_for_explicit_hotload_or_execution_mode_execute",
@@ -2682,6 +2731,8 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_calculation_preflight_csv",
     "semiconductor_reciprocal_lattice_csv",
     "semiconductor_band_path_csv",
+    "semiconductor_castep_electronic_result_csv",
+    "semiconductor_castep_band_edges_csv",
     "semiconductor_band_alignment_csv",
     "semiconductor_polarization_2deg_csv",
     "semiconductor_p_gan_gate_cap_csv",
@@ -2938,6 +2989,12 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_castep_electronic_result_document_name",
     "semiconductor_castep_electronic_total_energy_kcal_per_mol",
     "semiconductor_castep_electronic_band_gap_ev",
+    "semiconductor_castep_electronic_assessment_status",
+    "semiconductor_castep_electronic_assessment_trust_status",
+    "semiconductor_castep_electronic_artifact_evidence_verified",
+    "semiconductor_castep_electronic_calculation_result_review_required",
+    "semiconductor_castep_electronic_structure_normality_blocked",
+    "semiconductor_castep_electronic_result_review_reasons",
     "semiconductor_commensurate_twist_count",
     "semiconductor_commensurate_twist_quality",
     "semiconductor_commensurate_twist_metadata_consistent",
@@ -3664,6 +3721,18 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "scientific_band_gap_verified": False,
                 "analytic_band_path_binding_required_for_path_claims": True,
             },
+            "result_assessment": {
+                "schema": (
+                    "material_studio_castep_electronic_result_assessment_v1"
+                ),
+                "requires_receipt_binding": True,
+                "artifact_evidence_and_scientific_verification_are_separate": True,
+                "structure_normality_blocked_by_result_review": False,
+                "calculation_result_review_required": True,
+                "recommended_tool": "material_studio_castep_run_current",
+                "recommended_payload_execution_mode": "preview",
+                "execute_requires_explicit_confirmation": True,
+            },
             "numeric_curve_data_exported": "conditional_on_native_bands",
             "native_bands_format_contract": (
                 "Materials Studio 20.1 CASTEP file-format help"
@@ -3701,6 +3770,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_health.castep_electronic_result_summary"
             ),
             "diagnostic_csv": "semiconductor_castep_electronic_result.csv",
+            "band_edge_diagnostic_csv": (
+                "semiconductor_castep_band_edges.csv"
+            ),
         },
         "recommended_calculation_settings_receipt_recovery_field": (
             "recommended_calculation_settings_receipt_recovery"
@@ -13107,6 +13179,36 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
             ),
         ),
         (
+            "castep_electronic_results",
+            (
+                "castep result",
+                "castep electronic result",
+                "electronic result",
+                "electronic calculation result",
+                "calculation result",
+                "band structure result",
+                "band gap result",
+                "native bands",
+                "native band edges",
+                "sampled band gap",
+                "sampled band edge",
+                "fermi crossing",
+                "fermi-level crossing",
+                "scf convergence result",
+                "scf result",
+                "\u7535\u5b50\u8ba1\u7b97\u7ed3\u679c",
+                "\u7535\u5b50\u7ed3\u6784\u8ba1\u7b97\u7ed3\u679c",
+                "\u80fd\u5e26\u7ed3\u679c",
+                "\u5e26\u9699\u7ed3\u679c",
+                "\u8ba1\u7b97\u7ed3\u679c\u662f\u5426\u6b63\u5e38",
+                "\u8d39\u7c73\u80fd\u7ea7\u7a7f\u8d8a",
+                "\u8d39\u7c73\u9762\u7a7f\u8d8a",
+                "\u539f\u751f\u80fd\u5e26",
+                "\u91c7\u6837\u5e26\u9699",
+                "scf \u6536\u655b\u7ed3\u679c",
+            ),
+        ),
+        (
             "electronic_structure_preflight",
             (
                 "band structure",
@@ -13354,6 +13456,15 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         focuses.insert(1, "two_dimensional_electrostatic_preflight")
     if _comprehensive_model_parameter_focus_requested(user_request):
         focuses.insert(0, "comprehensive_model_parameters")
+    if (
+        "castep_electronic_results" in focuses
+        and not _calculation_readiness_requested_from_text(user_request)
+    ):
+        focuses = [
+            focus
+            for focus in focuses
+            if focus != "electronic_structure_preflight"
+        ]
     if _calculation_readiness_requested_from_text(user_request) and "electronic_structure_preflight" not in focuses:
         focuses.append("electronic_structure_preflight")
     if (
@@ -13767,6 +13878,18 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
             "view_quality_csv",
         ],
     },
+    "castep_electronic_results": {
+        "summary_keys": [
+            "inspection.semiconductor_health.castep_electronic_result_summary",
+            "inspection.semiconductor_health.castep_electronic_result_assessment",
+            "semiconductor_review.electronic_result",
+            "semiconductor_calculation_readiness",
+        ],
+        "csv_keys": [
+            "semiconductor_castep_electronic_result_csv",
+            "semiconductor_castep_band_edges_csv",
+        ],
+    },
     "electronic_structure_preflight": {
         "summary_keys": [
             "inspection.semiconductor_health.calculation_preflight_summary",
@@ -14083,6 +14206,11 @@ _REQUESTED_DIAGNOSTIC_FOCUS_EXAMPLES: dict[str, list[str]] = {
         "Build MAPb(I0.67Br0.33)3 alloy and export alloy diagnostics.",
         "Replace 33% I with Br in MAPbI3 and export alloy diagnostics.",
         "\u6784\u5efa MAPbI3 \u9499\u949b\u77ff\u5438\u6536\u5c42\u5e76\u5bfc\u51fa\u8bca\u65ad\u3002",
+    ],
+    "castep_electronic_results": [
+        "Check whether the current CASTEP electronic result is normal and export native band edges.",
+        "Review the sampled gap and Fermi crossing without rerunning CASTEP.",
+        "\u68c0\u67e5\u5f53\u524d CASTEP \u7535\u5b50\u8ba1\u7b97\u7ed3\u679c\u662f\u5426\u6b63\u5e38\u3002",
     ],
     "electronic_structure_preflight": [
         "Check whether the current model is ready for CASTEP band structure.",
@@ -19474,6 +19602,14 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_calculation_preflight_csv", "semiconductor_calculation_preflight"),
         ("semiconductor_reciprocal_lattice_csv", "semiconductor_reciprocal_lattice"),
         ("semiconductor_band_path_csv", "semiconductor_band_path"),
+        (
+            "semiconductor_castep_electronic_result_csv",
+            "semiconductor_castep_electronic_result",
+        ),
+        (
+            "semiconductor_castep_band_edges_csv",
+            "semiconductor_castep_band_edges",
+        ),
     ),
     "semiconductor_electronic_interfaces": (
         ("semiconductor_band_alignment_csv", "semiconductor_band_alignment"),
@@ -20482,6 +20618,12 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_calculation_preflight_csv": bundle_files.get("semiconductor_calculation_preflight_csv"),
             "semiconductor_reciprocal_lattice_csv": bundle_files.get("semiconductor_reciprocal_lattice_csv"),
             "semiconductor_band_path_csv": bundle_files.get("semiconductor_band_path_csv"),
+            "semiconductor_castep_electronic_result_csv": bundle_files.get(
+                "semiconductor_castep_electronic_result_csv"
+            ),
+            "semiconductor_castep_band_edges_csv": bundle_files.get(
+                "semiconductor_castep_band_edges_csv"
+            ),
             "semiconductor_band_alignment_csv": bundle_files.get("semiconductor_band_alignment_csv"),
             "semiconductor_polarization_2deg_csv": bundle_files.get("semiconductor_polarization_2deg_csv"),
             "semiconductor_p_gan_gate_cap_csv": bundle_files.get("semiconductor_p_gan_gate_cap_csv"),
@@ -21649,6 +21791,14 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         reason = f"semiconductor:{flag}"
         review_reasons.append(reason)
         calculation_blocking_reasons.append(reason)
+    calculation_result_review_reasons = _dedupe_strings(
+        [
+            f"castep_result:{flag}"
+            for flag in semiconductor_review.get("result_review_flags") or []
+            if flag
+        ]
+    )
+    review_reasons.extend(calculation_result_review_reasons)
 
     gui = report.get("gui") or {}
     single_window = _single_window_policy_summary(gui)
@@ -21816,6 +21966,10 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         "review_reasons": _dedupe_strings(review_reasons),
         "visual_review_reasons": _dedupe_strings(visual_review_reasons),
         "calculation_only_review_reasons": calculation_only_review_reasons,
+        "calculation_result_review_reasons": calculation_result_review_reasons,
+        "calculation_result_review_reason_count": len(
+            calculation_result_review_reasons
+        ),
         "review_reason_count": len(_dedupe_strings(review_reasons)),
         "visual_review_reason_count": len(_dedupe_strings(visual_review_reasons)),
         "blocking_reason_count": len(_dedupe_strings(blocking_reasons)),
@@ -21842,6 +21996,11 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
     surface_model = (
         semiconductor.get("surface_model")
         if isinstance(semiconductor.get("surface_model"), dict)
+        else {}
+    )
+    electronic_result = (
+        semiconductor.get("electronic_result")
+        if isinstance(semiconductor.get("electronic_result"), dict)
         else {}
     )
     risk_flags = _dedupe_strings([str(item) for item in semiconductor.get("risk_flags") or []])
@@ -21955,6 +22114,19 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
             "band_path_task_relevant": band_path.get("task_relevant"),
             "band_path_requires_materials_studio_review": band_path.get(
                 "requires_materials_studio_review"
+            ),
+            "electronic_result_status": electronic_result.get("status"),
+            "electronic_result_trust_status": electronic_result.get(
+                "trust_status"
+            ),
+            "electronic_result_review_required": electronic_result.get(
+                "calculation_result_review_required"
+            ),
+            "electronic_result_review_reasons": electronic_result.get(
+                "result_review_reasons"
+            ),
+            "electronic_result_structure_normality_blocked": (
+                electronic_result.get("structure_normality_blocked")
             ),
         }
     )
@@ -23480,7 +23652,10 @@ _CALCULATION_ONLY_NORMALITY_REVIEW_REASONS = {
 def _is_calculation_only_normality_review(reason: str) -> bool:
     """Return True when a review reason affects calculation readiness, not structure normality."""
 
-    return reason in _CALCULATION_ONLY_NORMALITY_REVIEW_REASONS
+    return (
+        reason in _CALCULATION_ONLY_NORMALITY_REVIEW_REASONS
+        or reason.startswith("castep_result:")
+    )
 
 
 def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
@@ -25213,6 +25388,11 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
     semiconductor_risk_flags = {
         str(flag) for flag in semiconductor_review.get("risk_flags", []) or [] if flag
     }
+    electronic_result_review = (
+        semiconductor_review.get("electronic_result")
+        if isinstance(semiconductor_review.get("electronic_result"), dict)
+        else {}
+    )
     structure_artifact_validation = (
         report.get("structure_artifact_validation")
         if isinstance(report.get("structure_artifact_validation"), dict)
@@ -25316,6 +25496,37 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
             view_parameter_refresh_plan.get("payload_hint")
             if isinstance(view_parameter_refresh_plan.get("payload_hint"), dict)
             else {"project_id": report.get("project_id")}
+        )
+    elif (
+        electronic_result_review.get("calculation_result_review_required") is True
+        and electronic_result_review.get("recommended_tool")
+        and recommended_tool
+        in {
+            "material_studio_live_modeling_request",
+            "material_studio_live_project_status",
+        }
+        and readiness.get("state") != "blocked"
+    ):
+        action_id = (
+            electronic_result_review.get("recommended_action_id")
+            or "review_castep_electronic_result"
+        )
+        recommended_tool = electronic_result_review.get("recommended_tool")
+        recommended_action_override = (
+            electronic_result_review.get("recommended_action")
+            or "review_castep_electronic_result_before_scientific_use"
+        )
+        needs_user_confirmation = False
+        payload_hint = (
+            electronic_result_review.get("recommended_preview_payload")
+            if isinstance(
+                electronic_result_review.get("recommended_preview_payload"),
+                dict,
+            )
+            else {
+                "project_id": report.get("project_id"),
+                "execution_mode": ExecutionMode.PREVIEW.value,
+            }
         )
     elif recommended_tool == "material_studio_gui_apply_current_revision":
         action_id = "execute_and_hotload_current_revision"
@@ -25426,6 +25637,10 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         "review_reasons": readiness.get("review_reasons") or [],
         "visual_review_reasons": readiness.get("visual_review_reasons") or [],
         "calculation_blocking_reasons": readiness.get("calculation_blocking_reasons") or [],
+        "calculation_result_review_reasons": readiness.get(
+            "calculation_result_review_reasons"
+        )
+        or [],
         "artifacts": artifacts,
     }
 
@@ -28980,6 +29195,7 @@ def _change_receipt_semiconductor_summary(semiconductor: dict[str, Any]) -> dict
         "contact": semiconductor.get("contact"),
         "surface_model": semiconductor.get("surface_model"),
         "surface": semiconductor.get("surface"),
+        "electronic_result": semiconductor.get("electronic_result"),
     }
 
 
@@ -29031,6 +29247,12 @@ def _change_receipt_artifacts(
             "semiconductor_calculation_preflight_csv": diagnostics.get("semiconductor_calculation_preflight_csv"),
             "semiconductor_reciprocal_lattice_csv": diagnostics.get("semiconductor_reciprocal_lattice_csv"),
             "semiconductor_band_path_csv": diagnostics.get("semiconductor_band_path_csv"),
+            "semiconductor_castep_electronic_result_csv": diagnostics.get(
+                "semiconductor_castep_electronic_result_csv"
+            ),
+            "semiconductor_castep_band_edges_csv": diagnostics.get(
+                "semiconductor_castep_band_edges_csv"
+            ),
             "semiconductor_band_alignment_csv": diagnostics.get("semiconductor_band_alignment_csv"),
             "semiconductor_polarization_2deg_csv": diagnostics.get("semiconductor_polarization_2deg_csv"),
             "semiconductor_p_gan_gate_cap_csv": diagnostics.get("semiconductor_p_gan_gate_cap_csv"),
@@ -29093,6 +29315,8 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_calculation_preflight",
         "semiconductor_reciprocal_lattice",
         "semiconductor_band_path",
+        "semiconductor_castep_electronic_result",
+        "semiconductor_castep_band_edges",
         "semiconductor_band_alignment",
         "semiconductor_polarization_2deg",
         "semiconductor_p_gan_gate_cap",
@@ -29763,6 +29987,16 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     surface = semiconductor.get("surface_termination_summary") or {}
     polarity = semiconductor.get("surface_polarity_summary") or {}
     local_environment = semiconductor.get("local_environment_summary") or {}
+    electronic_result = (
+        semiconductor.get("castep_electronic_result_assessment") or {}
+    )
+    result_review_flags = _dedupe_strings(
+        [
+            str(item)
+            for item in electronic_result.get("result_review_reasons") or []
+            if item
+        ]
+    )
 
     risk_flags = _semiconductor_review_risk_flags(
         semiconductor,
@@ -29973,9 +30207,18 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         "contact": _semiconductor_contact_review(contact),
         "surface_model": _semiconductor_surface_model_review(surface_model),
         "surface": _semiconductor_surface_review(surface, polarity),
+        "electronic_result": _semiconductor_electronic_result_review(
+            electronic_result
+        ),
+        "result_review_flags": result_review_flags,
+        "result_review_flag_count": len(result_review_flags),
         "risk_flags": risk_flags,
         "risk_flag_count": len(risk_flags),
-        "next_action": _semiconductor_review_next_action(risk_flags, calculation),
+        "next_action": _semiconductor_review_next_action(
+            risk_flags,
+            calculation,
+            electronic_result,
+        ),
     }
 
 
@@ -30027,6 +30270,59 @@ def _semiconductor_coordination_review(semiconductor: dict[str, Any]) -> dict[st
             ],
         )
     return _drop_none_values(result)
+
+
+def _semiconductor_electronic_result_review(
+    assessment: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not assessment:
+        return None
+    return _drop_none_values(
+        {
+            key: assessment.get(key)
+            for key in (
+                "schema_version",
+                "available",
+                "status",
+                "trust_status",
+                "receipt_binding_verified",
+                "backend_run_completed",
+                "artifact_evidence_verified",
+                "scientific_convergence_verified",
+                "scientific_band_gap_verified",
+                "scientific_result_verified",
+                "structure_normality_blocked",
+                "structure_normality_impact",
+                "calculation_result_review_required",
+                "calculation_readiness_impact",
+                "task",
+                "source_revision",
+                "target_revision",
+                "native_output_audit_status",
+                "native_scf_status",
+                "native_scf_maximum_cycles_reached",
+                "sampled_band_edge_status",
+                "sampled_gap_ev",
+                "sampled_gap_spin_component",
+                "sampled_fermi_crossing_observed",
+                "reported_band_gap_crosscheck_status",
+                "reported_band_gap_difference_ev",
+                "reported_band_gap_comparison_tolerance_ev",
+                "numeric_curve_data_exported",
+                "native_band_kpoint_path_exported",
+                "band_path_binding_verified",
+                "pdos_projection_weights_exported",
+                "result_review_reasons",
+                "result_review_reason_count",
+                "recommended_action_id",
+                "recommended_tool",
+                "recommended_action",
+                "recommended_preview_payload",
+                "preview_safe",
+                "execute_requires_explicit_confirmation",
+            )
+        }
+    )
 
 
 def _semiconductor_dopant_review(
@@ -30891,11 +31187,20 @@ def _abs_float_gt(value: Any, threshold: float) -> bool:
         return False
 
 
-def _semiconductor_review_next_action(risk_flags: list[str], calculation: dict[str, Any]) -> str:
+def _semiconductor_review_next_action(
+    risk_flags: list[str],
+    calculation: dict[str, Any],
+    electronic_result: dict[str, Any],
+) -> str:
     if "dopant_site_metadata_inconsistent" in risk_flags:
         return "reconcile_dopant_metadata_with_current_structure_then_reaudit"
     if risk_flags:
         return "review_semiconductor_risk_flags_before_calculation_or_claiming_normality"
+    if electronic_result.get("calculation_result_review_required") is True:
+        return str(
+            electronic_result.get("recommended_action")
+            or "review_castep_electronic_result_before_scientific_use"
+        )
     if calculation.get("ready_for_requested_task_preflight"):
         return "ready_for_requested_semiconductor_calculation_preflight"
     if calculation:
@@ -34781,6 +35086,12 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "reported_band_gap_crosscheck_status",
             "reported_band_gap_difference_ev",
             "sampled_band_edge_audit_after_execution",
+            "electronic_result_assessment_status",
+            "electronic_result_trust_status",
+            "electronic_result_review_reasons",
+            "electronic_result_recommended_action_id",
+            "electronic_result_recommended_tool",
+            "electronic_result_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -34962,6 +35273,12 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "reported_band_gap_crosscheck_status",
             "reported_band_gap_difference_ev",
             "sampled_band_edge_audit_after_execution",
+            "electronic_result_assessment_status",
+            "electronic_result_trust_status",
+            "electronic_result_review_reasons",
+            "electronic_result_recommended_action_id",
+            "electronic_result_recommended_tool",
+            "electronic_result_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -35368,6 +35685,12 @@ def _compact_live_response(
             "reported_band_gap_crosscheck_status",
             "reported_band_gap_difference_ev",
             "sampled_band_edge_audit_after_execution",
+            "electronic_result_assessment_status",
+            "electronic_result_trust_status",
+            "electronic_result_review_reasons",
+            "electronic_result_recommended_action_id",
+            "electronic_result_recommended_tool",
+            "electronic_result_recommended_preview_payload",
             "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
@@ -40634,6 +40957,9 @@ def material_studio_castep_run_current(
     """Run a fail-closed CASTEP Energy/Band/DOS/PDOS result workflow."""
 
     try:
+        orchestration_context = dict(
+            _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.get() or {}
+        )
         mode = ExecutionMode(execution_mode)
         store = _structured_store(working_dir)
         project_resolution: dict[str, Any]
@@ -40746,6 +41072,8 @@ def material_studio_castep_run_current(
                 "result_contract"
             ].get("sampled_band_edge_audit_after_execution"),
         }
+        if orchestration_context:
+            response.update(orchestration_context)
         if mode is ExecutionMode.PREVIEW:
             response["status"] = (
                 "ready_for_explicit_execute"
@@ -41155,6 +41483,13 @@ def material_studio_castep_run_current(
             )
 
         recorded_spec = store.get_revision(base_spec.project_id, info.revision)
+        electronic_result_assessment = assess_castep_electronic_result(
+            recorded_spec
+        )
+        if electronic_result_assessment is None:
+            raise ValueError(
+                "Recorded CASTEP electronic result assessment is unavailable"
+            )
         final_execution_metadata = {
             "schema_version": "material_studio_castep_electronic_execution_v2",
             "project_id": base_spec.project_id,
@@ -41178,6 +41513,7 @@ def material_studio_castep_run_current(
             "sampled_band_edges": native_output_audit.get(
                 "sampled_band_edges"
             ),
+            "electronic_result_assessment": electronic_result_assessment,
             "derived_artifacts": derived_artifacts,
             "native_artifact_warnings": native_warnings,
         }
@@ -41215,6 +41551,28 @@ def material_studio_castep_run_current(
                 "revision": info.revision,
                 "project_resolution": _explicit_project_resolution(recorded_spec),
                 "electronic_receipt": electronic_receipt,
+                "electronic_result_assessment": electronic_result_assessment,
+                "electronic_result_assessment_status": (
+                    electronic_result_assessment.get("status")
+                ),
+                "electronic_result_trust_status": (
+                    electronic_result_assessment.get("trust_status")
+                ),
+                "electronic_result_review_reasons": (
+                    electronic_result_assessment.get("result_review_reasons")
+                    or []
+                ),
+                "electronic_result_recommended_action_id": (
+                    electronic_result_assessment.get("recommended_action_id")
+                ),
+                "electronic_result_recommended_tool": (
+                    electronic_result_assessment.get("recommended_tool")
+                ),
+                "electronic_result_recommended_preview_payload": (
+                    electronic_result_assessment.get(
+                        "recommended_preview_payload"
+                    )
+                ),
                 "scientific_convergence_verified": False,
                 "scientific_band_gap_verified": False,
                 "numeric_curve_data_exported": electronic_receipt.get(
@@ -41280,6 +41638,12 @@ def material_studio_castep_run_current(
                     "sampled_fermi_crossing_observed": sampled_band_edges.get(
                         "fermi_crossing_observed"
                     ),
+                    "electronic_result_assessment_status": (
+                        electronic_result_assessment.get("status")
+                    ),
+                    "electronic_result_trust_status": (
+                        electronic_result_assessment.get("trust_status")
+                    ),
                     "recorded_revision": info.revision,
                 },
                 "native_output_audit": native_output_audit,
@@ -41287,8 +41651,28 @@ def material_studio_castep_run_current(
                 "view_audit": recorded_audit,
                 "warnings": warnings,
                 "required_next_step": (
-                    "Review the CASTEP report and, for property tasks, the native "
-                    "chart document before making scientific convergence claims."
+                    electronic_result_assessment.get("recommended_action")
+                ),
+                "diagnostic_export_requested": bool(
+                    response.get("diagnostic_export_requested")
+                    or export_view_audit
+                ),
+                "requested_diagnostic_focuses": _dedupe_strings(
+                    [
+                        *(
+                            response.get("requested_diagnostic_focuses")
+                            if isinstance(
+                                response.get("requested_diagnostic_focuses"),
+                                list,
+                            )
+                            else []
+                        ),
+                        *(
+                            ["castep_electronic_results"]
+                            if export_view_audit
+                            else []
+                        ),
+                    ]
                 ),
             }
         )
@@ -42283,47 +42667,63 @@ def material_studio_live_modeling_request(
                     execution_mode_source = (
                         "explicit_castep_electronic_execution_intent"
                     )
-                result = material_studio_castep_run_current(
-                    project_id=project_id,
-                    execution_mode=mode,
-                    task=electronic_payload.get("task"),
-                    quality=electronic_payload.get("quality"),
-                    functional=electronic_payload.get("functional"),
-                    cutoff_energy_ev=electronic_payload.get("cutoff_energy_ev"),
-                    kpoint_separation=electronic_payload.get("kpoint_separation"),
-                    kpoints=electronic_payload.get("kpoints"),
-                    properties_kpoint_separation=electronic_payload.get(
-                        "properties_kpoint_separation"
+                orchestration_context = {
+                    "workflow": "castep_electronic_calculation",
+                    "user_request": user_request,
+                    "nl_plan": nl_plan,
+                    "execution_mode": mode.value,
+                    "execution_mode_source": execution_mode_source,
+                    "project_resolution": project_resolution,
+                    "diagnostic_export_requested": (
+                        _diagnostic_export_requested_from_text(user_request)
                     ),
-                    band_structure_energy_max_ev=electronic_payload.get(
-                        "band_structure_energy_max_ev"
+                    "normality_check_requested": (
+                        _normality_check_requested_from_text(user_request)
                     ),
-                    band_structure_extra_bands=electronic_payload.get(
-                        "band_structure_extra_bands"
-                    ),
-                    band_structure_energy_tolerance_ev=electronic_payload.get(
-                        "band_structure_energy_tolerance_ev"
-                    ),
-                    dos_energy_max_ev=electronic_payload.get("dos_energy_max_ev"),
-                    dos_extra_bands=electronic_payload.get("dos_extra_bands"),
-                    dos_energy_tolerance_ev=electronic_payload.get(
-                        "dos_energy_tolerance_ev"
-                    ),
-                    dos_smearing_width_ev=electronic_payload.get(
-                        "dos_smearing_width_ev"
-                    ),
-                    dos_integration_method=electronic_payload.get(
-                        "dos_integration_method"
-                    ),
-                    dipole_correction=electronic_payload.get("dipole_correction"),
-                    open_in_gui=open_in_gui,
-                    take_snapshot=take_snapshot,
-                    export_view_audit=export_view_audit,
-                    views=views,
-                    working_dir=working_dir,
-                    timeout_seconds=timeout_seconds,
-                    response_mode=McpResponseMode.FULL,
-                )
+                    "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                }
+                with _live_orchestration_context(orchestration_context):
+                    result = material_studio_castep_run_current(
+                        project_id=project_id,
+                        execution_mode=mode,
+                        task=electronic_payload.get("task"),
+                        quality=electronic_payload.get("quality"),
+                        functional=electronic_payload.get("functional"),
+                        cutoff_energy_ev=electronic_payload.get("cutoff_energy_ev"),
+                        kpoint_separation=electronic_payload.get("kpoint_separation"),
+                        kpoints=electronic_payload.get("kpoints"),
+                        properties_kpoint_separation=electronic_payload.get(
+                            "properties_kpoint_separation"
+                        ),
+                        band_structure_energy_max_ev=electronic_payload.get(
+                            "band_structure_energy_max_ev"
+                        ),
+                        band_structure_extra_bands=electronic_payload.get(
+                            "band_structure_extra_bands"
+                        ),
+                        band_structure_energy_tolerance_ev=electronic_payload.get(
+                            "band_structure_energy_tolerance_ev"
+                        ),
+                        dos_energy_max_ev=electronic_payload.get("dos_energy_max_ev"),
+                        dos_extra_bands=electronic_payload.get("dos_extra_bands"),
+                        dos_energy_tolerance_ev=electronic_payload.get(
+                            "dos_energy_tolerance_ev"
+                        ),
+                        dos_smearing_width_ev=electronic_payload.get(
+                            "dos_smearing_width_ev"
+                        ),
+                        dos_integration_method=electronic_payload.get(
+                            "dos_integration_method"
+                        ),
+                        dipole_correction=electronic_payload.get("dipole_correction"),
+                        open_in_gui=open_in_gui,
+                        take_snapshot=take_snapshot,
+                        export_view_audit=export_view_audit,
+                        views=views,
+                        working_dir=working_dir,
+                        timeout_seconds=timeout_seconds,
+                        response_mode=McpResponseMode.FULL,
+                    )
                 result.update(
                     {
                         "workflow": "castep_electronic_calculation",

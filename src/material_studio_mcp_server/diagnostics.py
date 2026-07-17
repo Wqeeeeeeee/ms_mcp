@@ -11,7 +11,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
-from .castep_electronic import verify_castep_electronic_receipt
+from .castep_electronic import (
+    assess_castep_electronic_result,
+    verify_castep_electronic_receipt,
+)
 from .castep_relaxation import (
     CASTEP_RELAXATION_RECEIPT_SCHEMA,
     crystal_structure_sha256,
@@ -1415,13 +1418,27 @@ def write_view_audit_bundle(
             bundle_dir / "semiconductor_castep_electronic_result.csv"
         )
         electronic_row = _semiconductor_castep_electronic_result_csv_row(
-            castep_electronic
+            castep_electronic,
+            semiconductor.get("castep_electronic_result_assessment"),
         )
         row_counts["semiconductor_castep_electronic_result"] = _write_csv(
             bundle_dir / "semiconductor_castep_electronic_result.csv",
             list(electronic_row),
             [electronic_row],
         )
+        band_edge_rows = _semiconductor_castep_band_edge_csv_rows(
+            castep_electronic,
+            semiconductor.get("castep_electronic_result_assessment"),
+        )
+        if band_edge_rows:
+            files["semiconductor_castep_band_edges_csv"] = str(
+                bundle_dir / "semiconductor_castep_band_edges.csv"
+            )
+            row_counts["semiconductor_castep_band_edges"] = _write_csv(
+                bundle_dir / "semiconductor_castep_band_edges.csv",
+                list(band_edge_rows[0]),
+                band_edge_rows,
+            )
 
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
     if commensurate_twist:
@@ -2301,6 +2318,12 @@ def write_view_audit_bundle(
             "semiconductor_dopant_concentration_warning_level",
             "semiconductor_degenerate_doping_review_required",
             "semiconductor_calculation_status",
+            "semiconductor_castep_electronic_assessment_status",
+            "semiconductor_castep_electronic_assessment_trust_status",
+            "semiconductor_castep_electronic_artifact_evidence_verified",
+            "semiconductor_castep_electronic_calculation_result_review_required",
+            "semiconductor_castep_electronic_structure_normality_blocked",
+            "semiconductor_castep_electronic_result_review_reasons",
             "semiconductor_2d_electrostatic_status",
             "semiconductor_2d_electrostatic_quality",
             "semiconductor_2d_expected_asymmetry_verified",
@@ -2369,6 +2392,9 @@ def _modeling_health_summary_csv_row(
     composition = semiconductor.get("composition_summary") or {}
     surface = semiconductor.get("surface_termination_summary") or {}
     calculation = semiconductor.get("calculation_preflight_summary") or {}
+    castep_electronic_assessment = (
+        semiconductor.get("castep_electronic_result_assessment") or {}
+    )
     return {
         "project_id": spec.project_id,
         "revision": spec.revision,
@@ -2468,6 +2494,32 @@ def _modeling_health_summary_csv_row(
             "semiconductor_degenerate_doping_review_required"
         ),
         "semiconductor_calculation_status": checks.get("semiconductor_calculation_status", calculation.get("status")),
+        "semiconductor_castep_electronic_assessment_status": checks.get(
+            "semiconductor_castep_electronic_assessment_status",
+            castep_electronic_assessment.get("status"),
+        ),
+        "semiconductor_castep_electronic_assessment_trust_status": checks.get(
+            "semiconductor_castep_electronic_assessment_trust_status",
+            castep_electronic_assessment.get("trust_status"),
+        ),
+        "semiconductor_castep_electronic_artifact_evidence_verified": checks.get(
+            "semiconductor_castep_electronic_artifact_evidence_verified",
+            castep_electronic_assessment.get("artifact_evidence_verified"),
+        ),
+        "semiconductor_castep_electronic_calculation_result_review_required": checks.get(
+            "semiconductor_castep_electronic_calculation_result_review_required",
+            castep_electronic_assessment.get("calculation_result_review_required"),
+        ),
+        "semiconductor_castep_electronic_structure_normality_blocked": checks.get(
+            "semiconductor_castep_electronic_structure_normality_blocked",
+            castep_electronic_assessment.get("structure_normality_blocked"),
+        ),
+        "semiconductor_castep_electronic_result_review_reasons": _json_csv_value(
+            checks.get(
+                "semiconductor_castep_electronic_result_review_reasons",
+                castep_electronic_assessment.get("result_review_reasons") or [],
+            )
+        ),
         "semiconductor_2d_electrostatic_status": checks.get("semiconductor_2d_electrostatic_status"),
         "semiconductor_2d_electrostatic_quality": checks.get("semiconductor_2d_electrostatic_quality"),
         "semiconductor_2d_expected_asymmetry_verified": checks.get(
@@ -3330,6 +3382,7 @@ def _semiconductor_castep_geometry_optimization_csv_row(
 
 def _semiconductor_castep_electronic_result_csv_row(
     summary: dict[str, Any],
+    assessment_value: Any = None,
 ) -> dict[str, Any]:
     checks = summary.get("checks") if isinstance(summary.get("checks"), dict) else {}
     native = (
@@ -3357,6 +3410,7 @@ def _semiconductor_castep_electronic_result_csv_row(
         if isinstance(band_edges.get("reported_band_gap_crosscheck"), dict)
         else {}
     )
+    assessment = assessment_value if isinstance(assessment_value, dict) else {}
     return {
         "available": summary.get("available"),
         "status": summary.get("status"),
@@ -3448,6 +3502,22 @@ def _semiconductor_castep_electronic_result_csv_row(
         "reported_band_gap_comparison_tolerance_ev": gap_crosscheck.get(
             "comparison_tolerance_ev"
         ),
+        "assessment_status": assessment.get("status"),
+        "assessment_trust_status": assessment.get("trust_status"),
+        "assessment_artifact_evidence_verified": assessment.get(
+            "artifact_evidence_verified"
+        ),
+        "assessment_scientific_result_verified": False,
+        "assessment_structure_normality_blocked": assessment.get(
+            "structure_normality_blocked"
+        ),
+        "assessment_calculation_result_review_required": assessment.get(
+            "calculation_result_review_required"
+        ),
+        "assessment_result_review_reasons": json.dumps(
+            assessment.get("result_review_reasons") or [],
+            separators=(",", ":"),
+        ),
         **_castep_band_edge_state_csv_values("sampled_vbm", band_edges.get("vbm")),
         **_castep_band_edge_state_csv_values("sampled_cbm", band_edges.get("cbm")),
         "checks": json.dumps(checks, sort_keys=True, separators=(",", ":")),
@@ -3479,6 +3549,133 @@ def _castep_band_edge_state_csv_values(
             "energy_minus_fermi_ev"
         ),
     }
+
+
+def _semiconductor_castep_band_edge_csv_rows(
+    summary: dict[str, Any],
+    assessment_value: Any,
+) -> list[dict[str, Any]]:
+    if summary.get("binding_verified") is not True:
+        return []
+    native = (
+        summary.get("native_output_audit")
+        if isinstance(summary.get("native_output_audit"), dict)
+        else {}
+    )
+    bands = (
+        native.get("bands_summary")
+        if isinstance(native.get("bands_summary"), dict)
+        else {}
+    )
+    edges = (
+        native.get("sampled_band_edges")
+        if isinstance(native.get("sampled_band_edges"), dict)
+        else {}
+    )
+    if not edges:
+        return []
+    assessment = assessment_value if isinstance(assessment_value, dict) else {}
+    aggregate_crosscheck = (
+        edges.get("reported_band_gap_crosscheck")
+        if isinstance(edges.get("reported_band_gap_crosscheck"), dict)
+        else {}
+    )
+    common = {
+        "receipt_binding_verified": True,
+        "task": summary.get("task"),
+        "source_revision": summary.get("source_revision"),
+        "target_revision": summary.get("target_revision"),
+        "native_output_audit_schema": native.get("schema_version"),
+        "native_output_audit_status": native.get("status"),
+        "native_bands_source_path": bands.get("source_path"),
+        "native_bands_source_sha256": bands.get("source_sha256"),
+        "native_band_kpoint_count": bands.get("number_of_kpoints"),
+        "native_band_spin_component_count": bands.get(
+            "number_of_spin_components"
+        ),
+        "scientific_convergence_verified": False,
+        "scientific_band_gap_verified": False,
+        "assessment_status": assessment.get("status"),
+        "assessment_trust_status": assessment.get("trust_status"),
+        "assessment_result_review_reasons": json.dumps(
+            assessment.get("result_review_reasons") or [],
+            separators=(",", ":"),
+        ),
+    }
+
+    def row_for(
+        row_type: str,
+        edge: dict[str, Any],
+        *,
+        crossing_band: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        crosscheck = (
+            edge.get("reported_band_gap_crosscheck")
+            if isinstance(edge.get("reported_band_gap_crosscheck"), dict)
+            else aggregate_crosscheck
+        )
+        crossing = crossing_band or {}
+        return {
+            **common,
+            "row_type": row_type,
+            "status": edge.get("status"),
+            "spin_component": edge.get("spin_component"),
+            "gap_spin_component": edge.get("gap_spin_component"),
+            "fermi_energy_hartree": edge.get("fermi_energy_hartree"),
+            "fermi_energy_ev": edge.get("fermi_energy_ev"),
+            "sampled_gap_ev": edge.get("sampled_gap_ev"),
+            "fermi_crossing_observed": edge.get(
+                "fermi_crossing_observed"
+            ),
+            "crossing_band_count": edge.get("crossing_band_count"),
+            "crossing_bands_truncated": edge.get("crossing_bands_truncated"),
+            "minimum_same_kpoint_fermi_separation_ev": edge.get(
+                "minimum_same_kpoint_fermi_separation_ev"
+            ),
+            "minimum_abs_energy_minus_fermi_ev": edge.get(
+                "minimum_abs_energy_minus_fermi_ev"
+            ),
+            "crossing_band_index": crossing.get("band_index"),
+            "crossing_minimum_energy_minus_fermi_ev": crossing.get(
+                "minimum_energy_minus_fermi_ev"
+            ),
+            "crossing_maximum_energy_minus_fermi_ev": crossing.get(
+                "maximum_energy_minus_fermi_ev"
+            ),
+            "crossing_near_fermi_state_count": crossing.get(
+                "near_fermi_state_count"
+            ),
+            "reported_band_gap_crosscheck_status": crosscheck.get("status"),
+            "reported_band_gap_ev": crosscheck.get("reported_band_gap_ev"),
+            "reported_band_gap_difference_ev": crosscheck.get(
+                "absolute_difference_ev"
+            ),
+            "reported_band_gap_comparison_tolerance_ev": crosscheck.get(
+                "comparison_tolerance_ev"
+            ),
+            **_castep_band_edge_state_csv_values("vbm", edge.get("vbm")),
+            **_castep_band_edge_state_csv_values("cbm", edge.get("cbm")),
+            "warnings": json.dumps(
+                edge.get("warnings") or [],
+                separators=(",", ":"),
+            ),
+        }
+
+    rows = [row_for("aggregate", edges)]
+    for channel in edges.get("spin_channels") or []:
+        if not isinstance(channel, dict):
+            continue
+        rows.append(row_for("spin_channel", channel))
+        for crossing in channel.get("crossing_bands") or []:
+            if isinstance(crossing, dict):
+                rows.append(
+                    row_for(
+                        "crossing_band",
+                        channel,
+                        crossing_band=crossing,
+                    )
+                )
+    return rows
 
 
 def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -5360,6 +5557,10 @@ def _semiconductor_health_summary(
             "revision; inspect castep_geometry_optimization_summary."
         )
     castep_electronic_result_summary = verify_castep_electronic_receipt(spec)
+    castep_electronic_result_assessment = assess_castep_electronic_result(
+        spec,
+        receipt_summary=castep_electronic_result_summary,
+    )
     if castep_electronic_result_summary:
         if not castep_electronic_result_summary.get("binding_verified"):
             warnings.append(
@@ -5554,6 +5755,9 @@ def _semiconductor_health_summary(
         "layer_rotation_summary": layer_rotation_summary,
         "castep_geometry_optimization_summary": castep_geometry_optimization_summary,
         "castep_electronic_result_summary": castep_electronic_result_summary,
+        "castep_electronic_result_assessment": (
+            castep_electronic_result_assessment
+        ),
         "commensurate_twist_summary": commensurate_twist_summary,
         "commensurate_heterobilayer_summary": commensurate_heterobilayer_summary,
         "interface_scaffold_summary": interface_scaffold_summary,

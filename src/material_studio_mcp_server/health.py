@@ -818,6 +818,9 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             )
 
     castep_electronic = semiconductor.get("castep_electronic_result_summary") or {}
+    castep_electronic_assessment = (
+        semiconductor.get("castep_electronic_result_assessment") or {}
+    )
     if castep_electronic:
         checks["semiconductor_castep_electronic_task"] = castep_electronic.get(
             "task"
@@ -949,6 +952,32 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append(
                 "Native sampled CASTEP band edges differ from the reported BandGap "
                 "beyond the recorded comparison tolerance."
+            )
+    if castep_electronic_assessment:
+        checks["semiconductor_castep_electronic_assessment_status"] = (
+            castep_electronic_assessment.get("status")
+        )
+        checks["semiconductor_castep_electronic_assessment_trust_status"] = (
+            castep_electronic_assessment.get("trust_status")
+        )
+        checks["semiconductor_castep_electronic_artifact_evidence_verified"] = (
+            castep_electronic_assessment.get("artifact_evidence_verified")
+        )
+        checks[
+            "semiconductor_castep_electronic_calculation_result_review_required"
+        ] = castep_electronic_assessment.get("calculation_result_review_required")
+        checks[
+            "semiconductor_castep_electronic_structure_normality_blocked"
+        ] = castep_electronic_assessment.get("structure_normality_blocked")
+        checks["semiconductor_castep_electronic_result_review_reasons"] = (
+            castep_electronic_assessment.get("result_review_reasons") or []
+        )
+        if castep_electronic_assessment.get(
+            "calculation_result_review_required"
+        ) is True:
+            warnings.append(
+                "CASTEP electronic result requires calculation-only review: "
+                f"{castep_electronic_assessment.get('status')}."
             )
 
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}

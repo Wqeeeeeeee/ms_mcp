@@ -1152,6 +1152,24 @@ returns no trusted sampled band-edge summary. Fresh view bundles include the
 sampled status, gap, spin component, VBM/CBM states, Fermi-crossing count, and
 reported-gap comparison in `semiconductor_castep_electronic_result.csv`.
 
+Requests such as `Inspect the current CASTEP electronic result and export
+native band edges` or `检查当前 CASTEP 电子计算结果是否正常` are inspection
+requests, not execution requests. They route through `inspect_current`, select
+the `castep_electronic_results` diagnostic focus, preserve the current revision,
+and do not call the runner. The focus requires the revision/hash-bound result
+summary, `castep_electronic_result_assessment`, compact semiconductor result
+review, and both result CSVs when sampled band evidence is available.
+
+Read `castep_electronic_result_assessment` before acting on a prior result. Its
+`artifact_evidence_verified` field can establish provenance only;
+`scientific_convergence_verified`, `scientific_band_gap_verified`, and
+`scientific_result_verified` remain false. Its reasons are calculation-only
+review notes and do not make an otherwise unchanged structure abnormal. Follow
+`recommended_preview_payload` to inspect a possible rerun, and switch to
+`execution_mode=execute` only after explicit user confirmation. The dedicated
+`semiconductor_castep_band_edges.csv` preserves aggregate, per-spin, and
+crossing-band rows so clients do not need to flatten native audit JSON.
+
 ## Rollback
 
 Use `material_studio_project_rollback` to create a new revision copied from a previous revision. Rollback must not delete historical revisions.

@@ -3224,6 +3224,16 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             "pattern": "Apply deterministic lattice strain, e.g. 'apply 2% tensile strain in-plane' or 'apply 1% strain along c'.",
         },
         {
+            "template_id": "crystal_lattice_parameters",
+            "operations": ["set_lattice", "set_metadata"],
+            "requires_existing_project": True,
+            "pattern": (
+                "Set explicit crystal lattice lengths or angles while preserving fractional coordinates, "
+                "e.g. 'set lattice parameters a=3.189 and c=5.185 angstrom' or "
+                "'\u628a\u6676\u683c\u53c2\u6570 a \u548c b \u8bbe\u4e3a 3.189 \u57c3'."
+            ),
+        },
+        {
             "template_id": "crystal_add_atom_fractional",
             "operations": ["add_atom"],
             "requires_existing_project": True,
@@ -4085,6 +4095,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_center_slab,
             _match_gate_stack_thickness,
             _match_current_quantum_well_thickness,
+            _match_crystal_lattice_parameters,
             _match_crystal_strain,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
@@ -4130,6 +4141,7 @@ def _looks_like_current_crystal_modifier_request(text: str) -> bool:
             _match_gate_stack_thickness,
             _match_current_quantum_well_thickness,
             _match_current_p_gan_gate_cap_thickness,
+            _match_crystal_lattice_parameters,
             _match_crystal_interstitial_fractional,
             _match_crystal_add_atom_fractional,
             _match_crystal_set_atom_fractional,
@@ -10448,6 +10460,10 @@ def _apply_new_crystal_composite_operations(
             for target_layer, thickness in _match_gate_stack_thicknesses(text):
                 apply_operations([{"type": "set_gate_stack_thickness", "target_layer": target_layer, "thickness_angstrom": thickness}])
 
+        lattice_parameter_match = _match_crystal_lattice_parameters(text)
+        if lattice_parameter_match is not None:
+            apply_operations(_crystal_lattice_parameter_operations(working, lattice_parameter_match))
+
         strain_match = _match_crystal_strain(text)
         if strain_match is not None:
             axes, percent, mode = strain_match
@@ -11142,6 +11158,14 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
                 ),
             )
 
+        lattice_parameter_match = _match_crystal_lattice_parameters(text)
+        if lattice_parameter_match is not None:
+            changed_fields = ", ".join(lattice_parameter_match)
+            apply_group(
+                _crystal_lattice_parameter_operations(working, lattice_parameter_match),
+                f"set lattice parameters {changed_fields}",
+            )
+
         vacancy_match = _match_crystal_vacancy(text)
         if vacancy_match is not None:
             apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
@@ -11247,7 +11271,11 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
         if castep_match is not None:
             apply_group([castep_match], "set CASTEP calculation settings")
     except ValueError as exc:
-        if labels:
+        lattice_and_castep = (
+            _match_crystal_lattice_parameters(text) is not None
+            and _match_castep_settings(text, current_spec) is not None
+        )
+        if labels or lattice_and_castep:
             return unsupported(exc)
         return None
 
@@ -11465,6 +11493,28 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                 operations,
                 "gate_stack_thickness",
                 description[0].upper() + description[1:] + ".",
+            )
+
+        lattice_parameter_match = _match_crystal_lattice_parameters(text)
+        if lattice_parameter_match is not None:
+            try:
+                operations = _crystal_lattice_parameter_operations(current_spec, lattice_parameter_match)
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="crystal_lattice_parameters",
+                    notes=[
+                        "An explicit lattice-parameter edit matched but could not be applied safely.",
+                        str(exc),
+                    ],
+                )
+            changed_fields = ", ".join(lattice_parameter_match)
+            return _patch_plan(
+                operations,
+                "crystal_lattice_parameters",
+                f"Set explicit crystal lattice parameters {changed_fields} while preserving fractional coordinates.",
             )
 
         strain_match = _match_crystal_strain(text)
@@ -12969,6 +13019,143 @@ def _match_contact_length_value(text: str, term_patterns: Sequence[str]) -> floa
             if 0.0 < thickness <= 200.0:
                 return thickness
     return None
+
+
+def _match_crystal_lattice_parameters(text: str) -> dict[str, float] | None:
+    gate = re.search(
+        r"\blattice\s+(?:constant|parameter)s?\b|\b(?:unit\s+)?cell\s+parameters?\b|"
+        r"(?:\u6676\u683c\u5e38\u6570|\u6676\u683c\u53c2\u6570|\u6676\u80de\u53c2\u6570|\u6676\u80de\u5e38\u6570)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if gate is None:
+        return None
+
+    normalized = (
+        text.replace("\u03b1", "alpha")
+        .replace("\u03b2", "beta")
+        .replace("\u03b3", "gamma")
+    )
+    number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+    connector = (
+        r"(?:=|:|\bto\b|\bas\b|\bis\b|\bat\b|\bof\b|"
+        r"\u8bbe\u7f6e\u4e3a|\u8bbe\u4e3a|\u6539\u4e3a|\u6539\u6210|"
+        r"\u8c03\u6574\u5230|\u8c03\u5230|\u4e3a)"
+    )
+    unit = (
+        r"angstroms?|ang|nm|degrees?|deg|\u212b|\u00c5|\u00e5|"
+        r"\u57c3|\u5ea6|\u00b0"
+    )
+    edits: dict[str, float] = {}
+    conflict = False
+
+    def add_value(field: str, raw_value: str, raw_unit: str | None) -> None:
+        nonlocal conflict
+        field = field.lower()
+        unit_value = (raw_unit or "").lower()
+        value = float(raw_value)
+        if field in {"a", "b", "c"}:
+            if unit_value in {"degree", "degrees", "deg", "\u5ea6", "\u00b0"}:
+                conflict = True
+                return
+            if unit_value == "nm":
+                value *= 10.0
+        elif unit_value in {
+            "angstrom",
+            "angstroms",
+            "ang",
+            "nm",
+            "\u212b",
+            "\u00c5",
+            "\u00e5",
+            "\u57c3",
+        }:
+            conflict = True
+            return
+        value = round(value, 6)
+        if field in edits and abs(edits[field] - value) > 1e-9:
+            conflict = True
+            return
+        edits[field] = value
+
+    axis_group_patterns = (
+        rf"(?P<axes>(?<![A-Za-z0-9_])[abc](?![A-Za-z0-9_])"
+        rf"(?:\s*(?:,|/|&|\band\b|\u548c|\u4e0e)\s*(?<![A-Za-z0-9_])[abc](?![A-Za-z0-9_]))+)"
+        rf"\s*{connector}\s*(?P<value>{number})(?:\s*(?P<unit>{unit}))?",
+        rf"(?P<axes>(?<![A-Za-z0-9_])[abc](?![A-Za-z0-9_])"
+        rf"(?:\s*=\s*(?<![A-Za-z0-9_])[abc](?![A-Za-z0-9_]))+)"
+        rf"\s*=\s*(?P<value>{number})(?:\s*(?P<unit>{unit}))?",
+    )
+    for pattern in axis_group_patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            axes = re.findall(
+                r"(?<![A-Za-z0-9_])[abc](?![A-Za-z0-9_])",
+                match.group("axes"),
+                flags=re.IGNORECASE,
+            )
+            for axis in axes:
+                add_value(axis, match.group("value"), match.groupdict().get("unit"))
+
+    individual_pattern = (
+        rf"(?<![A-Za-z0-9_])(?P<field>alpha|beta|gamma|a|b|c)(?![A-Za-z0-9_])"
+        rf"\s*{connector}\s*(?P<value>{number})(?:\s*(?P<unit>{unit}))?"
+    )
+    for match in re.finditer(individual_pattern, normalized, flags=re.IGNORECASE):
+        add_value(match.group("field"), match.group("value"), match.groupdict().get("unit"))
+
+    if conflict or not edits:
+        return None
+    field_order = ("a", "b", "c", "alpha", "beta", "gamma")
+    return {field: edits[field] for field in field_order if field in edits}
+
+
+def _crystal_lattice_parameter_operations(
+    current_spec: ModelSpec,
+    edits: dict[str, float],
+) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("explicit lattice-parameter edits require a crystal model.")
+    reference_lattice = current_spec.model.lattice.model_dump(mode="json")
+    requested = {field: float(value) for field, value in edits.items()}
+    new_lattice = LatticeSpec.model_validate({**reference_lattice, **requested})
+    lattice_payload = new_lattice.model_dump(mode="json")
+    changed_fields = [
+        field
+        for field in ("a", "b", "c", "alpha", "beta", "gamma")
+        if field in requested and abs(float(reference_lattice[field]) - float(lattice_payload[field])) > 1e-9
+    ]
+    if not changed_fields:
+        raise ValueError("the requested lattice parameters already match the current crystal lattice.")
+
+    record = {
+        "changed_fields": changed_fields,
+        "requested_parameters": requested,
+        "reference_lattice": reference_lattice,
+        "lattice": lattice_payload,
+        "fractional_coordinates_preserved": True,
+        "length_unit": "angstrom",
+        "angle_unit": "degree",
+        "source": "natural_language_crystal_lattice_parameters",
+    }
+    previous = [
+        dict(item)
+        for item in (current_spec.metadata or {}).get("lattice_parameter_edits", [])
+        if isinstance(item, dict)
+    ]
+    previous.append(record)
+    metadata_updates: dict[str, Any] = {
+        "lattice_parameter_edits": previous,
+        "last_lattice_parameter_edit": record,
+    }
+    if (
+        ("a" in changed_fields or "b" in changed_fields)
+        and abs(new_lattice.a - new_lattice.b) <= 1e-6
+    ):
+        metadata_updates["in_plane_lattice_angstrom"] = new_lattice.a
+    return [
+        {"type": "set_lattice", "lattice": lattice_payload},
+        {"type": "set_metadata", "metadata_updates": metadata_updates},
+    ]
 
 
 def _match_crystal_strain(text: str) -> tuple[list[str], float, str] | None:

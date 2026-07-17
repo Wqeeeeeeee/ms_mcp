@@ -4281,6 +4281,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "p_gan_gate_cap",
                     "gate_stack_thickness",
                     "add_vacuum",
+                    "set_lattice_parameters",
                     "apply_strain",
                     "delete_atom",
                     "auto_site_vacancy",
@@ -4323,6 +4324,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "Build 4H-SiC PN junction and export doping diagnostics.",
                     "Build a silicon p-n junction and hot-load it in Materials Studio.",
                     "Make it a p-n junction.",
+                ],
+                "lattice_parameter_examples": [
+                    "Build silicon crystal with lattice constant a=5.45 angstrom.",
+                    "Build GaN with lattice parameters a=b=3.2 and c=5.2 angstrom.",
+                    "\u6784\u5efa\u6c2e\u5316\u9553\u6676\u4f53\uff0c\u6676\u683c\u53c2\u6570 a \u548c b \u8bbe\u4e3a 3.2 \u57c3\uff0cc \u8bbe\u4e3a 5.2 \u57c3\u3002",
                 ],
                 "superlattice_examples": [
                     "Build a 3-period GaAs/AlAs MQW.",
@@ -23124,6 +23130,7 @@ def _live_contract_patch_command_catalog() -> dict[str, Any]:
             "crystal_vacuum",
             "crystal_center_slab",
             "castep_settings",
+            "crystal_lattice_parameters",
             "crystal_strain",
             "crystal_add_atom_fractional",
             "crystal_interstitial_fractional",
@@ -23254,6 +23261,7 @@ def _live_contract_followup_edit_capabilities(
                 "crystal_hydrogen_passivation",
                 "crystal_surface_preparation",
                 "castep_settings",
+                "crystal_lattice_parameters",
                 "crystal_strain",
                 "crystal_add_atom_fractional",
                 "crystal_set_atom_fractional",
@@ -23272,6 +23280,7 @@ def _live_contract_followup_edit_capabilities(
             "add 10 angstrom vacuum along z",
             "hydrogen passivate both surfaces",
             "set CASTEP cutoff to 600 eV",
+            "set lattice parameters a=3.189 and c=5.185 angstrom",
         ]
         if interface_scaffold_available:
             recommended_examples.insert(3, "set interface gap to 2.5 angstrom")

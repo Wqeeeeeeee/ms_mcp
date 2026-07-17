@@ -6762,6 +6762,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "quantum_well_layers" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "quantum_well_thickness" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "p_gan_gate_cap" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    assert "set_lattice_parameters" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "apply_strain" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "auto_site_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "sublattice_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6772,6 +6773,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "alloy_fraction" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "formula_alloy" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "Build a 3-period AlN/GaN superlattice." in capabilities["natural_language"]["new_structure_inline_modifiers"]["superlattice_examples"]
+    assert (
+        "Build GaN with lattice parameters a=b=3.2 and c=5.2 angstrom."
+        in capabilities["natural_language"]["new_structure_inline_modifiers"]["lattice_parameter_examples"]
+    )
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7026,6 +7031,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "semiconductor_pn_junction",
         "castep_settings",
         "crystal_alloy_fraction",
+        "crystal_lattice_parameters",
         "crystal_strain",
         "crystal_add_atom_fractional",
         "crystal_interstitial_fractional",
@@ -25203,6 +25209,100 @@ def test_live_modeling_request_infers_chinese_uniaxial_strain_patch(
     assert result["modeling_health"]["checks"]["semiconductor_applied_strain_max_abs_percent"] == 3.0
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_strain_csv"]).exists()
     assert backend.opened == []
+
+
+def test_live_modeling_request_applies_inline_explicit_lattice_parameters(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "Build gallium nitride crystal with lattice parameters a and b to 3.2 angstrom and c=5.2 angstrom.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "gallium_nitride_wurtzite"
+    assert result["view_audit"]["model"]["lattice"] == {
+        "a": 3.2,
+        "b": 3.2,
+        "c": 5.2,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 120.0,
+    }
+    metadata = result["view_audit"]["metadata"]
+    assert metadata["nl_composite_operations"] == [
+        "set_lattice",
+        "set_metadata in_plane_lattice_angstrom,last_lattice_parameter_edit,lattice_parameter_edits",
+    ]
+    assert metadata["last_lattice_parameter_edit"]["changed_fields"] == ["a", "b", "c"]
+    lattice_summary = result["modeling_report"]["inspection"]["semiconductor_health"]["lattice_summary"]
+    assert lattice_summary["a_angstrom"] == 3.2
+    assert lattice_summary["c_angstrom"] == 5.2
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_lattice_csv"]).exists()
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_hotloads_chinese_lattice_parameter_patch(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build gallium nitride crystal.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    result = server.material_studio_live_modeling_request(
+        "\u628a\u6676\u683c\u53c2\u6570 a \u548c b \u8bbe\u4e3a 3.2 \u57c3\uff0cc \u6539\u4e3a 5.2 \u57c3\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "patch"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    assert result["nl_plan"]["template_id"] == "crystal_lattice_parameters"
+    assert result["new_revision"] == 1
+    assert result["view_audit"]["model"]["lattice"]["a"] == 3.2
+    assert result["view_audit"]["model"]["lattice"]["b"] == 3.2
+    assert result["view_audit"]["model"]["lattice"]["c"] == 5.2
+    assert result["revision_delta"]["crystal"]["lattice_delta"] == {
+        "a": 0.011,
+        "b": 0.011,
+        "c": 0.015,
+    }
+    assert result["revision_delta"]["crystal"]["fractional_coordinate_update_count"] == 0
+    assert result["revision_delta"]["crystal"]["cartesian_moved_atom_count"] == 4
+    assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_lattice_csv"]).exists()
+    assert isolated_fake_gui.opened and isolated_fake_gui.opened[-1].suffix == ".cif"
+
+
+def test_live_modeling_request_compacts_lattice_parameter_revision_delta(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build gallium nitride crystal.",
+        working_dir=str(tmp_path),
+    )
+
+    result = server.material_studio_live_modeling_request(
+        "Set lattice constant c to 5.25 angstrom.",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert result["ok"] is True
+    assert result["response_mode"] == "compact"
+    assert result["response_schema"] == "material_studio_live_compact_v2"
+    assert result["nl_plan"]["template_id"] == "crystal_lattice_parameters"
+    assert result["revision_delta"]["crystal"]["lattice_delta"] == {"c": 0.065}
+    assert result["revision_delta"]["crystal"]["fractional_coordinate_update_count"] == 0
+    assert result["revision_delta"]["crystal"]["cartesian_moved_atom_count"] == 3
+    assert isolated_fake_gui.opened == []
 
 
 def test_live_modeling_request_auto_selects_semiconductor_dopant_site_from_chinese(monkeypatch, tmp_path: Path) -> None:

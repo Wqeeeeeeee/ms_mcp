@@ -2505,6 +2505,75 @@ def test_infer_modeling_plan_maps_chinese_strain_phrases() -> None:
     assert uniaxial_record["mode"] == "uniaxial_compressive"
 
 
+def test_infer_modeling_plan_maps_explicit_lattice_parameter_phrases() -> None:
+    base = load_example("silicon_diamond_spec.json")
+
+    english_plan = infer_modeling_plan(
+        "Set lattice parameters a and b to 5.45 angstrom and gamma=91 degrees.",
+        current_spec=base,
+    )
+    assert english_plan.kind == "patch"
+    assert english_plan.template_id == "crystal_lattice_parameters"
+    english_lattice = english_plan.payload["operations"][0]["lattice"]
+    assert english_lattice == {
+        "a": 5.45,
+        "b": 5.45,
+        "c": 5.431,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 91.0,
+    }
+    record = english_plan.payload["operations"][1]["metadata_updates"]["last_lattice_parameter_edit"]
+    assert record["changed_fields"] == ["a", "b", "gamma"]
+    assert record["fractional_coordinates_preserved"] is True
+    assert record["source"] == "natural_language_crystal_lattice_parameters"
+
+    chinese_plan = infer_modeling_plan(
+        "\u628a\u6676\u683c\u53c2\u6570 a \u548c b \u8bbe\u4e3a 0.32 nm\uff0cc \u6539\u4e3a 5.2 \u57c3",
+        current_spec=base,
+    )
+    assert chinese_plan.kind == "patch"
+    assert chinese_plan.template_id == "crystal_lattice_parameters"
+    chinese_lattice = chinese_plan.payload["operations"][0]["lattice"]
+    assert chinese_lattice["a"] == 3.2
+    assert chinese_lattice["b"] == 3.2
+    assert chinese_lattice["c"] == 5.2
+
+    explicit_nm_plan = infer_modeling_plan(
+        "Set lattice parameters a=b=0.32 nm and c=0.52 nm.",
+        current_spec=base,
+    )
+    explicit_nm_lattice = explicit_nm_plan.payload["operations"][0]["lattice"]
+    assert explicit_nm_lattice["a"] == 3.2
+    assert explicit_nm_lattice["b"] == 3.2
+    assert explicit_nm_lattice["c"] == 5.2
+
+    unrelated_nm_plan = infer_modeling_plan(
+        "Set lattice constant a=3.2; the existing vacuum note is 1 nm.",
+        current_spec=base,
+    )
+    assert unrelated_nm_plan.payload["operations"][0]["lattice"]["a"] == 3.2
+
+    no_op_plan = infer_modeling_plan(
+        "Set lattice constants a=b=c=5.431 angstrom.",
+        current_spec=base,
+    )
+    assert no_op_plan.kind == "unsupported"
+    assert no_op_plan.template_id == "crystal_lattice_parameters"
+    assert "already match" in " ".join(no_op_plan.notes)
+
+    no_op_composite_plan = infer_modeling_plan(
+        "Set lattice constant a to 5.431 angstrom and CASTEP cutoff to 600 eV.",
+        current_spec=base,
+    )
+    assert no_op_composite_plan.kind == "unsupported"
+    assert no_op_composite_plan.template_id == "crystal_composite_edit"
+    assert "already match" in " ".join(no_op_composite_plan.notes)
+
+    assert infer_modeling_plan("Apply 2% strain along c.", current_spec=base).template_id == "crystal_strain"
+    assert infer_modeling_plan("Set vacuum to 10 angstrom.", current_spec=base).template_id == "crystal_vacuum"
+
+
 def test_infer_modeling_plan_maps_chinese_gate_stack_thickness_phrases() -> None:
     base = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
 

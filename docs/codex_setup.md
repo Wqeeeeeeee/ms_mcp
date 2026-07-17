@@ -884,7 +884,7 @@ atom-level patch commands such as delete/substitute/move-to-coordinate,
 add-atom-at-coordinate, add/delete bond, set bond type, and conservative
 functional-group replacements for nitro, hydroxyl, amino, and methyl. For
 crystal current projects it also supports semiconductor-style patch commands
-for explicit supercells, superlattice period repetition, lattice strain, dopant fractions, alloy fractions, vacancies, interstitials, antisites, dopant substitutions, auto-site vacancy/dopant selection, vacuum layers,
+for explicit supercells, superlattice period repetition, explicit lattice parameters, lattice strain, dopant fractions, alloy fractions, vacancies, interstitials, antisites, dopant substitutions, auto-site vacancy/dopant selection, vacuum layers,
 surface hydrogen passivation, explicit full dangling-bond hydrogen
 passivation, adding atoms at fractional coordinates, and moving atoms to
 fractional coordinates.
@@ -904,6 +904,11 @@ neighbors are treated as review warnings rather than accidental model failures.
 Natural-language strain patches record reference and strained lattice values in
 `metadata.applied_strain`, expose `semiconductor_health.strain_summary`, and
 export `semiconductor_strain.csv`.
+Natural-language explicit lattice edits accept named `a`, `b`, `c`, `alpha`,
+`beta`, and `gamma` parameters after an explicit lattice/cell-parameter phrase.
+They preserve fractional coordinates, record `metadata.lattice_parameter_edits`,
+and rely on `semiconductor_lattice.csv`, reciprocal-lattice diagnostics, neighbor
+diagnostics, and `revision_delta.crystal.lattice_delta` for post-edit review.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

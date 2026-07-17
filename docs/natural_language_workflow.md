@@ -688,6 +688,18 @@ the reference and strained lattice in `metadata.applied_strain`, and export a
 `semiconductor_strain.csv` table. Strain above the configured health threshold
 is reported as `ready_with_warnings` or `passed_with_warnings` instead of being
 treated as fully normal.
+Explicit lattice-parameter edits use the same immutable patch path without
+pretending the change is strain. Requests such as `set lattice constant a to
+5.43 angstrom`, `set lattice parameters a=b=3.189 and c=5.185 angstrom`, or
+`把晶格参数 a 和 b 设为 3.189 埃，c 设为 5.185 埃` preserve fractional
+coordinates, record the before/after receipt in
+`metadata.lattice_parameter_edits`, and re-export the existing semiconductor
+lattice, reciprocal-lattice, neighbor, and revision-delta diagnostics. Lengths
+default to Angstrom and may be supplied in `nm` when the unit is attached to
+the corresponding parameter or axis group; `alpha`, `beta`, and `gamma`
+default to degrees. The request must name `lattice constant`, `lattice
+parameter`, `cell parameter`, `晶格常数`, `晶格参数`, or `晶胞参数`, so
+ordinary layer-thickness, vacuum, and strain text is not reinterpreted.
 Chinese strain follow-ups use the same patch path. Supported examples include
 `面内拉伸 2％ 应变`, `对 c 轴加 -3% 应变`, `对c轴加 -3％ 应变`, and
 `c轴压缩 6％ 应变`; both ASCII `%` and full-width `％` are accepted.

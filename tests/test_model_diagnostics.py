@@ -3560,6 +3560,52 @@ def test_write_view_audit_bundle_exports_crystal_csv_tables(tmp_path: Path) -> N
     assert "unique_neighbor_ids" in crystal_coordination_csv
 
 
+def test_layer_translation_diagnostics_bind_current_layer_and_export_csv(tmp_path: Path) -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+    plan = infer_modeling_plan(
+        "Shift layer 3 by 0.5 angstrom along x.",
+        current_spec=base,
+    )
+    translated, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=plan.payload["operations"],
+        ),
+    )
+
+    audit = model_view_audit(translated)
+    summary = audit["health"]["semiconductor_health"]["layer_translation_summary"]
+    assert summary["quality"] == "complete"
+    assert summary["metadata_consistent"] is True
+    assert summary["target_binding_matches_current_layer"] is True
+    assert summary["current_layer_atom_ids"] == ["Si3", "Si5"]
+    assert summary["latest"]["translation_axis"] == "a"
+
+    bundle = write_view_audit_bundle(tmp_path, translated, audit)
+    csv_path = Path(bundle["files"]["semiconductor_layer_translation_csv"])
+    assert csv_path.exists()
+    assert bundle["row_counts"]["semiconductor_layer_translation"] == 1
+    rows = list(csv.DictReader(csv_path.open(encoding="utf-8", newline="")))
+    assert rows[0]["layer_index"] == "3"
+    assert rows[0]["atom_ids"] == "Si3;Si5"
+    assert rows[0]["metadata_consistent"] == "True"
+
+    expanded, _ = apply_semantic_patch(
+        translated,
+        SemanticPatch(
+            project_id=translated.project_id,
+            base_revision=translated.revision,
+            operations=[{"type": "make_supercell", "matrix": [2, 1, 1]}],
+        ),
+    )
+    stale_summary = model_view_audit(expanded)["health"]["semiconductor_health"]["layer_translation_summary"]
+    assert stale_summary["quality"] == "review_required"
+    assert stale_summary["metadata_consistent"] is False
+    assert stale_summary["target_binding_matches_current_layer"] is False
+
+
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:
     hetero = load_example("gallium_arsenide_aluminum_arsenide_001_heterostructure_spec.json")
     hetero_bundle = write_view_audit_bundle(tmp_path / "hetero", hetero, model_view_audit(hetero))

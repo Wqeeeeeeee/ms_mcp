@@ -319,5 +319,10 @@ View Onto 路径，但必须记录映射和平面/晶向双重证据；其他晶
 Copy Script 审核。MCP 不猜测 MaterialsScript 相机 API，也不把同指标 `[uvw]` 与 `(hkl)` 等同。
 半导体诊断还会把具体掺杂位点记录与当前原子表逐项核对；若记录元素与实际元素不一致，
 即使当前 revision 已热加载到 GUI，也会阻断“模型正常”和“可计算”的结论，直到元数据调和并重新审计。
+半导体层状结构支持可审计的横向堆垛配准调整，例如 `shift layer 3 by 0.5 angstrom along x`
+或 `将顶层沿 y 方向平移 -0.25 埃并热加载`。层号先解析为明确的原子 ID，随后通过
+`translate_crystal_atoms` 刚性平移并周期回卷；`layer_translation_summary` 和
+`semiconductor_layer_translation.csv` 会记录目标绑定、位移及回卷原子，法向位移则继续使用
+界面间距或层厚工具。
 晶体 execute/hot-load 还会重新解析生成的 CIF，逐项核对原子 ID、元素、分数坐标和六个晶格参数。
 已有 CIF 与当前 `CrystalSpec` 不一致时，即使路径和窗口 revision 正确也会阻断正常性结论；重新物化需要显式确认且不会创建空 revision。

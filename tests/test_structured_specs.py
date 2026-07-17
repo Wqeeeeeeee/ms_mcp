@@ -130,9 +130,13 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "set_metadata" in operation_type["enum"]
     assert "reconcile_dopant_metadata" in operation_type["enum"]
     assert "set_gate_stack_thickness" in operation_type["enum"]
+    assert "translate_crystal_atoms" in operation_type["enum"]
     task_schema = schema["$defs"]["SemanticPatchOperation"]["properties"]["task"]
     assert task_schema["anyOf"][0]["$ref"] == "#/$defs/CastepTask"
     assert "metadata_updates" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "atom_ids" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "distance_angstrom" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "wrap_fractional" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "unsupported_operation" not in operation_type["enum"]
 
 

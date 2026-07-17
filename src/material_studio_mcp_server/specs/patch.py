@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Literal
 
@@ -26,6 +27,7 @@ PatchOperationType = Literal[
     "set_bond_type",
     "substitute_atom",
     "set_atom_position",
+    "translate_crystal_atoms",
     "set_total_charge",
     "set_spin_multiplicity",
     "set_forcite_optimization",
@@ -81,6 +83,7 @@ class SemanticPatchOperation(StrictModel):
     element: str | None = None
     xyz_angstrom: Vector3 | None = None
     atom_id: str | None = None
+    atom_ids: list[str] | None = Field(default=None, min_length=1)
     atom1: str | None = None
     atom2: str | None = None
     bond_type: str | None = None
@@ -99,6 +102,8 @@ class SemanticPatchOperation(StrictModel):
     kpoints: tuple[int, int, int] | None = None
     matrix: tuple[int, int, int] | None = None
     axis: Literal["a", "b", "c", "x", "y", "z"] | None = None
+    distance_angstrom: float | None = Field(default=None, ge=-1_000, le=1_000)
+    wrap_fractional: bool = True
     thickness_angstrom: float | None = Field(default=None, gt=0)
     target_layer: Literal["gate", "oxide", "channel", "well", "barrier"] | None = None
     lattice: LatticeSpec | None = None
@@ -114,6 +119,18 @@ class SemanticPatchOperation(StrictModel):
             raise ValueError("元组值必须是正整数")
         return value
 
+    @field_validator("atom_ids")
+    @classmethod
+    def unique_atom_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned = [atom_id.strip() for atom_id in value]
+        if any(not atom_id for atom_id in cleaned):
+            raise ValueError("atom_ids must not contain empty identifiers")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("atom_ids must contain unique identifiers")
+        return cleaned
+
     @model_validator(mode="after")
     def validate_known_operation(self) -> "SemanticPatchOperation":
         """验证已知操作。"""
@@ -125,6 +142,7 @@ class SemanticPatchOperation(StrictModel):
             "set_bond_type",
             "substitute_atom",
             "set_atom_position",
+            "translate_crystal_atoms",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -143,6 +161,13 @@ class SemanticPatchOperation(StrictModel):
         }
         if self.operation not in known:
             raise ValueError(f"不支持的补丁操作: {self.operation}")
+        if self.operation == "translate_crystal_atoms":
+            if not self.atom_ids or self.axis is None or self.distance_angstrom is None:
+                raise ValueError("translate_crystal_atoms requires atom_ids, axis, and distance_angstrom")
+            if not math.isfinite(float(self.distance_angstrom)):
+                raise ValueError("translate_crystal_atoms distance_angstrom must be finite")
+            if abs(float(self.distance_angstrom)) <= 1e-12:
+                raise ValueError("translate_crystal_atoms distance_angstrom must be non-zero")
         return self
 
 
@@ -379,6 +404,8 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
                 for atom in atoms
             ]
             diff.append(f"set_atom_position {atom_id}")
+        elif op == "translate_crystal_atoms":
+            atoms = _apply_crystal_atom_translation_patch(lattice, atoms, operation, diff)
         elif op == "set_lattice":
             if operation.lattice is None:
                 raise ValueError("set_lattice 需要 lattice")
@@ -394,6 +421,68 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
             raise ValueError(f"{op} 对晶体模型无效")
 
     spec.model = CrystalSpec(name=crystal.name, lattice=lattice, basis_atoms=atoms, operations=crystal.operations)
+
+
+def _apply_crystal_atom_translation_patch(
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    operation: SemanticPatchOperation,
+    diff: list[str],
+) -> list[BasisAtomSpec]:
+    """Rigidly translate an explicit crystal atom set along one lattice vector."""
+
+    atom_ids = operation.atom_ids or []
+    axis_key = {"x": "a", "y": "b", "z": "c"}.get(str(operation.axis), str(operation.axis))
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis_key)
+    if not atom_ids or axis_index is None or operation.distance_angstrom is None:
+        raise ValueError("translate_crystal_atoms requires atom_ids, axis, and distance_angstrom")
+    axis_length = float(getattr(lattice, axis_key))
+    if axis_length <= 0:
+        raise ValueError("translate_crystal_atoms requires a positive lattice axis length")
+
+    atom_id_set = set(atom_ids)
+    missing_ids = sorted(atom_id_set - {atom.id for atom in atoms})
+    if missing_ids:
+        raise ValueError("translate_crystal_atoms references missing atom IDs: " + ", ".join(missing_ids))
+
+    distance = float(operation.distance_angstrom)
+    delta_fractional = distance / axis_length
+    wrapped_count = 0
+    translated: list[BasisAtomSpec] = []
+    for atom in atoms:
+        if atom.id not in atom_id_set:
+            translated.append(atom)
+            continue
+        fractional = [float(atom.fractional.x), float(atom.fractional.y), float(atom.fractional.z)]
+        shifted = fractional[axis_index] + delta_fractional
+        if operation.wrap_fractional:
+            if shifted < 0.0 or shifted >= 1.0:
+                wrapped_count += 1
+            shifted %= 1.0
+        else:
+            if shifted < -1e-12 or shifted > 1.0 + 1e-12:
+                raise ValueError("translate_crystal_atoms would move atoms outside the unit cell")
+            shifted = min(max(shifted, 0.0), 1.0)
+        shifted = round(shifted, 12)
+        if operation.wrap_fractional and shifted >= 1.0:
+            shifted = 0.0
+        fractional[axis_index] = shifted
+        translated.append(
+            atom.model_copy(
+                update={
+                    "fractional": FractionalVector3(
+                        x=fractional[0],
+                        y=fractional[1],
+                        z=fractional[2],
+                    )
+                }
+            )
+        )
+
+    diff.append(
+        f"translate_crystal_atoms {len(atom_ids)} {axis_key} {distance:g}A wrapped {wrapped_count}"
+    )
+    return translated
 
 
 def _reconcile_crystal_dopant_metadata(spec: ModelSpec, diff: list[str]) -> dict[str, int | bool]:

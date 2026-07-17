@@ -662,7 +662,7 @@ The JSON schemas under `src/material_studio_mcp_server/schemas/` are generated
 from the Pydantic models and can be used by external MCP clients to construct
 valid `ModelSpec`, molecule, crystal, simulation, and `SemanticPatch` payloads.
 `patch_spec.schema.json` enumerates the supported patch operations, including
-`set_bond_type` and `set_metadata`.
+`set_bond_type`, `translate_crystal_atoms`, and `set_metadata`.
 
 For open-GUI workflows, start with `material_studio_gui_status`.  When no
 project is supplied, it resolves the latest current structured project when
@@ -884,7 +884,10 @@ atom-level patch commands such as delete/substitute/move-to-coordinate,
 add-atom-at-coordinate, add/delete bond, set bond type, and conservative
 functional-group replacements for nitro, hydroxyl, amino, and methyl. For
 crystal current projects it also supports semiconductor-style patch commands
-for explicit supercells, superlattice period repetition, explicit lattice parameters, lattice strain, dopant fractions, alloy fractions, vacancies, interstitials, antisites, dopant substitutions, auto-site vacancy/dopant selection, vacuum layers,
+for explicit supercells, superlattice period repetition, explicit lattice parameters,
+lateral layer/stacking-registry translations, lattice strain, dopant fractions,
+alloy fractions, vacancies, interstitials, antisites, dopant substitutions,
+auto-site vacancy/dopant selection, vacuum layers,
 surface hydrogen passivation, explicit full dangling-bond hydrogen
 passivation, adding atoms at fractional coordinates, and moving atoms to
 fractional coordinates.
@@ -909,6 +912,13 @@ Natural-language explicit lattice edits accept named `a`, `b`, `c`, `alpha`,
 They preserve fractional coordinates, record `metadata.lattice_parameter_edits`,
 and rely on `semiconductor_lattice.csv`, reciprocal-lattice diagnostics, neighbor
 diagnostics, and `revision_delta.crystal.lattice_delta` for post-edit review.
+Natural-language layer-registry edits require an explicit 1-based layer number
+or `top`/`bottom` layer, an in-plane axis, a signed distance, and a length unit.
+The planner resolves the layer using the same profile axis and tolerance as
+`semiconductor_layer_profile.csv`, emits `translate_crystal_atoms` with exact
+atom IDs, and exports `semiconductor_layer_translation.csv`. A profile-normal
+request is rejected because interface-gap and layer-thickness tools own that
+geometry change.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

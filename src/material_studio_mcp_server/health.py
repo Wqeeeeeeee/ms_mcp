@@ -732,6 +732,25 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         if layer_profile.get("spacing_warning"):
             warnings.append("Semiconductor layer profile has unusually small interlayer spacing; inspect layer_profile_summary.")
 
+    layer_translation = semiconductor.get("layer_translation_summary") or {}
+    if layer_translation:
+        latest_translation = layer_translation.get("latest") or {}
+        checks["semiconductor_layer_translation_count"] = layer_translation.get("entry_count")
+        checks["semiconductor_layer_translation_quality"] = layer_translation.get("quality")
+        checks["semiconductor_layer_translation_metadata_consistent"] = layer_translation.get(
+            "metadata_consistent"
+        )
+        checks["semiconductor_layer_translation_latest_layer_index"] = latest_translation.get("layer_index")
+        checks["semiconductor_layer_translation_latest_axis"] = latest_translation.get("translation_axis")
+        checks["semiconductor_layer_translation_latest_distance_angstrom"] = latest_translation.get(
+            "distance_angstrom"
+        )
+        if layer_translation.get("metadata_consistent") is False:
+            warnings.append(
+                "Semiconductor layer-translation receipt does not match the current layer profile; "
+                "inspect layer_translation_summary."
+            )
+
     interface_quality = semiconductor.get("interface_quality_summary") or {}
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:

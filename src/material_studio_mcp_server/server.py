@@ -2625,6 +2625,7 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_dopant_concentration_csv",
     "semiconductor_dopant_sites_csv",
     "semiconductor_layer_profile_csv",
+    "semiconductor_layer_translation_csv",
     "semiconductor_interface_profile_csv",
     "semiconductor_interface_quality_csv",
     "semiconductor_gate_stack_csv",
@@ -2835,6 +2836,12 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_applied_strain_latest_mode",
     "semiconductor_applied_strain_max_abs_percent",
     "semiconductor_applied_strain_warning",
+    "semiconductor_layer_translation_count",
+    "semiconductor_layer_translation_quality",
+    "semiconductor_layer_translation_metadata_consistent",
+    "semiconductor_layer_translation_latest_layer_index",
+    "semiconductor_layer_translation_latest_axis",
+    "semiconductor_layer_translation_latest_distance_angstrom",
     "semiconductor_slab_vacuum_ok",
     "semiconductor_slab_vacuum_status",
     "semiconductor_slab_vacuum_next_action",
@@ -4282,6 +4289,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "gate_stack_thickness",
                     "add_vacuum",
                     "set_lattice_parameters",
+                    "translate_crystal_layer",
                     "apply_strain",
                     "delete_atom",
                     "auto_site_vacancy",
@@ -4329,6 +4337,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "Build silicon crystal with lattice constant a=5.45 angstrom.",
                     "Build GaN with lattice parameters a=b=3.2 and c=5.2 angstrom.",
                     "\u6784\u5efa\u6c2e\u5316\u9553\u6676\u4f53\uff0c\u6676\u683c\u53c2\u6570 a \u548c b \u8bbe\u4e3a 3.2 \u57c3\uff0cc \u8bbe\u4e3a 5.2 \u57c3\u3002",
+                ],
+                "layer_translation_examples": [
+                    "Build a Si/Ge heterostructure and shift layer 3 by 0.5 angstrom along x.",
+                    "Shift the top layer by -0.25 angstrom along y and hot-load it in Materials Studio.",
+                    "\u5c06\u7b2c 3 \u5c42\u6cbf x \u65b9\u5411\u5e73\u79fb 0.5 \u57c3\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\u3002",
                 ],
                 "superlattice_examples": [
                     "Build a 3-period GaAs/AlAs MQW.",
@@ -4833,6 +4846,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "heterostructure_summary",
                 "strain_summary",
                 "layer_profile_summary",
+                "layer_translation_summary",
                 "interface_profile_summary",
                 "superlattice_period_summary",
                 "quantum_well_summary",
@@ -5148,6 +5162,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_junctions_csv",
                 "semiconductor_defects_csv",
                 "semiconductor_layer_profile_csv",
+                "semiconductor_layer_translation_csv",
                 "semiconductor_quantum_well_csv",
                 "semiconductor_interface_quality_csv",
                 "semiconductor_gate_stack_csv",
@@ -5191,6 +5206,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_defects",
                 "semiconductor_finite_size",
                 "semiconductor_layer_profile",
+                "semiconductor_layer_translation",
                 "semiconductor_interface_profile",
                 "semiconductor_interface_quality",
                 "semiconductor_gate_stack",
@@ -5222,6 +5238,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_applied_strain_count",
                 "semiconductor_applied_strain_max_abs_percent",
                 "semiconductor_applied_strain_warning",
+                "semiconductor_layer_translation_count",
+                "semiconductor_layer_translation_quality",
+                "semiconductor_layer_translation_metadata_consistent",
             ],
             "modeling_report_summary_fields": [
                 "project_id",
@@ -6092,6 +6111,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_applied_strain_latest_mode",
                 "semiconductor_applied_strain_max_abs_percent",
                 "semiconductor_applied_strain_warning",
+                "semiconductor_layer_translation_count",
+                "semiconductor_layer_translation_quality",
+                "semiconductor_layer_translation_metadata_consistent",
+                "semiconductor_layer_translation_latest_layer_index",
+                "semiconductor_layer_translation_latest_axis",
+                "semiconductor_layer_translation_latest_distance_angstrom",
                 "semiconductor_surface_preparation_status",
                 "semiconductor_surface_preparation_next_action",
                 "semiconductor_surface_dangling_bond_estimate",
@@ -12064,6 +12089,23 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         return []
     focus_patterns: list[tuple[str, tuple[str, ...]]] = [
         (
+            "layer_registry_translation",
+            (
+                "layer translation",
+                "translate layer",
+                "shift layer",
+                "move layer",
+                "stacking registry",
+                "lateral registry",
+                "in-plane layer shift",
+                "in plane layer shift",
+                "\u5c42\u5e73\u79fb",
+                "\u5c42\u6a2a\u79fb",
+                "\u5806\u579b\u914d\u51c6",
+                "\u6a2a\u5411\u914d\u51c6",
+            ),
+        ),
+        (
             "iii_nitride_hemt_2deg",
             (
                 "2deg",
@@ -12569,6 +12611,15 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
             if sapphire_epitaxy_preflight and focus == "epitaxial_strain_preflight":
                 continue
             focuses.append(focus)
+    if (
+        re.search(
+            r"(?:\u7b2c\s*\d+\s*\u5c42|\u9876\u5c42|\u6700\u4e0a\u5c42|\u5e95\u5c42|\u6700\u4e0b\u5c42)"
+            r".{0,30}(?:\u5e73\u79fb|\u6a2a\u79fb|\u79fb\u52a8)",
+            text,
+        )
+        and "layer_registry_translation" not in focuses
+    ):
+        focuses.append("layer_registry_translation")
     if sapphire_epitaxy_preflight:
         focuses.insert(0, "substrate_epitaxy_preflight")
     if _comprehensive_model_parameter_focus_requested(user_request):
@@ -12738,6 +12789,24 @@ def _comprehensive_model_parameter_focus_requested(user_request: str | None) -> 
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
+    "layer_registry_translation": {
+        "summary_keys": [
+            "inspection.semiconductor_health.layer_profile_summary",
+            "inspection.semiconductor_health.layer_translation_summary",
+            "inspection.semiconductor_health.neighbor_distance_summary",
+            "inspection.semiconductor_health.local_environment_summary",
+            "semiconductor_review.layer_translation",
+            "semiconductor_review.coordination",
+            "view_review",
+        ],
+        "csv_keys": [
+            "semiconductor_layer_profile_csv",
+            "semiconductor_layer_translation_csv",
+            "semiconductor_neighbor_pairs_csv",
+            "semiconductor_local_environment_csv",
+            "view_quality_csv",
+        ],
+    },
     "comprehensive_model_parameters": {
         "summary_keys": [
             "inspection.semiconductor_health.composition_summary",
@@ -13140,6 +13209,10 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_EXAMPLES: dict[str, list[str]] = {
+    "layer_registry_translation": [
+        "Shift layer 3 by 0.5 angstrom along x and export layer-registry diagnostics.",
+        "\u5c06\u9876\u5c42\u6cbf y \u65b9\u5411\u5e73\u79fb -0.25 \u57c3\u5e76\u5bfc\u51fa\u5806\u579b\u914d\u51c6\u8bca\u65ad\u3002",
+    ],
     "comprehensive_model_parameters": [
         "Export all model parameters and check whether the model is normal.",
         "\u5bfc\u51fa\u5404\u79cd\u6a21\u578b\u53c2\u6570\u5e76\u68c0\u67e5\u5efa\u6a21\u662f\u5426\u6b63\u5e38\u3002",
@@ -13987,6 +14060,16 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         else {}
     )
     semiconductor_strain = semiconductor.get("strain") if isinstance(semiconductor.get("strain"), dict) else {}
+    semiconductor_layer_translation = (
+        semiconductor.get("layer_translation")
+        if isinstance(semiconductor.get("layer_translation"), dict)
+        else {}
+    )
+    semiconductor_latest_layer_translation = (
+        semiconductor_layer_translation.get("latest")
+        if isinstance(semiconductor_layer_translation.get("latest"), dict)
+        else {}
+    )
     semiconductor_surface = semiconductor.get("surface") if isinstance(semiconductor.get("surface"), dict) else {}
     semiconductor_surface_model = (
         semiconductor.get("surface_model")
@@ -14621,6 +14704,20 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "semiconductor_applied_strain_count": semiconductor_strain.get("entry_count"),
         "semiconductor_applied_strain_max_abs_percent": semiconductor_strain.get("max_abs_strain_percent"),
         "semiconductor_applied_strain_warning": semiconductor_strain.get("strain_warning"),
+        "semiconductor_layer_translation_count": semiconductor_layer_translation.get("entry_count"),
+        "semiconductor_layer_translation_quality": semiconductor_layer_translation.get("quality"),
+        "semiconductor_layer_translation_metadata_consistent": semiconductor_layer_translation.get(
+            "metadata_consistent"
+        ),
+        "semiconductor_layer_translation_latest_layer_index": semiconductor_latest_layer_translation.get(
+            "layer_index"
+        ),
+        "semiconductor_layer_translation_latest_axis": semiconductor_latest_layer_translation.get(
+            "translation_axis"
+        ),
+        "semiconductor_layer_translation_latest_distance_angstrom": semiconductor_latest_layer_translation.get(
+            "distance_angstrom"
+        ),
         "structure_path": structure.get("path"),
         "structure_exists": structure.get("exists"),
         "report_json_path": diagnostics.get("report_json_path") or response.get("report_json_path"),
@@ -18332,6 +18429,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_heterostructure_csv", "semiconductor_heterostructure"),
         ("semiconductor_substrate_epitaxy_preflight_csv", "semiconductor_substrate_epitaxy_preflight"),
         ("semiconductor_strain_csv", "semiconductor_strain"),
+        ("semiconductor_layer_translation_csv", "semiconductor_layer_translation"),
         ("semiconductor_interface_profile_csv", "semiconductor_interface_profile"),
         ("semiconductor_interface_scaffold_csv", "semiconductor_interface_scaffold"),
         ("semiconductor_interface_quality_csv", "semiconductor_interface_quality"),
@@ -19336,6 +19434,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_dopant_fraction_csv": bundle_files.get("semiconductor_dopant_fraction_csv"),
             "semiconductor_alloy_csv": bundle_files.get("semiconductor_alloy_csv"),
             "semiconductor_layer_profile_csv": bundle_files.get("semiconductor_layer_profile_csv"),
+            "semiconductor_layer_translation_csv": bundle_files.get("semiconductor_layer_translation_csv"),
             "semiconductor_interface_profile_csv": bundle_files.get("semiconductor_interface_profile_csv"),
             "semiconductor_interface_scaffold_csv": bundle_files.get("semiconductor_interface_scaffold_csv"),
             "semiconductor_interface_quality_csv": bundle_files.get("semiconductor_interface_quality_csv"),
@@ -27796,6 +27895,7 @@ def _change_receipt_artifacts(
             "semiconductor_junctions_csv": diagnostics.get("semiconductor_junctions_csv"),
             "semiconductor_defects_csv": diagnostics.get("semiconductor_defects_csv"),
             "semiconductor_layer_profile_csv": diagnostics.get("semiconductor_layer_profile_csv"),
+            "semiconductor_layer_translation_csv": diagnostics.get("semiconductor_layer_translation_csv"),
             "semiconductor_quantum_well_csv": diagnostics.get("semiconductor_quantum_well_csv"),
             "semiconductor_interface_quality_csv": diagnostics.get("semiconductor_interface_quality_csv"),
             "semiconductor_gate_stack_csv": diagnostics.get("semiconductor_gate_stack_csv"),
@@ -27848,6 +27948,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_defects",
         "semiconductor_finite_size",
         "semiconductor_layer_profile",
+        "semiconductor_layer_translation",
         "semiconductor_interface_profile",
         "semiconductor_interface_scaffold",
         "semiconductor_interface_quality",
@@ -28473,6 +28574,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     substrate_epitaxy_preflight = semiconductor.get("substrate_epitaxy_preflight_summary") or {}
     interface_scaffold = semiconductor.get("interface_scaffold_summary") or {}
     strain = semiconductor.get("strain_summary") or {}
+    layer_translation = semiconductor.get("layer_translation_summary") or {}
     charge_balance = semiconductor.get("charge_balance_summary") or {}
     dopant = semiconductor.get("dopant_summary") or {}
     dopant_site = semiconductor.get("dopant_site_summary") or {}
@@ -28503,6 +28605,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         substrate_epitaxy_preflight=substrate_epitaxy_preflight,
         interface_scaffold=interface_scaffold,
         strain=strain,
+        layer_translation=layer_translation,
         charge_balance=charge_balance,
         dopant=dopant,
         dopant_site=dopant_site,
@@ -28674,6 +28777,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         ),
         "interface_scaffold": _semiconductor_interface_scaffold_review(interface_scaffold),
         "strain": _semiconductor_strain_review(strain),
+        "layer_translation": _semiconductor_layer_translation_review(layer_translation),
         "alloy": _semiconductor_alloy_review(alloy),
         "defects": _semiconductor_defect_review(defect, finite_size),
         "interface": _semiconductor_interface_review(interface_quality, quantum_well),
@@ -29004,6 +29108,34 @@ def _semiconductor_strain_review(strain: dict[str, Any]) -> dict[str, Any] | Non
     }
 
 
+def _semiconductor_layer_translation_review(summary: dict[str, Any]) -> dict[str, Any] | None:
+    if not summary:
+        return None
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    return {
+        "entry_count": summary.get("entry_count"),
+        "quality": summary.get("quality"),
+        "metadata_consistent": summary.get("metadata_consistent"),
+        "target_binding_matches_current_layer": summary.get("target_binding_matches_current_layer"),
+        "latest": _select_keys(
+            latest,
+            [
+                "target_selector",
+                "layer_index",
+                "layer_count",
+                "profile_axis",
+                "translation_axis",
+                "distance_angstrom",
+                "delta_fractional",
+                "atom_count",
+                "periodic_wrap",
+                "wrapped_atom_count",
+            ],
+        ),
+        "warnings": summary.get("warnings") or [],
+    }
+
+
 def _semiconductor_alloy_review(alloy: dict[str, Any]) -> dict[str, Any] | None:
     if not alloy:
         return None
@@ -29159,6 +29291,7 @@ def _semiconductor_review_risk_flags(
     substrate_epitaxy_preflight: dict[str, Any],
     interface_scaffold: dict[str, Any],
     strain: dict[str, Any],
+    layer_translation: dict[str, Any],
     charge_balance: dict[str, Any],
     dopant: dict[str, Any],
     dopant_site: dict[str, Any],
@@ -29228,6 +29361,8 @@ def _semiconductor_review_risk_flags(
         flags.append("interface_scaffold_visual_hotload_not_ready")
     if strain.get("strain_warning"):
         flags.append("applied_lattice_strain_warning")
+    if layer_translation.get("metadata_consistent") is False:
+        flags.append("layer_translation_metadata_inconsistent")
     if charge_balance.get("odd_electron_warning"):
         flags.append("odd_valence_electron_count")
     if dopant.get("total_dopant_count"):
@@ -29571,6 +29706,7 @@ def _change_verification_summary(report: dict[str, Any]) -> dict[str, Any]:
                     "gate_stack",
                     "contact",
                     "strain",
+                    "layer_translation",
                 ],
             )
             if semiconductor

@@ -65,6 +65,153 @@ def test_crystal_supercell_patch() -> None:
     assert any(atom["atom_id"].endswith("_100") for atom in delta["crystal"]["added_atoms"])
 
 
+def test_crystal_atom_group_translation_wraps_periodically_without_mutating_base() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "translate_crystal_atoms",
+                "atom_ids": ["Si1", "Si7"],
+                "axis": "x",
+                "distance_angstrom": -0.5,
+            }
+        ],
+    )
+
+    translated, diff = apply_semantic_patch(base, patch)
+
+    expected_x = 1.0 - 0.5 / base.model.lattice.a
+    assert diff == ["translate_crystal_atoms 2 a -0.5A wrapped 1"]
+    assert next(atom for atom in translated.model.basis_atoms if atom.id == "Si1").fractional.x == pytest.approx(expected_x)
+    assert next(atom for atom in translated.model.basis_atoms if atom.id == "Si7").fractional.x == pytest.approx(0.5 - 0.5 / base.model.lattice.a)
+    assert next(atom for atom in base.model.basis_atoms if atom.id == "Si1").fractional.x == 0.0
+    assert base.revision == 0
+    assert translated.revision == 1
+
+
+def test_crystal_atom_group_translation_rejects_invalid_targets_and_unwrapped_escape() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    with pytest.raises(ValueError, match="unique identifiers"):
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "translate_crystal_atoms",
+                    "atom_ids": ["Si1", "Si1"],
+                    "axis": "a",
+                    "distance_angstrom": 0.5,
+                }
+            ],
+        )
+
+    missing = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "translate_crystal_atoms",
+                "atom_ids": ["Missing1"],
+                "axis": "a",
+                "distance_angstrom": 0.5,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="missing atom IDs: Missing1"):
+        apply_semantic_patch(base, missing)
+
+    no_wrap = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "translate_crystal_atoms",
+                "atom_ids": ["Si1"],
+                "axis": "a",
+                "distance_angstrom": -0.5,
+                "wrap_fractional": False,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="outside the unit cell"):
+        apply_semantic_patch(base, no_wrap)
+
+
+def test_semiconductor_layer_translation_infers_explicit_atom_ids_in_english_and_chinese() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    english = infer_modeling_plan(
+        "Shift layer 3 by 0.5 angstrom along x and hot-load it in Materials Studio.",
+        current_spec=base,
+    )
+    assert english.kind == "patch"
+    assert english.template_id == "crystal_layer_translation"
+    assert english.payload["operations"][0] == {
+        "type": "translate_crystal_atoms",
+        "atom_ids": ["Si3", "Si5"],
+        "axis": "a",
+        "distance_angstrom": 0.5,
+        "wrap_fractional": True,
+    }
+    english_record = english.payload["operations"][1]["metadata_updates"]["last_crystal_layer_translation"]
+    assert english_record["layer_index"] == 3
+    assert english_record["layer_count"] == 8
+    assert english_record["profile_axis"] == "c"
+    assert english_record["in_plane_translation"] is True
+
+    chinese = infer_modeling_plan(
+        "将顶层沿 y 方向平移 -0.25 埃并热加载到 Materials Studio。",
+        current_spec=base,
+    )
+    assert chinese.kind == "patch"
+    assert chinese.template_id == "crystal_layer_translation"
+    chinese_record = chinese.payload["operations"][1]["metadata_updates"]["last_crystal_layer_translation"]
+    assert chinese_record["layer_index"] == 8
+    assert chinese_record["translation_axis"] == "b"
+    assert chinese_record["distance_angstrom"] == -0.25
+
+
+def test_semiconductor_layer_translation_rejects_profile_axis_and_bad_layer_index() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    normal_axis = infer_modeling_plan(
+        "Shift layer 3 by 0.5 angstrom along z.",
+        current_spec=base,
+    )
+    assert normal_axis.kind == "unsupported"
+    assert normal_axis.template_id == "crystal_layer_translation"
+    assert "profile axis c" in normal_axis.notes[1]
+
+    bad_index = infer_modeling_plan(
+        "Shift layer 99 by 0.5 angstrom along x.",
+        current_spec=base,
+    )
+    assert bad_index.kind == "unsupported"
+    assert "available range 1..8" in bad_index.notes[1]
+
+
+def test_new_semiconductor_template_applies_inline_layer_translation() -> None:
+    plan = infer_modeling_plan(
+        "Build a Si/Ge heterostructure and shift layer 3 by 0.5 angstrom along x, then prepare preview."
+    )
+
+    assert plan.kind == "spec"
+    assert plan.template_id == "silicon_germanium_001_heterostructure"
+    spec = ModelSpec.model_validate(plan.payload)
+    record = spec.metadata["last_crystal_layer_translation"]
+    assert record["layer_index"] == 3
+    assert record["atom_ids"] == ["Si3", "Si5"]
+    assert record["translation_axis"] == "a"
+    assert record["distance_angstrom"] == 0.5
+    assert next(atom for atom in spec.model.basis_atoms if atom.id == "Si3").fractional.x == pytest.approx(
+        0.5 / spec.model.lattice.a
+    )
+    assert any("translate_crystal_atoms 2 a 0.5A wrapped 0" in note for note in plan.notes)
+
+
 def test_crystal_restore_dopant_reconciles_current_state_metadata_without_mutating_base() -> None:
     plan = infer_modeling_plan(
         "Build silicon crystal as a 2x1x1 supercell and dope Si1_000 with P, then prepare preview."

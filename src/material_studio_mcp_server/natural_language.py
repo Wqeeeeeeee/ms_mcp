@@ -3234,6 +3234,15 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             ),
         },
         {
+            "template_id": "crystal_layer_translation",
+            "operations": ["translate_crystal_atoms", "set_metadata"],
+            "requires_existing_project": True,
+            "pattern": (
+                "Rigidly translate an explicit semiconductor layer laterally with periodic wrapping, "
+                "e.g. 'shift layer 3 by 0.5 angstrom along x' or '将顶层沿 y 方向平移 -0.25 埃'."
+            ),
+        },
+        {
             "template_id": "crystal_add_atom_fractional",
             "operations": ["add_atom"],
             "requires_existing_project": True,
@@ -3259,13 +3268,13 @@ def supported_patch_commands() -> list[dict[str, Any]]:
         },
         {
             "template_id": "crystal_surface_preparation",
-            "operations": ["set_vacuum", "add_vacuum", "center_slab", "add_atom", "set_metadata", "set_castep_energy"],
+            "operations": ["set_vacuum", "add_vacuum", "center_slab", "translate_crystal_atoms", "add_atom", "set_metadata", "set_castep_energy"],
             "requires_existing_project": True,
             "pattern": "Combine deterministic slab preparation edits, e.g. 'center the slab, fully hydrogen-passivate both surfaces, set CASTEP cutoff to 600 eV, and hot-load it'.",
         },
         {
             "template_id": "crystal_composite_edit",
-            "operations": ["make_supercell", "substitute_atom", "delete_atom", "set_metadata", "set_castep_energy"],
+            "operations": ["make_supercell", "translate_crystal_atoms", "substitute_atom", "delete_atom", "set_metadata", "set_castep_energy"],
             "requires_existing_project": True,
             "pattern": "Combine deterministic current-crystal edits, e.g. 'make 2x1x1 supercell, dope with P, and set CASTEP cutoff to 600 eV'.",
         },
@@ -4096,6 +4105,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_gate_stack_thickness,
             _match_current_quantum_well_thickness,
             _match_crystal_lattice_parameters,
+            _match_crystal_layer_translation,
             _match_crystal_strain,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
@@ -4142,6 +4152,7 @@ def _looks_like_current_crystal_modifier_request(text: str) -> bool:
             _match_current_quantum_well_thickness,
             _match_current_p_gan_gate_cap_thickness,
             _match_crystal_lattice_parameters,
+            _match_crystal_layer_translation,
             _match_crystal_interstitial_fractional,
             _match_crystal_add_atom_fractional,
             _match_crystal_set_atom_fractional,
@@ -10464,6 +10475,10 @@ def _apply_new_crystal_composite_operations(
         if lattice_parameter_match is not None:
             apply_operations(_crystal_lattice_parameter_operations(working, lattice_parameter_match))
 
+        layer_translation_match = _match_crystal_layer_translation(text)
+        if layer_translation_match is not None:
+            apply_operations(_crystal_layer_translation_operations(working, layer_translation_match))
+
         strain_match = _match_crystal_strain(text)
         if strain_match is not None:
             axes, percent, mode = strain_match
@@ -10705,6 +10720,19 @@ def _infer_crystal_surface_preparation_patch(text: str, current_spec: ModelSpec)
         center_slab_axis = _match_center_slab(text)
         if center_slab_axis is not None:
             apply_group([{"type": "center_slab", "axis": center_slab_axis}], "center slab")
+
+        layer_translation_match = _match_crystal_layer_translation(text)
+        if layer_translation_match is not None:
+            translation_operations = _crystal_layer_translation_operations(working, layer_translation_match)
+            translation_record = translation_operations[-1]["metadata_updates"]["last_crystal_layer_translation"]
+            apply_group(
+                translation_operations,
+                (
+                    f"translate layer {translation_record['layer_index']} by "
+                    f"{translation_record['distance_angstrom']:g} Angstrom along "
+                    f"{translation_record['translation_axis']}"
+                ),
+            )
 
         vacancy_match = _match_crystal_vacancy(text)
         if vacancy_match is not None:
@@ -11166,6 +11194,19 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
                 f"set lattice parameters {changed_fields}",
             )
 
+        layer_translation_match = _match_crystal_layer_translation(text)
+        if layer_translation_match is not None:
+            translation_operations = _crystal_layer_translation_operations(working, layer_translation_match)
+            translation_record = translation_operations[-1]["metadata_updates"]["last_crystal_layer_translation"]
+            apply_group(
+                translation_operations,
+                (
+                    f"translate layer {translation_record['layer_index']} by "
+                    f"{translation_record['distance_angstrom']:g} Angstrom along "
+                    f"{translation_record['translation_axis']}"
+                ),
+            )
+
         vacancy_match = _match_crystal_vacancy(text)
         if vacancy_match is not None:
             apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
@@ -11493,6 +11534,32 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                 operations,
                 "gate_stack_thickness",
                 description[0].upper() + description[1:] + ".",
+            )
+
+        layer_translation_match = _match_crystal_layer_translation(text)
+        if layer_translation_match is not None:
+            try:
+                operations = _crystal_layer_translation_operations(current_spec, layer_translation_match)
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="crystal_layer_translation",
+                    notes=[
+                        "An explicit crystal-layer translation matched but could not be applied safely.",
+                        str(exc),
+                    ],
+                )
+            record = operations[-1]["metadata_updates"]["last_crystal_layer_translation"]
+            return _patch_plan(
+                operations,
+                "crystal_layer_translation",
+                (
+                    f"Translate crystal layer {record['layer_index']} by "
+                    f"{record['distance_angstrom']:g} Angstrom along {record['translation_axis']} "
+                    "with periodic wrapping."
+                ),
             )
 
         lattice_parameter_match = _match_crystal_lattice_parameters(text)
@@ -13019,6 +13086,201 @@ def _match_contact_length_value(text: str, term_patterns: Sequence[str]) -> floa
             if 0.0 < thickness <= 200.0:
                 return thickness
     return None
+
+
+def _match_crystal_layer_translation(text: str) -> dict[str, Any] | None:
+    if re.search(
+        r"\b(?:shift|translate|slide|displace|move)\b|(?:平移|横移|移动)",
+        text,
+        flags=re.IGNORECASE,
+    ) is None:
+        return None
+
+    target: dict[str, Any] | None = None
+    for pattern in (
+        r"\blayer\s*#?\s*(?P<index>\d+)\b",
+        r"第\s*(?P<index>\d+)\s*层",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            target = {"kind": "index", "layer_index": int(match.group("index"))}
+            break
+    if target is None:
+        edge_match = re.search(
+            r"\b(?P<edge>top(?:most)?|bottom(?:most)?)\s+layer\b|(?P<cjk_edge>最上层|顶层|最下层|底层)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if edge_match is not None:
+            raw_edge = str(edge_match.group("edge") or edge_match.group("cjk_edge") or "").lower()
+            edge = "top" if raw_edge.startswith("top") or raw_edge in {"最上层", "顶层"} else "bottom"
+            target = {"kind": "edge", "edge": edge}
+    if target is None:
+        return None
+
+    axis_match = re.search(
+        r"\b(?:along|in)\s+(?:the\s+)?(?P<axis>[abcxyz])(?:\s*[- ]?axis|\s+direction)?\b|"
+        r"(?:沿|沿着)\s*(?P<cjk_axis>[abcxyz])\s*(?:轴|方向)?|"
+        r"(?P<plain_axis>[abcxyz])\s*(?:轴|方向)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if axis_match is None:
+        return None
+    raw_axis = axis_match.group("axis") or axis_match.group("cjk_axis") or axis_match.group("plain_axis")
+
+    number = r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+    unit = r"(?P<unit>nanometers?|nm|angstroms?|ang|a|å|Å|Å|埃)"
+    distance_match = None
+    for pattern in (
+        rf"\b(?:by|through)\s*{number}\s*{unit}\b",
+        rf"(?:平移|横移|移动)\s*{number}\s*{unit}",
+        rf"{number}\s*{unit}",
+    ):
+        distance_match = re.search(pattern, text, flags=re.IGNORECASE)
+        if distance_match is not None:
+            break
+    if distance_match is None:
+        return None
+
+    distance = _thickness_value_to_angstrom(
+        float(distance_match.group("value")),
+        distance_match.group("unit"),
+    )
+    return {
+        **target,
+        "axis": _normalize_lattice_axis(str(raw_axis)),
+        "distance_angstrom": round(float(distance), 6),
+    }
+
+
+def _crystal_layer_translation_operations(
+    current_spec: ModelSpec,
+    request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("crystal layer translation requires a crystal model.")
+    metadata = dict(current_spec.metadata or {})
+    if metadata.get("domain") != "semiconductor":
+        raise ValueError("crystal layer translation is enabled only for semiconductor models.")
+
+    profile_axis = _normalize_lattice_axis(
+        str(metadata.get("interface_axis") or metadata.get("surface_axis") or "c")
+    )
+    translation_axis = _normalize_lattice_axis(str(request.get("axis") or ""))
+    if translation_axis not in {"a", "b", "c"}:
+        raise ValueError("crystal layer translation requires lattice axis a, b, or c.")
+    if translation_axis == profile_axis:
+        raise ValueError(
+            f"lateral layer translation must use an in-plane axis, not profile axis {profile_axis}; "
+            "use an interface-gap or layer-thickness command for normal-axis changes."
+        )
+    distance = float(request.get("distance_angstrom") or 0.0)
+    if abs(distance) <= 1e-12 or abs(distance) > 200.0:
+        raise ValueError("crystal layer translation distance must be non-zero and no more than 200 Angstrom.")
+
+    tolerance = _metadata_float_value(metadata.get("layer_profile_tolerance_fractional"), 1e-4)
+    layers = _profile_crystal_layers(current_spec.model, profile_axis, tolerance)
+    if not layers:
+        raise ValueError("no crystal layers could be resolved from the current model.")
+    if request.get("kind") == "edge":
+        edge = str(request.get("edge") or "")
+        layer_index = len(layers) if edge == "top" else 1
+        selector = f"{edge}_layer"
+    else:
+        layer_index = int(request.get("layer_index") or 0)
+        selector = f"layer_{layer_index}"
+    if layer_index < 1 or layer_index > len(layers):
+        raise ValueError(f"layer index {layer_index} is outside the available range 1..{len(layers)}.")
+
+    target_atoms = layers[layer_index - 1]
+    atom_ids = sorted(atom.id for atom in target_atoms)
+    axis_index = {"a": 0, "b": 1, "c": 2}[translation_axis]
+    axis_length = float(getattr(current_spec.model.lattice, translation_axis))
+    delta_fractional = distance / axis_length
+    wrapped_atom_ids = sorted(
+        atom.id
+        for atom in target_atoms
+        if (_basis_atom_fractional_tuple(atom)[axis_index] + delta_fractional) < 0.0
+        or (_basis_atom_fractional_tuple(atom)[axis_index] + delta_fractional) >= 1.0
+    )
+    profile_index = {"a": 0, "b": 1, "c": 2}[profile_axis]
+    profile_center = sum(
+        _basis_atom_fractional_tuple(atom)[profile_index] for atom in target_atoms
+    ) / len(target_atoms)
+    record = {
+        "source": "natural_language_crystal_layer_translation",
+        "target_selector": selector,
+        "layer_index": layer_index,
+        "layer_count": len(layers),
+        "profile_axis": profile_axis,
+        "profile_fractional_center": round(profile_center, 6),
+        "translation_axis": translation_axis,
+        "distance_angstrom": round(distance, 6),
+        "delta_fractional": round(delta_fractional, 9),
+        "atom_count": len(atom_ids),
+        "atom_ids": atom_ids,
+        "periodic_wrap": True,
+        "wrapped_atom_count": len(wrapped_atom_ids),
+        "wrapped_atom_ids": wrapped_atom_ids,
+        "layer_profile_tolerance_fractional": round(tolerance, 9),
+        "in_plane_translation": True,
+    }
+    history = [
+        dict(item)
+        for item in metadata.get("crystal_layer_translations", []) or []
+        if isinstance(item, dict)
+    ]
+    history.append(record)
+    return [
+        {
+            "type": "translate_crystal_atoms",
+            "atom_ids": atom_ids,
+            "axis": translation_axis,
+            "distance_angstrom": round(distance, 6),
+            "wrap_fractional": True,
+        },
+        {
+            "type": "set_metadata",
+            "metadata_updates": {
+                "crystal_layer_translations": history,
+                "last_crystal_layer_translation": record,
+            },
+        },
+    ]
+
+
+def _profile_crystal_layers(
+    model: CrystalSpec,
+    axis: str,
+    tolerance: float,
+) -> list[list[BasisAtomSpec]]:
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis)
+    if axis_index is None:
+        return []
+    sorted_atoms = sorted(
+        model.basis_atoms,
+        key=lambda atom: (_basis_atom_fractional_tuple(atom)[axis_index], atom.id),
+    )
+    layers: list[list[BasisAtomSpec]] = []
+    for atom in sorted_atoms:
+        value = _basis_atom_fractional_tuple(atom)[axis_index]
+        if not layers:
+            layers.append([atom])
+            continue
+        center = sum(_basis_atom_fractional_tuple(item)[axis_index] for item in layers[-1]) / len(layers[-1])
+        if abs(value - center) <= tolerance:
+            layers[-1].append(atom)
+        else:
+            layers.append([atom])
+    return [sorted(layer, key=lambda atom: atom.id) for layer in layers]
+
+
+def _metadata_float_value(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _match_crystal_lattice_parameters(text: str) -> dict[str, float] | None:

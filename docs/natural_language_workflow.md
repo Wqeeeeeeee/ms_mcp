@@ -707,6 +707,18 @@ Layer profiles are exported for semiconductor crystals as
 `semiconductor_layer_profile.csv`; they group atoms by fractional position along
 the interface axis, surface axis, or c axis and report per-layer composition,
 axis coordinate, and interlayer spacing.
+Explicit lateral layer translations use those same 1-based layer indices.
+Requests such as `shift layer 3 by 0.5 angstrom along x`, `shift the top layer
+by -0.25 angstrom along y`, or `将第 3 层沿 x 方向平移 0.5 埃` resolve the
+target layer to an exact `atom_ids` list before creating the immutable patch.
+The `translate_crystal_atoms` operation moves that atom set rigidly along a
+lattice vector and wraps fractional coordinates periodically. It records
+`metadata.crystal_layer_translations`, exposes
+`semiconductor_health.layer_translation_summary`, and exports
+`semiconductor_layer_translation.csv` so the target binding, displacement,
+and wrapped atom IDs can be audited after hot-loading. Natural-language layer
+translation is limited to axes in the interface/surface plane; use the
+interface-gap or layer-thickness commands for movement along the profile axis.
 Lattice summaries are exported as `semiconductor_lattice.csv` and report cell
 volume, atom density, volume per non-passivant atom, and slab vacuum fractions
 when surface metadata is present.

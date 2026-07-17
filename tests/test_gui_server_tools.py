@@ -6560,6 +6560,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert patch_commands["interface_scaffold_gap"]["operations"] == ["set_interface_gap"]
     assert "semiconductor interface scaffold gap" in patch_commands["interface_scaffold_gap"]["pattern"]
     assert "\u754c\u9762\u95f4\u8ddd" in patch_commands["interface_scaffold_gap"]["pattern"]
+    assert patch_commands["crystal_layer_translation"]["operations"] == [
+        "translate_crystal_atoms",
+        "set_metadata",
+    ]
+    assert "periodic wrapping" in patch_commands["crystal_layer_translation"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
@@ -6763,6 +6768,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "quantum_well_thickness" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "p_gan_gate_cap" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "set_lattice_parameters" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    assert "translate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "apply_strain" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "auto_site_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "sublattice_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6776,6 +6782,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert (
         "Build GaN with lattice parameters a=b=3.2 and c=5.2 angstrom."
         in capabilities["natural_language"]["new_structure_inline_modifiers"]["lattice_parameter_examples"]
+    )
+    assert (
+        "Build a Si/Ge heterostructure and shift layer 3 by 0.5 angstrom along x."
+        in capabilities["natural_language"]["new_structure_inline_modifiers"]["layer_translation_examples"]
     )
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7032,6 +7042,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "castep_settings",
         "crystal_alloy_fraction",
         "crystal_lattice_parameters",
+        "crystal_layer_translation",
         "crystal_strain",
         "crystal_add_atom_fractional",
         "crystal_interstitial_fractional",
@@ -7082,6 +7093,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert artifact_roundtrip["remediation_requires_user_confirmation"] is True
     assert "structure_artifact_validation" in capabilities["diagnostics"]["view_audit_fields"]
     assert "comprehensive_model_parameters" in diagnostic_profiles
+    assert "layer_registry_translation" in diagnostic_profiles
+    assert "inspection.semiconductor_health.layer_translation_summary" in diagnostic_profiles[
+        "layer_registry_translation"
+    ]["summary_keys"]
+    assert "semiconductor_layer_translation_csv" in diagnostic_profiles["layer_registry_translation"]["csv_keys"]
     assert "modeling_report_summary_csv" in diagnostic_profiles["comprehensive_model_parameters"]["csv_keys"]
     assert "semiconductor_calculation_readiness" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
     assert "semiconductor_normality_diagnosis" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
@@ -25302,6 +25318,62 @@ def test_live_modeling_request_compacts_lattice_parameter_revision_delta(
     assert result["revision_delta"]["crystal"]["lattice_delta"] == {"c": 0.065}
     assert result["revision_delta"]["crystal"]["fractional_coordinate_update_count"] == 0
     assert result["revision_delta"]["crystal"]["cartesian_moved_atom_count"] == 3
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_hotloads_chinese_semiconductor_layer_translation(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a Si/Ge heterostructure.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    result = server.material_studio_live_modeling_request(
+        "将第 3 层沿 x 方向平移 0.5 埃并热加载到 Materials Studio，导出堆垛配准诊断。",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "patch"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    assert result["nl_plan"]["template_id"] == "crystal_layer_translation"
+    assert result["new_revision"] == 1
+    assert result["revision_delta"]["crystal"]["fractional_coordinate_update_count"] == 2
+    assert result["revision_delta"]["crystal"]["cartesian_moved_atom_count"] == 2
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"]["layer_translation_summary"]
+    assert summary["quality"] == "complete"
+    assert summary["metadata_consistent"] is True
+    assert summary["latest"]["atom_ids"] == ["Si3", "Si5"]
+    assert summary["latest"]["translation_axis"] == "a"
+    assert result["modeling_health"]["checks"]["semiconductor_layer_translation_count"] == 1
+    assert "layer_registry_translation" in result["requested_diagnostic_focuses"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_translation_csv"]).exists()
+    assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    assert isolated_fake_gui.opened and isolated_fake_gui.opened[-1].suffix == ".cif"
+
+
+def test_live_modeling_request_previews_inline_semiconductor_layer_translation(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "Build a Si/Ge heterostructure and shift layer 3 by 0.5 angstrom along x, then prepare preview.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "silicon_germanium_001_heterostructure"
+    assert result["view_audit"]["metadata"]["last_crystal_layer_translation"]["layer_index"] == 3
+    assert result["modeling_report"]["inspection"]["semiconductor_health"]["layer_translation_summary"][
+        "metadata_consistent"
+    ] is True
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_translation_csv"]).exists()
     assert isolated_fake_gui.opened == []
 
 

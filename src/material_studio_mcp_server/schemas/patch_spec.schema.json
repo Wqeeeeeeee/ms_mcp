@@ -116,6 +116,7 @@
             "set_bond_type",
             "substitute_atom",
             "set_atom_position",
+            "translate_crystal_atoms",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -181,6 +182,22 @@
           ],
           "default": null,
           "title": "Atom Id"
+        },
+        "atom_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Atom Ids"
         },
         "atom1": {
           "anyOf": [
@@ -438,6 +455,25 @@
           ],
           "default": null,
           "title": "Axis"
+        },
+        "distance_angstrom": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distance Angstrom"
+        },
+        "wrap_fractional": {
+          "default": true,
+          "title": "Wrap Fractional",
+          "type": "boolean"
         },
         "thickness_angstrom": {
           "anyOf": [

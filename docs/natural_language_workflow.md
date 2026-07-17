@@ -1117,12 +1117,21 @@ Studio process/window before execution and reuses that same window afterward.
 
 Treat `backend_run_completed=true` only as backend completion. Materials Studio
 20.1 does not provide an independent SCF `Converged` result on the Energy API,
-so `scientific_convergence_verified` remains false. A returned
-`BandStructureChart`, `DOSChart`, or `PartialDOSChart` name proves a native Chart
-document exists but does not export numeric curve arrays; consequently
-`numeric_curve_data_exported` remains false. Review the CASTEP Report and native
-Chart document before reporting scientific convergence or quantitative curves.
-Fresh diagnostics expose `castep_electronic_result_summary` and write
+so `scientific_convergence_verified` remains false. The workflow parses the
+hash-bound native `.castep` output into SCF-cycle, final-energy, timing, warning,
+and fatal-marker evidence, but completing below the maximum cycle count is not
+reported as scientific convergence.
+
+A returned `BandStructureChart`, `DOSChart`, or `PartialDOSChart` name proves a
+native Chart document exists; it is not itself numeric export. When a single
+hash-bound native `.bands` file passes the documented Materials Studio 20.1
+format contract, BandStructure exports actual k-point/eigenvalue rows. DOS may
+also export a deterministic Gaussian total-DOS curve when the integration method
+is explicitly `Smearing` and a smearing width is supplied. The audit records the
+derivation and hashes every CSV. Native BandStructure k-points are not asserted
+to equal the analytic preview path. PDOS projection weights remain fail-closed,
+so PDOS keeps `numeric_curve_data_exported=false` until `.pdos_weights` is
+verified. Fresh diagnostics expose `castep_electronic_result_summary` and write
 `semiconductor_castep_electronic_result.csv`.
 
 ## Rollback

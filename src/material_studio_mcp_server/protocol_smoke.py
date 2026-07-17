@@ -686,9 +686,35 @@ async def _run_preview_calls(
             )
         if castep_electronic_capability.get(
             "numeric_curve_data_exported"
-        ) is not False:
+        ) != "conditional_on_native_bands":
             validation_errors.append(
                 "capabilities_castep_electronic_curve_boundary_missing"
+            )
+        electronic_exports = castep_electronic_capability.get(
+            "numeric_curve_export_by_task"
+        )
+        if not isinstance(electronic_exports, dict):
+            validation_errors.append(
+                "capabilities_castep_electronic_native_export_contract_missing"
+            )
+            electronic_exports = {}
+        if electronic_exports.get("BandStructure") != (
+            "native_castep_band_eigenvalues"
+        ):
+            validation_errors.append(
+                "capabilities_castep_electronic_band_export_contract_missing"
+            )
+        if electronic_exports.get("DensityOfStates") != (
+            "mcp_gaussian_total_dos_from_native_bands_when_smearing_is_explicit"
+        ):
+            validation_errors.append(
+                "capabilities_castep_electronic_dos_export_contract_missing"
+            )
+        if electronic_exports.get("ProjectedDensityOfStates") != (
+            "not_exported_until_pdos_weights_format_is_verified"
+        ):
+            validation_errors.append(
+                "capabilities_castep_electronic_pdos_boundary_missing"
             )
         replay_policy = capabilities.get("view_replay_automation_policy")
         if not isinstance(replay_policy, dict):
@@ -857,6 +883,18 @@ async def _run_preview_calls(
             validation_errors.append("castep_electronic_preview_created_revision")
         if electronic_preview.get("task") != "Energy":
             validation_errors.append("castep_electronic_preview_task_mismatch")
+        if electronic_preview.get("numeric_curve_data_exported") is not False:
+            validation_errors.append(
+                "castep_electronic_preview_claimed_numeric_export"
+            )
+        if electronic_preview.get("numeric_export_after_execution") is not None:
+            validation_errors.append(
+                "castep_electronic_energy_preview_numeric_plan_mismatch"
+            )
+        if electronic_preview.get("pdos_projection_weights_exported") is not False:
+            validation_errors.append(
+                "castep_electronic_preview_claimed_pdos_weights"
+            )
         if electronic_structure is None:
             validation_errors.append("castep_electronic_preview_structure_path_missing")
         elif electronic_structure.exists():
@@ -1020,6 +1058,12 @@ async def _run_preview_calls(
                     if electronic_run_dir is not None
                     else None
                 ),
+                "castep_electronic_preview_numeric_curve_data_exported": (
+                    electronic_preview.get("numeric_curve_data_exported")
+                ),
+                "castep_electronic_preview_numeric_export_after_execution": (
+                    electronic_preview.get("numeric_export_after_execution")
+                ),
                 "gui_opened": created.get("gui_open") is not None,
                 "view_names": view_names,
                 "view_bundle_manifest_path": exported.get("view_bundle_manifest_path"),
@@ -1089,6 +1133,20 @@ async def _run_preview_calls(
                 ),
                 "capabilities_castep_electronic_tool": (
                     castep_electronic_capability.get("tool")
+                ),
+                "capabilities_castep_electronic_numeric_export_mode": (
+                    castep_electronic_capability.get(
+                        "numeric_curve_data_exported"
+                    )
+                ),
+                "capabilities_castep_electronic_band_export": (
+                    electronic_exports.get("BandStructure")
+                ),
+                "capabilities_castep_electronic_dos_export": (
+                    electronic_exports.get("DensityOfStates")
+                ),
+                "capabilities_castep_electronic_pdos_export": (
+                    electronic_exports.get("ProjectedDensityOfStates")
                 ),
                 "capabilities_transactional_miller_implemented": (
                     replay_runtime.get("transactional_miller_implemented")

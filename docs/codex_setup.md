@@ -1209,10 +1209,18 @@ Materials Studio window and the workflow never starts another GUI process.
 
 Do not interpret backend completion as scientific convergence. The Materials
 Studio 20.1 Energy Results API has no independent SCF convergence flag, so the
-receipt intentionally reports `scientific_convergence_verified=false`. Native
-Chart object names are retained for BandStructure, DOS, and PDOS, but numeric
-curve arrays are not exported and `numeric_curve_data_exported=false`. Review
-the CASTEP Report and native chart before quantitative interpretation.
+receipt intentionally reports `scientific_convergence_verified=false`. The
+hash-bound native `.castep` output supplies a structured SCF audit, but a run
+that completes below the configured maximum cycles is still review evidence,
+not an independent convergence result.
+
+Native Chart object names are retained for BandStructure, DOS, and PDOS, but a
+Chart name is not numeric export. A valid native `.bands` file exports actual
+k-point/eigenvalue rows for BandStructure. With explicit Smearing integration
+and width, DOS also exports a deterministic, provenance-labeled Gaussian total
+DOS. PDOS projection weights remain unsupported and fail-closed until the local
+`.pdos_weights` layout is verified. Receipt v2 hash-binds the native audit and
+all derived CSVs; an artifact mismatch makes the numeric export unverified.
 
 The active user config is not rewritten by the doctor or protocol smoke. After
 merging the example snippet manually and restarting Codex, validate discovery

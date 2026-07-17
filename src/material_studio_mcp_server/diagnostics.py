@@ -3332,6 +3332,21 @@ def _semiconductor_castep_electronic_result_csv_row(
     summary: dict[str, Any],
 ) -> dict[str, Any]:
     checks = summary.get("checks") if isinstance(summary.get("checks"), dict) else {}
+    native = (
+        summary.get("native_output_audit")
+        if isinstance(summary.get("native_output_audit"), dict)
+        else {}
+    )
+    scf = (
+        native.get("castep_output_audit")
+        if isinstance(native.get("castep_output_audit"), dict)
+        else {}
+    )
+    bands = (
+        native.get("bands_summary")
+        if isinstance(native.get("bands_summary"), dict)
+        else {}
+    )
     return {
         "available": summary.get("available"),
         "status": summary.get("status"),
@@ -3345,6 +3360,13 @@ def _semiconductor_castep_electronic_result_csv_row(
         ),
         "numeric_curve_data_exported": summary.get(
             "numeric_curve_data_exported"
+        ),
+        "numeric_curve_kind": summary.get("numeric_curve_kind"),
+        "native_band_kpoint_path_exported": summary.get(
+            "native_band_kpoint_path_exported"
+        ),
+        "pdos_projection_weights_exported": summary.get(
+            "pdos_projection_weights_exported"
         ),
         "band_path_binding_verified": summary.get(
             "band_path_binding_verified"
@@ -3364,6 +3386,33 @@ def _semiconductor_castep_electronic_result_csv_row(
         "output_report": summary.get("output_report"),
         "result_metadata": summary.get("result_metadata"),
         "native_artifact_count": summary.get("native_artifact_count"),
+        "native_output_audit_status": native.get("status"),
+        "native_output_audit_path": summary.get("native_output_audit_path"),
+        "derived_artifact_count": summary.get("derived_artifact_count"),
+        "derived_artifact_paths": json.dumps(
+            [
+                item.get("path")
+                for item in summary.get("derived_artifacts", []) or []
+                if isinstance(item, dict)
+            ],
+            separators=(",", ":"),
+        ),
+        "scf_audit_status": scf.get("status"),
+        "scf_run_completed": scf.get("run_completed"),
+        "scf_max_cycles": scf.get("max_scf_cycles"),
+        "scf_last_iteration": scf.get("last_scf_iteration"),
+        "scf_maximum_cycles_reached": scf.get("maximum_scf_cycles_reached"),
+        "scf_final_energy_ev": scf.get("final_energy_ev"),
+        "scf_final_free_energy_ev": scf.get("final_free_energy_ev"),
+        "scf_total_time_seconds": scf.get("total_time_seconds"),
+        "scf_warning_count": scf.get("warning_count"),
+        "scf_fatal_marker_count": scf.get("fatal_marker_count"),
+        "native_band_kpoint_count": bands.get("number_of_kpoints"),
+        "native_band_spin_component_count": bands.get(
+            "number_of_spin_components"
+        ),
+        "native_band_eigenvalue_count": bands.get("eigenvalue_count"),
+        "native_band_kpoint_weight_sum": bands.get("kpoint_weight_sum"),
         "checks": json.dumps(checks, sort_keys=True, separators=(",", ":")),
         "warning_count": len(summary.get("warnings") or []),
         "warnings": json.dumps(
@@ -5259,12 +5308,24 @@ def _semiconductor_health_summary(
                 "immutable revision; inspect castep_electronic_result_summary."
             )
         else:
-            warnings.extend(
-                [
-                    "CASTEP electronic backend completion does not independently verify SCF convergence in MS 20.1.",
-                    "CASTEP band/DOS Chart Documents are recorded by name; numeric curve data were not exported.",
-                ]
+            warnings.append(
+                "CASTEP electronic backend completion does not independently verify SCF convergence in MS 20.1."
             )
+            native_audit = castep_electronic_result_summary.get(
+                "native_output_audit"
+            )
+            if isinstance(native_audit, dict) and native_audit.get("status") == (
+                "review_required"
+            ):
+                warnings.append(
+                    "CASTEP native-output audit requires review; inspect its errors and SCF markers."
+                )
+            if not castep_electronic_result_summary.get(
+                "numeric_curve_data_exported"
+            ):
+                warnings.append(
+                    "The requested CASTEP numeric property curve was not exported."
+                )
     commensurate_twist_summary = _commensurate_tmd_twist_summary(spec, metadata)
     if commensurate_twist_summary:
         if not commensurate_twist_summary.get("metadata_consistent"):

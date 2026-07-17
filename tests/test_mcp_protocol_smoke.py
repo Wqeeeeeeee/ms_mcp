@@ -60,10 +60,24 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["capabilities_castep_electronic_tool"] == (
         "material_studio_castep_run_current"
     )
+    assert calls["capabilities_castep_electronic_numeric_export_mode"] == (
+        "conditional_on_native_bands"
+    )
+    assert calls["capabilities_castep_electronic_band_export"] == (
+        "native_castep_band_eigenvalues"
+    )
+    assert calls["capabilities_castep_electronic_dos_export"] == (
+        "mcp_gaussian_total_dos_from_native_bands_when_smearing_is_explicit"
+    )
+    assert calls["capabilities_castep_electronic_pdos_export"] == (
+        "not_exported_until_pdos_weights_format_is_verified"
+    )
     assert calls["castep_electronic_preview_task"] == "Energy"
     assert calls["castep_electronic_preview_execution_started"] is False
     assert calls["castep_electronic_preview_structure_exists"] is False
     assert calls["castep_electronic_preview_run_directory_exists"] is False
+    assert calls["castep_electronic_preview_numeric_curve_data_exported"] is False
+    assert calls["castep_electronic_preview_numeric_export_after_execution"] is None
     assert calls["view_names"] == ["front", "top", "isometric"]
     assert calls["view_bundle_row_counts"]["view_summary"] == 3
     assert calls["view_bundle_row_counts"]["view_projections"] == 24

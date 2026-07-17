@@ -82,6 +82,33 @@ def test_compact_bundle_separates_artifact_availability_from_path_index(
     )
 
 
+def test_compact_preserves_castep_native_output_audit_receipt() -> None:
+    compact = server._compact_live_response(
+        {
+            "ok": True,
+            "status": "castep_electronic_result_recorded",
+            "scientific_convergence_verified": False,
+            "numeric_curve_data_exported": True,
+            "numeric_curve_kind": "native_castep_band_eigenvalues",
+            "native_output_audit_status": "complete",
+            "native_output_audit_path": "C:/workspace/native_output_audit.json",
+            "native_scf_status": "completed_below_max_cycles",
+            "native_scf_last_iteration": 12,
+            "native_scf_maximum_cycles_reached": False,
+            "derived_artifact_count": 1,
+        },
+        "compact",
+    )
+
+    assert compact["numeric_curve_data_exported"] is True
+    assert compact["numeric_curve_kind"] == "native_castep_band_eigenvalues"
+    assert compact["native_output_audit_status"] == "complete"
+    assert compact["native_scf_status"] == "completed_below_max_cycles"
+    assert compact["native_scf_last_iteration"] == 12
+    assert compact["native_scf_maximum_cycles_reached"] is False
+    assert compact["derived_artifact_count"] == 1
+
+
 def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     full = server.material_studio_live_capabilities()
     compact = server.material_studio_live_capabilities(response_mode="compact")

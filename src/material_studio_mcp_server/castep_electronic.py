@@ -8,13 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from .castep_relaxation import crystal_structure_sha256
+from .parsers.castep_native import CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA
 from .parsers.cif import validate_crystal_cif_against_spec
 from .specs.castep import CastepEnergySpec, CastepTask
 from .specs.crystal import CrystalSpec
 from .specs.project import ModelSpec
 
 
-CASTEP_ELECTRONIC_RECEIPT_SCHEMA = "material_studio_castep_electronic_receipt_v1"
+CASTEP_ELECTRONIC_RECEIPT_LEGACY_SCHEMA = (
+    "material_studio_castep_electronic_receipt_v1"
+)
+CASTEP_ELECTRONIC_RECEIPT_SCHEMA = "material_studio_castep_electronic_receipt_v2"
 SUPPORTED_CASTEP_ELECTRONIC_TASKS = frozenset(
     {
         CastepTask.ENERGY,
@@ -43,6 +47,9 @@ def build_electronic_result_revision_spec(
     script_path: str | Path,
     script_sha256: str,
     native_artifacts: list[dict[str, Any]],
+    native_output_audit: dict[str, Any],
+    native_output_audit_path: str | Path,
+    derived_artifacts: list[dict[str, Any]],
     target_revision: int,
 ) -> tuple[ModelSpec, dict[str, Any]]:
     """Create a metadata-only revision for one verified Energy task result."""
@@ -65,6 +72,7 @@ def build_electronic_result_revision_spec(
     metadata_path = Path(result_metadata).expanduser().resolve()
     payload_path = Path(result_payload_path).expanduser().resolve()
     persisted_script_path = Path(script_path).expanduser().resolve()
+    native_audit_path = Path(native_output_audit_path).expanduser().resolve()
     artifact_validation = validate_crystal_cif_against_spec(
         base_spec.model,
         structure_path,
@@ -96,6 +104,22 @@ def build_electronic_result_revision_spec(
         result_payload
     ):
         raise ValueError("CASTEP electronic tagged result payload mismatch")
+    if not native_audit_path.is_file():
+        raise ValueError(
+            f"CASTEP native output audit was not found: {native_audit_path}"
+        )
+    try:
+        persisted_native_audit = json.loads(
+            native_audit_path.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("CASTEP native output audit is not valid JSON") from exc
+    if _canonical_json_sha256(persisted_native_audit) != _canonical_json_sha256(
+        native_output_audit
+    ):
+        raise ValueError("CASTEP native output audit payload mismatch")
+    if native_output_audit.get("task") != simulation.task.value:
+        raise ValueError("CASTEP native output audit task mismatch")
 
     expected_document = RESULT_DOCUMENT_BY_TASK[simulation.task]
     document_names = dict(result_payload.get("result_document_names") or {})
@@ -105,6 +129,23 @@ def build_electronic_result_revision_spec(
             f"CASTEP {simulation.task.value} did not return {expected_document}"
         )
     normalized_native_artifacts = _validate_native_artifact_manifest(native_artifacts)
+    normalized_derived_artifacts = _validate_native_artifact_manifest(
+        derived_artifacts
+    )
+    audit_contract_errors = _native_output_audit_contract_errors(
+        native_output_audit,
+        task=simulation.task.value,
+        native_artifacts=normalized_native_artifacts,
+        derived_artifacts=normalized_derived_artifacts,
+    )
+    if audit_contract_errors:
+        raise ValueError(
+            "CASTEP native output audit contract mismatch: "
+            + "; ".join(audit_contract_errors)
+        )
+    numeric_curve_data_exported = native_output_audit[
+        "numeric_curve_data_exported"
+    ]
     structure_hash = crystal_structure_sha256(base_spec.model)
     simulation_payload = simulation.model_dump(mode="json")
     receipt = {
@@ -133,7 +174,14 @@ def build_electronic_result_revision_spec(
         "required_result_document": expected_document,
         "result_document_name": chart_name,
         "result_document_available": bool(chart_name),
-        "numeric_curve_data_exported": False,
+        "numeric_curve_data_exported": numeric_curve_data_exported,
+        "numeric_curve_kind": native_output_audit.get("numeric_curve_kind"),
+        "native_band_kpoint_path_exported": native_output_audit.get(
+            "native_band_kpoint_path_exported"
+        ),
+        "pdos_projection_weights_exported": native_output_audit.get(
+            "pdos_projection_weights_exported"
+        ),
         "band_path_binding_verified": False,
         "total_energy_kcal_per_mol": result_payload.get(
             "total_energy_kcal_per_mol"
@@ -158,6 +206,14 @@ def build_electronic_result_revision_spec(
         "script_sha256": script_sha256,
         "native_artifact_count": len(normalized_native_artifacts),
         "native_artifacts": normalized_native_artifacts,
+        "native_output_audit": native_output_audit,
+        "native_output_audit_path": str(native_audit_path),
+        "native_output_audit_payload_sha256": _canonical_json_sha256(
+            native_output_audit
+        ),
+        "native_output_audit_file_sha256": _file_sha256(native_audit_path),
+        "derived_artifact_count": len(normalized_derived_artifacts),
+        "derived_artifacts": normalized_derived_artifacts,
     }
     metadata = dict(base_spec.metadata or {})
     history = [
@@ -178,13 +234,28 @@ def build_electronic_result_revision_spec(
             "castep_electronic_result_metadata": str(metadata_path),
             "castep_electronic_result_structure": str(structure_path),
             "castep_electronic_result_report": str(report_path),
+            "castep_electronic_native_output_audit": str(native_audit_path),
         }
     )
+    for artifact in native_output_audit.get("derived_artifacts", []) or []:
+        if not isinstance(artifact, dict):
+            continue
+        kind = artifact.get("artifact_kind")
+        path = artifact.get("path")
+        if kind == "castep_band_eigenvalues_csv" and isinstance(path, str):
+            outputs["castep_band_eigenvalues_csv"] = path
+        elif kind == "castep_gaussian_total_dos_csv" and isinstance(path, str):
+            outputs["castep_gaussian_total_dos_csv"] = path
     notes = list(base_spec.acceptance.notes)
     notes.append(
-        "CASTEP Energy Results were recorded with immutable artifact binding; "
-        "the MS 20.1 Results object does not independently prove SCF convergence "
-        "or export numeric band/DOS curve data."
+        "CASTEP Energy Results were recorded with immutable native-output binding; "
+        "MS 20.1 does not expose an independent SCF convergence boolean. "
+        + (
+            "Numeric property data were exported with the provenance recorded in "
+            "the native-output audit."
+            if numeric_curve_data_exported
+            else "The requested numeric property curve was not exported."
+        )
     )
     result_spec = base_spec.model_copy(
         update={
@@ -206,8 +277,14 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     receipt = dict(raw)
+    schema_version = receipt.get("schema_version")
+    legacy_receipt = schema_version == CASTEP_ELECTRONIC_RECEIPT_LEGACY_SCHEMA
+    current_receipt = schema_version == CASTEP_ELECTRONIC_RECEIPT_SCHEMA
+    native_output_audit = receipt.get("native_output_audit")
+    if not isinstance(native_output_audit, dict):
+        native_output_audit = None
     checks: dict[str, bool] = {
-        "schema": receipt.get("schema_version") == CASTEP_ELECTRONIC_RECEIPT_SCHEMA,
+        "schema": legacy_receipt or current_receipt,
         "project": receipt.get("source_project_id") == spec.project_id,
         "target_revision": receipt.get("target_revision") == spec.revision,
         "source_revision_order": isinstance(receipt.get("source_revision"), int)
@@ -229,8 +306,17 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
             receipt.get("scientific_convergence_verified") is False
             and receipt.get("scientific_convergence_claimed") is False
         ),
-        "numeric_curve_not_overclaimed": (
+        "numeric_curve_contract": (
             receipt.get("numeric_curve_data_exported") is False
+            if legacy_receipt
+            else bool(
+                native_output_audit is not None
+                and isinstance(
+                    receipt.get("numeric_curve_data_exported"), bool
+                )
+                and receipt.get("numeric_curve_data_exported")
+                == native_output_audit.get("numeric_curve_data_exported")
+            )
         ),
         "script_file": _path_hash_matches(
             receipt.get("script_path"),
@@ -252,6 +338,41 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
             receipt.get("native_artifacts")
         ),
     }
+    if current_receipt:
+        checks.update(
+            {
+                "native_output_audit_file": _path_hash_matches(
+                    receipt.get("native_output_audit_path"),
+                    receipt.get("native_output_audit_file_sha256"),
+                ),
+                "native_output_audit_payload": _json_file_matches_payload(
+                    receipt.get("native_output_audit_path"),
+                    native_output_audit,
+                    receipt.get("native_output_audit_payload_sha256"),
+                ),
+                "native_output_audit_task": bool(
+                    native_output_audit is not None
+                    and native_output_audit.get("task") == receipt.get("task")
+                ),
+                "derived_artifacts": _native_artifacts_match(
+                    receipt.get("derived_artifacts")
+                ),
+                "native_artifact_count": _manifest_count_matches(
+                    receipt.get("native_artifacts"),
+                    receipt.get("native_artifact_count"),
+                ),
+                "derived_artifact_count": _manifest_count_matches(
+                    receipt.get("derived_artifacts"),
+                    receipt.get("derived_artifact_count"),
+                ),
+                "native_output_audit_contract": not _native_output_audit_contract_errors(
+                    native_output_audit,
+                    task=str(receipt.get("task") or ""),
+                    native_artifacts=receipt.get("native_artifacts"),
+                    derived_artifacts=receipt.get("derived_artifacts"),
+                ),
+            }
+        )
     structure_artifact_validation: dict[str, Any] | None = None
     if isinstance(spec.model, CrystalSpec) and checks["output_structure_file"]:
         structure_artifact_validation = validate_crystal_cif_against_spec(
@@ -289,12 +410,25 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
     binding_verified = all(checks.values())
     warnings = [
         "MS 20.1 Energy Results do not expose an independent SCF convergence boolean.",
-        "Numeric band/DOS curve data are not exported by the documented Chart Document API.",
     ]
+    numeric_export_claimed = receipt.get("numeric_curve_data_exported") is True
+    numeric_exported = binding_verified and numeric_export_claimed
+    if numeric_exported:
+        warnings.append(
+            "Numeric data provenance comes from the native CASTEP .bands file, "
+            "not from undocumented Chart Document export APIs."
+        )
+    elif numeric_export_claimed:
+        warnings.append(
+            "Numeric property data are claimed by the receipt, but their immutable "
+            "artifact binding is not verified."
+        )
+    else:
+        warnings.append("The requested numeric property curve was not exported.")
     if task is CastepTask.BAND_STRUCTURE:
         warnings.append(
-            "The returned BandStructureChart uses the Materials Studio native path; "
-            "it is not bound to the MCP analytic band-path preview."
+            "The native .bands k-points are exported when available, but they are "
+            "not asserted to equal the MCP analytic band-path preview."
         )
     if not binding_verified:
         warnings.insert(
@@ -303,7 +437,7 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
         )
     return {
         "available": True,
-        "schema_version": CASTEP_ELECTRONIC_RECEIPT_SCHEMA,
+        "schema_version": schema_version,
         "status": "verified" if binding_verified else "binding_mismatch",
         "binding_verified": binding_verified,
         "checks": checks,
@@ -312,7 +446,20 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
         "target_revision": receipt.get("target_revision"),
         "backend_run_completed": receipt.get("backend_run_completed"),
         "scientific_convergence_verified": False,
-        "numeric_curve_data_exported": False,
+        "numeric_curve_data_exported": numeric_exported,
+        "numeric_curve_data_claimed": numeric_export_claimed,
+        "numeric_curve_kind": (
+            receipt.get("numeric_curve_kind") if numeric_exported else None
+        ),
+        "numeric_curve_kind_claimed": receipt.get("numeric_curve_kind"),
+        "native_band_kpoint_path_exported": bool(
+            binding_verified
+            and receipt.get("native_band_kpoint_path_exported") is True
+        ),
+        "pdos_projection_weights_exported": bool(
+            binding_verified
+            and receipt.get("pdos_projection_weights_exported") is True
+        ),
         "band_path_binding_verified": receipt.get("band_path_binding_verified"),
         "required_result_document": receipt.get("required_result_document"),
         "result_document_name": receipt.get("result_document_name"),
@@ -329,6 +476,10 @@ def verify_castep_electronic_receipt(spec: ModelSpec) -> dict[str, Any] | None:
         "result_payload_path": receipt.get("result_payload_path"),
         "script_path": receipt.get("script_path"),
         "native_artifact_count": receipt.get("native_artifact_count"),
+        "native_output_audit": native_output_audit,
+        "native_output_audit_path": receipt.get("native_output_audit_path"),
+        "derived_artifact_count": receipt.get("derived_artifact_count"),
+        "derived_artifacts": receipt.get("derived_artifacts"),
         "structure_artifact_validation": structure_artifact_validation,
         "warnings": warnings,
     }
@@ -373,6 +524,141 @@ def _native_artifacts_match(value: Any) -> bool:
     return len(normalized) == len(value)
 
 
+def _manifest_count_matches(value: Any, count: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and isinstance(count, int)
+        and not isinstance(count, bool)
+        and count == len(value)
+    )
+
+
+def _native_output_audit_contract_errors(
+    audit: Any,
+    *,
+    task: str,
+    native_artifacts: Any,
+    derived_artifacts: Any,
+) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(audit, dict):
+        return ["audit payload is not an object"]
+    if audit.get("schema_version") != CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA:
+        errors.append("audit schema is unsupported")
+    if audit.get("task") != task:
+        errors.append("audit task does not match the receipt task")
+    if audit.get("status") not in {
+        "complete",
+        "partial",
+        "review_required",
+        "unavailable",
+    }:
+        errors.append("audit status is unsupported")
+    if audit.get("scientific_convergence_verified") is not False:
+        errors.append("audit overclaims scientific convergence")
+
+    numeric_exported = audit.get("numeric_curve_data_exported")
+    if not isinstance(numeric_exported, bool):
+        errors.append("numeric export flag is not boolean")
+        numeric_exported = False
+    if not isinstance(audit.get("native_band_kpoint_path_exported"), bool):
+        errors.append("native band-path export flag is not boolean")
+    if audit.get("pdos_projection_weights_exported") is not False:
+        errors.append("PDOS projection-weight export must remain false")
+
+    try:
+        normalized_native = _normalize_manifest_for_contract(native_artifacts)
+        normalized_derived = _normalize_manifest_for_contract(derived_artifacts)
+        normalized_audit_derived = _normalize_manifest_for_contract(
+            audit.get("derived_artifacts")
+        )
+    except (OSError, ValueError) as exc:
+        errors.append(str(exc))
+        return errors
+
+    if normalized_audit_derived != normalized_derived:
+        errors.append("audit derived-artifact manifest does not match the receipt")
+    if audit.get("native_artifact_count") != len(normalized_native):
+        errors.append("audit native-artifact count does not match the receipt")
+    if audit.get("derived_artifact_count") != len(normalized_derived):
+        errors.append("audit derived-artifact count does not match the receipt")
+
+    native_by_path = {
+        item["path"].lower(): item["sha256"] for item in normalized_native
+    }
+    for component_name in ("castep_output_audit", "bands_summary"):
+        component = audit.get(component_name)
+        if component is None:
+            continue
+        if not isinstance(component, dict):
+            errors.append(f"{component_name} is not an object")
+            continue
+        source_path = component.get("source_path")
+        source_sha256 = component.get("source_sha256")
+        if not isinstance(source_path, str) or not isinstance(source_sha256, str):
+            errors.append(f"{component_name} lacks source path/hash binding")
+            continue
+        try:
+            source_key = str(Path(source_path).expanduser().resolve()).lower()
+        except OSError:
+            errors.append(f"{component_name} source path is invalid")
+            continue
+        if native_by_path.get(source_key) != source_sha256:
+            errors.append(f"{component_name} source is not bound to native artifacts")
+    output_audit = audit.get("castep_output_audit")
+    if isinstance(output_audit, dict):
+        if output_audit.get("schema_version") != CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA:
+            errors.append("nested CASTEP output audit schema is unsupported")
+        if output_audit.get("scientific_convergence_verified") is not False:
+            errors.append("nested CASTEP output audit overclaims convergence")
+
+    kinds = {
+        item.get("artifact_kind")
+        for item in (audit.get("derived_artifacts") or [])
+        if isinstance(item, dict)
+    }
+    numeric_kind = audit.get("numeric_curve_kind")
+    if task == CastepTask.ENERGY.value:
+        if numeric_exported or numeric_kind is not None or kinds:
+            errors.append("Energy task must not claim a numeric property curve")
+    elif task == CastepTask.BAND_STRUCTURE.value:
+        expected = "castep_band_eigenvalues_csv"
+        if numeric_exported:
+            if numeric_kind != "native_castep_band_eigenvalues":
+                errors.append("BandStructure numeric export kind is invalid")
+            if kinds != {expected}:
+                errors.append("BandStructure derived-artifact set is invalid")
+            if audit.get("native_band_kpoint_path_exported") is not True:
+                errors.append("BandStructure native k-point path flag is missing")
+        elif numeric_kind is not None:
+            errors.append("BandStructure numeric kind exists without an export")
+    elif task == CastepTask.DENSITY_OF_STATES.value:
+        if numeric_exported:
+            if numeric_kind != "mcp_gaussian_total_dos_from_native_bands":
+                errors.append("DOS numeric export kind is invalid")
+            if kinds != {
+                "castep_band_eigenvalues_csv",
+                "castep_gaussian_total_dos_csv",
+            }:
+                errors.append("DOS derived-artifact set is invalid")
+        elif numeric_kind is not None:
+            errors.append("DOS numeric kind exists without an export")
+    elif task == CastepTask.PROJECTED_DENSITY_OF_STATES.value:
+        if numeric_exported or numeric_kind is not None:
+            errors.append("PDOS numeric projection export is not supported")
+        if not kinds.issubset({"castep_band_eigenvalues_csv"}):
+            errors.append("PDOS derived-artifact set is invalid")
+    else:
+        errors.append("receipt task is not a supported electronic task")
+    return errors
+
+
+def _normalize_manifest_for_contract(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+        raise ValueError("artifact manifest is not a list of objects")
+    return _validate_native_artifact_manifest([dict(item) for item in value])
+
+
 def _path_hash_matches(path_value: Any, digest_value: Any) -> bool:
     if not isinstance(path_value, str) or not isinstance(digest_value, str):
         return False
@@ -381,6 +667,30 @@ def _path_hash_matches(path_value: Any, digest_value: Any) -> bool:
         return path.is_file() and _file_sha256(path) == digest_value
     except OSError:
         return False
+
+
+def _json_file_matches_payload(
+    path_value: Any,
+    payload_value: Any,
+    digest_value: Any,
+) -> bool:
+    if (
+        not isinstance(path_value, str)
+        or not isinstance(payload_value, dict)
+        or not isinstance(digest_value, str)
+    ):
+        return False
+    try:
+        path = Path(path_value).expanduser().resolve()
+        if not path.is_file():
+            return False
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        _canonical_json_sha256(parsed) == digest_value
+        and _canonical_json_sha256(payload_value) == digest_value
+    )
 
 
 def _canonical_json_sha256(payload: Any) -> str:

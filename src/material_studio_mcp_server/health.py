@@ -840,6 +840,43 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_castep_electronic_numeric_curve_data_exported"] = (
             castep_electronic.get("numeric_curve_data_exported")
         )
+        checks["semiconductor_castep_electronic_numeric_curve_kind"] = (
+            castep_electronic.get("numeric_curve_kind")
+        )
+        checks["semiconductor_castep_electronic_native_band_path_exported"] = (
+            castep_electronic.get("native_band_kpoint_path_exported")
+        )
+        checks["semiconductor_castep_electronic_pdos_weights_exported"] = (
+            castep_electronic.get("pdos_projection_weights_exported")
+        )
+        raw_native_output = castep_electronic.get("native_output_audit")
+        native_output = (
+            raw_native_output if isinstance(raw_native_output, dict) else {}
+        )
+        raw_native_scf = native_output.get("castep_output_audit")
+        native_scf = raw_native_scf if isinstance(raw_native_scf, dict) else {}
+        raw_native_bands = native_output.get("bands_summary")
+        native_bands = (
+            raw_native_bands if isinstance(raw_native_bands, dict) else {}
+        )
+        checks["semiconductor_castep_native_output_audit_status"] = (
+            native_output.get("status")
+        )
+        checks["semiconductor_castep_native_scf_status"] = native_scf.get(
+            "status"
+        )
+        checks["semiconductor_castep_native_scf_last_iteration"] = (
+            native_scf.get("last_scf_iteration")
+        )
+        checks["semiconductor_castep_native_scf_maximum_cycles_reached"] = (
+            native_scf.get("maximum_scf_cycles_reached")
+        )
+        checks["semiconductor_castep_native_band_kpoint_count"] = (
+            native_bands.get("number_of_kpoints")
+        )
+        checks["semiconductor_castep_native_band_eigenvalue_count"] = (
+            native_bands.get("eigenvalue_count")
+        )
         checks["semiconductor_castep_electronic_result_document_name"] = (
             castep_electronic.get("result_document_name")
         )
@@ -853,10 +890,22 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append(
                 "CASTEP electronic-result receipt is not bound to the current immutable revision."
             )
-        else:
+        elif native_output.get("status") == "review_required":
+            warnings.append(
+                "CASTEP native-output audit requires review; inspect its persisted "
+                "errors and SCF markers."
+            )
+        elif castep_electronic.get("scientific_convergence_verified") is not True:
             warnings.append(
                 "CASTEP electronic backend completion is recorded, but independent "
-                "SCF convergence and numeric band/DOS curve export remain unverified."
+                "SCF convergence remains unverified."
+            )
+        if (
+            castep_electronic.get("binding_verified") is True
+            and castep_electronic.get("numeric_curve_data_exported") is not True
+        ):
+            warnings.append(
+                "The requested CASTEP numeric property curve was not exported."
             )
 
     commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}

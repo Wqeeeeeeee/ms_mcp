@@ -10,6 +10,19 @@ from .castep_log import (
     validate_castep_electronic_result,
     validate_castep_geometry_result,
 )
+from .castep_native import (
+    CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA,
+    HARTREE_TO_EV,
+    CastepBandKPoint,
+    CastepBandsData,
+    audit_castep_native_artifacts,
+    parse_castep_bands_file,
+    parse_castep_bands_text,
+    parse_castep_output_file,
+    parse_castep_output_text,
+    write_castep_band_eigenvalues_csv,
+    write_castep_gaussian_dos_csv,
+)
 from .cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .copy_script import analyze_reviewed_copy_script
 from .forcite_log import parse_forcite_convergence
@@ -24,10 +37,21 @@ __all__ = [
     "parse_castep_energy",
     "CASTEP_ELECTRONIC_RESULT_SCHEMA",
     "CastepElectronicResultPayload",
+    "CastepBandKPoint",
+    "CastepBandsData",
+    "audit_castep_native_artifacts",
+    "CASTEP_NATIVE_OUTPUT_AUDIT_SCHEMA",
+    "HARTREE_TO_EV",
+    "parse_castep_bands_file",
+    "parse_castep_bands_text",
     "validate_castep_electronic_result",
+    "parse_castep_output_file",
+    "parse_castep_output_text",
     "parse_crystal_cif",
     "parse_forcite_convergence",
     "parse_structure_summary",
     "validate_crystal_cif_against_spec",
     "validate_castep_geometry_result",
+    "write_castep_band_eigenvalues_csv",
+    "write_castep_gaussian_dos_csv",
 ]

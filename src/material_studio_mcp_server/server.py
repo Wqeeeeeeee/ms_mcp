@@ -66,6 +66,7 @@ from .parsers.castep_log import (
     validate_castep_electronic_result,
     validate_castep_geometry_result,
 )
+from .parsers.castep_native import audit_castep_native_artifacts
 from .parsers.cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .parsers.structure_summary import parse_structure_summary
 from .scripts import (
@@ -3648,13 +3649,35 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "scientific_convergence_limit": (
                 "MS 20.1 Energy Results expose no independent SCF convergence boolean."
             ),
-            "numeric_curve_data_exported": False,
+            "numeric_curve_data_exported": "conditional_on_native_bands",
+            "native_bands_format_contract": (
+                "Materials Studio 20.1 CASTEP file-format help"
+            ),
+            "numeric_curve_export_by_task": {
+                "Energy": "not_applicable",
+                "BandStructure": "native_castep_band_eigenvalues",
+                "DensityOfStates": (
+                    "mcp_gaussian_total_dos_from_native_bands_when_smearing_is_explicit"
+                ),
+                "ProjectedDensityOfStates": (
+                    "not_exported_until_pdos_weights_format_is_verified"
+                ),
+            },
+            "native_output_audit_fields": [
+                "castep_output_audit",
+                "bands_summary",
+                "numeric_curve_kind",
+                "derived_artifacts",
+            ],
             "numeric_curve_export_limit": (
-                "Documented Chart Documents expose no verified Export or SaveAs API."
+                "Chart Documents remain unparsed; numeric provenance comes only from "
+                "hash-bound native .bands data, and PDOS projection weights remain unsupported."
             ),
             "band_path_binding_verified": False,
             "band_path_limit": (
-                "BandStructure uses the Materials Studio native automatic path."
+                "BandStructure uses the Materials Studio native automatic path; the "
+                "actual native k-point coordinates are exported but not equated to the "
+                "analytic preview path."
             ),
             "hotload_reuses_existing_window_only": True,
             "launches_new_gui_process": False,
@@ -34727,6 +34750,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "run_directory",
             "scientific_convergence_verified",
             "numeric_curve_data_exported",
+            "numeric_export_after_execution",
+            "pdos_projection_weights_exported",
+            "numeric_curve_kind",
+            "native_output_audit_status",
+            "native_output_audit_path",
+            "native_scf_status",
+            "native_scf_last_iteration",
+            "native_scf_maximum_cycles_reached",
+            "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -34892,6 +34924,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "run_directory",
             "scientific_convergence_verified",
             "numeric_curve_data_exported",
+            "numeric_export_after_execution",
+            "pdos_projection_weights_exported",
+            "numeric_curve_kind",
+            "native_output_audit_status",
+            "native_output_audit_path",
+            "native_scf_status",
+            "native_scf_last_iteration",
+            "native_scf_maximum_cycles_reached",
+            "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -35282,6 +35323,15 @@ def _compact_live_response(
             "run_directory",
             "scientific_convergence_verified",
             "numeric_curve_data_exported",
+            "numeric_export_after_execution",
+            "pdos_projection_weights_exported",
+            "numeric_curve_kind",
+            "native_output_audit_status",
+            "native_output_audit_path",
+            "native_scf_status",
+            "native_scf_last_iteration",
+            "native_scf_maximum_cycles_reached",
+            "derived_artifact_count",
             "diagnostic_export_requested",
             "diagnostic_export_deferred",
             "diagnostic_export_retry_tool",
@@ -40255,7 +40305,7 @@ def _castep_electronic_preflight(
     ]
     warnings = [
         "The MS 20.1 Energy Results object does not expose an independent SCF convergence boolean.",
-        "Chart Documents do not expose documented Export/SaveAs support; numeric band/DOS curve data are not promised.",
+        "Chart Documents do not expose documented Export/SaveAs support; after execution the MCP will inspect a hash-bound native .bands file instead.",
     ]
     if simulation.task is CastepTask.BAND_STRUCTURE:
         warnings.append(
@@ -40284,6 +40334,19 @@ def _castep_electronic_preflight(
             "structure_must_remain_unchanged": True,
             "scientific_convergence_verified": False,
             "numeric_curve_data_exported": False,
+            "numeric_export_after_execution": (
+                "native_castep_band_eigenvalues"
+                if simulation.task is CastepTask.BAND_STRUCTURE
+                else (
+                    "mcp_gaussian_total_dos_from_native_bands"
+                    if simulation.task is CastepTask.DENSITY_OF_STATES
+                    and simulation.dos_integration_method is not None
+                    and simulation.dos_integration_method.value == "Smearing"
+                    and simulation.dos_smearing_width_ev is not None
+                    else None
+                )
+            ),
+            "pdos_projection_weights_exported": False,
         },
     }
 
@@ -40633,6 +40696,10 @@ def material_studio_castep_run_current(
             "single_window_hotload_required": bool(open_in_gui),
             "scientific_convergence_verified": False,
             "numeric_curve_data_exported": False,
+            "numeric_export_after_execution": preflight["result_contract"].get(
+                "numeric_export_after_execution"
+            ),
+            "pdos_projection_weights_exported": False,
         }
         if mode is ExecutionMode.PREVIEW:
             response["status"] = (
@@ -40946,12 +41013,16 @@ def material_studio_castep_run_current(
             final_result_payload_path = candidate_result_dir / "tagged_result.json"
             final_script_path = candidate_result_dir / "run_castep_electronic.pl"
             final_native_dir = candidate_result_dir / "native_artifacts"
+            final_derived_dir = candidate_result_dir / "derived_numeric"
+            final_native_audit_path = candidate_result_dir / "native_output_audit.json"
             if (
                 final_structure.exists()
                 or final_report.exists()
                 or final_result_metadata_path.exists()
                 or final_result_payload_path.exists()
                 or final_script_path.exists()
+                or final_derived_dir.exists()
+                or final_native_audit_path.exists()
                 or candidate_result_dir.exists()
             ):
                 raise ValueError(
@@ -40972,6 +41043,19 @@ def material_studio_castep_run_current(
                 source_root=native_capture_dir,
                 destination_root=final_native_dir,
             )
+            native_output_audit, derived_artifacts = audit_castep_native_artifacts(
+                copied_native_manifest,
+                task=simulation.task.value,
+                destination=final_derived_dir,
+                dos_integration_method=(
+                    simulation.dos_integration_method.value
+                    if simulation.dos_integration_method is not None
+                    else None
+                ),
+                dos_smearing_width_ev=simulation.dos_smearing_width_ev,
+                dos_energy_max_ev=simulation.dos_energy_max_ev,
+            )
+            _write_json_artifact(final_native_audit_path, native_output_audit)
             final_structure_validation = validate_crystal_cif_against_spec(
                 base_spec.model,
                 final_structure,
@@ -40992,6 +41076,9 @@ def material_studio_castep_run_current(
                     script_path=final_script_path,
                     script_sha256=text_sha256(script),
                     native_artifacts=copied_native_manifest,
+                    native_output_audit=native_output_audit,
+                    native_output_audit_path=final_native_audit_path,
+                    derived_artifacts=derived_artifacts,
                     target_revision=candidate_revision,
                 )
             )
@@ -41023,7 +41110,7 @@ def material_studio_castep_run_current(
 
         recorded_spec = store.get_revision(base_spec.project_id, info.revision)
         final_execution_metadata = {
-            "schema_version": "material_studio_castep_electronic_execution_v1",
+            "schema_version": "material_studio_castep_electronic_execution_v2",
             "project_id": base_spec.project_id,
             "base_revision": base_spec.revision,
             "recorded_revision": info.revision,
@@ -41031,12 +41118,17 @@ def material_studio_castep_run_current(
             "success": True,
             "backend_run_completed": True,
             "scientific_convergence_verified": False,
-            "numeric_curve_data_exported": False,
+            "numeric_curve_data_exported": electronic_receipt.get(
+                "numeric_curve_data_exported"
+            ),
+            "numeric_curve_kind": electronic_receipt.get("numeric_curve_kind"),
             "electronic_receipt": electronic_receipt,
             "runner": runner_result,
             "result_validation": result_validation,
             "structure_artifact_validation": final_structure_validation,
             "native_artifacts": copied_native_manifest,
+            "native_output_audit": native_output_audit,
+            "derived_artifacts": derived_artifacts,
             "native_artifact_warnings": native_warnings,
         }
         _write_json_artifact(
@@ -41051,6 +41143,11 @@ def material_studio_castep_run_current(
         audit_artifacts: list[dict[str, Any]] = []
         warnings = list(result_validation.get("warnings") or [])
         warnings.extend(native_warnings)
+        warnings.extend(native_output_audit.get("warnings") or [])
+        warnings.extend(native_output_audit.get("errors") or [])
+        native_scf_audit = native_output_audit.get("castep_output_audit")
+        if not isinstance(native_scf_audit, dict):
+            native_scf_audit = {}
         response.update(
             {
                 "ok": True,
@@ -41060,6 +41157,23 @@ def material_studio_castep_run_current(
                 "revision": info.revision,
                 "project_resolution": _explicit_project_resolution(recorded_spec),
                 "electronic_receipt": electronic_receipt,
+                "scientific_convergence_verified": False,
+                "numeric_curve_data_exported": electronic_receipt.get(
+                    "numeric_curve_data_exported"
+                ),
+                "numeric_curve_kind": electronic_receipt.get(
+                    "numeric_curve_kind"
+                ),
+                "native_output_audit_status": native_output_audit.get("status"),
+                "native_output_audit_path": str(final_native_audit_path),
+                "native_scf_status": native_scf_audit.get("status"),
+                "native_scf_last_iteration": native_scf_audit.get(
+                    "last_scf_iteration"
+                ),
+                "native_scf_maximum_cycles_reached": native_scf_audit.get(
+                    "maximum_scf_cycles_reached"
+                ),
+                "derived_artifact_count": len(derived_artifacts),
                 "structure_artifact_validation": final_structure_validation,
                 "planned_outputs": {
                     "structure": str(final_structure),
@@ -41068,20 +41182,31 @@ def material_studio_castep_run_current(
                     "tagged_result": str(final_result_payload_path),
                     "script": str(final_script_path),
                     "native_artifacts": str(final_native_dir),
+                    "native_output_audit": str(final_native_audit_path),
+                    "derived_numeric": (
+                        str(final_derived_dir) if final_derived_dir.is_dir() else None
+                    ),
                 },
                 "result": {
                     **(runner_result or {}),
                     "success": True,
                     "backend_run_completed": True,
                     "scientific_convergence_verified": False,
-                    "numeric_curve_data_exported": False,
+                    "numeric_curve_data_exported": electronic_receipt.get(
+                        "numeric_curve_data_exported"
+                    ),
+                    "numeric_curve_kind": electronic_receipt.get(
+                        "numeric_curve_kind"
+                    ),
                     "recorded_revision": info.revision,
                 },
+                "native_output_audit": native_output_audit,
+                "derived_artifacts": derived_artifacts,
                 "view_audit": recorded_audit,
                 "warnings": warnings,
                 "required_next_step": (
-                    "Review the CASTEP report and native chart document in "
-                    "Materials Studio before making scientific convergence claims."
+                    "Review the CASTEP report and, for property tasks, the native "
+                    "chart document before making scientific convergence claims."
                 ),
             }
         )

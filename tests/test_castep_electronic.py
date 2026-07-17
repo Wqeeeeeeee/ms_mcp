@@ -44,6 +44,39 @@ _RESULT_KEYS = [
     "PartialDOSChart",
 ]
 
+_NATIVE_BANDS = """\
+Number of k-points 2
+Number of spin components 1
+Number of electrons 4
+Number of eigenvalues 3
+Fermi energy (in atomic units) 0.100000
+Unit cell vectors
+4 0 0
+0 4 0
+0 0 4
+K-point 1 0 0 0 0.5
+Spin component 1
+-0.30
+0.05
+0.20
+K-point 2 0.5 0 0 0.5
+Spin component 1
+-0.25
+0.08
+0.25
+"""
+
+_NATIVE_CASTEP_OUTPUT = """\
+total energy / atom convergence tol. : 0.1000E-05 eV
+convergence tolerance window : 3 cycles
+max. number of SCF cycles : 100
+SCF loop Energy Energy gain Timer <-- SCF
+1 -8.50000000E+002 1.0E-2 1.0 <-- SCF
+8 -8.58547076E+002 1.0E-8 2.0 <-- SCF
+Final energy, E = -858.5426000919 eV
+Total time = 2.0 s
+"""
+
 
 def _silicon_spec(project_id: str) -> dict[str, Any]:
     payload = json.loads(
@@ -161,7 +194,9 @@ class _ElectronicRunner:
         fake_script = fake_job_dir / keep_script_name
         fake_script.write_text(script, encoding="utf-8")
         native_artifact = fake_job_dir / f"{self.task.value}.castep"
-        native_artifact.write_text("fake native CASTEP evidence\n", encoding="utf-8")
+        native_artifact.write_text(_NATIVE_CASTEP_OUTPUT, encoding="utf-8")
+        native_bands = fake_job_dir / f"{self.task.value}.bands"
+        native_bands.write_text(_NATIVE_BANDS, encoding="utf-8")
         return ScriptRunResult(
             command=["fake-RunMatScript.bat", str(fake_script)],
             job_id=f"fake-{self.task.value}",
@@ -177,7 +212,7 @@ class _ElectronicRunner:
             success=True,
             timed_out=False,
             parsed_json=payload,
-            created_files=[fake_script, native_artifact],
+            created_files=[fake_script, native_artifact, native_bands],
             duration_seconds=0.01,
         )
 
@@ -508,6 +543,10 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert result["status"] == "castep_electronic_result_recorded"
     assert result["revision_created"] is True
     assert result["new_revision"] == 1
+    assert result["native_output_audit_status"] == "complete"
+    assert result["native_scf_status"] == "completed_below_max_cycles"
+    assert result["native_scf_last_iteration"] == 8
+    assert result["native_scf_maximum_cycles_reached"] is False
     assert fake_runner.call_count == 1
     current = ProjectStore(tmp_path).load_current(source.project_id)
     assert current.revision == 1
@@ -518,7 +557,12 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert summary["task"] == "Energy"
     assert summary["scientific_convergence_verified"] is False
     assert summary["numeric_curve_data_exported"] is False
-    assert summary["native_artifact_count"] == 1
+    assert summary["native_artifact_count"] == 2
+    assert summary["native_output_audit"]["status"] == "complete"
+    assert summary["native_output_audit"]["castep_output_audit"]["status"] == (
+        "completed_below_max_cycles"
+    )
+    assert summary["derived_artifact_count"] == 0
     receipt = current.metadata["last_castep_electronic_calculation"]
     script_path = Path(receipt["script_path"])
     payload_path = Path(receipt["result_payload_path"])
@@ -541,6 +585,33 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     restored_summary = verify_castep_electronic_receipt(current)
     assert restored_summary is not None
     assert restored_summary["binding_verified"] is True
+    legacy_receipt = dict(receipt)
+    legacy_receipt["schema_version"] = "material_studio_castep_electronic_receipt_v1"
+    for key in (
+        "numeric_curve_kind",
+        "native_band_kpoint_path_exported",
+        "pdos_projection_weights_exported",
+        "native_output_audit",
+        "native_output_audit_path",
+        "native_output_audit_payload_sha256",
+        "native_output_audit_file_sha256",
+        "derived_artifact_count",
+        "derived_artifacts",
+    ):
+        legacy_receipt.pop(key, None)
+    legacy_receipt["numeric_curve_data_exported"] = False
+    legacy_metadata = dict(current.metadata)
+    legacy_metadata["last_castep_electronic_calculation"] = legacy_receipt
+    legacy_metadata["castep_electronic_calculation_history"] = [legacy_receipt]
+    legacy_spec = ModelSpec.model_validate(
+        current.model_copy(update={"metadata": legacy_metadata}).model_dump(
+            mode="json"
+        )
+    )
+    legacy_summary = verify_castep_electronic_receipt(legacy_spec)
+    assert legacy_summary is not None
+    assert legacy_summary["schema_version"].endswith("_v1")
+    assert legacy_summary["binding_verified"] is True
     diagnostic_summary = result["view_audit"]["health"]["semiconductor_health"][
         "castep_electronic_result_summary"
     ]
@@ -553,6 +624,9 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert csv_path.is_file()
     csv_text = csv_path.read_text(encoding="utf-8-sig")
     assert "scientific_convergence_verified" in csv_text
+    assert "native_output_audit_status" in csv_text
+    assert "completed_below_max_cycles" in csv_text
+    assert "native_band_eigenvalue_count" in csv_text
     assert "False" in csv_text
 
 
@@ -608,9 +682,117 @@ def test_band_structure_after_verified_relaxation_records_required_chart(
     assert receipt["required_result_document"] == "BandStructureChart"
     assert receipt["result_document_name"] == "fake_BandStructureChart"
     assert receipt["band_path_binding_verified"] is False
-    assert verify_castep_electronic_receipt(
-        ProjectStore(tmp_path).load_current(source.project_id)
-    )["binding_verified"] is True
+    assert receipt["numeric_curve_data_exported"] is True
+    assert receipt["numeric_curve_kind"] == "native_castep_band_eigenvalues"
+    assert receipt["native_band_kpoint_path_exported"] is True
+    assert Path(receipt["derived_artifacts"][0]["path"]).is_file()
+    current = ProjectStore(tmp_path).load_current(source.project_id)
+    verified = verify_castep_electronic_receipt(current)
+    assert verified["binding_verified"] is True
+    assert verified["numeric_curve_data_exported"] is True
+    derived_path = Path(receipt["derived_artifacts"][0]["path"])
+    original_derived = derived_path.read_bytes()
+    derived_path.write_bytes(original_derived + b"\n")
+    tampered_derived = verify_castep_electronic_receipt(current)
+    assert tampered_derived["binding_verified"] is False
+    assert tampered_derived["checks"]["derived_artifacts"] is False
+    assert tampered_derived["numeric_curve_data_exported"] is False
+    assert tampered_derived["numeric_curve_data_claimed"] is True
+    derived_path.write_bytes(original_derived)
+    audit_path = Path(receipt["native_output_audit_path"])
+    original_audit = audit_path.read_bytes()
+    audit_path.write_bytes(original_audit + b"\n")
+    tampered_audit = verify_castep_electronic_receipt(current)
+    assert tampered_audit["binding_verified"] is False
+    assert tampered_audit["checks"]["native_output_audit_file"] is False
+    assert tampered_audit["numeric_curve_data_exported"] is False
+    audit_path.write_bytes(original_audit)
+    assert verify_castep_electronic_receipt(current)["binding_verified"] is True
+
+    invalid_receipt = dict(receipt)
+    invalid_audit = dict(receipt["native_output_audit"])
+    invalid_audit["schema_version"] = "unsupported_native_audit_v0"
+    invalid_receipt["native_output_audit"] = invalid_audit
+    invalid_metadata = dict(current.metadata)
+    invalid_metadata["last_castep_electronic_calculation"] = invalid_receipt
+    invalid_metadata["castep_electronic_calculation_history"] = [invalid_receipt]
+    invalid_spec = ModelSpec.model_validate(
+        current.model_copy(update={"metadata": invalid_metadata}).model_dump(
+            mode="json"
+        )
+    )
+    invalid_summary = verify_castep_electronic_receipt(invalid_spec)
+    assert invalid_summary["binding_verified"] is False
+    assert invalid_summary["checks"]["native_output_audit_contract"] is False
+    assert invalid_summary["numeric_curve_data_exported"] is False
+
+
+def test_dos_smearing_exports_provenance_bound_numeric_curve(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_relaxed_dos")
+    relaxed = _relax_current(monkeypatch, tmp_path, source)
+    fake_runner = _ElectronicRunner(relaxed, CastepTask.DENSITY_OF_STATES)
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="DensityOfStates",
+        properties_kpoint_separation=0.03,
+        dos_integration_method="Smearing",
+        dos_smearing_width_ev=0.2,
+        dos_energy_max_ev=8.0,
+        open_in_gui=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    receipt = result["electronic_receipt"]
+    assert receipt["numeric_curve_data_exported"] is True
+    assert receipt["numeric_curve_kind"] == (
+        "mcp_gaussian_total_dos_from_native_bands"
+    )
+    assert {Path(item["path"]).name for item in receipt["derived_artifacts"]} == {
+        "band_eigenvalues.csv",
+        "total_dos_gaussian.csv",
+    }
+    assert result["result"]["numeric_curve_data_exported"] is True
+    assert Path(result["planned_outputs"]["native_output_audit"]).is_file()
+
+
+def test_pdos_keeps_projection_weights_fail_closed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_relaxed_pdos")
+    relaxed = _relax_current(monkeypatch, tmp_path, source)
+    fake_runner = _ElectronicRunner(relaxed, CastepTask.PROJECTED_DENSITY_OF_STATES)
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="ProjectedDensityOfStates",
+        properties_kpoint_separation=0.03,
+        dos_integration_method="Smearing",
+        dos_smearing_width_ev=0.2,
+        dos_energy_max_ev=8.0,
+        open_in_gui=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    receipt = result["electronic_receipt"]
+    assert receipt["numeric_curve_data_exported"] is False
+    assert receipt["pdos_projection_weights_exported"] is False
+    assert len(receipt["derived_artifacts"]) == 1
+    assert Path(receipt["derived_artifacts"][0]["path"]).name == (
+        "band_eigenvalues.csv"
+    )
 
 
 def test_malformed_electronic_chart_preserves_evidence_without_revision(

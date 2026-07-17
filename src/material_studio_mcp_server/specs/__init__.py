@@ -19,7 +19,12 @@ from .crystal import BasisAtomSpec, CrystalOperation, CrystalSpec, LatticeSpec
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
 from .castep import CastepEnergySpec, CastepTask, normalize_castep_task
 from .molecule import AtomSpec, BondSpec, MoleculeSpec
-from .patch import SemanticPatch, SemanticPatchOperation, apply_semantic_patch
+from .patch import (
+    SemanticPatch,
+    SemanticPatchOperation,
+    apply_semantic_patch,
+    commensurate_twist_angle_degrees,
+)
 from .project import ImportedStructureSpec, ModelSpec, SimulationSpec
 
 __all__ = [
@@ -53,5 +58,6 @@ __all__ = [
     "UnitSystem",
     "Vector3",
     "apply_semantic_patch",
+    "commensurate_twist_angle_degrees",
     "normalize_castep_task",
 ]

@@ -662,8 +662,8 @@ The JSON schemas under `src/material_studio_mcp_server/schemas/` are generated
 from the Pydantic models and can be used by external MCP clients to construct
 valid `ModelSpec`, molecule, crystal, simulation, and `SemanticPatch` payloads.
 `patch_spec.schema.json` enumerates the supported patch operations, including
-`set_bond_type`, `translate_crystal_atoms`, `rotate_crystal_atoms`, and
-`set_metadata`.
+`set_bond_type`, `translate_crystal_atoms`, `rotate_crystal_atoms`,
+`make_commensurate_twisted_bilayer`, and `set_metadata`.
 
 For open-GUI workflows, start with `material_studio_gui_status`.  When no
 project is supplied, it resolves the latest current structured project when
@@ -932,6 +932,16 @@ twist angles are non-commensurate visual-review scaffolds. Same-window hot-load
 is allowed after normal GUI preflight, but normality and calculation readiness
 remain blocked until a commensurate supercell and geometry relaxation are
 verified.
+For pristine periodic TMD homobilayers, use the separate
+`commensurate_tmd_twisted_bilayer` natural-language command or the structured
+`make_commensurate_twisted_bilayer` patch. Supported local starts are MoS2,
+WS2, MoSe2, and WSe2. Supply coprime `m > n >= 0`, or a target twist angle that
+has a candidate within 0.1 degrees and the default 2000-atom bound. Request the
+`commensurate_twisted_bilayer` diagnostic focus to require
+`commensurate_twist_summary`, `semiconductor_commensurate_twist.csv`, layer,
+neighbor, local-environment, and view evidence. Exact integer
+commensurability permits same-window hot-loading but does not clear the
+geometry-relaxation calculation blocker.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

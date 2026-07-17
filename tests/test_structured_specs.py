@@ -132,6 +132,7 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "set_gate_stack_thickness" in operation_type["enum"]
     assert "translate_crystal_atoms" in operation_type["enum"]
     assert "rotate_crystal_atoms" in operation_type["enum"]
+    assert "make_commensurate_twisted_bilayer" in operation_type["enum"]
     task_schema = schema["$defs"]["SemanticPatchOperation"]["properties"]["task"]
     assert task_schema["anyOf"][0]["$ref"] == "#/$defs/CastepTask"
     assert "metadata_updates" in schema["$defs"]["SemanticPatchOperation"]["properties"]
@@ -140,6 +141,11 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "angle_degrees" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "pivot_fractional" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "wrap_fractional" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "commensurate_m" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "commensurate_n" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "interlayer_distance_angstrom" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "twist_orientation" in schema["$defs"]["SemanticPatchOperation"]["properties"]
+    assert "max_atoms" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "unsupported_operation" not in operation_type["enum"]
 
 

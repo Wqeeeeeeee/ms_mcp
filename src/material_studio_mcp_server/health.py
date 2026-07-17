@@ -786,6 +786,51 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "Semiconductor layer-rotation scaffold requires geometry relaxation before calculation."
             )
 
+    commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
+    if commensurate_twist:
+        latest_twist = commensurate_twist.get("latest") or {}
+        checks["semiconductor_commensurate_twist_count"] = commensurate_twist.get("entry_count")
+        checks["semiconductor_commensurate_twist_quality"] = commensurate_twist.get("quality")
+        checks["semiconductor_commensurate_twist_metadata_consistent"] = commensurate_twist.get(
+            "metadata_consistent"
+        )
+        checks["semiconductor_commensurate_twist_m"] = latest_twist.get("commensurate_m")
+        checks["semiconductor_commensurate_twist_n"] = latest_twist.get("commensurate_n")
+        checks["semiconductor_commensurate_twist_angle_degrees"] = latest_twist.get(
+            "twist_angle_degrees"
+        )
+        checks["semiconductor_commensurate_twist_atom_count"] = latest_twist.get("atom_count")
+        checks["semiconductor_commensurate_twist_matrix_verified"] = commensurate_twist.get(
+            "matrix_determinant_verified"
+        )
+        checks["semiconductor_commensurate_twist_angle_verified"] = commensurate_twist.get(
+            "angle_verified"
+        )
+        checks["semiconductor_commensurate_twist_lattice_verified"] = commensurate_twist.get(
+            "lattice_verified"
+        )
+        checks["semiconductor_commensurate_twist_structure_binding_matches_current"] = (
+            commensurate_twist.get("structure_binding_matches_current")
+        )
+        checks["semiconductor_commensurate_twist_commensurability_verified"] = (
+            commensurate_twist.get("commensurability_verified")
+        )
+        checks["semiconductor_commensurate_twist_requires_geometry_relaxation"] = (
+            commensurate_twist.get("requires_geometry_relaxation")
+        )
+        checks["semiconductor_commensurate_twist_calculation_ready"] = commensurate_twist.get(
+            "calculation_ready"
+        )
+        if commensurate_twist.get("metadata_consistent") is False:
+            warnings.append(
+                "Commensurate TMD twist receipt does not match the current structure; "
+                "inspect commensurate_twist_summary."
+            )
+        elif commensurate_twist.get("requires_geometry_relaxation"):
+            warnings.append(
+                "Commensurate TMD twisted bilayer is periodic and verified but still requires geometry relaxation."
+            )
+
     interface_quality = semiconductor.get("interface_quality_summary") or {}
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:

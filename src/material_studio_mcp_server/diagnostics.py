@@ -1341,6 +1341,63 @@ def write_view_audit_bundle(
             rotation_rows,
         )
 
+    commensurate_twist = semiconductor.get("commensurate_twist_summary") or {}
+    if commensurate_twist:
+        twist_rows = _semiconductor_commensurate_twist_csv_rows(commensurate_twist)
+        files["semiconductor_commensurate_twist_csv"] = str(
+            bundle_dir / "semiconductor_commensurate_twist.csv"
+        )
+        row_counts["semiconductor_commensurate_twist"] = _write_csv(
+            bundle_dir / "semiconductor_commensurate_twist.csv",
+            [
+                "index",
+                "is_latest",
+                "commensurate_m",
+                "commensurate_n",
+                "supercell_index",
+                "bottom_supercell_matrix",
+                "top_supercell_matrix",
+                "twist_orientation",
+                "twist_angle_degrees",
+                "requested_twist_angle_degrees",
+                "twist_angle_error_degrees",
+                "common_lattice_a_angstrom",
+                "common_lattice_b_angstrom",
+                "common_lattice_gamma_degrees",
+                "interlayer_distance_angstrom",
+                "monolayer_thickness_angstrom",
+                "interlayer_chalcogen_gap_angstrom",
+                "total_slab_thickness_angstrom",
+                "vacuum_angstrom",
+                "atom_count",
+                "atoms_per_layer",
+                "bottom_layer_atom_id_sha256",
+                "top_layer_atom_id_sha256",
+                "structure_sha256",
+                "indices_valid",
+                "supercell_index_verified",
+                "matrix_pattern_verified",
+                "matrix_determinant_verified",
+                "angle_verified",
+                "lattice_verified",
+                "layer_counts_verified",
+                "layer_atom_ids_verified",
+                "interlayer_distance_verified",
+                "interlayer_gap_verified",
+                "structure_binding_matches_current",
+                "current_structure_sha256",
+                "metadata_consistent",
+                "commensurability_verified",
+                "requires_geometry_relaxation",
+                "geometry_relaxed",
+                "calculation_ready",
+                "quality",
+                "warning_count",
+                "source",
+            ],
+            twist_rows,
+        )
+
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:
         interface_rows = _semiconductor_interface_profile_csv_rows(interface_profile)
@@ -2908,6 +2965,89 @@ def _semiconductor_layer_rotation_csv_rows(summary: dict[str, Any]) -> list[dict
                 "visual_review_only": entry.get("visual_review_only"),
                 "calculation_ready": entry.get("calculation_ready"),
                 "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
+                "source": entry.get("source"),
+            }
+        )
+    return rows
+
+
+def _semiconductor_commensurate_twist_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = summary.get("entries", []) or []
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    rows = []
+    for index, entry in enumerate(entries, start=1):
+        is_latest = index == len(entries) and entry == latest
+        rows.append(
+            {
+                "index": index,
+                "is_latest": is_latest,
+                "commensurate_m": entry.get("commensurate_m"),
+                "commensurate_n": entry.get("commensurate_n"),
+                "supercell_index": entry.get("supercell_index"),
+                "bottom_supercell_matrix": json.dumps(
+                    entry.get("bottom_supercell_matrix"),
+                    separators=(",", ":"),
+                ),
+                "top_supercell_matrix": json.dumps(
+                    entry.get("top_supercell_matrix"),
+                    separators=(",", ":"),
+                ),
+                "twist_orientation": entry.get("twist_orientation"),
+                "twist_angle_degrees": entry.get("twist_angle_degrees"),
+                "requested_twist_angle_degrees": entry.get("requested_twist_angle_degrees"),
+                "twist_angle_error_degrees": entry.get("twist_angle_error_degrees"),
+                "common_lattice_a_angstrom": entry.get("common_lattice_a_angstrom"),
+                "common_lattice_b_angstrom": entry.get("common_lattice_b_angstrom"),
+                "common_lattice_gamma_degrees": entry.get("common_lattice_gamma_degrees"),
+                "interlayer_distance_angstrom": entry.get("interlayer_distance_angstrom"),
+                "monolayer_thickness_angstrom": entry.get("monolayer_thickness_angstrom"),
+                "interlayer_chalcogen_gap_angstrom": entry.get("interlayer_chalcogen_gap_angstrom"),
+                "total_slab_thickness_angstrom": entry.get("total_slab_thickness_angstrom"),
+                "vacuum_angstrom": entry.get("vacuum_angstrom"),
+                "atom_count": entry.get("atom_count"),
+                "atoms_per_layer": entry.get("atoms_per_layer"),
+                "bottom_layer_atom_id_sha256": entry.get("bottom_layer_atom_id_sha256"),
+                "top_layer_atom_id_sha256": entry.get("top_layer_atom_id_sha256"),
+                "structure_sha256": entry.get("structure_sha256"),
+                "indices_valid": summary.get("indices_valid") if is_latest else None,
+                "supercell_index_verified": (
+                    summary.get("supercell_index_verified") if is_latest else None
+                ),
+                "matrix_pattern_verified": (
+                    summary.get("matrix_pattern_verified") if is_latest else None
+                ),
+                "matrix_determinant_verified": (
+                    summary.get("matrix_determinant_verified") if is_latest else None
+                ),
+                "angle_verified": summary.get("angle_verified") if is_latest else None,
+                "lattice_verified": summary.get("lattice_verified") if is_latest else None,
+                "layer_counts_verified": (
+                    summary.get("layer_counts_verified") if is_latest else None
+                ),
+                "layer_atom_ids_verified": (
+                    summary.get("layer_atom_ids_verified") if is_latest else None
+                ),
+                "interlayer_distance_verified": (
+                    summary.get("interlayer_distance_verified") if is_latest else None
+                ),
+                "interlayer_gap_verified": (
+                    summary.get("interlayer_gap_verified") if is_latest else None
+                ),
+                "structure_binding_matches_current": (
+                    summary.get("structure_binding_matches_current") if is_latest else None
+                ),
+                "current_structure_sha256": (
+                    summary.get("current_structure_sha256") if is_latest else None
+                ),
+                "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
+                "commensurability_verified": (
+                    summary.get("commensurability_verified") if is_latest else None
+                ),
+                "requires_geometry_relaxation": entry.get("requires_geometry_relaxation"),
+                "geometry_relaxed": entry.get("geometry_relaxed"),
+                "calculation_ready": summary.get("calculation_ready") if is_latest else None,
+                "quality": summary.get("quality") if is_latest else None,
+                "warning_count": summary.get("warning_count") if is_latest else None,
                 "source": entry.get("source"),
             }
         )
@@ -4535,6 +4675,18 @@ def _semiconductor_health_summary(
                 "Crystal layer rotation is a non-commensurate visual-review scaffold; build a commensurate "
                 "supercell and relax it before calculation."
             )
+    commensurate_twist_summary = _commensurate_tmd_twist_summary(spec, metadata)
+    if commensurate_twist_summary:
+        if not commensurate_twist_summary.get("metadata_consistent"):
+            warnings.append(
+                "Commensurate TMD twist receipt no longer matches the current lattice or atom coordinates; "
+                "inspect commensurate_twist_summary."
+            )
+        elif commensurate_twist_summary.get("requires_geometry_relaxation"):
+            warnings.append(
+                "Commensurate TMD twisted bilayer is an exact periodic pre-relaxation structure; "
+                "complete geometry relaxation before production calculations."
+            )
     interface_scaffold_summary = _interface_scaffold_summary(metadata, lattice_summary, layer_profile_summary)
     superlattice_period_summary = _superlattice_period_summary(metadata, layer_profile_summary)
     interface_profile_summary = _interface_profile_summary(metadata, layer_profile_summary, heterostructure_summary)
@@ -4639,6 +4791,7 @@ def _semiconductor_health_summary(
         "layer_profile_summary": layer_profile_summary,
         "layer_translation_summary": layer_translation_summary,
         "layer_rotation_summary": layer_rotation_summary,
+        "commensurate_twist_summary": commensurate_twist_summary,
         "interface_scaffold_summary": interface_scaffold_summary,
         "interface_profile_summary": interface_profile_summary,
         "superlattice_period_summary": superlattice_period_summary,
@@ -5994,6 +6147,343 @@ def _crystal_layer_rotation_summary(
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+def _commensurate_tmd_twist_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    entries = [
+        dict(item)
+        for item in metadata.get("commensurate_twist_history", []) or []
+        if isinstance(item, dict)
+    ]
+    latest = metadata.get("last_commensurate_twist")
+    if isinstance(latest, dict) and latest not in entries:
+        entries.append(dict(latest))
+    if not entries:
+        return None
+
+    latest = entries[-1]
+    warnings: list[str] = []
+    if not isinstance(spec.model, CrystalSpec):
+        return {
+            "available": True,
+            "quality": "review_required",
+            "entry_count": len(entries),
+            "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+            "latest": latest,
+            "metadata_consistent": False,
+            "commensurability_verified": False,
+            "calculation_ready": False,
+            "calculation_blocking_reasons": ["commensurate_twist_requires_crystal_model"],
+            "warning_count": 1,
+            "warnings": ["Commensurate TMD twist metadata requires a crystal model."],
+        }
+
+    m = _optional_int(latest.get("commensurate_m"))
+    n = _optional_int(latest.get("commensurate_n"))
+    indices_valid = bool(
+        m is not None
+        and n is not None
+        and m > n >= 0
+        and math.gcd(m, n) == 1
+    )
+    if not indices_valid:
+        warnings.append("Recorded commensurate twist indices are invalid or non-coprime.")
+    supercell_index = m * m + m * n + n * n if indices_valid and m is not None and n is not None else None
+    recorded_index = _optional_int(latest.get("supercell_index"))
+    supercell_index_verified = supercell_index is not None and recorded_index == supercell_index
+    if not supercell_index_verified:
+        warnings.append("Recorded commensurate supercell index does not equal m^2+mn+n^2.")
+
+    bottom_matrix = _two_by_two_integer_matrix(latest.get("bottom_supercell_matrix"))
+    top_matrix = _two_by_two_integer_matrix(latest.get("top_supercell_matrix"))
+    orientation = str(latest.get("twist_orientation") or "")
+    if indices_valid and m is not None and n is not None:
+        matrix_a = ((m + n, n), (-n, m))
+        matrix_b = ((m + n, m), (-m, n))
+        expected_bottom, expected_top = (
+            (matrix_b, matrix_a)
+            if orientation == "counterclockwise"
+            else (matrix_a, matrix_b)
+            if orientation == "clockwise"
+            else (None, None)
+        )
+    else:
+        expected_bottom, expected_top = None, None
+    matrix_pattern_verified = bool(
+        expected_bottom is not None
+        and bottom_matrix == expected_bottom
+        and top_matrix == expected_top
+    )
+    matrix_determinant_verified = bool(
+        supercell_index is not None
+        and bottom_matrix is not None
+        and top_matrix is not None
+        and _two_by_two_determinant(bottom_matrix) == supercell_index
+        and _two_by_two_determinant(top_matrix) == supercell_index
+        and matrix_pattern_verified
+    )
+    if not matrix_determinant_verified:
+        warnings.append("Recorded bottom/top integer matrices do not verify the commensurate cell.")
+
+    expected_angle = (
+        _diagnostic_commensurate_twist_angle_degrees(m, n)
+        if indices_valid and m is not None and n is not None
+        else None
+    )
+    recorded_angle = _optional_float(latest.get("twist_angle_degrees"))
+    signed_expected_angle = (
+        expected_angle
+        if orientation == "counterclockwise"
+        else -expected_angle
+        if orientation == "clockwise" and expected_angle is not None
+        else None
+    )
+    angle_verified = bool(
+        recorded_angle is not None
+        and signed_expected_angle is not None
+        and abs(recorded_angle - signed_expected_angle) <= 1e-6
+    )
+    if not angle_verified:
+        warnings.append("Recorded twist angle does not match the exact integer commensurability formula.")
+
+    lattice = spec.model.lattice
+    expected_common_a = _optional_float(latest.get("common_lattice_a_angstrom"))
+    expected_common_b = _optional_float(latest.get("common_lattice_b_angstrom"))
+    expected_gamma = _optional_float(latest.get("common_lattice_gamma_degrees"))
+    lattice_verified = bool(
+        expected_common_a is not None
+        and expected_common_b is not None
+        and expected_gamma is not None
+        and abs(float(lattice.a) - expected_common_a) <= 1e-6
+        and abs(float(lattice.b) - expected_common_b) <= 1e-6
+        and abs(float(lattice.gamma) - expected_gamma) <= 1e-8
+        and abs(float(lattice.alpha) - 90.0) <= 1e-8
+        and abs(float(lattice.beta) - 90.0) <= 1e-8
+    )
+    if not lattice_verified:
+        warnings.append("Current lattice no longer matches the recorded commensurate common cell.")
+
+    atoms = list(spec.model.basis_atoms)
+    bottom_atoms = [atom for atom in atoms if "_L1_" in atom.id]
+    top_atoms = [atom for atom in atoms if "_L2_" in atom.id]
+    expected_atoms_per_layer = _optional_int(latest.get("atoms_per_layer"))
+    expected_atom_count = _optional_int(latest.get("atom_count"))
+    layer_counts_verified = bool(
+        expected_atoms_per_layer is not None
+        and expected_atom_count is not None
+        and len(bottom_atoms) == expected_atoms_per_layer
+        and len(top_atoms) == expected_atoms_per_layer
+        and len(atoms) == expected_atom_count == 2 * expected_atoms_per_layer
+    )
+    bottom_id_hash = _diagnostic_atom_id_list_sha256([atom.id for atom in bottom_atoms])
+    top_id_hash = _diagnostic_atom_id_list_sha256([atom.id for atom in top_atoms])
+    layer_atom_ids_verified = bool(
+        layer_counts_verified
+        and bottom_id_hash == latest.get("bottom_layer_atom_id_sha256")
+        and top_id_hash == latest.get("top_layer_atom_id_sha256")
+    )
+    if not layer_atom_ids_verified:
+        warnings.append("Current layer atom IDs or counts no longer match the commensurate twist receipt.")
+
+    bottom_metals = [atom for atom in bottom_atoms if atom.element in TMD_METALS]
+    top_metals = [atom for atom in top_atoms if atom.element in TMD_METALS]
+    current_interlayer_distance = (
+        (
+            sum(float(atom.fractional.z) for atom in top_metals) / len(top_metals)
+            - sum(float(atom.fractional.z) for atom in bottom_metals) / len(bottom_metals)
+        )
+        * float(lattice.c)
+        if bottom_metals and top_metals
+        else None
+    )
+    expected_interlayer_distance = _optional_float(latest.get("interlayer_distance_angstrom"))
+    interlayer_distance_verified = bool(
+        current_interlayer_distance is not None
+        and expected_interlayer_distance is not None
+        and abs(current_interlayer_distance - expected_interlayer_distance) <= 1e-6
+    )
+    if not interlayer_distance_verified:
+        warnings.append("Current TMD metal-plane separation differs from the recorded interlayer distance.")
+
+    bottom_chalcogens = [atom for atom in bottom_atoms if atom.element in TMD_CHALCOGENS]
+    top_chalcogens = [atom for atom in top_atoms if atom.element in TMD_CHALCOGENS]
+    current_interlayer_gap = (
+        (
+            min(float(atom.fractional.z) for atom in top_chalcogens)
+            - max(float(atom.fractional.z) for atom in bottom_chalcogens)
+        )
+        * float(lattice.c)
+        if bottom_chalcogens and top_chalcogens
+        else None
+    )
+    expected_interlayer_gap = _optional_float(latest.get("interlayer_chalcogen_gap_angstrom"))
+    interlayer_gap_verified = bool(
+        current_interlayer_gap is not None
+        and expected_interlayer_gap is not None
+        and abs(current_interlayer_gap - expected_interlayer_gap) <= 1e-6
+    )
+    if not interlayer_gap_verified:
+        warnings.append("Current opposing-chalcogen gap differs from the commensurate twist receipt.")
+
+    expected_structure_sha256 = str(latest.get("structure_sha256") or "")
+    current_structure_sha256 = _diagnostic_crystal_structure_sha256(spec.model)
+    structure_binding_matches = bool(
+        len(expected_structure_sha256) == 64
+        and current_structure_sha256 == expected_structure_sha256
+    )
+    if not structure_binding_matches:
+        warnings.append("Current crystal SHA-256 differs from the generated commensurate twist structure.")
+
+    metadata_consistent = bool(
+        indices_valid
+        and supercell_index_verified
+        and matrix_determinant_verified
+        and angle_verified
+        and lattice_verified
+        and layer_atom_ids_verified
+        and interlayer_distance_verified
+        and interlayer_gap_verified
+        and structure_binding_matches
+    )
+    commensurability_verified = bool(
+        metadata_consistent and latest.get("commensurability_verified") is True
+    )
+    requires_geometry_relaxation = latest.get("requires_geometry_relaxation") is not False
+    geometry_relaxed = latest.get("geometry_relaxed") is True
+    calculation_ready = bool(
+        commensurability_verified
+        and geometry_relaxed
+        and not requires_geometry_relaxation
+        and latest.get("calculation_ready") is True
+    )
+    if requires_geometry_relaxation or not geometry_relaxed:
+        warnings.append("Commensurate twisted bilayer remains a pre-relaxation structure.")
+
+    return {
+        "available": True,
+        "quality": (
+            "calculation_preflight_ready"
+            if calculation_ready
+            else "commensurate_pre_relaxation"
+            if metadata_consistent and commensurability_verified
+            else "review_required"
+        ),
+        "entry_count": len(entries),
+        "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+        "latest": latest,
+        "indices_valid": indices_valid,
+        "supercell_index_verified": supercell_index_verified,
+        "matrix_pattern_verified": matrix_pattern_verified,
+        "matrix_determinant_verified": matrix_determinant_verified,
+        "expected_twist_angle_degrees": (
+            _round(signed_expected_angle) if signed_expected_angle is not None else None
+        ),
+        "angle_verified": angle_verified,
+        "lattice_verified": lattice_verified,
+        "layer_counts_verified": layer_counts_verified,
+        "layer_atom_ids_verified": layer_atom_ids_verified,
+        "current_bottom_layer_atom_id_sha256": bottom_id_hash,
+        "current_top_layer_atom_id_sha256": top_id_hash,
+        "current_interlayer_distance_angstrom": (
+            _round(current_interlayer_distance) if current_interlayer_distance is not None else None
+        ),
+        "interlayer_distance_verified": interlayer_distance_verified,
+        "current_interlayer_chalcogen_gap_angstrom": (
+            _round(current_interlayer_gap) if current_interlayer_gap is not None else None
+        ),
+        "interlayer_gap_verified": interlayer_gap_verified,
+        "expected_structure_sha256": expected_structure_sha256 or None,
+        "current_structure_sha256": current_structure_sha256,
+        "structure_binding_matches_current": structure_binding_matches,
+        "metadata_consistent": metadata_consistent,
+        "commensurability_verified": commensurability_verified,
+        "pre_relaxation_scaffold": latest.get("pre_relaxation_scaffold") is not False,
+        "visual_review_only": latest.get("visual_review_only") is True,
+        "visual_hotload_ready": latest.get("visual_hotload_ready") is True,
+        "requires_geometry_relaxation": requires_geometry_relaxation,
+        "geometry_relaxed": geometry_relaxed,
+        "calculation_ready": calculation_ready,
+        "calculation_blocking_reasons": [
+            reason
+            for condition, reason in (
+                (not metadata_consistent, "commensurate_twist_metadata_inconsistent"),
+                (not commensurability_verified, "commensurate_twist_not_verified"),
+                (
+                    requires_geometry_relaxation or not geometry_relaxed,
+                    "commensurate_twisted_bilayer_requires_geometry_relaxation",
+                ),
+            )
+            if condition
+        ],
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
+def _two_by_two_integer_matrix(
+    value: Any,
+) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    rows: list[tuple[int, int]] = []
+    for row in value:
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            return None
+        converted: list[int] = []
+        for item in row:
+            try:
+                integer = int(item)
+                numeric = float(item)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(numeric) or abs(numeric - integer) > 1e-12:
+                return None
+            converted.append(integer)
+        rows.append((converted[0], converted[1]))
+    return rows[0], rows[1]
+
+
+def _two_by_two_determinant(matrix: tuple[tuple[int, int], tuple[int, int]]) -> int:
+    return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
+
+
+def _diagnostic_commensurate_twist_angle_degrees(m: int, n: int) -> float:
+    index = m * m + m * n + n * n
+    cosine = (m * m + 4 * m * n + n * n) / (2.0 * index)
+    return math.degrees(math.acos(min(1.0, max(-1.0, cosine))))
+
+
+def _diagnostic_atom_id_list_sha256(atom_ids: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(sorted(atom_ids), separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _diagnostic_crystal_structure_sha256(crystal: CrystalSpec) -> str:
+    payload = {
+        "lattice": {
+            key: round(float(getattr(crystal.lattice, key)), 12)
+            for key in ("a", "b", "c", "alpha", "beta", "gamma")
+        },
+        "atoms": [
+            {
+                "id": atom.id,
+                "element": atom.element,
+                "fractional": [
+                    round(float(atom.fractional.x), 12),
+                    round(float(atom.fractional.y), 12),
+                    round(float(atom.fractional.z), 12),
+                ],
+            }
+            for atom in sorted(crystal.basis_atoms, key=lambda item: item.id)
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _crystal_atom_coordinate_sha256(spec: ModelSpec, atom_ids: Sequence[str]) -> str | None:

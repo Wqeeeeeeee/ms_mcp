@@ -3670,6 +3670,110 @@ def test_layer_rotation_diagnostics_bind_coordinates_block_calculation_and_expor
     assert stale_summary["coordinate_binding_matches_current"] is False
 
 
+def test_commensurate_tmd_twist_diagnostics_verify_integer_cell_and_detect_stale_structure(
+    tmp_path: Path,
+) -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    twisted, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_twisted_bilayer",
+                    "commensurate_m": 2,
+                    "commensurate_n": 1,
+                    "interlayer_distance_angstrom": 6.15,
+                }
+            ],
+        ),
+    )
+
+    audit = model_view_audit(twisted)
+    summary = audit["health"]["semiconductor_health"]["commensurate_twist_summary"]
+    assert summary["quality"] == "commensurate_pre_relaxation"
+    assert summary["metadata_consistent"] is True
+    assert summary["indices_valid"] is True
+    assert summary["supercell_index_verified"] is True
+    assert summary["matrix_pattern_verified"] is True
+    assert summary["matrix_determinant_verified"] is True
+    assert summary["angle_verified"] is True
+    assert summary["lattice_verified"] is True
+    assert summary["layer_atom_ids_verified"] is True
+    assert summary["interlayer_distance_verified"] is True
+    assert summary["interlayer_gap_verified"] is True
+    assert summary["structure_binding_matches_current"] is True
+    assert summary["commensurability_verified"] is True
+    assert summary["requires_geometry_relaxation"] is True
+    assert summary["calculation_ready"] is False
+    assert summary["calculation_blocking_reasons"] == [
+        "commensurate_twisted_bilayer_requires_geometry_relaxation"
+    ]
+
+    modeling_health = build_modeling_health(
+        {"ok": True, "view_audit": audit},
+        execution_mode="preview",
+    )
+    assert modeling_health["checks"]["semiconductor_commensurate_twist_quality"] == (
+        "commensurate_pre_relaxation"
+    )
+    assert modeling_health["checks"]["semiconductor_commensurate_twist_m"] == 2
+    assert modeling_health["checks"]["semiconductor_commensurate_twist_n"] == 1
+    assert modeling_health["checks"]["semiconductor_commensurate_twist_angle_verified"] is True
+    assert (
+        modeling_health["checks"]["semiconductor_commensurate_twist_commensurability_verified"]
+        is True
+    )
+    assert modeling_health["checks"]["semiconductor_commensurate_twist_calculation_ready"] is False
+
+    bundle = write_view_audit_bundle(tmp_path, twisted, audit)
+    csv_path = Path(bundle["files"]["semiconductor_commensurate_twist_csv"])
+    assert csv_path.exists()
+    assert bundle["row_counts"]["semiconductor_commensurate_twist"] == 1
+    rows = list(csv.DictReader(csv_path.open(encoding="utf-8", newline="")))
+    assert rows[0]["commensurate_m"] == "2"
+    assert rows[0]["commensurate_n"] == "1"
+    assert rows[0]["supercell_index"] == "7"
+    assert rows[0]["matrix_pattern_verified"] == "True"
+    assert rows[0]["matrix_determinant_verified"] == "True"
+    assert rows[0]["interlayer_gap_verified"] == "True"
+    assert rows[0]["structure_binding_matches_current"] == "True"
+    assert len(rows[0]["structure_sha256"]) == 64
+    assert rows[0]["commensurability_verified"] == "True"
+    assert rows[0]["calculation_ready"] == "False"
+    assert rows[0]["quality"] == "commensurate_pre_relaxation"
+
+    target = next(atom for atom in twisted.model.basis_atoms if atom.id == "S1_L1_0000")
+    stale, _ = apply_semantic_patch(
+        twisted,
+        SemanticPatch(
+            project_id=twisted.project_id,
+            base_revision=twisted.revision,
+            operations=[
+                {
+                    "type": "set_atom_position",
+                    "atom_id": target.id,
+                    "fractional": [
+                        target.fractional.x + 0.01,
+                        target.fractional.y,
+                        target.fractional.z,
+                    ],
+                }
+            ],
+        ),
+    )
+    stale_summary = model_view_audit(stale)["health"]["semiconductor_health"][
+        "commensurate_twist_summary"
+    ]
+    assert stale_summary["quality"] == "review_required"
+    assert stale_summary["metadata_consistent"] is False
+    assert stale_summary["matrix_determinant_verified"] is True
+    assert stale_summary["layer_atom_ids_verified"] is True
+    assert stale_summary["structure_binding_matches_current"] is False
+    assert stale_summary["commensurability_verified"] is False
+
+
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:
     hetero = load_example("gallium_arsenide_aluminum_arsenide_001_heterostructure_spec.json")
     hetero_bundle = write_view_audit_bundle(tmp_path / "hetero", hetero, model_view_audit(hetero))

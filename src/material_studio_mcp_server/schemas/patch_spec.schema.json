@@ -118,6 +118,7 @@
             "set_atom_position",
             "translate_crystal_atoms",
             "rotate_crystal_atoms",
+            "make_commensurate_twisted_bilayer",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -500,6 +501,78 @@
           "default": true,
           "title": "Wrap Fractional",
           "type": "boolean"
+        },
+        "commensurate_m": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commensurate M"
+        },
+        "commensurate_n": {
+          "anyOf": [
+            {
+              "maximum": 99,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commensurate N"
+        },
+        "interlayer_distance_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interlayer Distance Angstrom"
+        },
+        "twist_orientation": {
+          "anyOf": [
+            {
+              "enum": [
+                "counterclockwise",
+                "clockwise"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Twist Orientation"
+        },
+        "max_atoms": {
+          "anyOf": [
+            {
+              "maximum": 20000,
+              "minimum": 6,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Atoms"
         },
         "thickness_angstrom": {
           "anyOf": [

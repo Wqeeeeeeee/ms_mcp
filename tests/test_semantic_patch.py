@@ -236,6 +236,237 @@ def test_crystal_atom_group_rotation_rejects_invalid_targets_and_unwrapped_escap
         apply_semantic_patch(base, no_wrap)
 
 
+def test_commensurate_tmd_twisted_bilayer_builds_exact_integer_supercell_without_mutating_base() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "make_commensurate_twisted_bilayer",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.15,
+            }
+        ],
+    )
+
+    twisted, diff = apply_semantic_patch(base, patch)
+
+    assert diff == [
+        "make_commensurate_twisted_bilayer m=2 n=1 "
+        "angle=21.786789298deg atoms=42 interlayer=6.15A"
+    ]
+    assert len(base.model.basis_atoms) == 12
+    assert base.model.lattice.a == 6.32
+    assert len(twisted.model.basis_atoms) == 42
+    assert twisted.model.lattice.a == pytest.approx(3.16 * math.sqrt(7))
+    assert twisted.model.lattice.b == pytest.approx(3.16 * math.sqrt(7))
+    assert twisted.model.lattice.gamma == 120.0
+    assert twisted.metadata["structure_family"] == "commensurate twisted 2d tmd bilayer"
+    assert twisted.metadata["monolayer_polytype"] == "2H"
+    assert twisted.metadata["bilayer_stacking_family"] == "twisted_R_type_from_same_orientation_monolayers"
+    assert any("geometry relaxation is required" in note for note in twisted.acceptance.notes)
+    assert all("monolayer template" not in note.lower() for note in twisted.acceptance.notes)
+    receipt = twisted.metadata["last_commensurate_twist"]
+    assert receipt["commensurate_m"] == 2
+    assert receipt["commensurate_n"] == 1
+    assert receipt["supercell_index"] == 7
+    assert receipt["bottom_supercell_matrix"] == [[3, 2], [-2, 1]]
+    assert receipt["top_supercell_matrix"] == [[3, 1], [-1, 2]]
+    assert receipt["twist_angle_degrees"] == pytest.approx(21.786789, abs=1e-6)
+    assert receipt["commensurability_verified"] is True
+    assert receipt["matrix_determinant_verified"] is True
+    assert receipt["interlayer_distance_angstrom"] == 6.15
+    assert receipt["interlayer_chalcogen_gap_angstrom"] == pytest.approx(3.0304)
+    assert receipt["vacuum_angstrom"] == pytest.approx(12.7304)
+    assert receipt["atoms_per_layer"] == 21
+    assert receipt["requires_geometry_relaxation"] is True
+    assert receipt["calculation_ready"] is False
+    assert len(receipt["structure_sha256"]) == 64
+    bottom_metal_z = {
+        atom.fractional.z
+        for atom in twisted.model.basis_atoms
+        if atom.id.startswith("Mo1_L1_")
+    }
+    top_metal_z = {
+        atom.fractional.z
+        for atom in twisted.model.basis_atoms
+        if atom.id.startswith("Mo1_L2_")
+    }
+    assert len(bottom_metal_z) == len(top_metal_z) == 1
+    assert (next(iter(top_metal_z)) - next(iter(bottom_metal_z))) * twisted.model.lattice.c == pytest.approx(6.15)
+
+
+def test_commensurate_tmd_twisted_bilayer_rejects_unsafe_or_nonperiodic_inputs() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+
+    with pytest.raises(ValueError, match="coprime"):
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_twisted_bilayer",
+                    "commensurate_m": 4,
+                    "commensurate_n": 2,
+                    "interlayer_distance_angstrom": 6.15,
+                }
+            ],
+        )
+
+    too_large = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "make_commensurate_twisted_bilayer",
+                "commensurate_m": 20,
+                "commensurate_n": 19,
+                "interlayer_distance_angstrom": 6.15,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="above max_atoms=2000"):
+        apply_semantic_patch(base, too_large)
+
+    defective = base.model_copy(deep=True)
+    defective.model = defective.model.model_copy(
+        update={"basis_atoms": defective.model.basis_atoms[:-1]}
+    )
+    defect_patch = SemanticPatch(
+        project_id=defective.project_id,
+        base_revision=defective.revision,
+        operations=[
+            {
+                "type": "make_commensurate_twisted_bilayer",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.15,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="not a complete periodic repetition"):
+        apply_semantic_patch(defective, defect_patch)
+
+    silicon = load_example("silicon_diamond_spec.json")
+    non_tmd = SemanticPatch(
+        project_id=silicon.project_id,
+        base_revision=silicon.revision,
+        operations=[
+            {
+                "type": "make_commensurate_twisted_bilayer",
+                "commensurate_m": 2,
+                "commensurate_n": 1,
+                "interlayer_distance_angstrom": 6.15,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="periodic 2D TMD monolayer"):
+        apply_semantic_patch(silicon, non_tmd)
+
+
+def test_commensurate_tmd_twisted_bilayer_infers_indices_in_english_and_chinese() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+
+    english = infer_modeling_plan(
+        "Make it a commensurate twisted bilayer with m=2, n=1 and "
+        "interlayer distance 6.15 angstrom.",
+        current_spec=base,
+    )
+    assert english.kind == "patch"
+    assert english.template_id == "commensurate_tmd_twisted_bilayer"
+    assert english.payload["operations"] == [
+        {
+            "type": "make_commensurate_twisted_bilayer",
+            "commensurate_m": 2,
+            "commensurate_n": 1,
+            "interlayer_distance_angstrom": 6.15,
+            "twist_orientation": "counterclockwise",
+            "max_atoms": 2000,
+        }
+    ]
+
+    chinese = infer_modeling_plan(
+        "把当前模型变为 m=2,n=1 的共格扭转双层，"
+        "顺时针，层间距 6.2 埃。",
+        current_spec=base,
+    )
+    assert chinese.kind == "patch"
+    operation = chinese.payload["operations"][0]
+    assert operation["commensurate_m"] == 2
+    assert operation["commensurate_n"] == 1
+    assert operation["twist_orientation"] == "clockwise"
+    assert operation["interlayer_distance_angstrom"] == 6.2
+
+    clockwise, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_twisted_bilayer",
+                    "commensurate_m": 2,
+                    "commensurate_n": 1,
+                    "angle_degrees": -21.786789298,
+                    "interlayer_distance_angstrom": 6.15,
+                }
+            ],
+        ),
+    )
+    assert clockwise.metadata["last_commensurate_twist"]["twist_orientation"] == "clockwise"
+    assert clockwise.metadata["last_commensurate_twist"]["twist_angle_degrees"] < 0
+
+
+def test_commensurate_tmd_twist_angle_selects_bounded_integer_cell_and_rejects_bad_match() -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+
+    selected = infer_modeling_plan(
+        "Make a commensurate twisted bilayer at twist angle 5 degrees.",
+        current_spec=base,
+    )
+    assert selected.kind == "patch"
+    operation = selected.payload["operations"][0]
+    assert operation["commensurate_m"] == 7
+    assert operation["commensurate_n"] == 6
+    assert operation["angle_degrees"] == 5.0
+    twisted, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=selected.payload["operations"],
+        ),
+    )
+    receipt = twisted.metadata["last_commensurate_twist"]
+    assert receipt["atom_count"] == 762
+    assert receipt["twist_angle_degrees"] == pytest.approx(5.085848, abs=1e-6)
+    assert receipt["twist_angle_error_degrees"] == pytest.approx(0.085848, abs=1e-6)
+
+    no_bounded_match = infer_modeling_plan(
+        "Make a commensurate twisted bilayer at twist angle 3 degrees.",
+        current_spec=base,
+    )
+    assert no_bounded_match.kind == "unsupported"
+    assert no_bounded_match.template_id == "commensurate_tmd_twisted_bilayer"
+    assert "nearest is" in no_bounded_match.notes[1]
+
+
+def test_new_tmd_template_applies_inline_commensurate_twisted_bilayer() -> None:
+    plan = infer_modeling_plan(
+        "Build a commensurate twisted bilayer MoS2 with m=2, n=1 and prepare preview."
+    )
+
+    assert plan.kind == "spec"
+    assert plan.template_id == "molybdenum_disulfide_2d_mos2_monolayer"
+    spec = ModelSpec.model_validate(plan.payload)
+    assert len(spec.model.basis_atoms) == 42
+    assert spec.metadata["commensurate_twisted_bilayer"] is True
+    assert spec.metadata["last_commensurate_twist"]["commensurability_verified"] is True
+    assert any("make_commensurate_twisted_bilayer m=2 n=1" in note for note in plan.notes)
+
+
 def test_semiconductor_layer_translation_infers_explicit_atom_ids_in_english_and_chinese() -> None:
     base = load_example("silicon_germanium_001_heterostructure_spec.json")
 

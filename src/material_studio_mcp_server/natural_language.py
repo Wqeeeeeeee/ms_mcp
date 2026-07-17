@@ -14,7 +14,12 @@ from .specs.castep import CastepTask, normalize_castep_task
 from .specs.common import ELEMENTS
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
-from .specs.patch import SemanticPatch, apply_semantic_patch, rotate_crystal_atom_set
+from .specs.patch import (
+    SemanticPatch,
+    apply_semantic_patch,
+    commensurate_twist_angle_degrees,
+    rotate_crystal_atom_set,
+)
 from .specs.project import ModelSpec
 
 
@@ -1815,6 +1820,14 @@ CJK_NON_SILICON_SEMICONDUCTOR_TERMS: tuple[str, ...] = (
 )
 TMD_METALS = {"Mo", "W"}
 TMD_CHALCOGENS = {"S", "Se", "Te"}
+TMD_COMMENSURATE_TWIST_DEFAULT_INTERLAYER_ANGSTROM = {
+    "mos2": 6.15,
+    "ws2": 6.18,
+    "mose2": 6.47,
+    "wse2": 6.49,
+}
+COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS = 2_000
+COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES = 0.1
 TMD_METAL_SITE_DOPANTS = {"Mo", "W", "Nb", "Ta", "Re"}
 TMD_CHALCOGEN_SITE_DOPANTS = {"O", "S", "Se", "Te", "F", "Cl", "Br", "I", "N", "P", "As", "Sb"}
 BOND_TYPE_ALIASES = {
@@ -3253,6 +3266,16 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             ),
         },
         {
+            "template_id": "commensurate_tmd_twisted_bilayer",
+            "operations": ["make_commensurate_twisted_bilayer"],
+            "requires_existing_project": True,
+            "pattern": (
+                "Build an exact integer commensurate MX2 TMD homobilayer from a pristine periodic monolayer, "
+                "e.g. 'make a commensurate twisted bilayer with m=2, n=1' or "
+                "'\u6784\u5efa m=2,n=1 \u7684\u5171\u683c\u626d\u8f6c\u53cc\u5c42'."
+            ),
+        },
+        {
             "template_id": "crystal_add_atom_fractional",
             "operations": ["add_atom"],
             "requires_existing_project": True,
@@ -4117,6 +4140,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_crystal_lattice_parameters,
             _match_crystal_layer_translation,
             _match_crystal_layer_rotation,
+            _match_commensurate_tmd_twisted_bilayer,
             _match_crystal_strain,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
@@ -4165,6 +4189,7 @@ def _looks_like_current_crystal_modifier_request(text: str) -> bool:
             _match_crystal_lattice_parameters,
             _match_crystal_layer_translation,
             _match_crystal_layer_rotation,
+            _match_commensurate_tmd_twisted_bilayer,
             _match_crystal_interstitial_fractional,
             _match_crystal_add_atom_fractional,
             _match_crystal_set_atom_fractional,
@@ -4178,11 +4203,11 @@ def _contains_explicit_new_model_noun(text: str) -> bool:
 
     return bool(
         re.search(
-            r"\b(?:crystal|surface|slab|heterostructure|interface|superlattice|quantum\s+well|mqw|gate\s+stack|mos\s+capacitor|hemt|2deg|two[-\s]+dimensional\s+electron\s+gas|high\s+electron\s+mobility\s+transistor)\b",
+            r"\b(?:crystal|surface|slab|bilayer|heterostructure|interface|superlattice|quantum\s+well|mqw|gate\s+stack|mos\s+capacitor|hemt|2deg|two[-\s]+dimensional\s+electron\s+gas|high\s+electron\s+mobility\s+transistor)\b",
             text,
             flags=re.IGNORECASE,
         )
-        or any(term in text for term in ("\u4e8c\u7ef4\u7535\u5b50\u6c14", "\u9ad8\u7535\u5b50\u8fc1\u79fb\u7387\u6676\u4f53\u7ba1"))
+        or any(term in text for term in ("\u53cc\u5c42", "\u4e8c\u7ef4\u7535\u5b50\u6c14", "\u9ad8\u7535\u5b50\u8fc1\u79fb\u7387\u6676\u4f53\u7ba1"))
     )
 
 
@@ -10434,6 +10459,12 @@ def _apply_new_crystal_composite_operations(
         return True
 
     try:
+        commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
+        if commensurate_twist_match is not None:
+            apply_operations(
+                _commensurate_tmd_twisted_bilayer_operations(working, commensurate_twist_match)
+            )
+
         supercell_match = None if skip_supercell else _match_make_supercell(text)
         if supercell_match is not None:
             apply_operations([{"type": "make_supercell", "matrix": list(supercell_match)}])
@@ -11189,6 +11220,30 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
         )
 
     try:
+        commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
+        if commensurate_twist_match is not None:
+            twist_operations = _commensurate_tmd_twisted_bilayer_operations(
+                working,
+                commensurate_twist_match,
+            )
+            preview_twist, _ = apply_semantic_patch(
+                working,
+                SemanticPatch(
+                    project_id=working.project_id,
+                    base_revision=working.revision,
+                    operations=twist_operations,
+                ),
+            )
+            twist_record = preview_twist.metadata["last_commensurate_twist"]
+            apply_group(
+                twist_operations,
+                (
+                    f"build m={twist_record['commensurate_m']}, n={twist_record['commensurate_n']} "
+                    f"commensurate TMD twisted bilayer at "
+                    f"{twist_record['twist_angle_degrees']:g} degrees"
+                ),
+            )
+
         supercell_match = _match_make_supercell(text)
         if supercell_match is not None:
             nx, ny, nz = supercell_match
@@ -11627,6 +11682,43 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                     f"Rotate crystal layer {record['layer_index']} by {record['angle_degrees']:g} degrees "
                     f"around {record['rotation_axis']} as a non-commensurate visual-review scaffold; "
                     "build a commensurate supercell and relax before calculation."
+                ),
+            )
+
+        commensurate_twist_match = _match_commensurate_tmd_twisted_bilayer(text)
+        if commensurate_twist_match is not None:
+            try:
+                operations = _commensurate_tmd_twisted_bilayer_operations(
+                    current_spec,
+                    commensurate_twist_match,
+                )
+                preview_twist, _ = apply_semantic_patch(
+                    current_spec,
+                    SemanticPatch(
+                        project_id=current_spec.project_id,
+                        base_revision=current_spec.revision,
+                        operations=operations,
+                    ),
+                )
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="commensurate_tmd_twisted_bilayer",
+                    notes=[
+                        "A commensurate TMD twisted-bilayer request matched but could not be applied safely.",
+                        str(exc),
+                    ],
+                )
+            record = preview_twist.metadata["last_commensurate_twist"]
+            return _patch_plan(
+                operations,
+                "commensurate_tmd_twisted_bilayer",
+                (
+                    f"Build exact m={record['commensurate_m']}, n={record['commensurate_n']} "
+                    f"commensurate TMD twisted bilayer at {record['twist_angle_degrees']:g} degrees "
+                    f"with {record['atom_count']} atoms; geometry relaxation remains required."
                 ),
             )
 
@@ -13283,6 +13375,172 @@ def _match_crystal_layer_rotation(text: str) -> dict[str, Any] | None:
         "axis": _normalize_lattice_axis(str(raw_axis)) if raw_axis else None,
         "angle_degrees": round(float(angle_match.group("value")), 6),
     }
+
+
+def _match_commensurate_tmd_twisted_bilayer(text: str) -> dict[str, Any] | None:
+    if re.search(r"\bcommensurate\b|\u5171\u683c", text, flags=re.IGNORECASE) is None:
+        return None
+    if re.search(
+        r"\b(?:twist(?:ed)?|moire|moir[e\u00e9]|bilayer)\b|"
+        r"(?:\u626d\u8f6c|\u626d\u89d2|\u83ab\u5c14|\u53cc\u5c42)",
+        text,
+        flags=re.IGNORECASE,
+    ) is None:
+        return None
+
+    indices: tuple[int, int] | None = None
+    for pattern in (
+        r"\bm\s*=\s*(?P<m>\d+)\s*[,;/\s]+\s*n\s*=\s*(?P<n>\d+)\b",
+        r"\bn\s*=\s*(?P<n>\d+)\s*[,;/\s]+\s*m\s*=\s*(?P<m>\d+)\b",
+        r"\(\s*m\s*,\s*n\s*\)\s*=\s*\(\s*(?P<m>\d+)\s*,\s*(?P<n>\d+)\s*\)",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            indices = (int(match.group("m")), int(match.group("n")))
+            break
+
+    value = r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+    angle: float | None = None
+    for pattern in (
+        rf"\b(?:twist(?:ed)?|rotation)\s*(?:angle)?\s*(?:of|=|:)?\s*{value}\s*(?:degrees?|deg|\u00b0)",
+        rf"{value}\s*(?:degrees?|deg|\u00b0)\s*(?:commensurate\s+)?(?:twist(?:ed)?|rotation)",
+        rf"(?:\u626d\u89d2|\u626d\u8f6c\u89d2|\u65cb\u8f6c\u89d2)\s*(?:=|:)?\s*{value}\s*(?:\u5ea6|\u00b0)",
+        rf"{value}\s*(?:\u5ea6|\u00b0)\s*(?:\u5171\u683c)?(?:\u626d\u8f6c|\u626d\u89d2)",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            angle = round(float(match.group("value")), 9)
+            break
+
+    interlayer_distance: float | None = None
+    for pattern in (
+        rf"\binterlayer\s+(?:distance|spacing|separation)\s*(?:of|=|:)?\s*{value}\s*(?P<unit>angstroms?|ang|a|nm|nanometers?)\b",
+        rf"(?:\u5c42\u95f4\u8ddd|\u5c42\u95f4\u8ddd\u79bb|\u5c42\u95f4\u95f4\u8ddd)\s*(?:=|:|\u4e3a|\u8bbe\u4e3a)?\s*{value}\s*(?P<unit>\u57c3|\u00c5|a|nm|\u7eb3\u7c73)",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            interlayer_distance = float(match.group("value"))
+            unit = str(match.group("unit") or "").lower()
+            if unit in {"nm", "nanometer", "nanometers", "\u7eb3\u7c73"}:
+                interlayer_distance *= 10.0
+            interlayer_distance = round(interlayer_distance, 9)
+            break
+
+    orientation = None
+    if re.search(r"\bcounter[-\s]?clockwise\b|\banticlockwise\b|\u9006\u65f6\u9488", text, flags=re.IGNORECASE):
+        orientation = "counterclockwise"
+    elif re.search(r"\bclockwise\b|\u987a\u65f6\u9488", text, flags=re.IGNORECASE):
+        orientation = "clockwise"
+    elif angle is not None:
+        orientation = "counterclockwise" if angle > 0 else "clockwise"
+
+    return {
+        "indices": indices,
+        "requested_angle_degrees": angle,
+        "interlayer_distance_angstrom": interlayer_distance,
+        "twist_orientation": orientation,
+    }
+
+
+def _commensurate_tmd_twisted_bilayer_operations(
+    current_spec: ModelSpec,
+    request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("commensurate twisted bilayer requires a crystal model.")
+    metadata = dict(current_spec.metadata or {})
+    family = str(metadata.get("structure_family") or "").lower()
+    if metadata.get("domain") != "semiconductor" or "tmd" not in family or "monolayer" not in family:
+        raise ValueError("commensurate twisted bilayer requires a pristine semiconductor TMD monolayer.")
+
+    max_atoms = COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS
+    indices = request.get("indices")
+    requested_angle = request.get("requested_angle_degrees")
+    if indices is None:
+        if requested_angle is None:
+            raise ValueError(
+                "commensurate twisted bilayer requires either explicit coprime m,n indices "
+                "or a twist angle that maps within 0.1 degrees under the atom-count limit."
+            )
+        m, n, _actual_angle = _select_commensurate_twist_indices(
+            float(requested_angle),
+            max_atoms=max_atoms,
+        )
+    else:
+        m, n = (int(value) for value in indices)
+    if m <= n or n < 0 or math.gcd(m, n) != 1:
+        raise ValueError("commensurate twist indices must be coprime and satisfy m > n >= 0.")
+
+    actual_angle = commensurate_twist_angle_degrees(m, n)
+    orientation = request.get("twist_orientation")
+    if orientation is None:
+        orientation = "counterclockwise"
+    signed_actual_angle = actual_angle if orientation == "counterclockwise" else -actual_angle
+    if requested_angle is not None:
+        requested_angle = float(requested_angle)
+        requested_orientation = "counterclockwise" if requested_angle > 0 else "clockwise"
+        if requested_orientation != orientation:
+            raise ValueError("requested twist-angle sign conflicts with the requested orientation.")
+        error = abs(abs(requested_angle) - actual_angle)
+        if error > COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES + 1e-12:
+            raise ValueError(
+                f"indices m={m}, n={n} produce {actual_angle:.9f} degrees, "
+                f"not requested {abs(requested_angle):.9f} degrees "
+                f"(error {error:.9f} > {COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES:g})."
+            )
+
+    interlayer_distance = request.get("interlayer_distance_angstrom")
+    if interlayer_distance is None:
+        material_key = re.sub(r"[^a-z0-9]+", "", str(metadata.get("material") or "").lower())
+        interlayer_distance = TMD_COMMENSURATE_TWIST_DEFAULT_INTERLAYER_ANGSTROM.get(material_key)
+        if interlayer_distance is None:
+            raise ValueError(
+                "no reviewed default interlayer distance is available for this TMD; "
+                "provide interlayer distance explicitly."
+            )
+
+    operation: dict[str, Any] = {
+        "type": "make_commensurate_twisted_bilayer",
+        "commensurate_m": m,
+        "commensurate_n": n,
+        "interlayer_distance_angstrom": round(float(interlayer_distance), 9),
+        "twist_orientation": orientation,
+        "max_atoms": max_atoms,
+    }
+    if requested_angle is not None:
+        operation["angle_degrees"] = round(float(requested_angle), 9)
+    return [operation]
+
+
+def _select_commensurate_twist_indices(
+    requested_angle_degrees: float,
+    *,
+    max_atoms: int,
+) -> tuple[int, int, float]:
+    magnitude = abs(float(requested_angle_degrees))
+    if not math.isfinite(magnitude) or magnitude <= 1e-12 or magnitude > 60.0 + 1e-12:
+        raise ValueError("commensurate twist angle must be in (0, 60] degrees.")
+    candidates: list[tuple[float, int, int, int, float]] = []
+    for m in range(1, 101):
+        for n in range(0, m):
+            if math.gcd(m, n) != 1:
+                continue
+            index = m * m + m * n + n * n
+            atom_count = 6 * index
+            if atom_count > max_atoms:
+                continue
+            actual = commensurate_twist_angle_degrees(m, n)
+            candidates.append((abs(actual - magnitude), atom_count, m, n, actual))
+    if not candidates:
+        raise ValueError(f"no commensurate TMD twist candidate fits max_atoms={max_atoms}.")
+    error, _atom_count, m, n, actual = min(candidates)
+    if error > COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES + 1e-12:
+        raise ValueError(
+            f"no commensurate TMD twist matches {magnitude:.9f} degrees within "
+            f"{COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES:g} degrees and max_atoms={max_atoms}; "
+            f"nearest is m={m}, n={n}, angle={actual:.9f}, error={error:.9f}."
+        )
+    return m, n, actual
 
 
 def _crystal_layer_translation_operations(

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from typing import Any, Literal
@@ -29,6 +31,7 @@ PatchOperationType = Literal[
     "set_atom_position",
     "translate_crystal_atoms",
     "rotate_crystal_atoms",
+    "make_commensurate_twisted_bilayer",
     "set_total_charge",
     "set_spin_multiplicity",
     "set_forcite_optimization",
@@ -107,6 +110,11 @@ class SemanticPatchOperation(StrictModel):
     angle_degrees: float | None = Field(default=None, ge=-360, le=360)
     pivot_fractional: FractionalVector3 | None = None
     wrap_fractional: bool = True
+    commensurate_m: int | None = Field(default=None, ge=1, le=100)
+    commensurate_n: int | None = Field(default=None, ge=0, le=99)
+    interlayer_distance_angstrom: float | None = Field(default=None, gt=0, le=100)
+    twist_orientation: Literal["counterclockwise", "clockwise"] | None = None
+    max_atoms: int | None = Field(default=None, ge=6, le=20_000)
     thickness_angstrom: float | None = Field(default=None, gt=0)
     target_layer: Literal["gate", "oxide", "channel", "well", "barrier"] | None = None
     lattice: LatticeSpec | None = None
@@ -147,6 +155,7 @@ class SemanticPatchOperation(StrictModel):
             "set_atom_position",
             "translate_crystal_atoms",
             "rotate_crystal_atoms",
+            "make_commensurate_twisted_bilayer",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -179,6 +188,25 @@ class SemanticPatchOperation(StrictModel):
                 raise ValueError("rotate_crystal_atoms angle_degrees must be finite")
             if abs(float(self.angle_degrees)) <= 1e-12 or abs(float(self.angle_degrees)) >= 360.0 - 1e-12:
                 raise ValueError("rotate_crystal_atoms angle_degrees must produce a non-identity rotation")
+        if self.operation == "make_commensurate_twisted_bilayer":
+            if (
+                self.commensurate_m is None
+                or self.commensurate_n is None
+                or self.interlayer_distance_angstrom is None
+            ):
+                raise ValueError(
+                    "make_commensurate_twisted_bilayer requires commensurate_m, "
+                    "commensurate_n, and interlayer_distance_angstrom"
+                )
+            if self.commensurate_m <= self.commensurate_n:
+                raise ValueError("commensurate twist indices must satisfy m > n >= 0")
+            if math.gcd(self.commensurate_m, self.commensurate_n) != 1:
+                raise ValueError("commensurate twist indices m and n must be coprime")
+            if self.angle_degrees is not None and not (
+                math.isfinite(float(self.angle_degrees))
+                and 1e-12 < abs(float(self.angle_degrees)) <= 60.0 + 1e-12
+            ):
+                raise ValueError("commensurate twisted bilayer requested angle must be in (0, 60] degrees")
         return self
 
 
@@ -338,6 +366,7 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
     assert isinstance(crystal, CrystalSpec)
     lattice = crystal.lattice.model_copy(deep=True)
     atoms = [atom.model_copy(deep=True) for atom in crystal.basis_atoms]
+    model_name = crystal.name
 
     for operation in patch.operations:
         op = operation.operation
@@ -419,6 +448,15 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
             atoms = _apply_crystal_atom_translation_patch(lattice, atoms, operation, diff)
         elif op == "rotate_crystal_atoms":
             atoms = _apply_crystal_atom_rotation_patch(lattice, atoms, operation, diff)
+        elif op == "make_commensurate_twisted_bilayer":
+            lattice, atoms, model_name = _apply_commensurate_twisted_bilayer_patch(
+                spec,
+                lattice,
+                atoms,
+                operation,
+                diff,
+                source_model_name=model_name,
+            )
         elif op == "set_lattice":
             if operation.lattice is None:
                 raise ValueError("set_lattice 需要 lattice")
@@ -433,7 +471,7 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
         else:
             raise ValueError(f"{op} 对晶体模型无效")
 
-    spec.model = CrystalSpec(name=crystal.name, lattice=lattice, basis_atoms=atoms, operations=crystal.operations)
+    spec.model = CrystalSpec(name=model_name, lattice=lattice, basis_atoms=atoms, operations=crystal.operations)
 
 
 def _apply_crystal_atom_translation_patch(
@@ -714,6 +752,416 @@ def _patch_cross(
         left[2] * right[0] - left[0] * right[2],
         left[0] * right[1] - left[1] * right[0],
     )
+
+
+_COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS = 2_000
+_COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM = 5.0
+_COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM = 1.5
+_COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES = 0.1
+_TMD_METALS = {"Mo", "W"}
+_TMD_CHALCOGENS = {"S", "Se", "Te"}
+
+
+def _apply_commensurate_twisted_bilayer_patch(
+    spec: ModelSpec,
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    operation: SemanticPatchOperation,
+    diff: list[str],
+    *,
+    source_model_name: str,
+) -> tuple[LatticeSpec, list[BasisAtomSpec], str]:
+    """Construct an exact integer commensurate homobilayer from a periodic TMD monolayer."""
+
+    if (
+        operation.commensurate_m is None
+        or operation.commensurate_n is None
+        or operation.interlayer_distance_angstrom is None
+    ):
+        raise ValueError(
+            "make_commensurate_twisted_bilayer requires commensurate_m, "
+            "commensurate_n, and interlayer_distance_angstrom"
+        )
+    m = int(operation.commensurate_m)
+    n = int(operation.commensurate_n)
+    if m <= n or n < 0 or math.gcd(m, n) != 1:
+        raise ValueError("commensurate twist indices must be coprime and satisfy m > n >= 0")
+
+    metadata = dict(spec.metadata or {})
+    primitive_atoms, primitive_a, source_supercell = _commensurate_tmd_primitive_basis(
+        metadata,
+        lattice,
+        atoms,
+    )
+    supercell_index = m * m + m * n + n * n
+    expected_atom_count = len(primitive_atoms) * 2 * supercell_index
+    max_atoms = int(operation.max_atoms or _COMMENSURATE_TWIST_DEFAULT_MAX_ATOMS)
+    if expected_atom_count > max_atoms:
+        raise ValueError(
+            "commensurate twisted bilayer would contain "
+            f"{expected_atom_count} atoms, above max_atoms={max_atoms}; "
+            "choose smaller coprime indices or explicitly review a larger max_atoms value"
+        )
+
+    requested_angle = float(operation.angle_degrees) if operation.angle_degrees is not None else None
+    angle_magnitude = commensurate_twist_angle_degrees(m, n)
+    orientation = operation.twist_orientation or (
+        "clockwise" if requested_angle is not None and requested_angle < 0 else "counterclockwise"
+    )
+    signed_angle = angle_magnitude if orientation == "counterclockwise" else -angle_magnitude
+    if requested_angle is not None:
+        requested_orientation = "counterclockwise" if requested_angle > 0 else "clockwise"
+        if requested_orientation != orientation:
+            raise ValueError("requested twist-angle sign conflicts with twist_orientation")
+        angle_error = abs(abs(requested_angle) - angle_magnitude)
+        if angle_error > _COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES + 1e-12:
+            raise ValueError(
+                f"commensurate indices (m={m}, n={n}) produce {angle_magnitude:.9f} degrees, "
+                f"which differs from requested {abs(requested_angle):.9f} degrees by "
+                f"{angle_error:.9f} degrees; tolerance is "
+                f"{_COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES:g} degrees"
+            )
+    else:
+        angle_error = None
+    matrix_a = ((m + n, n), (-n, m))
+    matrix_b = ((m + n, m), (-m, n))
+    if orientation == "counterclockwise":
+        bottom_matrix, top_matrix = matrix_b, matrix_a
+    else:
+        bottom_matrix, top_matrix = matrix_a, matrix_b
+    if _integer_matrix_determinant(bottom_matrix) != supercell_index:
+        raise ValueError("bottom commensurate matrix determinant does not match the supercell index")
+    if _integer_matrix_determinant(top_matrix) != supercell_index:
+        raise ValueError("top commensurate matrix determinant does not match the supercell index")
+
+    metal_atoms = [atom for atom in primitive_atoms if atom.element in _TMD_METALS]
+    if len(metal_atoms) != 1:
+        raise ValueError("commensurate TMD primitive basis must contain exactly one transition-metal atom")
+    monolayer_center_fractional = float(metal_atoms[0].fractional.z)
+    z_values = [float(atom.fractional.z) for atom in primitive_atoms]
+    monolayer_thickness = (max(z_values) - min(z_values)) * float(lattice.c)
+    interlayer_distance = float(operation.interlayer_distance_angstrom)
+    interlayer_gap = interlayer_distance - monolayer_thickness
+    if interlayer_gap < _COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM - 1e-9:
+        raise ValueError(
+            "interlayer_distance_angstrom leaves only "
+            f"{interlayer_gap:.6f} angstrom between opposing chalcogen planes; "
+            f"at least {_COMMENSURATE_TWIST_MIN_INTERLAYER_GAP_ANGSTROM:g} angstrom is required"
+        )
+    total_slab_thickness = monolayer_thickness + interlayer_distance
+    vacuum_angstrom = float(lattice.c) - total_slab_thickness
+    if vacuum_angstrom < _COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM - 1e-9:
+        raise ValueError(
+            "current c lattice leaves only "
+            f"{vacuum_angstrom:.6f} angstrom vacuum around the twisted bilayer; "
+            f"at least {_COMMENSURATE_TWIST_MIN_VACUUM_ANGSTROM:g} angstrom is required"
+        )
+
+    bottom_center_fractional = 0.5 - interlayer_distance / (2.0 * float(lattice.c))
+    top_center_fractional = 0.5 + interlayer_distance / (2.0 * float(lattice.c))
+    bottom_atoms = _commensurate_layer_atoms(
+        primitive_atoms,
+        bottom_matrix,
+        layer_number=1,
+        layer_center_fractional=bottom_center_fractional,
+        source_center_fractional=monolayer_center_fractional,
+    )
+    top_atoms = _commensurate_layer_atoms(
+        primitive_atoms,
+        top_matrix,
+        layer_number=2,
+        layer_center_fractional=top_center_fractional,
+        source_center_fractional=monolayer_center_fractional,
+    )
+    twisted_atoms = bottom_atoms + top_atoms
+    if len(twisted_atoms) != expected_atom_count:
+        raise ValueError(
+            f"commensurate construction generated {len(twisted_atoms)} atoms; "
+            f"expected {expected_atom_count}"
+        )
+
+    common_length = primitive_a * math.sqrt(supercell_index)
+    twisted_lattice = LatticeSpec(
+        a=common_length,
+        b=common_length,
+        c=float(lattice.c),
+        alpha=90.0,
+        beta=90.0,
+        gamma=120.0,
+    )
+    structure_sha256 = _crystal_structure_sha256(twisted_lattice, twisted_atoms)
+    bottom_ids = [atom.id for atom in bottom_atoms]
+    top_ids = [atom.id for atom in top_atoms]
+    receipt = {
+        "source": "semantic_patch_make_commensurate_twisted_bilayer",
+        "source_revision": int(spec.revision),
+        "source_model_name": source_model_name,
+        "source_template_supercell": list(source_supercell),
+        "primitive_basis_atom_count": len(primitive_atoms),
+        "primitive_lattice_a_angstrom": _round_patch_float(primitive_a),
+        "commensurate_m": m,
+        "commensurate_n": n,
+        "supercell_index": supercell_index,
+        "bottom_supercell_matrix": [list(row) for row in bottom_matrix],
+        "top_supercell_matrix": [list(row) for row in top_matrix],
+        "matrix_determinant_verified": True,
+        "twist_orientation": orientation,
+        "twist_angle_degrees": _round_patch_float(signed_angle),
+        "twist_angle_magnitude_degrees": _round_patch_float(angle_magnitude),
+        "requested_twist_angle_degrees": (
+            _round_patch_float(requested_angle) if requested_angle is not None else None
+        ),
+        "twist_angle_error_degrees": (
+            _round_patch_float(angle_error) if angle_error is not None else None
+        ),
+        "twist_angle_tolerance_degrees": _COMMENSURATE_TWIST_ANGLE_TOLERANCE_DEGREES,
+        "twist_angle_formula": "acos((m^2+4mn+n^2)/(2(m^2+mn+n^2)))",
+        "commensurability_verified": True,
+        "common_lattice_a_angstrom": _round_patch_float(common_length),
+        "common_lattice_b_angstrom": _round_patch_float(common_length),
+        "common_lattice_gamma_degrees": 120.0,
+        "interlayer_distance_angstrom": _round_patch_float(interlayer_distance),
+        "monolayer_thickness_angstrom": _round_patch_float(monolayer_thickness),
+        "interlayer_chalcogen_gap_angstrom": _round_patch_float(interlayer_gap),
+        "total_slab_thickness_angstrom": _round_patch_float(total_slab_thickness),
+        "vacuum_angstrom": _round_patch_float(vacuum_angstrom),
+        "atom_count": len(twisted_atoms),
+        "atoms_per_layer": len(bottom_atoms),
+        "bottom_layer_atom_id_sha256": _atom_id_list_sha256(bottom_ids),
+        "top_layer_atom_id_sha256": _atom_id_list_sha256(top_ids),
+        "structure_sha256": structure_sha256,
+        "pre_relaxation_scaffold": True,
+        "visual_review_only": False,
+        "visual_hotload_ready": True,
+        "requires_geometry_relaxation": True,
+        "geometry_relaxed": False,
+        "calculation_ready": False,
+        "calculation_blocking_reason": "commensurate_twisted_bilayer_requires_geometry_relaxation",
+    }
+    history = [
+        dict(item)
+        for item in metadata.get("commensurate_twist_history", []) or []
+        if isinstance(item, dict)
+    ]
+    history.append(receipt)
+    metadata.update(
+        {
+            "structure_family": "commensurate twisted 2d tmd bilayer",
+            "monolayer_polytype": metadata.get("tmd_phase"),
+            "bilayer_stacking_family": "twisted_R_type_from_same_orientation_monolayers",
+            "surface_axis": "c",
+            "layer_count": 2,
+            "twisted_bilayer": True,
+            "commensurate_twisted_bilayer": True,
+            "template_supercell": [1, 1, 1],
+            "slab_thickness_angstrom": _round_patch_float(total_slab_thickness),
+            "vacuum_angstrom": _round_patch_float(vacuum_angstrom),
+            "commensurate_twist_history": history,
+            "last_commensurate_twist": receipt,
+        }
+    )
+    spec.metadata = metadata
+    acceptance_note = (
+        "Exact integer commensurate TMD twisted-bilayer pre-relaxation structure; "
+        "geometry relaxation is required before production calculation."
+    )
+    acceptance_notes = [
+        note
+        for note in spec.acceptance.notes
+        if "monolayer template" not in note.lower()
+        and "commensurate tmd twisted-bilayer" not in note.lower()
+    ]
+    acceptance_notes.append(acceptance_note)
+    spec.acceptance = spec.acceptance.model_copy(update={"notes": acceptance_notes})
+    diff.append(
+        "make_commensurate_twisted_bilayer "
+        f"m={m} n={n} angle={signed_angle:.9f}deg atoms={len(twisted_atoms)} "
+        f"interlayer={interlayer_distance:g}A"
+    )
+    suffix = f"_commensurate_twisted_bilayer_m{m}_n{n}"
+    model_name = (source_model_name + suffix)[:120]
+    return twisted_lattice, twisted_atoms, model_name
+
+
+def _commensurate_tmd_primitive_basis(
+    metadata: dict[str, Any],
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+) -> tuple[list[BasisAtomSpec], float, tuple[int, int, int]]:
+    family = str(metadata.get("structure_family") or "").lower()
+    if "tmd" not in family or "monolayer" not in family:
+        raise ValueError("commensurate twisted bilayer requires a periodic 2D TMD monolayer template")
+    if str(metadata.get("surface_axis") or "c").lower() not in {"c", "z"}:
+        raise ValueError("commensurate twisted bilayer currently requires surface_axis=c")
+    if abs(float(lattice.alpha) - 90.0) > 1e-6 or abs(float(lattice.beta) - 90.0) > 1e-6:
+        raise ValueError("commensurate twisted bilayer requires alpha=beta=90 degrees")
+    if abs(float(lattice.gamma) - 120.0) > 1e-6:
+        raise ValueError("commensurate twisted bilayer currently requires a 120-degree hexagonal cell")
+
+    raw_supercell = metadata.get("template_supercell")
+    if not isinstance(raw_supercell, (list, tuple)) or len(raw_supercell) != 3:
+        raise ValueError("commensurate twisted bilayer requires template_supercell metadata")
+    try:
+        nx, ny, nz = (int(value) for value in raw_supercell)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("template_supercell must contain three integers") from exc
+    if nx <= 0 or ny <= 0 or nz != 1:
+        raise ValueError("commensurate twisted bilayer requires a positive in-plane template supercell and nz=1")
+    primitive_a = float(lattice.a) / nx
+    primitive_b = float(lattice.b) / ny
+    if abs(primitive_a - primitive_b) > max(primitive_a, primitive_b) * 1e-6:
+        raise ValueError("commensurate twisted bilayer requires equal primitive in-plane lattice lengths")
+
+    signatures: dict[tuple[str, float, float, float], list[BasisAtomSpec]] = {}
+    for atom in atoms:
+        px = _canonical_fractional((float(atom.fractional.x) * nx) % 1.0)
+        py = _canonical_fractional((float(atom.fractional.y) * ny) % 1.0)
+        pz = _canonical_fractional(float(atom.fractional.z))
+        key = (atom.element, round(px, 6), round(py, 6), round(pz, 6))
+        signatures.setdefault(key, []).append(atom)
+    repeat_count = nx * ny
+    inconsistent = [key for key, values in signatures.items() if len(values) != repeat_count]
+    if inconsistent:
+        raise ValueError(
+            "current monolayer is not a complete periodic repetition of one primitive basis; "
+            "remove defects, dopants, alloy edits, or prior coordinate changes before constructing the twist cell"
+        )
+    if len(atoms) != len(signatures) * repeat_count:
+        raise ValueError("current monolayer atom count does not match template_supercell periodicity")
+
+    ordered = sorted(signatures, key=lambda item: (item[0] not in _TMD_METALS, item[0], item[3], item[1], item[2]))
+    primitive_atoms: list[BasisAtomSpec] = []
+    element_counters: dict[str, int] = {}
+    for element, x, y, z in ordered:
+        element_counters[element] = element_counters.get(element, 0) + 1
+        primitive_atoms.append(
+            BasisAtomSpec(
+                id=f"{element}{element_counters[element]}",
+                element=element,
+                fractional=FractionalVector3(x=x, y=y, z=z),
+            )
+        )
+    metal_atoms = [atom for atom in primitive_atoms if atom.element in _TMD_METALS]
+    chalcogen_atoms = [atom for atom in primitive_atoms if atom.element in _TMD_CHALCOGENS]
+    other_atoms = [
+        atom
+        for atom in primitive_atoms
+        if atom.element not in _TMD_METALS and atom.element not in _TMD_CHALCOGENS
+    ]
+    if len(primitive_atoms) != 3 or len(metal_atoms) != 1 or len(chalcogen_atoms) != 2 or other_atoms:
+        raise ValueError(
+            "commensurate twisted bilayer currently supports MX2 TMD primitive cells "
+            "with one Mo/W atom and two S/Se/Te atoms"
+        )
+    if len({atom.element for atom in metal_atoms}) != 1 or len({atom.element for atom in chalcogen_atoms}) != 1:
+        raise ValueError("commensurate twisted bilayer currently supports a pristine TMD homobilayer")
+    return primitive_atoms, (primitive_a + primitive_b) / 2.0, (nx, ny, nz)
+
+
+def commensurate_twist_angle_degrees(m: int, n: int) -> float:
+    """Return the exact homobilayer twist angle for coprime hexagonal indices."""
+
+    if m <= n or n < 0 or math.gcd(m, n) != 1:
+        raise ValueError("commensurate twist indices must be coprime and satisfy m > n >= 0")
+    index = m * m + m * n + n * n
+    cosine = (m * m + 4 * m * n + n * n) / (2.0 * index)
+    return math.degrees(math.acos(min(1.0, max(-1.0, cosine))))
+
+
+def _integer_matrix_determinant(matrix: tuple[tuple[int, int], tuple[int, int]]) -> int:
+    return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
+
+
+def _commensurate_layer_atoms(
+    primitive_atoms: list[BasisAtomSpec],
+    matrix: tuple[tuple[int, int], tuple[int, int]],
+    *,
+    layer_number: int,
+    layer_center_fractional: float,
+    source_center_fractional: float,
+) -> list[BasisAtomSpec]:
+    generated: list[BasisAtomSpec] = []
+    for primitive_atom in primitive_atoms:
+        positions = _integer_supercell_fractional_positions(
+            (float(primitive_atom.fractional.x), float(primitive_atom.fractional.y)),
+            matrix,
+        )
+        z = layer_center_fractional + float(primitive_atom.fractional.z) - source_center_fractional
+        if z < -1e-12 or z > 1.0 + 1e-12:
+            raise ValueError("twisted bilayer atom would fall outside the c-axis unit cell")
+        z = _canonical_fractional(min(max(z, 0.0), 1.0))
+        for index, (x, y) in enumerate(positions):
+            generated.append(
+                BasisAtomSpec(
+                    id=f"{primitive_atom.id}_L{layer_number}_{index:04d}",
+                    element=primitive_atom.element,
+                    fractional=FractionalVector3(x=x, y=y, z=z),
+                )
+            )
+    return generated
+
+
+def _integer_supercell_fractional_positions(
+    primitive_fractional: tuple[float, float],
+    matrix: tuple[tuple[int, int], tuple[int, int]],
+) -> list[tuple[float, float]]:
+    determinant = _integer_matrix_determinant(matrix)
+    if determinant <= 0:
+        raise ValueError("commensurate supercell matrix must have a positive determinant")
+    a, b = matrix[0]
+    c, d = matrix[1]
+    corners = ((0, 0), (a, b), (c, d), (a + c, b + d))
+    px, py = primitive_fractional
+    min_x = math.floor(min(item[0] for item in corners) - px) - 1
+    max_x = math.ceil(max(item[0] for item in corners) - px) + 1
+    min_y = math.floor(min(item[1] for item in corners) - py) - 1
+    max_y = math.ceil(max(item[1] for item in corners) - py) + 1
+    positions: set[tuple[float, float]] = set()
+    tolerance = 1e-10
+    for ix in range(min_x, max_x + 1):
+        for iy in range(min_y, max_y + 1):
+            qx = px + ix
+            qy = py + iy
+            fx = (qx * d - qy * c) / determinant
+            fy = (-qx * b + qy * a) / determinant
+            if -tolerance <= fx < 1.0 - tolerance and -tolerance <= fy < 1.0 - tolerance:
+                positions.add((_canonical_fractional(fx % 1.0), _canonical_fractional(fy % 1.0)))
+    if len(positions) != determinant:
+        raise ValueError(
+            f"commensurate matrix generated {len(positions)} primitive translations; "
+            f"expected determinant {determinant}"
+        )
+    return sorted(positions, key=lambda value: (value[0], value[1]))
+
+
+def _atom_id_list_sha256(atom_ids: list[str]) -> str:
+    return hashlib.sha256(
+        json.dumps(sorted(atom_ids), separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _crystal_structure_sha256(lattice: LatticeSpec, atoms: list[BasisAtomSpec]) -> str:
+    payload = {
+        "lattice": {
+            key: round(float(getattr(lattice, key)), 12)
+            for key in ("a", "b", "c", "alpha", "beta", "gamma")
+        },
+        "atoms": [
+            {
+                "id": atom.id,
+                "element": atom.element,
+                "fractional": [
+                    round(float(atom.fractional.x), 12),
+                    round(float(atom.fractional.y), 12),
+                    round(float(atom.fractional.z), 12),
+                ],
+            }
+            for atom in sorted(atoms, key=lambda item: item.id)
+        ],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _reconcile_crystal_dopant_metadata(spec: ModelSpec, diff: list[str]) -> dict[str, int | bool]:

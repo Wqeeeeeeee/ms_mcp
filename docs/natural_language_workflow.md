@@ -737,6 +737,26 @@ non-commensurate, visual-review-only scaffold. It may be hot-loaded into the
 verified single Materials Studio window, but normality and calculation readiness
 remain blocked until a commensurate supercell is constructed and geometry
 relaxation is completed and re-audited.
+Explicit commensurate TMD requests use a separate structured operation,
+`make_commensurate_twisted_bilayer`. It accepts a pristine periodic MoS2,
+WS2, MoSe2, or WSe2 monolayer and either coprime integer indices
+`m > n >= 0` or a target angle. Angle selection is bounded by a 0.1 degree
+tolerance and a default 2000-atom cap. For example,
+`Build a commensurate twisted MoS2 bilayer with m=2, n=1 and 6.15 angstrom
+interlayer distance` produces the exact 21.786789298 degree, 42-atom periodic
+cell. The Chinese equivalent `构建 m=2,n=1 的共格扭转双层二硫化钼，层间距
+6.15 埃并热加载到 Materials Studio` uses the same path.
+
+The immutable receipt records both integer supercell matrices, theoretical and
+signed twist angles, common lattice, per-layer atom-ID hashes, metal-plane
+separation, opposing-chalcogen gap, vacuum, and full structure SHA-256.
+`semiconductor_health.commensurate_twist_summary` recomputes those invariants
+from the current revision, while `semiconductor_commensurate_twist.csv` exports
+the compact evidence. The model is periodic and commensurability-verified, so
+it does not inherit the arbitrary-rotation `requires_commensurate_supercell`
+blocker. It remains a pre-relaxation structure: same-window visual hot-loading
+is allowed after normal GUI preflight, but calculation readiness remains false
+until a trusted geometry-relaxation result is bound and re-audited.
 Lattice summaries are exported as `semiconductor_lattice.csv` and report cell
 volume, atom density, volume per non-passivant atom, and slab vacuum fractions
 when surface metadata is present.

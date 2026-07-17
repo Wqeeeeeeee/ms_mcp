@@ -330,5 +330,12 @@ Copy Script 审核。MCP 不猜测 MaterialsScript 相机 API，也不把同指�
 `semiconductor_layer_rotation.csv` 保存原子 ID、旋转轴、角度、枢轴和坐标摘要。任意扭角默认是
 非共格、仅供可视审阅的结构脚手架：它可以在已验证的单一 MS 窗口中热加载，但在构建共格超胞并完成
 几何弛豫前，MCP 会阻断“模型正常”和“可计算”的结论。
+对于明确的 TMD 共格请求，`make_commensurate_twisted_bilayer` 会从干净、周期性的
+MoS2/WS2/MoSe2/WSe2 单层模板构造精确整数共格同质双层。可直接指定互素整数
+`m > n >= 0`，例如 `构建 m=2,n=1 的共格扭转双层二硫化钼，层间距 6.15 埃`；也可给出目标角度，
+规划器会在 0.1 度容差和 2000 原子默认上限内选择角度误差最小、原子数次优的共格候选。`commensurate_twist_summary`
+和 `semiconductor_commensurate_twist.csv` 会重新验证整数矩阵、理论扭角、公共晶格、层原子绑定、
+层间距和完整结构 SHA-256。该结果是精确周期共格的预弛豫结构，可在已验证的单一 MS 窗口中热加载，
+但 `requires_geometry_relaxation=true`，完成并绑定可信弛豫结果前仍不会标记为可计算。
 晶体 execute/hot-load 还会重新解析生成的 CIF，逐项核对原子 ID、元素、分数坐标和六个晶格参数。
 已有 CIF 与当前 `CrystalSpec` 不一致时，即使路径和窗口 revision 正确也会阻断正常性结论；重新物化需要显式确认且不会创建空 revision。

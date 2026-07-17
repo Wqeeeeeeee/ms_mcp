@@ -6570,6 +6570,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "set_metadata",
     ]
     assert "visual-review twist scaffold" in patch_commands["crystal_layer_rotation"]["pattern"]
+    assert patch_commands["commensurate_tmd_twisted_bilayer"]["operations"] == [
+        "make_commensurate_twisted_bilayer"
+    ]
+    assert "exact integer commensurate" in patch_commands["commensurate_tmd_twisted_bilayer"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
@@ -6775,6 +6779,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "set_lattice_parameters" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "translate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "rotate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    assert (
+        "make_commensurate_twisted_bilayer"
+        in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    )
     assert "apply_strain" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "auto_site_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "sublattice_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6801,6 +6809,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert rotation_safety["requires_axis_orthogonal_to_in_plane_vectors"] is True
     assert rotation_safety["arbitrary_twist_is_visual_review_scaffold_only"] is True
     assert rotation_safety["commensurate_supercell_required_before_calculation"] is True
+    commensurate_safety = capabilities["natural_language"]["new_structure_inline_modifiers"][
+        "commensurate_twisted_bilayer_safety"
+    ]
+    assert commensurate_safety["exact_integer_supercell_matrices"] is True
+    assert commensurate_safety["default_max_atoms"] == 2000
+    assert commensurate_safety["commensurability_verified_before_hotload"] is True
+    assert commensurate_safety["geometry_relaxation_required_before_calculation"] is True
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7058,6 +7073,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "crystal_lattice_parameters",
         "crystal_layer_translation",
         "crystal_layer_rotation",
+        "commensurate_tmd_twisted_bilayer",
         "crystal_strain",
         "crystal_add_atom_fractional",
         "crystal_interstitial_fractional",
@@ -7122,6 +7138,16 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "Twist layer 3 by 5 degrees and export layer-rotation diagnostics." in diagnostic_profiles[
         "layer_registry_rotation"
     ]["request_examples"]
+    assert "commensurate_twisted_bilayer" in diagnostic_profiles
+    assert "inspection.semiconductor_health.commensurate_twist_summary" in diagnostic_profiles[
+        "commensurate_twisted_bilayer"
+    ]["summary_keys"]
+    assert "semiconductor_review.commensurate_twist" in diagnostic_profiles[
+        "commensurate_twisted_bilayer"
+    ]["summary_keys"]
+    assert "semiconductor_commensurate_twist_csv" in diagnostic_profiles[
+        "commensurate_twisted_bilayer"
+    ]["csv_keys"]
     assert "modeling_report_summary_csv" in diagnostic_profiles["comprehensive_model_parameters"]["csv_keys"]
     assert "semiconductor_calculation_readiness" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
     assert "semiconductor_normality_diagnosis" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
@@ -7718,6 +7744,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_heterostructure_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "semiconductor_strain_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "semiconductor_layer_rotation_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
+    assert "semiconductor_commensurate_twist_csv" in capabilities["diagnostics"][
+        "change_receipt_artifact_fields"
+    ]
     assert "view_projections" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "view_quality" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_calculation_preflight" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
@@ -7728,6 +7757,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_polarization_2deg" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_p_gan_gate_cap" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_layer_rotation" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
+    assert "semiconductor_commensurate_twist" in capabilities["diagnostics"][
+        "change_receipt_diagnostic_row_count_fields"
+    ]
     assert "gui_loaded_current_revision" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "view_projection_row_count" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "view_names" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
@@ -7740,6 +7772,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         in capabilities["diagnostics"]["modeling_health_summary_fields"]
     )
     assert "semiconductor_layer_rotation_calculation_ready" in capabilities["diagnostics"][
+        "modeling_health_summary_fields"
+    ]
+    assert "semiconductor_commensurate_twist_quality" in capabilities["diagnostics"][
+        "modeling_health_summary_fields"
+    ]
+    assert "semiconductor_commensurate_twist_calculation_ready" in capabilities["diagnostics"][
         "modeling_health_summary_fields"
     ]
     assert "modeling_report_summary_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
@@ -7806,6 +7844,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "modeling_report_summary_fields"
     ]
     assert "semiconductor_layer_rotation_calculation_ready" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_twist_m" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_twist_commensurability_verified" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_commensurate_twist_calculation_ready" in capabilities["diagnostics"][
         "modeling_report_summary_fields"
     ]
     assert "requested_diagnostic_focus_missing_csv_keys" in capabilities["diagnostics"]["modeling_report_summary_fields"]
@@ -25492,6 +25539,86 @@ def test_live_modeling_request_previews_inline_semiconductor_layer_rotation_scaf
     assert summary["calculation_ready"] is False
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_rotation_csv"]).exists()
     assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_previews_exact_commensurate_tmd_twisted_bilayer(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "Build a commensurate twisted MoS2 bilayer with m=2, n=1 and 6.15 angstrom "
+        "interlayer distance, then prepare preview and export commensurate twist diagnostics.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "molybdenum_disulfide_2d_mos2_monolayer"
+    assert result["view_audit"]["model"]["atom_count"] == 42
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "commensurate_twist_summary"
+    ]
+    assert summary["quality"] == "commensurate_pre_relaxation"
+    assert summary["metadata_consistent"] is True
+    assert summary["commensurability_verified"] is True
+    assert summary["matrix_determinant_verified"] is True
+    assert summary["angle_verified"] is True
+    assert summary["lattice_verified"] is True
+    assert summary["structure_binding_matches_current"] is True
+    assert summary["requires_geometry_relaxation"] is True
+    assert summary["calculation_ready"] is False
+    assert summary["latest"]["commensurate_m"] == 2
+    assert summary["latest"]["commensurate_n"] == 1
+    assert summary["latest"]["atom_count"] == 42
+    assert "commensurate_twisted_bilayer" in result["requested_diagnostic_focuses"]
+    assert "layer_registry_rotation" not in result["requested_diagnostic_focuses"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    assert Path(
+        result["modeling_report"]["diagnostics"]["semiconductor_commensurate_twist_csv"]
+    ).exists()
+    receipt = result["modeling_report"]["change_receipt"]["semiconductor"]["commensurate_twist"]
+    assert receipt["commensurability_verified"] is True
+    assert receipt["requires_geometry_relaxation"] is True
+    assert receipt["calculation_ready"] is False
+    assert "commensurate_twist" in result["change_verification"]["domain_tags"]
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_hotloads_chinese_commensurate_tmd_twisted_bilayer_in_one_window(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "\u6784\u5efa m=2,n=1 \u7684\u5171\u683c\u626d\u8f6c\u53cc\u5c42\u4e8c\u786b\u5316\u94bc\uff0c\u5c42\u95f4\u8ddd 6.15 \u57c3\u5e76\u70ed\u52a0\u8f7d\u5230 "
+        "Materials Studio\uff0c\u5bfc\u51fa\u5171\u683c\u626d\u8f6c\u8bca\u65ad\u3002",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    assert result["view_audit"]["model"]["atom_count"] == 42
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"][
+        "commensurate_twist_summary"
+    ]
+    assert summary["commensurability_verified"] is True
+    assert summary["calculation_ready"] is False
+    assert result["modeling_health"]["checks"]["semiconductor_commensurate_twist_m"] == 2
+    assert result["modeling_health"]["checks"]["semiconductor_commensurate_twist_n"] == 1
+    assert (
+        result["modeling_health"]["checks"][
+            "semiconductor_commensurate_twist_commensurability_verified"
+        ]
+        is True
+    )
+    risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "commensurate_twisted_bilayer_requires_geometry_relaxation" in risk_flags
+    assert "layer_rotation_requires_commensurate_supercell" not in risk_flags
+    assert result["modeling_report"]["live_readiness"]["ready_for_calculation"] is False
+    assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    assert result["modeling_report"]["gui"]["single_window_policy_ok"] is True
+    assert len(isolated_fake_gui.opened) == 1
+    assert isolated_fake_gui.opened[0].suffix == ".cif"
 
 
 def test_live_modeling_request_auto_selects_semiconductor_dopant_site_from_chinese(monkeypatch, tmp_path: Path) -> None:

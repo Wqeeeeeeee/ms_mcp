@@ -6565,6 +6565,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "set_metadata",
     ]
     assert "periodic wrapping" in patch_commands["crystal_layer_translation"]["pattern"]
+    assert patch_commands["crystal_layer_rotation"]["operations"] == [
+        "rotate_crystal_atoms",
+        "set_metadata",
+    ]
+    assert "visual-review twist scaffold" in patch_commands["crystal_layer_rotation"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
@@ -6769,6 +6774,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "p_gan_gate_cap" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "set_lattice_parameters" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "translate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    assert "rotate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "apply_strain" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "auto_site_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "sublattice_dopant" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -6787,6 +6793,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "Build a Si/Ge heterostructure and shift layer 3 by 0.5 angstrom along x."
         in capabilities["natural_language"]["new_structure_inline_modifiers"]["layer_translation_examples"]
     )
+    assert (
+        "Build a Si/Ge heterostructure and twist layer 3 by 5 degrees."
+        in capabilities["natural_language"]["new_structure_inline_modifiers"]["layer_rotation_examples"]
+    )
+    rotation_safety = capabilities["natural_language"]["new_structure_inline_modifiers"]["layer_rotation_safety"]
+    assert rotation_safety["requires_axis_orthogonal_to_in_plane_vectors"] is True
+    assert rotation_safety["arbitrary_twist_is_visual_review_scaffold_only"] is True
+    assert rotation_safety["commensurate_supercell_required_before_calculation"] is True
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build Cd0.25Zn0.75Te alloy as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -7043,6 +7057,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "crystal_alloy_fraction",
         "crystal_lattice_parameters",
         "crystal_layer_translation",
+        "crystal_layer_rotation",
         "crystal_strain",
         "crystal_add_atom_fractional",
         "crystal_interstitial_fractional",
@@ -7098,6 +7113,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "layer_registry_translation"
     ]["summary_keys"]
     assert "semiconductor_layer_translation_csv" in diagnostic_profiles["layer_registry_translation"]["csv_keys"]
+    assert "layer_registry_rotation" in diagnostic_profiles
+    assert "inspection.semiconductor_health.layer_rotation_summary" in diagnostic_profiles[
+        "layer_registry_rotation"
+    ]["summary_keys"]
+    assert "semiconductor_review.layer_rotation" in diagnostic_profiles["layer_registry_rotation"]["summary_keys"]
+    assert "semiconductor_layer_rotation_csv" in diagnostic_profiles["layer_registry_rotation"]["csv_keys"]
+    assert "Twist layer 3 by 5 degrees and export layer-rotation diagnostics." in diagnostic_profiles[
+        "layer_registry_rotation"
+    ]["request_examples"]
     assert "modeling_report_summary_csv" in diagnostic_profiles["comprehensive_model_parameters"]["csv_keys"]
     assert "semiconductor_calculation_readiness" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
     assert "semiconductor_normality_diagnosis" in diagnostic_profiles["comprehensive_model_parameters"]["summary_keys"]
@@ -7693,6 +7717,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_p_gan_gate_cap_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "semiconductor_heterostructure_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "semiconductor_strain_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
+    assert "semiconductor_layer_rotation_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "view_projections" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "view_quality" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_calculation_preflight" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
@@ -7702,12 +7727,21 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_junctions" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_polarization_2deg" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "semiconductor_p_gan_gate_cap" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
+    assert "semiconductor_layer_rotation" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "gui_loaded_current_revision" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "view_projection_row_count" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "view_names" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "supported_view_names" in capabilities["diagnostics"]["change_receipt_view_check_fields"]
     assert "gui_open_identity_verification" in capabilities["diagnostics"]["modeling_health_summary_fields"]
     assert "gui_window_identity_verification" in capabilities["diagnostics"]["modeling_health_summary_fields"]
+    assert "semiconductor_layer_rotation_quality" in capabilities["diagnostics"]["modeling_health_summary_fields"]
+    assert (
+        "semiconductor_layer_rotation_coordinate_binding_matches_current"
+        in capabilities["diagnostics"]["modeling_health_summary_fields"]
+    )
+    assert "semiconductor_layer_rotation_calculation_ready" in capabilities["diagnostics"][
+        "modeling_health_summary_fields"
+    ]
     assert "modeling_report_summary_csv" in capabilities["diagnostics"]["change_receipt_artifact_fields"]
     assert "modeling_report_summary" in capabilities["diagnostics"]["change_receipt_diagnostic_row_count_fields"]
     assert "modeling_report_summary_csv" in capabilities["diagnostics"]["live_summary_fields"]
@@ -7767,6 +7801,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "requested_diagnostic_focuses" in capabilities["diagnostics"]["modeling_report_summary_fields"]
     assert "auto_completed_diagnostic_focuses" in capabilities["diagnostics"]["modeling_report_summary_fields"]
     assert "requested_diagnostic_focus_ok" in capabilities["diagnostics"]["modeling_report_summary_fields"]
+    assert "semiconductor_layer_rotation_quality" in capabilities["diagnostics"]["modeling_report_summary_fields"]
+    assert "semiconductor_layer_rotation_latest_angle_degrees" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
+    assert "semiconductor_layer_rotation_calculation_ready" in capabilities["diagnostics"][
+        "modeling_report_summary_fields"
+    ]
     assert "requested_diagnostic_focus_missing_csv_keys" in capabilities["diagnostics"]["modeling_report_summary_fields"]
     assert "diagnostic_focus_plan_status" in capabilities["diagnostics"]["modeling_report_summary_fields"]
     assert "diagnostic_focus_plan_recommended_action" in capabilities["diagnostics"]["modeling_report_summary_fields"]
@@ -25374,6 +25415,82 @@ def test_live_modeling_request_previews_inline_semiconductor_layer_translation(
         "metadata_consistent"
     ] is True
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_translation_csv"]).exists()
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_hotloads_chinese_semiconductor_layer_rotation_scaffold(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build a Si/Ge heterostructure.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    result = server.material_studio_live_modeling_request(
+        "\u5c06\u7b2c 3 \u5c42\u7ed5 c \u8f74\u65cb\u8f6c 5 \u5ea6\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\uff0c\u5bfc\u51fa\u626d\u89d2\u8bca\u65ad\u3002",
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "patch"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    assert result["nl_plan"]["template_id"] == "crystal_layer_rotation"
+    assert result["new_revision"] == 1
+    assert result["revision_delta"]["crystal"]["fractional_coordinate_update_count"] == 2
+    assert result["revision_delta"]["crystal"]["cartesian_moved_atom_count"] == 2
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"]["layer_rotation_summary"]
+    assert summary["quality"] == "visual_review_only"
+    assert summary["metadata_consistent"] is True
+    assert summary["coordinate_binding_matches_current"] is True
+    assert summary["latest"]["atom_ids"] == ["Si3", "Si5"]
+    assert summary["latest"]["rotation_axis"] == "c"
+    assert summary["latest"]["angle_degrees"] == 5.0
+    assert summary["commensurability_verified"] is False
+    assert summary["calculation_ready"] is False
+    assert result["modeling_health"]["checks"]["semiconductor_layer_rotation_count"] == 1
+    assert result["modeling_health"]["checks"]["semiconductor_layer_rotation_calculation_ready"] is False
+    assert "layer_registry_rotation" in result["requested_diagnostic_focuses"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_rotation_csv"]).exists()
+    risk_flags = result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "layer_rotation_commensurability_unverified" in risk_flags
+    assert "layer_rotation_requires_commensurate_supercell" in risk_flags
+    assert "layer_rotation_requires_geometry_relaxation" in risk_flags
+    receipt_rotation = result["modeling_report"]["change_receipt"]["semiconductor"]["layer_rotation"]
+    assert receipt_rotation["quality"] == "visual_review_only"
+    assert receipt_rotation["coordinate_binding_matches_current"] is True
+    assert receipt_rotation["commensurability_verified"] is False
+    assert receipt_rotation["requires_commensurate_supercell"] is True
+    assert receipt_rotation["requires_geometry_relaxation"] is True
+    assert receipt_rotation["calculation_ready"] is False
+    assert receipt_rotation["latest"]["angle_degrees"] == 5.0
+    assert result["modeling_report"]["live_readiness"]["ready_for_calculation"] is False
+    assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    assert isolated_fake_gui.opened and isolated_fake_gui.opened[-1].suffix == ".cif"
+
+
+def test_live_modeling_request_previews_inline_semiconductor_layer_rotation_scaffold(
+    isolated_fake_gui, tmp_path: Path
+) -> None:
+    result = server.material_studio_live_modeling_request(
+        "Build a Si/Ge heterostructure and twist layer 3 by 5 degrees, then prepare preview.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "silicon_germanium_001_heterostructure"
+    assert result["view_audit"]["metadata"]["last_crystal_layer_rotation"]["layer_index"] == 3
+    summary = result["modeling_report"]["inspection"]["semiconductor_health"]["layer_rotation_summary"]
+    assert summary["metadata_consistent"] is True
+    assert summary["coordinate_binding_matches_current"] is True
+    assert summary["visual_review_only"] is True
+    assert summary["calculation_ready"] is False
+    assert Path(result["modeling_report"]["diagnostics"]["semiconductor_layer_rotation_csv"]).exists()
     assert isolated_fake_gui.opened == []
 
 

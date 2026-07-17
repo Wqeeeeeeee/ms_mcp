@@ -28,6 +28,7 @@ PatchOperationType = Literal[
     "substitute_atom",
     "set_atom_position",
     "translate_crystal_atoms",
+    "rotate_crystal_atoms",
     "set_total_charge",
     "set_spin_multiplicity",
     "set_forcite_optimization",
@@ -103,6 +104,8 @@ class SemanticPatchOperation(StrictModel):
     matrix: tuple[int, int, int] | None = None
     axis: Literal["a", "b", "c", "x", "y", "z"] | None = None
     distance_angstrom: float | None = Field(default=None, ge=-1_000, le=1_000)
+    angle_degrees: float | None = Field(default=None, ge=-360, le=360)
+    pivot_fractional: FractionalVector3 | None = None
     wrap_fractional: bool = True
     thickness_angstrom: float | None = Field(default=None, gt=0)
     target_layer: Literal["gate", "oxide", "channel", "well", "barrier"] | None = None
@@ -143,6 +146,7 @@ class SemanticPatchOperation(StrictModel):
             "substitute_atom",
             "set_atom_position",
             "translate_crystal_atoms",
+            "rotate_crystal_atoms",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -168,6 +172,13 @@ class SemanticPatchOperation(StrictModel):
                 raise ValueError("translate_crystal_atoms distance_angstrom must be finite")
             if abs(float(self.distance_angstrom)) <= 1e-12:
                 raise ValueError("translate_crystal_atoms distance_angstrom must be non-zero")
+        if self.operation == "rotate_crystal_atoms":
+            if not self.atom_ids or self.axis is None or self.angle_degrees is None:
+                raise ValueError("rotate_crystal_atoms requires atom_ids, axis, and angle_degrees")
+            if not math.isfinite(float(self.angle_degrees)):
+                raise ValueError("rotate_crystal_atoms angle_degrees must be finite")
+            if abs(float(self.angle_degrees)) <= 1e-12 or abs(float(self.angle_degrees)) >= 360.0 - 1e-12:
+                raise ValueError("rotate_crystal_atoms angle_degrees must produce a non-identity rotation")
         return self
 
 
@@ -406,6 +417,8 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
             diff.append(f"set_atom_position {atom_id}")
         elif op == "translate_crystal_atoms":
             atoms = _apply_crystal_atom_translation_patch(lattice, atoms, operation, diff)
+        elif op == "rotate_crystal_atoms":
+            atoms = _apply_crystal_atom_rotation_patch(lattice, atoms, operation, diff)
         elif op == "set_lattice":
             if operation.lattice is None:
                 raise ValueError("set_lattice 需要 lattice")
@@ -483,6 +496,224 @@ def _apply_crystal_atom_translation_patch(
         f"translate_crystal_atoms {len(atom_ids)} {axis_key} {distance:g}A wrapped {wrapped_count}"
     )
     return translated
+
+
+def _apply_crystal_atom_rotation_patch(
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    operation: SemanticPatchOperation,
+    diff: list[str],
+) -> list[BasisAtomSpec]:
+    """Rigidly rotate an explicit crystal atom set around one lattice vector."""
+
+    rotated, receipt = rotate_crystal_atom_set(
+        lattice,
+        atoms,
+        atom_ids=operation.atom_ids or [],
+        axis=str(operation.axis or ""),
+        angle_degrees=float(operation.angle_degrees or 0.0),
+        pivot_fractional=operation.pivot_fractional,
+        wrap_fractional=operation.wrap_fractional,
+    )
+    pivot = receipt["pivot_fractional"]
+    diff.append(
+        "rotate_crystal_atoms "
+        f"{receipt['atom_count']} {receipt['axis']} {receipt['angle_degrees']:g}deg "
+        f"pivot {pivot[0]:g},{pivot[1]:g},{pivot[2]:g} wrapped {receipt['wrapped_atom_count']}"
+    )
+    return rotated
+
+
+def rotate_crystal_atom_set(
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    *,
+    atom_ids: list[str],
+    axis: str,
+    angle_degrees: float,
+    pivot_fractional: FractionalVector3 | None = None,
+    wrap_fractional: bool = True,
+) -> tuple[list[BasisAtomSpec], dict[str, Any]]:
+    """Return a periodic-image-aware rigid rotation and a deterministic receipt."""
+
+    axis_key = {"x": "a", "y": "b", "z": "c"}.get(axis, axis)
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis_key)
+    if not atom_ids or axis_index is None:
+        raise ValueError("rotate_crystal_atoms requires atom_ids and lattice axis a, b, or c")
+    if len(set(atom_ids)) != len(atom_ids):
+        raise ValueError("rotate_crystal_atoms atom_ids must contain unique identifiers")
+    angle = float(angle_degrees)
+    if not math.isfinite(angle) or abs(angle) <= 1e-12 or abs(angle) >= 360.0 - 1e-12:
+        raise ValueError("rotate_crystal_atoms angle_degrees must produce a non-identity rotation")
+
+    atom_id_set = set(atom_ids)
+    atoms_by_id = {atom.id: atom for atom in atoms}
+    missing_ids = sorted(atom_id_set - set(atoms_by_id))
+    if missing_ids:
+        raise ValueError("rotate_crystal_atoms references missing atom IDs: " + ", ".join(missing_ids))
+
+    selected = [atoms_by_id[atom_id] for atom_id in atom_ids]
+    pivot = (
+        tuple(float(value) for value in pivot_fractional.as_tuple())
+        if pivot_fractional is not None
+        else tuple(
+            _periodic_fractional_center(
+                [
+                    (float(atom.fractional.x), float(atom.fractional.y), float(atom.fractional.z))[index]
+                    for atom in selected
+                ]
+            )
+            for index in range(3)
+        )
+    )
+    vectors = _patch_lattice_vectors(lattice)
+    axis_vector = vectors[axis_index]
+    axis_norm = math.sqrt(_patch_dot(axis_vector, axis_vector))
+    if axis_norm <= 1e-12:
+        raise ValueError("rotate_crystal_atoms requires a non-degenerate lattice axis")
+    unit_axis = tuple(value / axis_norm for value in axis_vector)
+    pivot_cartesian = _patch_fractional_to_cartesian(pivot, vectors)
+    radians = math.radians(angle)
+    cosine = math.cos(radians)
+    sine = math.sin(radians)
+
+    wrapped_atom_ids: list[str] = []
+    rotated_by_id: dict[str, BasisAtomSpec] = {}
+    for atom in selected:
+        fractional = (
+            float(atom.fractional.x),
+            float(atom.fractional.y),
+            float(atom.fractional.z),
+        )
+        unwrapped = tuple(
+            pivot[index] + _nearest_periodic_delta(fractional[index] - pivot[index])
+            for index in range(3)
+        )
+        cartesian = _patch_fractional_to_cartesian(unwrapped, vectors)
+        relative = tuple(cartesian[index] - pivot_cartesian[index] for index in range(3))
+        cross = _patch_cross(unit_axis, relative)
+        axial_scale = _patch_dot(unit_axis, relative) * (1.0 - cosine)
+        rotated_relative = tuple(
+            relative[index] * cosine + cross[index] * sine + unit_axis[index] * axial_scale
+            for index in range(3)
+        )
+        rotated_cartesian = tuple(
+            pivot_cartesian[index] + rotated_relative[index]
+            for index in range(3)
+        )
+        raw_fractional = _patch_cartesian_to_fractional(rotated_cartesian, vectors)
+        if wrap_fractional:
+            if any(value < -1e-10 or value >= 1.0 + 1e-10 for value in raw_fractional):
+                wrapped_atom_ids.append(atom.id)
+            normalized = tuple(_canonical_fractional(value % 1.0) for value in raw_fractional)
+        else:
+            if any(value < -1e-10 or value > 1.0 + 1e-10 for value in raw_fractional):
+                raise ValueError("rotate_crystal_atoms would move atoms outside the unit cell")
+            normalized = tuple(_canonical_fractional(min(max(value, 0.0), 1.0)) for value in raw_fractional)
+        rotated_by_id[atom.id] = atom.model_copy(
+            update={
+                "fractional": FractionalVector3(
+                    x=normalized[0],
+                    y=normalized[1],
+                    z=normalized[2],
+                )
+            }
+        )
+
+    return (
+        [rotated_by_id.get(atom.id, atom) for atom in atoms],
+        {
+            "axis": axis_key,
+            "angle_degrees": angle,
+            "pivot_fractional": [_round_patch_float(value) for value in pivot],
+            "atom_count": len(atom_ids),
+            "atom_ids": list(atom_ids),
+            "periodic_wrap": bool(wrap_fractional),
+            "wrapped_atom_count": len(wrapped_atom_ids),
+            "wrapped_atom_ids": sorted(wrapped_atom_ids),
+        },
+    )
+
+
+def _periodic_fractional_center(values: list[float]) -> float:
+    sine = sum(math.sin(2.0 * math.pi * value) for value in values)
+    cosine = sum(math.cos(2.0 * math.pi * value) for value in values)
+    if abs(sine) <= 1e-12 and abs(cosine) <= 1e-12:
+        return _canonical_fractional(sum(values) / len(values))
+    return _canonical_fractional((math.atan2(sine, cosine) / (2.0 * math.pi)) % 1.0)
+
+
+def _nearest_periodic_delta(value: float) -> float:
+    return value - math.floor(value + 0.5)
+
+
+def _canonical_fractional(value: float) -> float:
+    rounded = round(float(value), 12)
+    if rounded >= 1.0 or abs(rounded) <= 1e-12:
+        return 0.0
+    return rounded
+
+
+def _patch_lattice_vectors(
+    lattice: LatticeSpec,
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    alpha = math.radians(float(lattice.alpha))
+    beta = math.radians(float(lattice.beta))
+    gamma = math.radians(float(lattice.gamma))
+    sin_gamma = math.sin(gamma)
+    if abs(sin_gamma) <= 1e-12:
+        raise ValueError("rotate_crystal_atoms requires a non-degenerate lattice gamma angle")
+    a_vector = (float(lattice.a), 0.0, 0.0)
+    b_vector = (float(lattice.b) * math.cos(gamma), float(lattice.b) * sin_gamma, 0.0)
+    c_x = float(lattice.c) * math.cos(beta)
+    c_y = float(lattice.c) * (math.cos(alpha) - math.cos(beta) * math.cos(gamma)) / sin_gamma
+    c_z_squared = float(lattice.c) ** 2 - c_x**2 - c_y**2
+    if c_z_squared <= 1e-16:
+        raise ValueError("rotate_crystal_atoms requires a non-degenerate lattice volume")
+    c_vector = (c_x, c_y, math.sqrt(c_z_squared))
+    return a_vector, b_vector, c_vector
+
+
+def _patch_fractional_to_cartesian(
+    fractional: tuple[float, float, float],
+    vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+) -> tuple[float, float, float]:
+    return tuple(
+        fractional[0] * vectors[0][index]
+        + fractional[1] * vectors[1][index]
+        + fractional[2] * vectors[2][index]
+        for index in range(3)
+    )
+
+
+def _patch_cartesian_to_fractional(
+    cartesian: tuple[float, float, float],
+    vectors: tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]],
+) -> tuple[float, float, float]:
+    a_vector, b_vector, c_vector = vectors
+    volume = _patch_dot(a_vector, _patch_cross(b_vector, c_vector))
+    if abs(volume) <= 1e-12:
+        raise ValueError("rotate_crystal_atoms requires a non-degenerate lattice volume")
+    return (
+        _patch_dot(cartesian, _patch_cross(b_vector, c_vector)) / volume,
+        _patch_dot(cartesian, _patch_cross(c_vector, a_vector)) / volume,
+        _patch_dot(cartesian, _patch_cross(a_vector, b_vector)) / volume,
+    )
+
+
+def _patch_dot(left: tuple[float, float, float], right: tuple[float, float, float]) -> float:
+    return sum(left[index] * right[index] for index in range(3))
+
+
+def _patch_cross(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
 
 
 def _reconcile_crystal_dopant_metadata(spec: ModelSpec, diff: list[str]) -> dict[str, int | bool]:

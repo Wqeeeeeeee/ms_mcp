@@ -2626,6 +2626,7 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_dopant_sites_csv",
     "semiconductor_layer_profile_csv",
     "semiconductor_layer_translation_csv",
+    "semiconductor_layer_rotation_csv",
     "semiconductor_interface_profile_csv",
     "semiconductor_interface_quality_csv",
     "semiconductor_gate_stack_csv",
@@ -2842,6 +2843,16 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_layer_translation_latest_layer_index",
     "semiconductor_layer_translation_latest_axis",
     "semiconductor_layer_translation_latest_distance_angstrom",
+    "semiconductor_layer_rotation_count",
+    "semiconductor_layer_rotation_quality",
+    "semiconductor_layer_rotation_metadata_consistent",
+    "semiconductor_layer_rotation_coordinate_binding_matches_current",
+    "semiconductor_layer_rotation_latest_layer_index",
+    "semiconductor_layer_rotation_latest_axis",
+    "semiconductor_layer_rotation_latest_angle_degrees",
+    "semiconductor_layer_rotation_commensurability_verified",
+    "semiconductor_layer_rotation_requires_geometry_relaxation",
+    "semiconductor_layer_rotation_calculation_ready",
     "semiconductor_slab_vacuum_ok",
     "semiconductor_slab_vacuum_status",
     "semiconductor_slab_vacuum_next_action",
@@ -4290,6 +4301,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "add_vacuum",
                     "set_lattice_parameters",
                     "translate_crystal_layer",
+                    "rotate_crystal_layer",
                     "apply_strain",
                     "delete_atom",
                     "auto_site_vacancy",
@@ -4343,6 +4355,18 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "Shift the top layer by -0.25 angstrom along y and hot-load it in Materials Studio.",
                     "\u5c06\u7b2c 3 \u5c42\u6cbf x \u65b9\u5411\u5e73\u79fb 0.5 \u57c3\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\u3002",
                 ],
+                "layer_rotation_examples": [
+                    "Build a Si/Ge heterostructure and twist layer 3 by 5 degrees.",
+                    "Twist the top layer by 3 degrees and hot-load it in Materials Studio.",
+                    "\u5c06\u9876\u5c42\u7ed5 c \u8f74\u65cb\u8f6c 3 \u5ea6\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\u3002",
+                ],
+                "layer_rotation_safety": {
+                    "automatic_axis": "current interface_axis or surface_axis",
+                    "requires_axis_orthogonal_to_in_plane_vectors": True,
+                    "arbitrary_twist_is_visual_review_scaffold_only": True,
+                    "commensurate_supercell_required_before_calculation": True,
+                    "geometry_relaxation_required_before_calculation": True,
+                },
                 "superlattice_examples": [
                     "Build a 3-period GaAs/AlAs MQW.",
                     "Build a 3-period AlGaN/GaN superlattice.",
@@ -4847,6 +4871,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "strain_summary",
                 "layer_profile_summary",
                 "layer_translation_summary",
+                "layer_rotation_summary",
                 "interface_profile_summary",
                 "superlattice_period_summary",
                 "quantum_well_summary",
@@ -5163,6 +5188,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_defects_csv",
                 "semiconductor_layer_profile_csv",
                 "semiconductor_layer_translation_csv",
+                "semiconductor_layer_rotation_csv",
                 "semiconductor_quantum_well_csv",
                 "semiconductor_interface_quality_csv",
                 "semiconductor_gate_stack_csv",
@@ -5207,6 +5233,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_finite_size",
                 "semiconductor_layer_profile",
                 "semiconductor_layer_translation",
+                "semiconductor_layer_rotation",
                 "semiconductor_interface_profile",
                 "semiconductor_interface_quality",
                 "semiconductor_gate_stack",
@@ -5241,6 +5268,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_layer_translation_count",
                 "semiconductor_layer_translation_quality",
                 "semiconductor_layer_translation_metadata_consistent",
+                "semiconductor_layer_rotation_count",
+                "semiconductor_layer_rotation_quality",
+                "semiconductor_layer_rotation_metadata_consistent",
+                "semiconductor_layer_rotation_coordinate_binding_matches_current",
+                "semiconductor_layer_rotation_commensurability_verified",
+                "semiconductor_layer_rotation_requires_geometry_relaxation",
+                "semiconductor_layer_rotation_calculation_ready",
             ],
             "modeling_report_summary_fields": [
                 "project_id",
@@ -5501,6 +5535,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_applied_strain_count",
                 "semiconductor_applied_strain_max_abs_percent",
                 "semiconductor_applied_strain_warning",
+                "semiconductor_layer_rotation_count",
+                "semiconductor_layer_rotation_quality",
+                "semiconductor_layer_rotation_metadata_consistent",
+                "semiconductor_layer_rotation_coordinate_binding_matches_current",
+                "semiconductor_layer_rotation_latest_layer_index",
+                "semiconductor_layer_rotation_latest_axis",
+                "semiconductor_layer_rotation_latest_angle_degrees",
+                "semiconductor_layer_rotation_commensurability_verified",
+                "semiconductor_layer_rotation_requires_geometry_relaxation",
+                "semiconductor_layer_rotation_calculation_ready",
                 "structure_path",
                 "structure_exists",
                 "report_json_path",
@@ -6117,6 +6161,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_layer_translation_latest_layer_index",
                 "semiconductor_layer_translation_latest_axis",
                 "semiconductor_layer_translation_latest_distance_angstrom",
+                "semiconductor_layer_rotation_count",
+                "semiconductor_layer_rotation_quality",
+                "semiconductor_layer_rotation_metadata_consistent",
+                "semiconductor_layer_rotation_coordinate_binding_matches_current",
+                "semiconductor_layer_rotation_latest_layer_index",
+                "semiconductor_layer_rotation_latest_axis",
+                "semiconductor_layer_rotation_latest_angle_degrees",
+                "semiconductor_layer_rotation_commensurability_verified",
+                "semiconductor_layer_rotation_requires_geometry_relaxation",
+                "semiconductor_layer_rotation_calculation_ready",
                 "semiconductor_surface_preparation_status",
                 "semiconductor_surface_preparation_next_action",
                 "semiconductor_surface_dangling_bond_estimate",
@@ -12089,6 +12143,24 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         return []
     focus_patterns: list[tuple[str, tuple[str, ...]]] = [
         (
+            "layer_registry_rotation",
+            (
+                "layer rotation",
+                "rotate layer",
+                "twist layer",
+                "twisted layer",
+                "twist angle",
+                "twisted bilayer",
+                "rotational registry",
+                "stacking twist",
+                "\u5c42\u65cb\u8f6c",
+                "\u5c42\u626d\u8f6c",
+                "\u626d\u8f6c\u5c42",
+                "\u626d\u89d2",
+                "\u65cb\u8f6c\u914d\u51c6",
+            ),
+        ),
+        (
             "layer_registry_translation",
             (
                 "layer translation",
@@ -12620,6 +12692,15 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         and "layer_registry_translation" not in focuses
     ):
         focuses.append("layer_registry_translation")
+    if (
+        re.search(
+            r"(?:\u7b2c\s*\d+\s*\u5c42|\u9876\u5c42|\u6700\u4e0a\u5c42|\u5e95\u5c42|\u6700\u4e0b\u5c42)"
+            r".{0,30}(?:\u65cb\u8f6c|\u626d\u8f6c|\u626d\u89d2)",
+            text,
+        )
+        and "layer_registry_rotation" not in focuses
+    ):
+        focuses.append("layer_registry_rotation")
     if sapphire_epitaxy_preflight:
         focuses.insert(0, "substrate_epitaxy_preflight")
     if _comprehensive_model_parameter_focus_requested(user_request):
@@ -12789,6 +12870,24 @@ def _comprehensive_model_parameter_focus_requested(user_request: str | None) -> 
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
+    "layer_registry_rotation": {
+        "summary_keys": [
+            "inspection.semiconductor_health.layer_profile_summary",
+            "inspection.semiconductor_health.layer_rotation_summary",
+            "inspection.semiconductor_health.neighbor_distance_summary",
+            "inspection.semiconductor_health.local_environment_summary",
+            "semiconductor_review.layer_rotation",
+            "semiconductor_review.coordination",
+            "view_review",
+        ],
+        "csv_keys": [
+            "semiconductor_layer_profile_csv",
+            "semiconductor_layer_rotation_csv",
+            "semiconductor_neighbor_pairs_csv",
+            "semiconductor_local_environment_csv",
+            "view_quality_csv",
+        ],
+    },
     "layer_registry_translation": {
         "summary_keys": [
             "inspection.semiconductor_health.layer_profile_summary",
@@ -13209,6 +13308,10 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
 
 
 _REQUESTED_DIAGNOSTIC_FOCUS_EXAMPLES: dict[str, list[str]] = {
+    "layer_registry_rotation": [
+        "Twist layer 3 by 5 degrees and export layer-rotation diagnostics.",
+        "\u5c06\u9876\u5c42\u7ed5 c \u8f74\u65cb\u8f6c 3 \u5ea6\u5e76\u5bfc\u51fa\u626d\u89d2\u8bca\u65ad\u3002",
+    ],
     "layer_registry_translation": [
         "Shift layer 3 by 0.5 angstrom along x and export layer-registry diagnostics.",
         "\u5c06\u9876\u5c42\u6cbf y \u65b9\u5411\u5e73\u79fb -0.25 \u57c3\u5e76\u5bfc\u51fa\u5806\u579b\u914d\u51c6\u8bca\u65ad\u3002",
@@ -14070,6 +14173,16 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         if isinstance(semiconductor_layer_translation.get("latest"), dict)
         else {}
     )
+    semiconductor_layer_rotation = (
+        semiconductor.get("layer_rotation")
+        if isinstance(semiconductor.get("layer_rotation"), dict)
+        else {}
+    )
+    semiconductor_latest_layer_rotation = (
+        semiconductor_layer_rotation.get("latest")
+        if isinstance(semiconductor_layer_rotation.get("latest"), dict)
+        else {}
+    )
     semiconductor_surface = semiconductor.get("surface") if isinstance(semiconductor.get("surface"), dict) else {}
     semiconductor_surface_model = (
         semiconductor.get("surface_model")
@@ -14717,6 +14830,32 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         ),
         "semiconductor_layer_translation_latest_distance_angstrom": semiconductor_latest_layer_translation.get(
             "distance_angstrom"
+        ),
+        "semiconductor_layer_rotation_count": semiconductor_layer_rotation.get("entry_count"),
+        "semiconductor_layer_rotation_quality": semiconductor_layer_rotation.get("quality"),
+        "semiconductor_layer_rotation_metadata_consistent": semiconductor_layer_rotation.get(
+            "metadata_consistent"
+        ),
+        "semiconductor_layer_rotation_coordinate_binding_matches_current": semiconductor_layer_rotation.get(
+            "coordinate_binding_matches_current"
+        ),
+        "semiconductor_layer_rotation_latest_layer_index": semiconductor_latest_layer_rotation.get(
+            "layer_index"
+        ),
+        "semiconductor_layer_rotation_latest_axis": semiconductor_latest_layer_rotation.get(
+            "rotation_axis"
+        ),
+        "semiconductor_layer_rotation_latest_angle_degrees": semiconductor_latest_layer_rotation.get(
+            "angle_degrees"
+        ),
+        "semiconductor_layer_rotation_commensurability_verified": semiconductor_layer_rotation.get(
+            "commensurability_verified"
+        ),
+        "semiconductor_layer_rotation_requires_geometry_relaxation": semiconductor_layer_rotation.get(
+            "requires_geometry_relaxation"
+        ),
+        "semiconductor_layer_rotation_calculation_ready": semiconductor_layer_rotation.get(
+            "calculation_ready"
         ),
         "structure_path": structure.get("path"),
         "structure_exists": structure.get("exists"),
@@ -18430,6 +18569,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_substrate_epitaxy_preflight_csv", "semiconductor_substrate_epitaxy_preflight"),
         ("semiconductor_strain_csv", "semiconductor_strain"),
         ("semiconductor_layer_translation_csv", "semiconductor_layer_translation"),
+        ("semiconductor_layer_rotation_csv", "semiconductor_layer_rotation"),
         ("semiconductor_interface_profile_csv", "semiconductor_interface_profile"),
         ("semiconductor_interface_scaffold_csv", "semiconductor_interface_scaffold"),
         ("semiconductor_interface_quality_csv", "semiconductor_interface_quality"),
@@ -19435,6 +19575,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_alloy_csv": bundle_files.get("semiconductor_alloy_csv"),
             "semiconductor_layer_profile_csv": bundle_files.get("semiconductor_layer_profile_csv"),
             "semiconductor_layer_translation_csv": bundle_files.get("semiconductor_layer_translation_csv"),
+            "semiconductor_layer_rotation_csv": bundle_files.get("semiconductor_layer_rotation_csv"),
             "semiconductor_interface_profile_csv": bundle_files.get("semiconductor_interface_profile_csv"),
             "semiconductor_interface_scaffold_csv": bundle_files.get("semiconductor_interface_scaffold_csv"),
             "semiconductor_interface_quality_csv": bundle_files.get("semiconductor_interface_quality_csv"),
@@ -27822,6 +27963,8 @@ def _change_receipt_semiconductor_summary(semiconductor: dict[str, Any]) -> dict
         "substrate_epitaxy_preflight": semiconductor.get("substrate_epitaxy_preflight"),
         "interface_scaffold": semiconductor.get("interface_scaffold"),
         "strain": semiconductor.get("strain"),
+        "layer_translation": semiconductor.get("layer_translation"),
+        "layer_rotation": semiconductor.get("layer_rotation"),
         "alloy": semiconductor.get("alloy"),
         "defects": semiconductor.get("defects"),
         "interface": semiconductor.get("interface"),
@@ -27896,6 +28039,7 @@ def _change_receipt_artifacts(
             "semiconductor_defects_csv": diagnostics.get("semiconductor_defects_csv"),
             "semiconductor_layer_profile_csv": diagnostics.get("semiconductor_layer_profile_csv"),
             "semiconductor_layer_translation_csv": diagnostics.get("semiconductor_layer_translation_csv"),
+            "semiconductor_layer_rotation_csv": diagnostics.get("semiconductor_layer_rotation_csv"),
             "semiconductor_quantum_well_csv": diagnostics.get("semiconductor_quantum_well_csv"),
             "semiconductor_interface_quality_csv": diagnostics.get("semiconductor_interface_quality_csv"),
             "semiconductor_gate_stack_csv": diagnostics.get("semiconductor_gate_stack_csv"),
@@ -27949,6 +28093,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_finite_size",
         "semiconductor_layer_profile",
         "semiconductor_layer_translation",
+        "semiconductor_layer_rotation",
         "semiconductor_interface_profile",
         "semiconductor_interface_scaffold",
         "semiconductor_interface_quality",
@@ -28575,6 +28720,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     interface_scaffold = semiconductor.get("interface_scaffold_summary") or {}
     strain = semiconductor.get("strain_summary") or {}
     layer_translation = semiconductor.get("layer_translation_summary") or {}
+    layer_rotation = semiconductor.get("layer_rotation_summary") or {}
     charge_balance = semiconductor.get("charge_balance_summary") or {}
     dopant = semiconductor.get("dopant_summary") or {}
     dopant_site = semiconductor.get("dopant_site_summary") or {}
@@ -28606,6 +28752,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         interface_scaffold=interface_scaffold,
         strain=strain,
         layer_translation=layer_translation,
+        layer_rotation=layer_rotation,
         charge_balance=charge_balance,
         dopant=dopant,
         dopant_site=dopant_site,
@@ -28778,6 +28925,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         "interface_scaffold": _semiconductor_interface_scaffold_review(interface_scaffold),
         "strain": _semiconductor_strain_review(strain),
         "layer_translation": _semiconductor_layer_translation_review(layer_translation),
+        "layer_rotation": _semiconductor_layer_rotation_review(layer_rotation),
         "alloy": _semiconductor_alloy_review(alloy),
         "defects": _semiconductor_defect_review(defect, finite_size),
         "interface": _semiconductor_interface_review(interface_quality, quantum_well),
@@ -29136,6 +29284,47 @@ def _semiconductor_layer_translation_review(summary: dict[str, Any]) -> dict[str
     }
 
 
+def _semiconductor_layer_rotation_review(summary: dict[str, Any]) -> dict[str, Any] | None:
+    if not summary:
+        return None
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    return {
+        "entry_count": summary.get("entry_count"),
+        "quality": summary.get("quality"),
+        "metadata_consistent": summary.get("metadata_consistent"),
+        "target_binding_matches_current_layer": summary.get("target_binding_matches_current_layer"),
+        "coordinate_binding_matches_current": summary.get("coordinate_binding_matches_current"),
+        "rotation_axis_orthogonal_to_in_plane_vectors": summary.get(
+            "rotation_axis_orthogonal_to_in_plane_vectors"
+        ),
+        "commensurability_verified": summary.get("commensurability_verified"),
+        "requires_commensurate_supercell": summary.get("requires_commensurate_supercell"),
+        "requires_geometry_relaxation": summary.get("requires_geometry_relaxation"),
+        "visual_review_only": summary.get("visual_review_only"),
+        "visual_hotload_ready": summary.get("visual_hotload_ready"),
+        "calculation_ready": summary.get("calculation_ready"),
+        "calculation_blocking_reasons": summary.get("calculation_blocking_reasons") or [],
+        "latest": _select_keys(
+            latest,
+            [
+                "target_selector",
+                "layer_index",
+                "layer_count",
+                "profile_axis",
+                "rotation_axis",
+                "rotation_axis_source",
+                "angle_degrees",
+                "pivot_fractional",
+                "atom_count",
+                "periodic_wrap",
+                "wrapped_atom_count",
+                "scaffold_only",
+            ],
+        ),
+        "warnings": summary.get("warnings") or [],
+    }
+
+
 def _semiconductor_alloy_review(alloy: dict[str, Any]) -> dict[str, Any] | None:
     if not alloy:
         return None
@@ -29292,6 +29481,7 @@ def _semiconductor_review_risk_flags(
     interface_scaffold: dict[str, Any],
     strain: dict[str, Any],
     layer_translation: dict[str, Any],
+    layer_rotation: dict[str, Any],
     charge_balance: dict[str, Any],
     dopant: dict[str, Any],
     dopant_site: dict[str, Any],
@@ -29363,6 +29553,14 @@ def _semiconductor_review_risk_flags(
         flags.append("applied_lattice_strain_warning")
     if layer_translation.get("metadata_consistent") is False:
         flags.append("layer_translation_metadata_inconsistent")
+    if layer_rotation.get("metadata_consistent") is False:
+        flags.append("layer_rotation_metadata_inconsistent")
+    if layer_rotation and layer_rotation.get("commensurability_verified") is False:
+        flags.append("layer_rotation_commensurability_unverified")
+    if layer_rotation.get("requires_commensurate_supercell"):
+        flags.append("layer_rotation_requires_commensurate_supercell")
+    if layer_rotation.get("requires_geometry_relaxation"):
+        flags.append("layer_rotation_requires_geometry_relaxation")
     if charge_balance.get("odd_electron_warning"):
         flags.append("odd_valence_electron_count")
     if dopant.get("total_dopant_count"):
@@ -29707,6 +29905,7 @@ def _change_verification_summary(report: dict[str, Any]) -> dict[str, Any]:
                     "contact",
                     "strain",
                     "layer_translation",
+                    "layer_rotation",
                 ],
             )
             if semiconductor
@@ -29742,6 +29941,10 @@ def _change_verification_domain_tags(
         tags.append("atom_removal")
     if "add_atom" in diff_text or molecule.get("added_atoms") or crystal.get("added_atoms"):
         tags.append("atom_addition")
+    if "translate_crystal_atoms" in diff_text:
+        tags.append("layer_translation")
+    if "rotate_crystal_atoms" in diff_text:
+        tags.extend(["layer_rotation", "twist_scaffold"])
     if (delta.get("simulation") or {}).get("changed"):
         tags.append("simulation_settings")
 

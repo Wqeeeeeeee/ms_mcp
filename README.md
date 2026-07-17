@@ -324,5 +324,11 @@ Copy Script 审核。MCP 不猜测 MaterialsScript 相机 API，也不把同指�
 `translate_crystal_atoms` 刚性平移并周期回卷；`layer_translation_summary` 和
 `semiconductor_layer_translation.csv` 会记录目标绑定、位移及回卷原子，法向位移则继续使用
 界面间距或层厚工具。
+层旋转/扭转也使用同一层剖面进行精确绑定，例如 `twist the top layer by 3 degrees`
+或 `将第 2 层绕 c 轴旋转 5 度并热加载`。`rotate_crystal_atoms` 会围绕周期质心对目标原子组
+执行笛卡尔刚体旋转，并通过 `layer_rotation_summary` 与
+`semiconductor_layer_rotation.csv` 保存原子 ID、旋转轴、角度、枢轴和坐标摘要。任意扭角默认是
+非共格、仅供可视审阅的结构脚手架：它可以在已验证的单一 MS 窗口中热加载，但在构建共格超胞并完成
+几何弛豫前，MCP 会阻断“模型正常”和“可计算”的结论。
 晶体 execute/hot-load 还会重新解析生成的 CIF，逐项核对原子 ID、元素、分数坐标和六个晶格参数。
 已有 CIF 与当前 `CrystalSpec` 不一致时，即使路径和窗口 revision 正确也会阻断正常性结论；重新物化需要显式确认且不会创建空 revision。

@@ -3606,6 +3606,70 @@ def test_layer_translation_diagnostics_bind_current_layer_and_export_csv(tmp_pat
     assert stale_summary["target_binding_matches_current_layer"] is False
 
 
+def test_layer_rotation_diagnostics_bind_coordinates_block_calculation_and_export_csv(tmp_path: Path) -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+    plan = infer_modeling_plan(
+        "Twist layer 3 by 5 degrees.",
+        current_spec=base,
+    )
+    rotated, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=plan.payload["operations"],
+        ),
+    )
+
+    audit = model_view_audit(rotated)
+    summary = audit["health"]["semiconductor_health"]["layer_rotation_summary"]
+    assert summary["quality"] == "visual_review_only"
+    assert summary["metadata_consistent"] is True
+    assert summary["target_binding_matches_current_layer"] is True
+    assert summary["coordinate_binding_matches_current"] is True
+    assert summary["current_layer_atom_ids"] == ["Si3", "Si5"]
+    assert summary["latest"]["rotation_axis"] == "c"
+    assert summary["latest"]["angle_degrees"] == 5.0
+    assert summary["commensurability_verified"] is False
+    assert summary["requires_commensurate_supercell"] is True
+    assert summary["requires_geometry_relaxation"] is True
+    assert summary["calculation_ready"] is False
+    assert "layer_rotation_commensurability_unverified" in summary["calculation_blocking_reasons"]
+
+    bundle = write_view_audit_bundle(tmp_path, rotated, audit)
+    csv_path = Path(bundle["files"]["semiconductor_layer_rotation_csv"])
+    assert csv_path.exists()
+    assert bundle["row_counts"]["semiconductor_layer_rotation"] == 1
+    rows = list(csv.DictReader(csv_path.open(encoding="utf-8", newline="")))
+    assert rows[0]["layer_index"] == "3"
+    assert rows[0]["atom_ids"] == "Si3;Si5"
+    assert rows[0]["angle_degrees"] == "5.0"
+    assert rows[0]["coordinate_binding_matches_current"] == "True"
+    assert rows[0]["commensurability_verified"] == "False"
+    assert rows[0]["calculation_ready"] == "False"
+
+    shifted, _ = apply_semantic_patch(
+        rotated,
+        SemanticPatch(
+            project_id=rotated.project_id,
+            base_revision=rotated.revision,
+            operations=[
+                {
+                    "type": "translate_crystal_atoms",
+                    "atom_ids": ["Si3", "Si5"],
+                    "axis": "a",
+                    "distance_angstrom": 0.1,
+                }
+            ],
+        ),
+    )
+    stale_summary = model_view_audit(shifted)["health"]["semiconductor_health"]["layer_rotation_summary"]
+    assert stale_summary["quality"] == "review_required"
+    assert stale_summary["metadata_consistent"] is False
+    assert stale_summary["target_binding_matches_current_layer"] is True
+    assert stale_summary["coordinate_binding_matches_current"] is False
+
+
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:
     hetero = load_example("gallium_arsenide_aluminum_arsenide_001_heterostructure_spec.json")
     hetero_bundle = write_view_audit_bundle(tmp_path / "hetero", hetero, model_view_audit(hetero))

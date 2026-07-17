@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -140,6 +141,101 @@ def test_crystal_atom_group_translation_rejects_invalid_targets_and_unwrapped_es
         apply_semantic_patch(base, no_wrap)
 
 
+def test_crystal_atom_group_rotation_is_rigid_and_does_not_mutate_base() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+    base_positions = {
+        atom.id: atom.fractional.as_tuple()
+        for atom in base.model.basis_atoms
+        if atom.id in {"Si3", "Si5"}
+    }
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "rotate_crystal_atoms",
+                "atom_ids": ["Si3", "Si5"],
+                "axis": "c",
+                "angle_degrees": 90.0,
+                "pivot_fractional": [0.25, 0.25, 0.244891],
+            }
+        ],
+    )
+
+    rotated, diff = apply_semantic_patch(base, patch)
+
+    rotated_positions = {
+        atom.id: atom.fractional.as_tuple()
+        for atom in rotated.model.basis_atoms
+        if atom.id in {"Si3", "Si5"}
+    }
+    assert diff == ["rotate_crystal_atoms 2 c 90deg pivot 0.25,0.25,0.244891 wrapped 0"]
+    assert rotated_positions["Si3"] == pytest.approx((0.0, 0.0, 0.244891))
+    assert rotated_positions["Si5"] == pytest.approx((0.5, 0.5, 0.244891))
+    assert base_positions == {
+        "Si3": (0.0, 0.5, 0.244891),
+        "Si5": (0.5, 0.0, 0.244891),
+    }
+    before_distance = math.hypot(0.5 * base.model.lattice.a, 0.5 * base.model.lattice.b)
+    after_distance = math.hypot(
+        (rotated_positions["Si5"][0] - rotated_positions["Si3"][0]) * base.model.lattice.a,
+        (rotated_positions["Si5"][1] - rotated_positions["Si3"][1]) * base.model.lattice.b,
+    )
+    assert after_distance == pytest.approx(before_distance)
+    assert base.revision == 0
+    assert rotated.revision == 1
+
+
+def test_crystal_atom_group_rotation_rejects_invalid_targets_and_unwrapped_escape() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    with pytest.raises(ValueError, match="unique identifiers"):
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "rotate_crystal_atoms",
+                    "atom_ids": ["Si3", "Si3"],
+                    "axis": "c",
+                    "angle_degrees": 5.0,
+                }
+            ],
+        )
+
+    missing = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "rotate_crystal_atoms",
+                "atom_ids": ["Missing1"],
+                "axis": "c",
+                "angle_degrees": 5.0,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="missing atom IDs: Missing1"):
+        apply_semantic_patch(base, missing)
+
+    no_wrap = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "rotate_crystal_atoms",
+                "atom_ids": ["Si1"],
+                "axis": "c",
+                "angle_degrees": 45.0,
+                "pivot_fractional": [0.5, 0.5, 0.0],
+                "wrap_fractional": False,
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="outside the unit cell"):
+        apply_semantic_patch(base, no_wrap)
+
+
 def test_semiconductor_layer_translation_infers_explicit_atom_ids_in_english_and_chinese() -> None:
     base = load_example("silicon_germanium_001_heterostructure_spec.json")
 
@@ -210,6 +306,84 @@ def test_new_semiconductor_template_applies_inline_layer_translation() -> None:
         0.5 / spec.model.lattice.a
     )
     assert any("translate_crystal_atoms 2 a 0.5A wrapped 0" in note for note in plan.notes)
+
+
+def test_semiconductor_layer_rotation_infers_explicit_atom_ids_in_english_and_chinese() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    english = infer_modeling_plan(
+        "Twist layer 3 by 5 degrees and hot-load it in Materials Studio.",
+        current_spec=base,
+    )
+    assert english.kind == "patch"
+    assert english.template_id == "crystal_layer_rotation"
+    assert english.payload["operations"][0] == {
+        "type": "rotate_crystal_atoms",
+        "atom_ids": ["Si3", "Si5"],
+        "axis": "c",
+        "angle_degrees": 5.0,
+        "pivot_fractional": [0.25, 0.25, 0.244891],
+        "wrap_fractional": True,
+    }
+    english_record = english.payload["operations"][1]["metadata_updates"]["last_crystal_layer_rotation"]
+    assert english_record["layer_index"] == 3
+    assert english_record["layer_count"] == 8
+    assert english_record["rotation_axis"] == "c"
+    assert english_record["rotation_axis_source"] == "profile_axis_default"
+    assert english_record["commensurability_verified"] is False
+    assert english_record["calculation_ready"] is False
+    assert len(english_record["post_rotation_atom_coordinate_sha256"]) == 64
+
+    chinese = infer_modeling_plan(
+        "\u5c06\u9876\u5c42\u7ed5 c \u8f74\u65cb\u8f6c -3 \u5ea6\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\u3002",
+        current_spec=base,
+    )
+    assert chinese.kind == "patch"
+    assert chinese.template_id == "crystal_layer_rotation"
+    chinese_record = chinese.payload["operations"][1]["metadata_updates"]["last_crystal_layer_rotation"]
+    assert chinese_record["layer_index"] == 8
+    assert chinese_record["rotation_axis"] == "c"
+    assert chinese_record["rotation_axis_source"] == "explicit"
+    assert chinese_record["angle_degrees"] == -3.0
+
+
+def test_semiconductor_layer_rotation_rejects_tilt_axis_and_bad_layer_index() -> None:
+    base = load_example("silicon_germanium_001_heterostructure_spec.json")
+
+    tilt_axis = infer_modeling_plan(
+        "Rotate layer 3 by 5 degrees around x axis.",
+        current_spec=base,
+    )
+    assert tilt_axis.kind == "unsupported"
+    assert tilt_axis.template_id == "crystal_layer_rotation"
+    assert "profile axis c" in tilt_axis.notes[1]
+    assert "tilt the layer" in tilt_axis.notes[1]
+
+    bad_index = infer_modeling_plan(
+        "Twist layer 99 by 5 degrees.",
+        current_spec=base,
+    )
+    assert bad_index.kind == "unsupported"
+    assert "available range 1..8" in bad_index.notes[1]
+
+
+def test_new_semiconductor_template_applies_inline_layer_rotation_scaffold() -> None:
+    plan = infer_modeling_plan(
+        "Build a Si/Ge heterostructure and twist layer 3 by 5 degrees, then prepare preview."
+    )
+
+    assert plan.kind == "spec"
+    assert plan.template_id == "silicon_germanium_001_heterostructure"
+    spec = ModelSpec.model_validate(plan.payload)
+    record = spec.metadata["last_crystal_layer_rotation"]
+    assert record["layer_index"] == 3
+    assert record["atom_ids"] == ["Si3", "Si5"]
+    assert record["rotation_axis"] == "c"
+    assert record["angle_degrees"] == 5.0
+    assert record["visual_review_only"] is True
+    assert record["requires_commensurate_supercell"] is True
+    assert next(atom for atom in spec.model.basis_atoms if atom.id == "Si3").fractional.x > 0.0
+    assert any("rotate_crystal_atoms 2 c 5deg" in note for note in plan.notes)
 
 
 def test_crystal_restore_dopant_reconciles_current_state_metadata_without_mutating_base() -> None:

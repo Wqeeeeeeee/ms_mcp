@@ -14,7 +14,7 @@ from .specs.castep import CastepTask, normalize_castep_task
 from .specs.common import ELEMENTS
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
-from .specs.patch import SemanticPatch, apply_semantic_patch
+from .specs.patch import SemanticPatch, apply_semantic_patch, rotate_crystal_atom_set
 from .specs.project import ModelSpec
 
 
@@ -3243,6 +3243,16 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             ),
         },
         {
+            "template_id": "crystal_layer_rotation",
+            "operations": ["rotate_crystal_atoms", "set_metadata"],
+            "requires_existing_project": True,
+            "pattern": (
+                "Rigidly rotate a semiconductor layer around its orthogonal profile axis as a visual-review "
+                "twist scaffold, e.g. 'twist the top layer by 3 degrees' or "
+                "'\u5c06\u7b2c 3 \u5c42\u7ed5 c \u8f74\u65cb\u8f6c 5 \u5ea6'."
+            ),
+        },
+        {
             "template_id": "crystal_add_atom_fractional",
             "operations": ["add_atom"],
             "requires_existing_project": True,
@@ -4106,6 +4116,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_current_quantum_well_thickness,
             _match_crystal_lattice_parameters,
             _match_crystal_layer_translation,
+            _match_crystal_layer_rotation,
             _match_crystal_strain,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
@@ -4153,6 +4164,7 @@ def _looks_like_current_crystal_modifier_request(text: str) -> bool:
             _match_current_p_gan_gate_cap_thickness,
             _match_crystal_lattice_parameters,
             _match_crystal_layer_translation,
+            _match_crystal_layer_rotation,
             _match_crystal_interstitial_fractional,
             _match_crystal_add_atom_fractional,
             _match_crystal_set_atom_fractional,
@@ -10479,6 +10491,10 @@ def _apply_new_crystal_composite_operations(
         if layer_translation_match is not None:
             apply_operations(_crystal_layer_translation_operations(working, layer_translation_match))
 
+        layer_rotation_match = _match_crystal_layer_rotation(text)
+        if layer_rotation_match is not None:
+            apply_operations(_crystal_layer_rotation_operations(working, layer_rotation_match))
+
         strain_match = _match_crystal_strain(text)
         if strain_match is not None:
             axes, percent, mode = strain_match
@@ -10731,6 +10747,19 @@ def _infer_crystal_surface_preparation_patch(text: str, current_spec: ModelSpec)
                     f"translate layer {translation_record['layer_index']} by "
                     f"{translation_record['distance_angstrom']:g} Angstrom along "
                     f"{translation_record['translation_axis']}"
+                ),
+            )
+
+        layer_rotation_match = _match_crystal_layer_rotation(text)
+        if layer_rotation_match is not None:
+            rotation_operations = _crystal_layer_rotation_operations(working, layer_rotation_match)
+            rotation_record = rotation_operations[-1]["metadata_updates"]["last_crystal_layer_rotation"]
+            apply_group(
+                rotation_operations,
+                (
+                    f"rotate layer {rotation_record['layer_index']} by "
+                    f"{rotation_record['angle_degrees']:g} degrees around "
+                    f"{rotation_record['rotation_axis']} as a twist scaffold"
                 ),
             )
 
@@ -11207,6 +11236,19 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
                 ),
             )
 
+        layer_rotation_match = _match_crystal_layer_rotation(text)
+        if layer_rotation_match is not None:
+            rotation_operations = _crystal_layer_rotation_operations(working, layer_rotation_match)
+            rotation_record = rotation_operations[-1]["metadata_updates"]["last_crystal_layer_rotation"]
+            apply_group(
+                rotation_operations,
+                (
+                    f"rotate layer {rotation_record['layer_index']} by "
+                    f"{rotation_record['angle_degrees']:g} degrees around "
+                    f"{rotation_record['rotation_axis']} as a twist scaffold"
+                ),
+            )
+
         vacancy_match = _match_crystal_vacancy(text)
         if vacancy_match is not None:
             apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
@@ -11559,6 +11601,32 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                     f"Translate crystal layer {record['layer_index']} by "
                     f"{record['distance_angstrom']:g} Angstrom along {record['translation_axis']} "
                     "with periodic wrapping."
+                ),
+            )
+
+        layer_rotation_match = _match_crystal_layer_rotation(text)
+        if layer_rotation_match is not None:
+            try:
+                operations = _crystal_layer_rotation_operations(current_spec, layer_rotation_match)
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="crystal_layer_rotation",
+                    notes=[
+                        "An explicit crystal-layer rotation matched but could not be applied safely.",
+                        str(exc),
+                    ],
+                )
+            record = operations[-1]["metadata_updates"]["last_crystal_layer_rotation"]
+            return _patch_plan(
+                operations,
+                "crystal_layer_rotation",
+                (
+                    f"Rotate crystal layer {record['layer_index']} by {record['angle_degrees']:g} degrees "
+                    f"around {record['rotation_axis']} as a non-commensurate visual-review scaffold; "
+                    "build a commensurate supercell and relax before calculation."
                 ),
             )
 
@@ -13154,6 +13222,69 @@ def _match_crystal_layer_translation(text: str) -> dict[str, Any] | None:
     }
 
 
+def _match_crystal_layer_rotation(text: str) -> dict[str, Any] | None:
+    if re.search(
+        r"\b(?:rotate|twist)\b|(?:\u65cb\u8f6c|\u626d\u8f6c|\u626d\u89d2)",
+        text,
+        flags=re.IGNORECASE,
+    ) is None:
+        return None
+
+    target: dict[str, Any] | None = None
+    for pattern in (
+        r"\blayer\s*#?\s*(?P<index>\d+)\b",
+        r"\u7b2c\s*(?P<index>\d+)\s*\u5c42",
+    ):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            target = {"kind": "index", "layer_index": int(match.group("index"))}
+            break
+    if target is None:
+        edge_match = re.search(
+            r"\b(?P<edge>top(?:most)?|bottom(?:most)?)\s+layer\b|"
+            r"(?P<cjk_edge>\u6700\u4e0a\u5c42|\u9876\u5c42|\u6700\u4e0b\u5c42|\u5e95\u5c42)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if edge_match is not None:
+            raw_edge = str(edge_match.group("edge") or edge_match.group("cjk_edge") or "").lower()
+            edge = "top" if raw_edge.startswith("top") or raw_edge in {"\u6700\u4e0a\u5c42", "\u9876\u5c42"} else "bottom"
+            target = {"kind": "edge", "edge": edge}
+    if target is None:
+        return None
+
+    value = r"(?P<value>[+-]?(?:\d+(?:\.\d*)?|\.\d+))"
+    angle_match = None
+    for pattern in (
+        rf"\b(?:by|through|through an angle of|at an angle of)\s*{value}\s*(?:degrees?|deg|\u00b0)\b",
+        rf"\b(?:twist|rotation)\s+angle\s*(?:of|=|:)?\s*{value}\s*(?:degrees?|deg|\u00b0)\b",
+        rf"(?:\u65cb\u8f6c|\u626d\u8f6c|\u626d\u89d2)\s*{value}\s*(?:\u5ea6|\u00b0)",
+        rf"{value}\s*(?:\u5ea6|\u00b0)",
+    ):
+        angle_match = re.search(pattern, text, flags=re.IGNORECASE)
+        if angle_match is not None:
+            break
+    if angle_match is None:
+        return None
+
+    axis_match = re.search(
+        r"\b(?:around|about)\s+(?:the\s+)?(?P<axis>[abcxyz])(?:\s*[- ]?axis)?\b|"
+        r"(?:\u7ed5|\u7ed5\u7740)\s*(?P<cjk_axis>[abcxyz])\s*(?:\u8f74)?",
+        text,
+        flags=re.IGNORECASE,
+    )
+    raw_axis = (
+        axis_match.group("axis") or axis_match.group("cjk_axis")
+        if axis_match is not None
+        else None
+    )
+    return {
+        **target,
+        "axis": _normalize_lattice_axis(str(raw_axis)) if raw_axis else None,
+        "angle_degrees": round(float(angle_match.group("value")), 6),
+    }
+
+
 def _crystal_layer_translation_operations(
     current_spec: ModelSpec,
     request: dict[str, Any],
@@ -13248,6 +13379,169 @@ def _crystal_layer_translation_operations(
             },
         },
     ]
+
+
+def _crystal_layer_rotation_operations(
+    current_spec: ModelSpec,
+    request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("crystal layer rotation requires a crystal model.")
+    metadata = dict(current_spec.metadata or {})
+    if metadata.get("domain") != "semiconductor":
+        raise ValueError("crystal layer rotation is enabled only for semiconductor models.")
+
+    profile_axis = _normalize_lattice_axis(
+        str(metadata.get("interface_axis") or metadata.get("surface_axis") or "c")
+    )
+    requested_axis = request.get("axis")
+    rotation_axis = _normalize_lattice_axis(str(requested_axis)) if requested_axis else profile_axis
+    if rotation_axis != profile_axis:
+        raise ValueError(
+            f"layer twist rotation must use profile axis {profile_axis}; requested axis {rotation_axis} "
+            "would tilt the layer instead of rotating it in plane."
+        )
+    angle = float(request.get("angle_degrees") or 0.0)
+    if abs(angle) <= 1e-12 or abs(angle) >= 360.0 - 1e-12:
+        raise ValueError("crystal layer rotation angle must produce a non-identity rotation.")
+
+    orthogonality = _lattice_axis_orthogonality_max_abs_cosine(current_spec.model, rotation_axis)
+    if orthogonality is None or orthogonality > 1e-6:
+        raise ValueError(
+            f"profile axis {profile_axis} is not orthogonal to both in-plane lattice vectors; "
+            "automatic in-plane layer rotation is unsafe for this cell."
+        )
+
+    tolerance = _metadata_float_value(metadata.get("layer_profile_tolerance_fractional"), 1e-4)
+    layers = _profile_crystal_layers(current_spec.model, profile_axis, tolerance)
+    if not layers:
+        raise ValueError("no crystal layers could be resolved from the current model.")
+    if request.get("kind") == "edge":
+        edge = str(request.get("edge") or "")
+        layer_index = len(layers) if edge == "top" else 1
+        selector = f"{edge}_layer"
+    else:
+        layer_index = int(request.get("layer_index") or 0)
+        selector = f"layer_{layer_index}"
+    if layer_index < 1 or layer_index > len(layers):
+        raise ValueError(f"layer index {layer_index} is outside the available range 1..{len(layers)}.")
+
+    target_atoms = layers[layer_index - 1]
+    atom_ids = sorted(atom.id for atom in target_atoms)
+    rotated_atoms, rotation_receipt = rotate_crystal_atom_set(
+        current_spec.model.lattice,
+        current_spec.model.basis_atoms,
+        atom_ids=atom_ids,
+        axis=rotation_axis,
+        angle_degrees=angle,
+        wrap_fractional=True,
+    )
+    profile_index = {"a": 0, "b": 1, "c": 2}[profile_axis]
+    profile_center = sum(
+        _basis_atom_fractional_tuple(atom)[profile_index] for atom in target_atoms
+    ) / len(target_atoms)
+    record = {
+        "source": "natural_language_crystal_layer_rotation",
+        "target_selector": selector,
+        "layer_index": layer_index,
+        "layer_count": len(layers),
+        "profile_axis": profile_axis,
+        "profile_fractional_center": round(profile_center, 6),
+        "rotation_axis": rotation_axis,
+        "rotation_axis_source": "explicit" if requested_axis else "profile_axis_default",
+        "angle_degrees": round(angle, 6),
+        "pivot_fractional": list(rotation_receipt["pivot_fractional"]),
+        "atom_count": len(atom_ids),
+        "atom_ids": atom_ids,
+        "periodic_wrap": True,
+        "wrapped_atom_count": rotation_receipt["wrapped_atom_count"],
+        "wrapped_atom_ids": list(rotation_receipt["wrapped_atom_ids"]),
+        "layer_profile_tolerance_fractional": round(tolerance, 9),
+        "axis_orthogonality_max_abs_cosine": round(orthogonality, 12),
+        "rotation_axis_orthogonal_to_in_plane_vectors": True,
+        "in_plane_rotation": True,
+        "pre_rotation_atom_coordinate_sha256": _crystal_atom_coordinate_sha256(
+            current_spec.model.basis_atoms,
+            atom_ids,
+        ),
+        "post_rotation_atom_coordinate_sha256": _crystal_atom_coordinate_sha256(
+            rotated_atoms,
+            atom_ids,
+        ),
+        "scaffold_only": True,
+        "visual_review_only": True,
+        "visual_hotload_ready": True,
+        "commensurability_verified": False,
+        "requires_commensurate_supercell": True,
+        "requires_geometry_relaxation": True,
+        "calculation_ready": False,
+        "calculation_blocking_reason": "layer_rotation_commensurability_unverified",
+    }
+    history = [
+        dict(item)
+        for item in metadata.get("crystal_layer_rotations", []) or []
+        if isinstance(item, dict)
+    ]
+    history.append(record)
+    return [
+        {
+            "type": "rotate_crystal_atoms",
+            "atom_ids": atom_ids,
+            "axis": rotation_axis,
+            "angle_degrees": round(angle, 6),
+            "pivot_fractional": list(rotation_receipt["pivot_fractional"]),
+            "wrap_fractional": True,
+        },
+        {
+            "type": "set_metadata",
+            "metadata_updates": {
+                "crystal_layer_rotations": history,
+                "last_crystal_layer_rotation": record,
+            },
+        },
+    ]
+
+
+def _lattice_axis_orthogonality_max_abs_cosine(model: CrystalSpec, axis: str) -> float | None:
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis)
+    if axis_index is None:
+        return None
+    vectors = _lattice_vectors(model)
+    axis_vector = vectors[axis_index]
+    axis_norm = math.sqrt(sum(value * value for value in axis_vector))
+    if axis_norm <= 1e-12:
+        return None
+    cosines: list[float] = []
+    for index, vector in enumerate(vectors):
+        if index == axis_index:
+            continue
+        vector_norm = math.sqrt(sum(value * value for value in vector))
+        if vector_norm <= 1e-12:
+            return None
+        cosines.append(
+            abs(sum(axis_vector[item] * vector[item] for item in range(3)))
+            / (axis_norm * vector_norm)
+        )
+    return max(cosines, default=0.0)
+
+
+def _crystal_atom_coordinate_sha256(atoms: Sequence[BasisAtomSpec], atom_ids: Sequence[str]) -> str:
+    atoms_by_id = {atom.id: atom for atom in atoms}
+    payload = [
+        {
+            "id": atom_id,
+            "fractional": [
+                round(float(atoms_by_id[atom_id].fractional.x), 12),
+                round(float(atoms_by_id[atom_id].fractional.y), 12),
+                round(float(atoms_by_id[atom_id].fractional.z), 12),
+            ],
+        }
+        for atom_id in sorted(atom_ids)
+        if atom_id in atoms_by_id
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _profile_crystal_layers(

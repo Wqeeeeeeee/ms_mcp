@@ -719,6 +719,24 @@ lattice vector and wraps fractional coordinates periodically. It records
 and wrapped atom IDs can be audited after hot-loading. Natural-language layer
 translation is limited to axes in the interface/surface plane; use the
 interface-gap or layer-thickness commands for movement along the profile axis.
+Explicit layer rotation and twist requests use the same profile and exact atom
+binding. Examples include `twist the top layer by 3 degrees`, `rotate layer 2
+by -5 degrees around c`, and `将第 2 层绕 c 轴旋转 5 度并热加载`. The planner
+emits one `rotate_crystal_atoms` operation, uses the periodic centroid as the
+pivot, performs a Cartesian rigid-body rotation around the profile axis, and
+wraps the resulting fractional coordinates. Automatic natural-language
+rotation is accepted only when the profile axis is orthogonal to both in-plane
+lattice vectors; an axis that would tilt the layer is rejected.
+
+Each accepted rotation records `metadata.crystal_layer_rotations`, exposes
+`semiconductor_health.layer_rotation_summary`, and exports
+`semiconductor_layer_rotation.csv`. The receipt binds the selected layer and
+atom IDs to a post-rotation coordinate SHA-256 so later edits cannot reuse stale
+rotation evidence. An arbitrary twist angle is deliberately classified as a
+non-commensurate, visual-review-only scaffold. It may be hot-loaded into the
+verified single Materials Studio window, but normality and calculation readiness
+remain blocked until a commensurate supercell is constructed and geometry
+relaxation is completed and re-audited.
 Lattice summaries are exported as `semiconductor_lattice.csv` and report cell
 volume, atom density, volume per non-passivant atom, and slab vacuum fractions
 when surface metadata is present.

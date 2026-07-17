@@ -1304,6 +1304,43 @@ def write_view_audit_bundle(
             translation_rows,
         )
 
+    layer_rotation = semiconductor.get("layer_rotation_summary") or {}
+    if layer_rotation:
+        rotation_rows = _semiconductor_layer_rotation_csv_rows(layer_rotation)
+        files["semiconductor_layer_rotation_csv"] = str(bundle_dir / "semiconductor_layer_rotation.csv")
+        row_counts["semiconductor_layer_rotation"] = _write_csv(
+            bundle_dir / "semiconductor_layer_rotation.csv",
+            [
+                "index",
+                "is_latest",
+                "target_selector",
+                "layer_index",
+                "layer_count",
+                "profile_axis",
+                "profile_fractional_center",
+                "rotation_axis",
+                "rotation_axis_source",
+                "angle_degrees",
+                "pivot_fractional",
+                "atom_count",
+                "atom_ids",
+                "periodic_wrap",
+                "wrapped_atom_count",
+                "wrapped_atom_ids",
+                "axis_orthogonality_max_abs_cosine",
+                "target_binding_matches_current_layer",
+                "coordinate_binding_matches_current",
+                "commensurability_verified",
+                "requires_commensurate_supercell",
+                "requires_geometry_relaxation",
+                "visual_review_only",
+                "calculation_ready",
+                "metadata_consistent",
+                "source",
+            ],
+            rotation_rows,
+        )
+
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:
         interface_rows = _semiconductor_interface_profile_csv_rows(interface_profile)
@@ -2827,6 +2864,49 @@ def _semiconductor_layer_translation_csv_rows(summary: dict[str, Any]) -> list[d
                 "target_binding_matches_current_layer": (
                     summary.get("target_binding_matches_current_layer") if is_latest else None
                 ),
+                "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
+                "source": entry.get("source"),
+            }
+        )
+    return rows
+
+
+def _semiconductor_layer_rotation_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = summary.get("entries", []) or []
+    latest = summary.get("latest") if isinstance(summary.get("latest"), dict) else {}
+    rows = []
+    for index, entry in enumerate(entries, start=1):
+        is_latest = index == len(entries) and entry == latest
+        rows.append(
+            {
+                "index": index,
+                "is_latest": is_latest,
+                "target_selector": entry.get("target_selector"),
+                "layer_index": entry.get("layer_index"),
+                "layer_count": entry.get("layer_count"),
+                "profile_axis": entry.get("profile_axis"),
+                "profile_fractional_center": entry.get("profile_fractional_center"),
+                "rotation_axis": entry.get("rotation_axis"),
+                "rotation_axis_source": entry.get("rotation_axis_source"),
+                "angle_degrees": entry.get("angle_degrees"),
+                "pivot_fractional": _join_vector(entry.get("pivot_fractional")),
+                "atom_count": entry.get("atom_count"),
+                "atom_ids": _join_vector(entry.get("atom_ids")),
+                "periodic_wrap": entry.get("periodic_wrap"),
+                "wrapped_atom_count": entry.get("wrapped_atom_count"),
+                "wrapped_atom_ids": _join_vector(entry.get("wrapped_atom_ids")),
+                "axis_orthogonality_max_abs_cosine": entry.get("axis_orthogonality_max_abs_cosine"),
+                "target_binding_matches_current_layer": (
+                    summary.get("target_binding_matches_current_layer") if is_latest else None
+                ),
+                "coordinate_binding_matches_current": (
+                    summary.get("coordinate_binding_matches_current") if is_latest else None
+                ),
+                "commensurability_verified": entry.get("commensurability_verified"),
+                "requires_commensurate_supercell": entry.get("requires_commensurate_supercell"),
+                "requires_geometry_relaxation": entry.get("requires_geometry_relaxation"),
+                "visual_review_only": entry.get("visual_review_only"),
+                "calculation_ready": entry.get("calculation_ready"),
                 "metadata_consistent": summary.get("metadata_consistent") if is_latest else None,
                 "source": entry.get("source"),
             }
@@ -4443,6 +4523,18 @@ def _semiconductor_health_summary(
             "Crystal layer-translation metadata no longer matches the current layer profile; "
             "inspect layer_translation_summary."
         )
+    layer_rotation_summary = _crystal_layer_rotation_summary(spec, metadata, layer_profile_summary)
+    if layer_rotation_summary:
+        if not layer_rotation_summary.get("metadata_consistent"):
+            warnings.append(
+                "Crystal layer-rotation receipt no longer matches the current layer coordinates or profile; "
+                "inspect layer_rotation_summary."
+            )
+        if layer_rotation_summary.get("calculation_ready") is False:
+            warnings.append(
+                "Crystal layer rotation is a non-commensurate visual-review scaffold; build a commensurate "
+                "supercell and relax it before calculation."
+            )
     interface_scaffold_summary = _interface_scaffold_summary(metadata, lattice_summary, layer_profile_summary)
     superlattice_period_summary = _superlattice_period_summary(metadata, layer_profile_summary)
     interface_profile_summary = _interface_profile_summary(metadata, layer_profile_summary, heterostructure_summary)
@@ -4546,6 +4638,7 @@ def _semiconductor_health_summary(
         "strain_summary": strain_summary,
         "layer_profile_summary": layer_profile_summary,
         "layer_translation_summary": layer_translation_summary,
+        "layer_rotation_summary": layer_rotation_summary,
         "interface_scaffold_summary": interface_scaffold_summary,
         "interface_profile_summary": interface_profile_summary,
         "superlattice_period_summary": superlattice_period_summary,
@@ -5744,6 +5837,208 @@ def _crystal_layer_translation_summary(
         "warning_count": len(warnings),
         "warnings": warnings,
     }
+
+
+def _crystal_layer_rotation_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+    layer_profile: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    entries = [
+        dict(item)
+        for item in metadata.get("crystal_layer_rotations", []) or []
+        if isinstance(item, dict)
+    ]
+    latest = metadata.get("last_crystal_layer_rotation")
+    if isinstance(latest, dict) and latest not in entries:
+        entries.append(dict(latest))
+    if not entries:
+        return None
+
+    latest = entries[-1]
+    warnings: list[str] = []
+    profile_available = bool(layer_profile and layer_profile.get("available"))
+    recorded_profile_axis = str(latest.get("profile_axis") or "")
+    current_profile_axis = str((layer_profile or {}).get("axis") or "")
+    profile_axis_matches = profile_available and recorded_profile_axis == current_profile_axis
+    if not profile_available:
+        warnings.append("Current layer profile is unavailable; rotation target binding cannot be verified.")
+    elif not profile_axis_matches:
+        warnings.append("Recorded rotation profile axis differs from the current layer-profile axis.")
+
+    layer_index = _optional_int(latest.get("layer_index"))
+    tolerance = _optional_float((layer_profile or {}).get("tolerance_fractional")) or 1e-4
+    current_layers = _crystal_layer_atom_ids_by_axis(spec, current_profile_axis, tolerance)
+    current_layer_atom_ids = (
+        current_layers[layer_index - 1]
+        if layer_index is not None and 1 <= layer_index <= len(current_layers)
+        else None
+    )
+    recorded_atom_ids = sorted(str(value) for value in latest.get("atom_ids", []) or [])
+    current_atom_ids = sorted(current_layer_atom_ids or [])
+    target_layer_found = current_layer_atom_ids is not None
+    target_binding_matches = target_layer_found and recorded_atom_ids == current_atom_ids
+    if not target_layer_found:
+        warnings.append("Recorded rotation target layer is not present in the current layer profile.")
+    elif not target_binding_matches:
+        warnings.append("Recorded rotation atom IDs differ from the current target layer atom IDs.")
+
+    rotation_axis = str(latest.get("rotation_axis") or "")
+    rotation_axis_matches_profile = rotation_axis in {"a", "b", "c"} and rotation_axis == recorded_profile_axis
+    if not rotation_axis_matches_profile:
+        warnings.append("Recorded rotation axis is not the layer-profile axis.")
+    current_orthogonality = (
+        _diagnostic_lattice_axis_orthogonality_max_abs_cosine(spec.model.lattice, rotation_axis)
+        if isinstance(spec.model, CrystalSpec) and rotation_axis in {"a", "b", "c"}
+        else None
+    )
+    rotation_axis_orthogonal = current_orthogonality is not None and current_orthogonality <= 1e-6
+    if not rotation_axis_orthogonal:
+        warnings.append("Current rotation axis is not orthogonal to both in-plane lattice vectors.")
+
+    angle = _optional_float(latest.get("angle_degrees"))
+    angle_valid = angle is not None and 1e-12 < abs(angle) < 360.0 - 1e-12
+    if not angle_valid:
+        warnings.append("Recorded layer-rotation angle is missing or produces an identity rotation.")
+    pivot = latest.get("pivot_fractional")
+    pivot_valid = bool(
+        isinstance(pivot, (list, tuple))
+        and len(pivot) == 3
+        and all(
+            value is not None and -1e-12 <= value <= 1.0 + 1e-12
+            for value in (_optional_float(item) for item in pivot)
+        )
+    )
+    if not pivot_valid:
+        warnings.append("Recorded layer-rotation pivot is missing or outside the fractional unit cell.")
+
+    expected_coordinate_sha256 = str(latest.get("post_rotation_atom_coordinate_sha256") or "")
+    current_coordinate_sha256 = _crystal_atom_coordinate_sha256(spec, recorded_atom_ids)
+    coordinate_binding_matches = bool(
+        target_binding_matches
+        and len(expected_coordinate_sha256) == 64
+        and current_coordinate_sha256 == expected_coordinate_sha256
+    )
+    if not coordinate_binding_matches:
+        warnings.append("Current target-layer coordinates differ from the recorded post-rotation coordinates.")
+
+    metadata_consistent = bool(
+        profile_axis_matches
+        and target_binding_matches
+        and coordinate_binding_matches
+        and rotation_axis_matches_profile
+        and rotation_axis_orthogonal
+        and angle_valid
+        and pivot_valid
+    )
+    commensurability_verified = latest.get("commensurability_verified") is True
+    requires_commensurate_supercell = latest.get("requires_commensurate_supercell") is not False
+    requires_geometry_relaxation = latest.get("requires_geometry_relaxation") is not False
+    calculation_ready = bool(
+        metadata_consistent
+        and commensurability_verified
+        and not requires_commensurate_supercell
+        and not requires_geometry_relaxation
+        and latest.get("calculation_ready") is True
+    )
+    if not commensurability_verified:
+        warnings.append("Twist commensurability has not been verified for the current periodic cell.")
+    if requires_geometry_relaxation:
+        warnings.append("The rotated layer scaffold requires geometry relaxation before calculation.")
+
+    return {
+        "available": True,
+        "quality": (
+            "calculation_preflight_ready"
+            if calculation_ready
+            else "visual_review_only"
+            if metadata_consistent
+            else "review_required"
+        ),
+        "entry_count": len(entries),
+        "entries": entries[-MAX_HEALTH_DETAIL_ROWS:],
+        "latest": latest,
+        "profile_available": profile_available,
+        "profile_axis_matches": profile_axis_matches,
+        "target_layer_found": target_layer_found,
+        "target_binding_matches_current_layer": target_binding_matches,
+        "current_layer_atom_ids": current_atom_ids,
+        "rotation_axis_matches_profile": rotation_axis_matches_profile,
+        "rotation_axis_orthogonal_to_in_plane_vectors": rotation_axis_orthogonal,
+        "axis_orthogonality_max_abs_cosine": (
+            _round(current_orthogonality) if current_orthogonality is not None else None
+        ),
+        "angle_valid": angle_valid,
+        "pivot_valid": pivot_valid,
+        "expected_post_rotation_atom_coordinate_sha256": expected_coordinate_sha256 or None,
+        "current_atom_coordinate_sha256": current_coordinate_sha256,
+        "coordinate_binding_matches_current": coordinate_binding_matches,
+        "metadata_consistent": metadata_consistent,
+        "scaffold_only": latest.get("scaffold_only") is not False,
+        "visual_review_only": latest.get("visual_review_only") is not False,
+        "visual_hotload_ready": latest.get("visual_hotload_ready") is True,
+        "commensurability_verified": commensurability_verified,
+        "requires_commensurate_supercell": requires_commensurate_supercell,
+        "requires_geometry_relaxation": requires_geometry_relaxation,
+        "calculation_ready": calculation_ready,
+        "calculation_blocking_reasons": [
+            reason
+            for condition, reason in (
+                (not metadata_consistent, "layer_rotation_metadata_inconsistent"),
+                (not commensurability_verified, "layer_rotation_commensurability_unverified"),
+                (requires_commensurate_supercell, "layer_rotation_requires_commensurate_supercell"),
+                (requires_geometry_relaxation, "layer_rotation_requires_geometry_relaxation"),
+            )
+            if condition
+        ],
+        "warning_count": len(warnings),
+        "warnings": warnings,
+    }
+
+
+def _crystal_atom_coordinate_sha256(spec: ModelSpec, atom_ids: Sequence[str]) -> str | None:
+    if not isinstance(spec.model, CrystalSpec) or not atom_ids:
+        return None
+    atoms_by_id = {atom.id: atom for atom in spec.model.basis_atoms}
+    if any(atom_id not in atoms_by_id for atom_id in atom_ids):
+        return None
+    payload = [
+        {
+            "id": atom_id,
+            "fractional": [
+                round(float(atoms_by_id[atom_id].fractional.x), 12),
+                round(float(atoms_by_id[atom_id].fractional.y), 12),
+                round(float(atoms_by_id[atom_id].fractional.z), 12),
+            ],
+        }
+        for atom_id in sorted(atom_ids)
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _diagnostic_lattice_axis_orthogonality_max_abs_cosine(
+    lattice: LatticeSpec,
+    axis: str,
+) -> float | None:
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis)
+    if axis_index is None:
+        return None
+    vectors = _lattice_vectors(lattice)
+    axis_vector = vectors[axis_index]
+    axis_norm = math.sqrt(_dot(axis_vector, axis_vector))
+    if axis_norm <= 1e-12:
+        return None
+    cosines = []
+    for index, vector in enumerate(vectors):
+        if index == axis_index:
+            continue
+        vector_norm = math.sqrt(_dot(vector, vector))
+        if vector_norm <= 1e-12:
+            return None
+        cosines.append(abs(_dot(axis_vector, vector)) / (axis_norm * vector_norm))
+    return max(cosines, default=0.0)
 
 
 def _crystal_layer_atom_ids_by_axis(

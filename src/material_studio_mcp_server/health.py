@@ -751,6 +751,41 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
                 "inspect layer_translation_summary."
             )
 
+    layer_rotation = semiconductor.get("layer_rotation_summary") or {}
+    if layer_rotation:
+        latest_rotation = layer_rotation.get("latest") or {}
+        checks["semiconductor_layer_rotation_count"] = layer_rotation.get("entry_count")
+        checks["semiconductor_layer_rotation_quality"] = layer_rotation.get("quality")
+        checks["semiconductor_layer_rotation_metadata_consistent"] = layer_rotation.get(
+            "metadata_consistent"
+        )
+        checks["semiconductor_layer_rotation_coordinate_binding_matches_current"] = layer_rotation.get(
+            "coordinate_binding_matches_current"
+        )
+        checks["semiconductor_layer_rotation_latest_layer_index"] = latest_rotation.get("layer_index")
+        checks["semiconductor_layer_rotation_latest_axis"] = latest_rotation.get("rotation_axis")
+        checks["semiconductor_layer_rotation_latest_angle_degrees"] = latest_rotation.get("angle_degrees")
+        checks["semiconductor_layer_rotation_commensurability_verified"] = layer_rotation.get(
+            "commensurability_verified"
+        )
+        checks["semiconductor_layer_rotation_requires_geometry_relaxation"] = layer_rotation.get(
+            "requires_geometry_relaxation"
+        )
+        checks["semiconductor_layer_rotation_calculation_ready"] = layer_rotation.get("calculation_ready")
+        if layer_rotation.get("metadata_consistent") is False:
+            warnings.append(
+                "Semiconductor layer-rotation receipt does not match current layer coordinates; "
+                "inspect layer_rotation_summary."
+            )
+        if layer_rotation.get("commensurability_verified") is False:
+            warnings.append(
+                "Semiconductor layer rotation is not commensurability-verified; treat it as visual review only."
+            )
+        if layer_rotation.get("requires_geometry_relaxation"):
+            warnings.append(
+                "Semiconductor layer-rotation scaffold requires geometry relaxation before calculation."
+            )
+
     interface_quality = semiconductor.get("interface_quality_summary") or {}
     interface_profile = semiconductor.get("interface_profile_summary") or {}
     if interface_profile:

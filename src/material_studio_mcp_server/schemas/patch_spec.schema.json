@@ -117,6 +117,7 @@
             "substitute_atom",
             "set_atom_position",
             "translate_crystal_atoms",
+            "rotate_crystal_atoms",
             "set_total_charge",
             "set_spin_multiplicity",
             "set_forcite_optimization",
@@ -469,6 +470,31 @@
           ],
           "default": null,
           "title": "Distance Angstrom"
+        },
+        "angle_degrees": {
+          "anyOf": [
+            {
+              "maximum": 360,
+              "minimum": -360,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Angle Degrees"
+        },
+        "pivot_fractional": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FractionalVector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "wrap_fractional": {
           "default": true,

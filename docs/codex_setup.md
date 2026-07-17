@@ -662,7 +662,8 @@ The JSON schemas under `src/material_studio_mcp_server/schemas/` are generated
 from the Pydantic models and can be used by external MCP clients to construct
 valid `ModelSpec`, molecule, crystal, simulation, and `SemanticPatch` payloads.
 `patch_spec.schema.json` enumerates the supported patch operations, including
-`set_bond_type`, `translate_crystal_atoms`, and `set_metadata`.
+`set_bond_type`, `translate_crystal_atoms`, `rotate_crystal_atoms`, and
+`set_metadata`.
 
 For open-GUI workflows, start with `material_studio_gui_status`.  When no
 project is supplied, it resolves the latest current structured project when
@@ -919,6 +920,18 @@ The planner resolves the layer using the same profile axis and tolerance as
 atom IDs, and exports `semiconductor_layer_translation.csv`. A profile-normal
 request is rejected because interface-gap and layer-thickness tools own that
 geometry change.
+Natural-language layer rotation accepts an explicit 1-based layer number or
+`top`/`bottom`, a signed angle in degrees, and an optional profile-axis name.
+Examples include `twist the top layer by 3 degrees` and
+`将第 2 层绕 c 轴旋转 5 度并热加载`. The planner emits
+`rotate_crystal_atoms` with exact atom IDs and exports
+`semiconductor_layer_rotation.csv`; request the `layer_registry_rotation`
+diagnostic focus when a compact MCP client needs the corresponding profile,
+rotation, neighbor, local-environment, view, and revision evidence. Arbitrary
+twist angles are non-commensurate visual-review scaffolds. Same-window hot-load
+is allowed after normal GUI preflight, but normality and calculation readiness
+remain blocked until a commensurate supercell and geometry relaxation are
+verified.
 Semiconductor layer profiles are exported as `semiconductor_layer_profile.csv`
 and summarize per-layer composition, axis coordinate, and interlayer spacing
 along the interface axis, surface axis, or c axis.

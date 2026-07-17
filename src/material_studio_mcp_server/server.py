@@ -63,7 +63,12 @@ from .scripts import (
     validate_materialscript,
 )
 from .specs.common import ExecutionMode, ModelType
-from .specs.castep import CastepEnergySpec, CastepTask, CastepTaskValue
+from .specs.castep import (
+    CastepDipoleCorrectionValue,
+    CastepEnergySpec,
+    CastepTask,
+    CastepTaskValue,
+)
 from .specs.forcite import ForciteDynamicsSpec
 from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
@@ -339,6 +344,13 @@ class CastepEnergyInput(BaseModel):
         default=None,
         description="Optional primary SCF custom k-point grid.",
     )
+    dipole_correction: CastepDipoleCorrectionValue | None = Field(
+        default=None,
+        description=(
+            "Optional Materials Studio 20.1 DipoleCorrection mode. "
+            "Non self-consistent is valid only for the Energy task."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_kpoint_mode(self) -> "CastepEnergyInput":
@@ -349,6 +361,7 @@ class CastepEnergyInput(BaseModel):
             cutoff_energy_ev=self.cutoff_energy_ev,
             kpoint_separation=self.kpoint_separation,
             kpoints=self.kpoints,
+            dipole_correction=self.dipole_correction,
         )
         return self
 
@@ -2899,7 +2912,14 @@ _TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS = (
     "semiconductor_2d_charge_density_available",
     "semiconductor_2d_dipole_moment_calculated",
     "semiconductor_2d_dipole_correction_api_verified",
+    "semiconductor_2d_dipole_correction_api_contract",
+    "semiconductor_2d_dipole_correction_api_property",
+    "semiconductor_2d_dipole_correction_mode",
+    "semiconductor_2d_dipole_correction_enabled",
+    "semiconductor_2d_dipole_correction_task_compatible",
+    "semiconductor_2d_dipole_correction_vacuum_requirement_met",
     "semiconductor_2d_dipole_correction_setting_verified",
+    "semiconductor_2d_geometry_relaxation_required",
     "semiconductor_2d_calculation_review_required",
     "semiconductor_2d_quantitative_electrostatic_calculation_ready",
     "semiconductor_slab_vacuum_ok",
@@ -4454,8 +4474,18 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "two_dimensional_electrostatic_preflight_required": True,
                     "charge_density_available_in_model_spec_diagnostics": False,
                     "dipole_moment_calculated": False,
-                    "dipole_correction_setting_verified": False,
-                    "dipole_review_method": "reviewed_materials_studio_copy_script_or_documented_castep_ui",
+                    "dipole_correction_api_contract": "Materials Studio 20.1 CASTEP DipoleCorrection",
+                    "dipole_correction_api_property": "DipoleCorrection",
+                    "dipole_correction_modes": [
+                        "None",
+                        "Non self-consistent",
+                        "Self-consistent",
+                    ],
+                    "dipole_correction_minimum_vacuum_angstrom": 8.0,
+                    "non_self_consistent_energy_only": True,
+                    "dipole_correction_direction_property_exposed": False,
+                    "dipole_correction_setting_verified_from_model_spec": True,
+                    "dipole_review_method": "structured_materialscript_setting_verified_against_ms20_1_help",
                     "quantitative_electrostatic_calculation_ready": False,
                 },
                 "superlattice_examples": [
@@ -5399,7 +5429,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_charge_density_available",
                 "semiconductor_2d_dipole_moment_calculated",
                 "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_api_contract",
+                "semiconductor_2d_dipole_correction_api_property",
+                "semiconductor_2d_dipole_correction_mode",
+                "semiconductor_2d_dipole_correction_enabled",
+                "semiconductor_2d_dipole_correction_task_compatible",
+                "semiconductor_2d_dipole_correction_vacuum_requirement_met",
                 "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_geometry_relaxation_required",
                 "semiconductor_2d_calculation_review_required",
                 "semiconductor_2d_quantitative_electrostatic_calculation_ready",
             ],
@@ -5715,7 +5752,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_charge_density_available",
                 "semiconductor_2d_dipole_moment_calculated",
                 "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_api_contract",
+                "semiconductor_2d_dipole_correction_api_property",
+                "semiconductor_2d_dipole_correction_mode",
+                "semiconductor_2d_dipole_correction_enabled",
+                "semiconductor_2d_dipole_correction_task_compatible",
+                "semiconductor_2d_dipole_correction_vacuum_requirement_met",
                 "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_geometry_relaxation_required",
                 "semiconductor_2d_calculation_review_required",
                 "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "structure_path",
@@ -6387,7 +6431,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_charge_density_available",
                 "semiconductor_2d_dipole_moment_calculated",
                 "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_api_contract",
+                "semiconductor_2d_dipole_correction_api_property",
+                "semiconductor_2d_dipole_correction_mode",
+                "semiconductor_2d_dipole_correction_enabled",
+                "semiconductor_2d_dipole_correction_task_compatible",
+                "semiconductor_2d_dipole_correction_vacuum_requirement_met",
                 "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_geometry_relaxation_required",
                 "semiconductor_2d_calculation_review_required",
                 "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "semiconductor_surface_preparation_status",
@@ -6450,7 +6501,14 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_charge_density_available",
                 "semiconductor_2d_dipole_moment_calculated",
                 "semiconductor_2d_dipole_correction_api_verified",
+                "semiconductor_2d_dipole_correction_api_contract",
+                "semiconductor_2d_dipole_correction_api_property",
+                "semiconductor_2d_dipole_correction_mode",
+                "semiconductor_2d_dipole_correction_enabled",
+                "semiconductor_2d_dipole_correction_task_compatible",
+                "semiconductor_2d_dipole_correction_vacuum_requirement_met",
                 "semiconductor_2d_dipole_correction_setting_verified",
+                "semiconductor_2d_geometry_relaxation_required",
                 "semiconductor_2d_calculation_review_required",
                 "semiconductor_2d_quantitative_electrostatic_calculation_ready",
                 "semiconductor_gate_stack_quality",
@@ -10799,6 +10857,10 @@ def material_studio_castep_energy_script(
         tuple[int, int, int] | None,
         Field(description="Optional primary SCF custom k-point grid."),
     ] = None,
+    dipole_correction: Annotated[
+        CastepDipoleCorrectionValue | None,
+        Field(description="Optional verified Materials Studio 20.1 dipole-correction mode."),
+    ] = None,
 ) -> dict[str, Any]:
     """Generate a task-aware CASTEP MaterialsScript Perl template.
 
@@ -10814,6 +10876,7 @@ def material_studio_castep_energy_script(
         cutoff_energy_ev (int | None): optional cutoff energy in eV.
         kpoint_separation (float | None): optional primary SCF k-point separation.
         kpoints (tuple[int, int, int] | None): optional primary SCF custom grid.
+        dipole_correction (str | None): optional verified DipoleCorrection mode.
 
     Returns:
         dict[str, Any]: generated MaterialsScript Perl source code.
@@ -10827,6 +10890,7 @@ def material_studio_castep_energy_script(
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
+        dipole_correction=dipole_correction,
     )
     spec = CastepEnergySpec(
         task=params.task,
@@ -10835,6 +10899,7 @@ def material_studio_castep_energy_script(
         cutoff_energy_ev=params.cutoff_energy_ev,
         kpoint_separation=params.kpoint_separation,
         kpoints=params.kpoints,
+        dipole_correction=params.dipole_correction,
     )
     plan = build_castep_materialscript_plan(spec)
     script = castep_energy_script(
@@ -10845,6 +10910,9 @@ def material_studio_castep_energy_script(
         cutoff_energy_ev=spec.cutoff_energy_ev,
         kpoint_separation=spec.kpoint_separation,
         kpoints=spec.kpoints,
+        dipole_correction=(
+            spec.dipole_correction.value if spec.dipole_correction is not None else None
+        ),
     )
     return _ok(
         {
@@ -15400,8 +15468,29 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "semiconductor_2d_dipole_correction_api_verified": semiconductor_2d_electrostatics.get(
             "dipole_correction_api_verified"
         ),
+        "semiconductor_2d_dipole_correction_api_contract": semiconductor_2d_electrostatics.get(
+            "dipole_correction_api_contract"
+        ),
+        "semiconductor_2d_dipole_correction_api_property": semiconductor_2d_electrostatics.get(
+            "dipole_correction_api_property"
+        ),
+        "semiconductor_2d_dipole_correction_mode": semiconductor_2d_electrostatics.get(
+            "dipole_correction_mode"
+        ),
+        "semiconductor_2d_dipole_correction_enabled": semiconductor_2d_electrostatics.get(
+            "dipole_correction_enabled"
+        ),
+        "semiconductor_2d_dipole_correction_task_compatible": semiconductor_2d_electrostatics.get(
+            "dipole_correction_task_compatible"
+        ),
+        "semiconductor_2d_dipole_correction_vacuum_requirement_met": semiconductor_2d_electrostatics.get(
+            "dipole_correction_vacuum_requirement_met"
+        ),
         "semiconductor_2d_dipole_correction_setting_verified": semiconductor_2d_electrostatics.get(
             "dipole_correction_setting_verified"
+        ),
+        "semiconductor_2d_geometry_relaxation_required": semiconductor_2d_electrostatics.get(
+            "geometry_relaxation_required"
         ),
         "semiconductor_2d_calculation_review_required": semiconductor_2d_electrostatics.get(
             "calculation_review_required"
@@ -27799,8 +27888,29 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_2d_dipole_correction_api_verified": two_dimensional_electrostatics.get(
                 "dipole_correction_api_verified"
             ),
+            "semiconductor_2d_dipole_correction_api_contract": two_dimensional_electrostatics.get(
+                "dipole_correction_api_contract"
+            ),
+            "semiconductor_2d_dipole_correction_api_property": two_dimensional_electrostatics.get(
+                "dipole_correction_api_property"
+            ),
+            "semiconductor_2d_dipole_correction_mode": two_dimensional_electrostatics.get(
+                "dipole_correction_mode"
+            ),
+            "semiconductor_2d_dipole_correction_enabled": two_dimensional_electrostatics.get(
+                "dipole_correction_enabled"
+            ),
+            "semiconductor_2d_dipole_correction_task_compatible": two_dimensional_electrostatics.get(
+                "dipole_correction_task_compatible"
+            ),
+            "semiconductor_2d_dipole_correction_vacuum_requirement_met": two_dimensional_electrostatics.get(
+                "dipole_correction_vacuum_requirement_met"
+            ),
             "semiconductor_2d_dipole_correction_setting_verified": two_dimensional_electrostatics.get(
                 "dipole_correction_setting_verified"
+            ),
+            "semiconductor_2d_geometry_relaxation_required": two_dimensional_electrostatics.get(
+                "geometry_relaxation_required"
             ),
             "semiconductor_2d_calculation_review_required": two_dimensional_electrostatics.get(
                 "calculation_review_required"
@@ -29494,6 +29604,11 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
                 "kpoint_mode",
                 "kpoint_separation",
                 "kpoints",
+                "dipole_correction_mode",
+                "dipole_correction_configured",
+                "dipole_correction_enabled",
+                "dipole_correction_api_contract",
+                "dipole_correction_api_property",
                 "ready_for_requested_task_preflight",
                 "requires_prior_relaxed_structure",
                 "settings_review_required",
@@ -30134,8 +30249,22 @@ def _semiconductor_2d_electrostatic_review(
             "charge_density_available",
             "dipole_moment_calculated",
             "dipole_correction_api_verified",
+            "dipole_correction_api_contract",
+            "dipole_correction_api_property",
+            "dipole_correction_direction_property_exposed",
+            "dipole_correction_direction_status",
+            "dipole_correction_setting_source",
+            "dipole_correction_setting_configured",
+            "dipole_correction_mode",
+            "dipole_correction_enabled",
+            "dipole_correction_task",
+            "dipole_correction_task_compatible",
+            "dipole_correction_minimum_vacuum_angstrom",
+            "dipole_correction_vacuum_requirement_met",
+            "dipole_correction_symmetry_behavior",
             "dipole_correction_setting_verified",
             "dipole_correction_review_method",
+            "geometry_relaxation_required",
             "calculation_review_required",
             "quantitative_electrostatic_calculation_ready",
             "calculation_blocking_reasons",

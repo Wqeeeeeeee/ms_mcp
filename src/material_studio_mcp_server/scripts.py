@@ -295,6 +295,7 @@ def castep_energy_script(
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None = None,
+    dipole_correction: str | None = None,
 ) -> str:
     """Create a task-aware CASTEP script using the MS 20.1 contract.
 
@@ -316,6 +317,7 @@ def castep_energy_script(
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
+        dipole_correction=dipole_correction,
     )
     run_snippet = render_castep_run_snippet(spec, results_variable="$results")
 

@@ -1099,6 +1099,14 @@ object in `castep_dispatch`, and never executes CASTEP itself. Custom cutoff and
 primary SCF k-point settings use the documented `EnergyCutoff` and
 `KPointDerivation` forms; separate property-grid sampling remains at the
 Materials Studio default until a dedicated reviewed schema field is supplied.
+The same contract exposes `dipole_correction` as the documented
+`DipoleCorrection` setting with exact values `None`, `Non self-consistent`, and
+`Self-consistent`. Non-self-consistent mode is Energy-only. For slab models,
+the two-dimensional electrostatic audit additionally requires at least 8
+angstrom of vacuum before treating an enabled setting as verified. No separate
+dipole-direction MaterialsScript property is exposed by the verified 20.1 API,
+so the MCP does not synthesize one. This is an input-setting receipt, not a
+charge-density or dipole-moment result.
 For structured crystal revisions, inspect the separate
 `calculation_preview` receipt. Its `script_path` points to the persisted
 `scripts/rNNN_castep_task.pl` companion, while `artifact_status`, generated and

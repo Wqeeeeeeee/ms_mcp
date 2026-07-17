@@ -1,5 +1,15 @@
 {
   "$defs": {
+    "CastepDipoleCorrection": {
+      "description": "Dipole-correction modes documented by Materials Studio 20.1.",
+      "enum": [
+        "None",
+        "Non self-consistent",
+        "Self-consistent"
+      ],
+      "title": "CastepDipoleCorrection",
+      "type": "string"
+    },
     "CastepTask": {
       "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
       "enum": [
@@ -413,6 +423,17 @@
           ],
           "default": null,
           "title": "Kpoints"
+        },
+        "dipole_correction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepDipoleCorrection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "matrix": {
           "anyOf": [

@@ -11,7 +11,15 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
-from .specs.castep import normalize_castep_task
+from .specs.castep import (
+    CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
+    CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
+    CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM,
+    CastepDipoleCorrection,
+    CastepEnergySpec,
+    CastepTask,
+    normalize_castep_task,
+)
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
@@ -884,6 +892,11 @@ def write_view_audit_bundle(
                 "kpoint_mode",
                 "kpoint_separation",
                 "kpoints",
+                "dipole_correction_mode",
+                "dipole_correction_configured",
+                "dipole_correction_enabled",
+                "dipole_correction_api_contract",
+                "dipole_correction_api_property",
                 "slab_axis",
                 "slab_kpoint_axis_value",
                 "output_file",
@@ -1512,8 +1525,22 @@ def write_view_audit_bundle(
                 "charge_density_available",
                 "dipole_moment_calculated",
                 "dipole_correction_api_verified",
+                "dipole_correction_api_contract",
+                "dipole_correction_api_property",
+                "dipole_correction_direction_property_exposed",
+                "dipole_correction_direction_status",
+                "dipole_correction_setting_source",
+                "dipole_correction_setting_configured",
+                "dipole_correction_mode",
+                "dipole_correction_enabled",
+                "dipole_correction_task",
+                "dipole_correction_task_compatible",
+                "dipole_correction_minimum_vacuum_angstrom",
+                "dipole_correction_vacuum_requirement_met",
+                "dipole_correction_symmetry_behavior",
                 "dipole_correction_setting_verified",
                 "dipole_correction_review_method",
+                "geometry_relaxation_required",
                 "calculation_review_required",
                 "quantitative_electrostatic_calculation_ready",
                 "calculation_blocking_reasons",
@@ -2210,7 +2237,14 @@ def write_view_audit_bundle(
             "semiconductor_2d_charge_density_available",
             "semiconductor_2d_dipole_moment_calculated",
             "semiconductor_2d_dipole_correction_api_verified",
+            "semiconductor_2d_dipole_correction_api_contract",
+            "semiconductor_2d_dipole_correction_api_property",
+            "semiconductor_2d_dipole_correction_mode",
+            "semiconductor_2d_dipole_correction_enabled",
+            "semiconductor_2d_dipole_correction_task_compatible",
+            "semiconductor_2d_dipole_correction_vacuum_requirement_met",
             "semiconductor_2d_dipole_correction_setting_verified",
+            "semiconductor_2d_geometry_relaxation_required",
             "semiconductor_2d_calculation_review_required",
             "semiconductor_2d_quantitative_electrostatic_calculation_ready",
             "errors",
@@ -2386,8 +2420,29 @@ def _modeling_health_summary_csv_row(
         "semiconductor_2d_dipole_correction_api_verified": checks.get(
             "semiconductor_2d_dipole_correction_api_verified"
         ),
+        "semiconductor_2d_dipole_correction_api_contract": checks.get(
+            "semiconductor_2d_dipole_correction_api_contract"
+        ),
+        "semiconductor_2d_dipole_correction_api_property": checks.get(
+            "semiconductor_2d_dipole_correction_api_property"
+        ),
+        "semiconductor_2d_dipole_correction_mode": checks.get(
+            "semiconductor_2d_dipole_correction_mode"
+        ),
+        "semiconductor_2d_dipole_correction_enabled": checks.get(
+            "semiconductor_2d_dipole_correction_enabled"
+        ),
+        "semiconductor_2d_dipole_correction_task_compatible": checks.get(
+            "semiconductor_2d_dipole_correction_task_compatible"
+        ),
+        "semiconductor_2d_dipole_correction_vacuum_requirement_met": checks.get(
+            "semiconductor_2d_dipole_correction_vacuum_requirement_met"
+        ),
         "semiconductor_2d_dipole_correction_setting_verified": checks.get(
             "semiconductor_2d_dipole_correction_setting_verified"
+        ),
+        "semiconductor_2d_geometry_relaxation_required": checks.get(
+            "semiconductor_2d_geometry_relaxation_required"
         ),
         "semiconductor_2d_calculation_review_required": checks.get(
             "semiconductor_2d_calculation_review_required"
@@ -2512,6 +2567,11 @@ def _semiconductor_calculation_preflight_csv_rows(summary: dict[str, Any]) -> li
             "kpoint_mode": summary.get("kpoint_mode"),
             "kpoint_separation": summary.get("kpoint_separation"),
             "kpoints": _join_vector(summary.get("kpoints")),
+            "dipole_correction_mode": summary.get("dipole_correction_mode"),
+            "dipole_correction_configured": summary.get("dipole_correction_configured"),
+            "dipole_correction_enabled": summary.get("dipole_correction_enabled"),
+            "dipole_correction_api_contract": summary.get("dipole_correction_api_contract"),
+            "dipole_correction_api_property": summary.get("dipole_correction_api_property"),
             "slab_axis": summary.get("slab_axis"),
             "slab_kpoint_axis_value": summary.get("slab_kpoint_axis_value"),
             "output_file": summary.get("output_file"),
@@ -5473,6 +5533,8 @@ def _surface_model_summary(
         blocking_reasons.append("two_dimensional_electrostatics:model_geometry_unverified")
     elif electrostatics.get("calculation_review_required"):
         review_reasons.append("two_dimensional_electrostatics:dipole_correction_review_required")
+    elif polarity.get("expected_2d_heterobilayer_asymmetry") is True:
+        pass
     elif polarity_status == "asymmetric_or_polar":
         review_reasons.append("surface_polarity:asymmetric_or_polar")
     elif polarity_status not in {None, "symmetric_nonpolar"}:
@@ -5822,6 +5884,22 @@ def _two_dimensional_electrostatic_summary(
     top_material = heterobilayer.get("top_material") or latest.get("top_material")
     bottom_layer_element_counts = heterobilayer.get("bottom_layer_element_counts") or {}
     top_layer_element_counts = heterobilayer.get("top_layer_element_counts") or {}
+    simulation = spec.simulation if isinstance(spec.simulation, CastepEnergySpec) else None
+    dipole_mode = simulation.dipole_correction if simulation is not None else None
+    dipole_setting_configured = dipole_mode is not None
+    dipole_enabled = dipole_mode in {
+        CastepDipoleCorrection.SELF_CONSISTENT,
+        CastepDipoleCorrection.NON_SELF_CONSISTENT,
+    }
+    dipole_task = normalize_castep_task(simulation.task) if simulation is not None else None
+    dipole_task_compatible = bool(
+        dipole_enabled
+        and (
+            dipole_mode is CastepDipoleCorrection.SELF_CONSISTENT
+            or dipole_task is CastepTask.ENERGY
+        )
+    )
+    dipole_vacuum_requirement_met = bool(vacuum.get("vacuum_ok") is True)
 
     crystal_model = isinstance(spec.model, CrystalSpec)
     structure_binding_verified = bool(
@@ -5860,6 +5938,21 @@ def _two_dimensional_electrostatic_summary(
         and expected_compositional_asymmetry
         and vacuum_geometry_verified
     )
+    dipole_setting_verified = bool(
+        model_geometry_verified
+        and dipole_enabled
+        and dipole_task_compatible
+        and dipole_vacuum_requirement_met
+    )
+    geometry_relaxation_required = bool(
+        heterobilayer.get("requires_geometry_relaxation")
+        and heterobilayer.get("geometry_relaxed") is not True
+    )
+    quantitative_calculation_ready = bool(
+        model_geometry_verified
+        and dipole_setting_verified
+        and not geometry_relaxation_required
+    )
 
     warnings: list[str] = []
     if not crystal_model:
@@ -5875,24 +5968,58 @@ def _two_dimensional_electrostatic_summary(
         )
     if not vacuum_geometry_verified:
         warnings.append("Slab vacuum spacing, centering, or metadata binding is not ready for electrostatic review.")
+    if simulation is None:
+        warnings.append(
+            "No CASTEP simulation is configured, so the verified Materials Studio 20.1 "
+            "DipoleCorrection setting is not present in the current ModelSpec."
+        )
+    elif not dipole_enabled:
+        warnings.append(
+            "CASTEP DipoleCorrection is not enabled for the current two-dimensional heterobilayer."
+        )
+    elif not dipole_task_compatible:
+        warnings.append(
+            "The selected CASTEP dipole-correction mode is not compatible with the configured task."
+        )
+    elif not dipole_vacuum_requirement_met:
+        warnings.append(
+            "CASTEP dipole correction requires at least 8 angstrom of slab vacuum."
+        )
     warnings.append(
-        "No charge density is available in ModelSpec diagnostics, so the out-of-plane dipole moment and "
-        "dipole-correction setting are not calculated or verified."
+        "No charge density is available in ModelSpec diagnostics, so the out-of-plane dipole moment "
+        "has not been calculated; this preflight verifies the calculation input setting only."
     )
 
     calculation_blocking_reasons = []
     if not model_geometry_verified:
         calculation_blocking_reasons.append("two_dimensional_electrostatic_model_geometry_unverified")
-    calculation_blocking_reasons.append("two_dimensional_dipole_correction_review_required")
+    if not dipole_setting_verified:
+        calculation_blocking_reasons.append("two_dimensional_dipole_correction_review_required")
+    if geometry_relaxation_required:
+        calculation_blocking_reasons.append(
+            "commensurate_tmd_heterobilayer_requires_geometry_relaxation"
+        )
+    if not model_geometry_verified:
+        status = "model_review_required"
+        quality = "review_required"
+        next_action = "fix_2d_model_geometry_before_quantitative_calculation"
+    elif not dipole_setting_verified:
+        status = "model_geometry_verified_calculation_review"
+        quality = "preflight_complete"
+        next_action = "configure_verified_castep_dipole_correction_before_quantitative_calculation"
+    elif geometry_relaxation_required:
+        status = "dipole_correction_verified_geometry_relaxation_required"
+        quality = "dipole_correction_verified"
+        next_action = "relax_commensurate_tmd_heterobilayer_before_quantitative_calculation"
+    else:
+        status = "quantitative_electrostatic_input_ready"
+        quality = "calculation_input_ready"
+        next_action = "preview_or_explicitly_execute_quantitative_electrostatic_calculation"
     return {
         "available": True,
         "model": "metadata_surface_and_vacuum_preflight_without_charge_density",
-        "status": (
-            "model_geometry_verified_calculation_review"
-            if model_geometry_verified
-            else "model_review_required"
-        ),
-        "quality": "preflight_complete" if model_geometry_verified else "review_required",
+        "status": status,
+        "quality": quality,
         "bottom_material": bottom_material,
         "top_material": top_material,
         "surface_axis": polarity.get("surface_axis") or vacuum.get("surface_axis"),
@@ -5922,13 +6049,27 @@ def _two_dimensional_electrostatic_summary(
         "model_geometry_normality_blocker": not model_geometry_verified,
         "charge_density_available": False,
         "dipole_moment_calculated": False,
-        "dipole_correction_api_verified": False,
-        "dipole_correction_setting_verified": False,
-        "dipole_correction_review_method": "reviewed_materials_studio_copy_script_or_documented_castep_ui",
-        "calculation_review_required": True,
-        "quantitative_electrostatic_calculation_ready": False,
+        "dipole_correction_api_verified": True,
+        "dipole_correction_api_contract": CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
+        "dipole_correction_api_property": CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
+        "dipole_correction_direction_property_exposed": False,
+        "dipole_correction_direction_status": "not_exposed_by_verified_materialscript_contract",
+        "dipole_correction_setting_source": "model_spec.simulation.dipole_correction",
+        "dipole_correction_setting_configured": dipole_setting_configured,
+        "dipole_correction_mode": dipole_mode.value if dipole_mode is not None else None,
+        "dipole_correction_enabled": dipole_enabled,
+        "dipole_correction_task": dipole_task.value if dipole_task is not None else None,
+        "dipole_correction_task_compatible": dipole_task_compatible,
+        "dipole_correction_minimum_vacuum_angstrom": CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM,
+        "dipole_correction_vacuum_requirement_met": dipole_vacuum_requirement_met,
+        "dipole_correction_symmetry_behavior": "materials_studio_converts_molecule_or_slab_to_p1",
+        "dipole_correction_setting_verified": dipole_setting_verified,
+        "dipole_correction_review_method": "structured_materialscript_setting_verified_against_ms20_1_help",
+        "geometry_relaxation_required": geometry_relaxation_required,
+        "calculation_review_required": not dipole_setting_verified,
+        "quantitative_electrostatic_calculation_ready": quantitative_calculation_ready,
         "calculation_blocking_reasons": calculation_blocking_reasons,
-        "next_action": "review_2d_out_of_plane_dipole_correction_before_quantitative_calculation",
+        "next_action": next_action,
         "warning_count": len(warnings),
         "warnings": warnings,
     }
@@ -10406,6 +10547,11 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
             "kpoint_mode": "not_set",
             "kpoint_separation": None,
             "kpoints": None,
+            "dipole_correction_mode": None,
+            "dipole_correction_configured": False,
+            "dipole_correction_enabled": False,
+            "dipole_correction_api_contract": CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
+            "dipole_correction_api_property": CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
             "slab_axis": (lattice_summary or {}).get("surface_axis"),
             "slab_kpoint_axis_value": None,
             "output_file": None,
@@ -10428,6 +10574,16 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
     cutoff_energy = _optional_int(getattr(simulation, "cutoff_energy_ev", None))
     kpoint_separation = _optional_float(getattr(simulation, "kpoint_separation", None))
     kpoints = _simulation_kpoints(getattr(simulation, "kpoints", None))
+    dipole_correction = getattr(simulation, "dipole_correction", None)
+    dipole_correction_mode = (
+        str(getattr(dipole_correction, "value", dipole_correction))
+        if dipole_correction is not None
+        else None
+    )
+    dipole_correction_enabled = dipole_correction_mode in {
+        CastepDipoleCorrection.SELF_CONSISTENT.value,
+        CastepDipoleCorrection.NON_SELF_CONSISTENT.value,
+    }
     lattice_summary = lattice_summary or {}
     is_slab = bool(lattice_summary.get("is_slab"))
     slab_axis = lattice_summary.get("surface_axis")
@@ -10527,6 +10683,11 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
         "kpoint_mode": kpoint_mode,
         "kpoint_separation": _round(kpoint_separation) if kpoint_separation is not None else None,
         "kpoints": list(kpoints) if kpoints is not None else None,
+        "dipole_correction_mode": dipole_correction_mode,
+        "dipole_correction_configured": dipole_correction_mode is not None,
+        "dipole_correction_enabled": dipole_correction_enabled,
+        "dipole_correction_api_contract": CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
+        "dipole_correction_api_property": CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
         "slab_axis": slab_axis,
         "slab_kpoint_axis_value": slab_axis_value,
         "output_file": output_file,

@@ -2921,6 +2921,34 @@ def test_infer_modeling_plan_updates_castep_settings_patch() -> None:
     assert calculation["task_intent"] == "band_structure"
 
 
+@pytest.mark.parametrize(
+    ("user_text", "expected_mode"),
+    [
+        ("Enable self-consistent dipole correction for CASTEP.", "Self-consistent"),
+        ("Apply non-self-consistent dipole correction for the energy calculation.", "Non self-consistent"),
+        ("Disable dipole correction.", "None"),
+        ("\u542f\u7528\u81ea\u6d3d\u5076\u6781\u4fee\u6b63", "Self-consistent"),
+        ("\u5173\u95ed\u5076\u6781\u4fee\u6b63", "None"),
+    ],
+)
+def test_infer_modeling_plan_updates_castep_dipole_correction(
+    user_text: str,
+    expected_mode: str,
+) -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+
+    plan = infer_modeling_plan(user_text, current_spec=base)
+
+    assert plan.kind == "patch"
+    assert plan.template_id == "castep_settings"
+    operation = plan.payload["operations"][0]
+    assert operation["type"] == "set_castep_energy"
+    assert operation["task"] == "Energy"
+    assert operation["cutoff_energy_ev"] == base.simulation.cutoff_energy_ev
+    assert operation["kpoint_separation"] == base.simulation.kpoint_separation
+    assert operation["dipole_correction"] == expected_mode
+
+
 def test_infer_modeling_plan_maps_semiconductor_property_aliases_to_castep_patch() -> None:
     base = load_example("silicon_diamond_spec.json")
 
@@ -3836,12 +3864,22 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert electrostatics["model_geometry_normality_blocker"] is False
     assert electrostatics["charge_density_available"] is False
     assert electrostatics["dipole_moment_calculated"] is False
-    assert electrostatics["dipole_correction_api_verified"] is False
+    assert electrostatics["dipole_correction_api_verified"] is True
+    assert electrostatics["dipole_correction_api_contract"] == (
+        "Materials Studio 20.1 CASTEP DipoleCorrection"
+    )
+    assert electrostatics["dipole_correction_api_property"] == "DipoleCorrection"
+    assert electrostatics["dipole_correction_direction_property_exposed"] is False
+    assert electrostatics["dipole_correction_setting_configured"] is False
+    assert electrostatics["dipole_correction_mode"] is None
+    assert electrostatics["dipole_correction_enabled"] is False
     assert electrostatics["dipole_correction_setting_verified"] is False
+    assert electrostatics["geometry_relaxation_required"] is True
     assert electrostatics["calculation_review_required"] is True
     assert electrostatics["quantitative_electrostatic_calculation_ready"] is False
     assert electrostatics["calculation_blocking_reasons"] == [
-        "two_dimensional_dipole_correction_review_required"
+        "two_dimensional_dipole_correction_review_required",
+        "commensurate_tmd_heterobilayer_requires_geometry_relaxation",
     ]
     surface_polarity = audit["health"]["semiconductor_health"]["surface_polarity_summary"]
     assert surface_polarity["surface_polarity_status"] == "asymmetric_expected_2d_heterobilayer"
@@ -3869,8 +3907,12 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert checks["semiconductor_2d_model_geometry_normality_blocker"] is False
     assert checks["semiconductor_2d_charge_density_available"] is False
     assert checks["semiconductor_2d_dipole_moment_calculated"] is False
-    assert checks["semiconductor_2d_dipole_correction_api_verified"] is False
+    assert checks["semiconductor_2d_dipole_correction_api_verified"] is True
+    assert checks["semiconductor_2d_dipole_correction_api_property"] == "DipoleCorrection"
+    assert checks["semiconductor_2d_dipole_correction_mode"] is None
+    assert checks["semiconductor_2d_dipole_correction_enabled"] is False
     assert checks["semiconductor_2d_dipole_correction_setting_verified"] is False
+    assert checks["semiconductor_2d_geometry_relaxation_required"] is True
     assert checks["semiconductor_2d_calculation_review_required"] is True
 
     bundle = write_view_audit_bundle(
@@ -3900,6 +3942,8 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert electrostatic_rows[0]["expected_compositional_asymmetry_verified"] == "True"
     assert electrostatic_rows[0]["model_geometry_normality_blocker"] == "False"
     assert electrostatic_rows[0]["charge_density_available"] == "False"
+    assert electrostatic_rows[0]["dipole_correction_api_verified"] == "True"
+    assert electrostatic_rows[0]["dipole_correction_api_property"] == "DipoleCorrection"
     assert electrostatic_rows[0]["dipole_correction_setting_verified"] == "False"
     health_rows = list(
         csv.DictReader(
@@ -3912,7 +3956,7 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
         "model_geometry_verified_calculation_review"
     )
     assert health_rows[0]["semiconductor_2d_model_geometry_verified"] == "True"
-    assert health_rows[0]["semiconductor_2d_dipole_correction_api_verified"] == "False"
+    assert health_rows[0]["semiconductor_2d_dipole_correction_api_verified"] == "True"
 
     target = next(atom for atom in heterobilayer.model.basis_atoms if atom.id.startswith("Setop1_L2_"))
     stale, _ = apply_semantic_patch(
@@ -3945,6 +3989,100 @@ def test_commensurate_tmd_heterobilayer_diagnostics_verify_materials_strain_and_
     assert "two_dimensional_electrostatic_model_geometry_unverified" in stale_electrostatics[
         "calculation_blocking_reasons"
     ]
+
+
+def test_self_consistent_dipole_correction_clears_only_the_2d_setting_blocker(
+    tmp_path: Path,
+) -> None:
+    base = load_example("molybdenum_disulfide_2d_mos2_monolayer_spec.json")
+    heterobilayer, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_commensurate_tmd_heterobilayer",
+                    "top_layer_material": "WSe2",
+                    "commensurate_m": 2,
+                    "commensurate_n": 1,
+                    "interlayer_distance_angstrom": 6.32,
+                    "strain_policy": "balanced",
+                    "max_strain_percent": 3.0,
+                }
+            ],
+        ),
+    )
+    simulation = heterobilayer.simulation
+    assert simulation is not None
+    operation = {
+        "type": "set_castep_energy",
+        "task": simulation.task.value,
+        "functional": simulation.functional,
+        "quality": simulation.quality,
+        "cutoff_energy_ev": simulation.cutoff_energy_ev,
+        "kpoint_separation": simulation.kpoint_separation,
+        "dipole_correction": "Self-consistent",
+    }
+    configured, diff = apply_semantic_patch(
+        heterobilayer,
+        SemanticPatch(
+            project_id=heterobilayer.project_id,
+            base_revision=heterobilayer.revision,
+            operations=[operation],
+        ),
+    )
+
+    assert diff == ["set_castep_energy"]
+    assert configured.simulation is not None
+    assert configured.simulation.dipole_correction.value == "Self-consistent"
+    semiconductor = model_view_audit(configured)["health"]["semiconductor_health"]
+    electrostatics = semiconductor["two_dimensional_electrostatic_summary"]
+    assert electrostatics["status"] == "dipole_correction_verified_geometry_relaxation_required"
+    assert electrostatics["quality"] == "dipole_correction_verified"
+    assert electrostatics["dipole_correction_api_verified"] is True
+    assert electrostatics["dipole_correction_mode"] == "Self-consistent"
+    assert electrostatics["dipole_correction_enabled"] is True
+    assert electrostatics["dipole_correction_task"] == "Energy"
+    assert electrostatics["dipole_correction_task_compatible"] is True
+    assert electrostatics["dipole_correction_vacuum_requirement_met"] is True
+    assert electrostatics["dipole_correction_setting_verified"] is True
+    assert electrostatics["calculation_review_required"] is False
+    assert electrostatics["geometry_relaxation_required"] is True
+    assert electrostatics["quantitative_electrostatic_calculation_ready"] is False
+    assert electrostatics["calculation_blocking_reasons"] == [
+        "commensurate_tmd_heterobilayer_requires_geometry_relaxation"
+    ]
+    assert semiconductor["surface_model_summary"]["status"] == "ready"
+
+    audit = model_view_audit(configured)
+    health = build_modeling_health({"ok": True, "view_audit": audit}, execution_mode="preview")
+    assert health["checks"]["semiconductor_2d_dipole_correction_mode"] == "Self-consistent"
+    assert health["checks"]["semiconductor_2d_dipole_correction_setting_verified"] is True
+    assert health["checks"]["semiconductor_2d_geometry_relaxation_required"] is True
+    bundle = write_view_audit_bundle(tmp_path, configured, audit, modeling_health=health)
+    rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["semiconductor_2d_electrostatics_csv"]).open(
+                encoding="utf-8",
+                newline="",
+            )
+        )
+    )
+    assert rows[0]["dipole_correction_mode"] == "Self-consistent"
+    assert rows[0]["dipole_correction_setting_verified"] == "True"
+    assert rows[0]["geometry_relaxation_required"] == "True"
+    calculation_rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["semiconductor_calculation_preflight_csv"]).open(
+                encoding="utf-8",
+                newline="",
+            )
+        )
+    )
+    assert calculation_rows[0]["dipole_correction_mode"] == "Self-consistent"
+    assert calculation_rows[0]["dipole_correction_enabled"] == "True"
+    assert calculation_rows[0]["dipole_correction_api_property"] == "DipoleCorrection"
 
 
 def test_write_view_audit_bundle_exports_semiconductor_csv_tables(tmp_path: Path) -> None:

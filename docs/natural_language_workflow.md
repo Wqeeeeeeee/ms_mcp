@@ -1016,6 +1016,26 @@ use their dedicated task objects. A custom cutoff emits
 either `KPointDerivation=Separation` with `KPointSeparation` or
 `KPointDerivation=CustomGrid` with `ParameterA/B/C`. The renderer deliberately
 does not treat `kpoint_separation` as a property-grid override.
+
+Slab dipole correction uses the same `set_castep_energy` patch path. The
+locally installed 20.1 scripting help documents the exact MaterialsScript
+property `DipoleCorrection` and values `None`, `Non self-consistent`, and
+`Self-consistent`. The renderer emits that exact property and never guesses a
+separate direction setting because none is exposed by the verified
+MaterialsScript contract. `Non self-consistent` is accepted only for the
+`Energy` task; either enabled mode requires at least 8 angstrom of slab vacuum
+before `two_dimensional_electrostatic_summary.dipole_correction_setting_verified`
+can become true. Requests such as `Enable self-consistent dipole correction`,
+`Disable dipole correction`, `启用自洽偶极修正`, and `关闭偶极修正` preserve the
+current cutoff and k-point settings while creating a new simulation revision.
+
+The two-dimensional electrostatic preflight still has no charge density and
+does not calculate a dipole moment. A verified `DipoleCorrection` input removes
+only `two_dimensional_dipole_correction_review_required`. An unrelaxed
+commensurate heterobilayer continues to report
+`commensurate_tmd_heterobilayer_requires_geometry_relaxation`, and quantitative
+electrostatic readiness remains false until that independent blocker is
+resolved and re-audited.
 Common Chinese CASTEP setting phrases are also supported, including
 `设置 CASTEP 截断能为 600 eV`,
 `计算带隙，平面波截断 520 eV，k点网格 6×6×6`, and

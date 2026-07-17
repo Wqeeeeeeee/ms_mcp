@@ -136,6 +136,10 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "make_commensurate_tmd_heterobilayer" in operation_type["enum"]
     task_schema = schema["$defs"]["SemanticPatchOperation"]["properties"]["task"]
     assert task_schema["anyOf"][0]["$ref"] == "#/$defs/CastepTask"
+    dipole_schema = schema["$defs"]["SemanticPatchOperation"]["properties"][
+        "dipole_correction"
+    ]
+    assert dipole_schema["anyOf"][0]["$ref"] == "#/$defs/CastepDipoleCorrection"
     assert "metadata_updates" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "atom_ids" in schema["$defs"]["SemanticPatchOperation"]["properties"]
     assert "distance_angstrom" in schema["$defs"]["SemanticPatchOperation"]["properties"]
@@ -185,4 +189,12 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
         "Optics",
         "Phonon",
         "ElasticConstants",
+    ]
+    assert castep_schema["properties"]["dipole_correction"]["anyOf"][0]["$ref"] == (
+        "#/$defs/CastepDipoleCorrection"
+    )
+    assert castep_schema["$defs"]["CastepDipoleCorrection"]["enum"] == [
+        "None",
+        "Non self-consistent",
+        "Self-consistent",
     ]

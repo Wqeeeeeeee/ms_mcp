@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from .runner import perl_string
-from .specs.castep import CastepEnergySpec, CastepTask, normalize_castep_task
+from .specs.castep import (
+    CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
+    CastepEnergySpec,
+    CastepTask,
+    normalize_castep_task,
+)
 
 
 CASTEP_MATERIALSCRIPT_CONTRACT = "Materials Studio 20.1"
@@ -78,6 +83,10 @@ def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialSc
                 ("UseCustomEnergyCutoff", "Yes"),
                 ("EnergyCutoff", spec.cutoff_energy_ev),
             ]
+        )
+    if spec.dipole_correction is not None:
+        settings.append(
+            (CASTEP_DIPOLE_CORRECTION_API_PROPERTY, spec.dipole_correction.value)
         )
     if spec.kpoint_separation is not None:
         settings.extend(

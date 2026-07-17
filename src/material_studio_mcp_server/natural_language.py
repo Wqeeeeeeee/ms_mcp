@@ -12334,14 +12334,72 @@ def _match_set_bond_type(text: str) -> tuple[str, str, str] | None:
 
 
 
-def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any] | None:
+def _match_castep_dipole_correction(text: str) -> str | None:
+    """Match explicit dipole-correction intent to the MS 20.1 enum strings."""
+
     lowered = text.lower()
-    has_trigger = bool(
+    mentions_dipole_correction = bool(
+        re.search(r"\bdipole[- ]?corrections?\b", lowered)
+    ) or any(
+        token in text
+        for token in (
+            "\u5076\u6781\u4fee\u6b63",
+            "\u5076\u6781\u6821\u6b63",
+        )
+    )
+    if not mentions_dipole_correction:
+        return None
+
+    if (
         re.search(
-            r"\b(?:castep|cutoff|k[- ]?point|kpoints?|band\s*structure|band[- ]?gap|electronic\s+bands?|density\s+of\s+states|projected\s+density\s+of\s+states|dos|pdos|optical|optics|phonons?|elastic(?:ity| constants?)?|geometry\s+optimi[sz]ation|geom\s*opt|relaxation|scf|self[- ]?consistent)\b",
+            r"\b(?:disable|remove|turn\s+off|without|no)\b.{0,30}\bdipole[- ]?corrections?\b",
             lowered,
         )
+        or re.search(r"\bdipole[- ]?corrections?\b.{0,20}\b(?:off|none|disabled)\b", lowered)
+        or any(
+            token in text
+            for token in (
+                "\u5173\u95ed\u5076\u6781\u4fee\u6b63",
+                "\u7981\u7528\u5076\u6781\u4fee\u6b63",
+                "\u53d6\u6d88\u5076\u6781\u4fee\u6b63",
+                "\u4e0d\u4f7f\u7528\u5076\u6781\u4fee\u6b63",
+                "\u5173\u95ed\u5076\u6781\u6821\u6b63",
+            )
+        )
+    ):
+        return "None"
+    if re.search(r"\b(?:non[- ]?self[- ]?consistent|static)\b", lowered) or any(
+        token in text for token in ("\u975e\u81ea\u6d3d\u5076\u6781", "\u9759\u6001\u5076\u6781")
+    ):
+        return "Non self-consistent"
+    if re.search(r"\bself[- ]?consistent\b", lowered) or "\u81ea\u6d3d\u5076\u6781" in text:
+        return "Self-consistent"
+    if re.search(
+        r"\b(?:enable|apply|use|turn\s+on|set)\b.{0,30}\bdipole[- ]?corrections?\b",
+        lowered,
     ) or any(
+        token in text
+        for token in (
+            "\u542f\u7528\u5076\u6781\u4fee\u6b63",
+            "\u5f00\u542f\u5076\u6781\u4fee\u6b63",
+            "\u5e94\u7528\u5076\u6781\u4fee\u6b63",
+            "\u8bbe\u7f6e\u5076\u6781\u4fee\u6b63",
+            "\u542f\u7528\u5076\u6781\u6821\u6b63",
+        )
+    ):
+        return "Self-consistent"
+    return None
+
+
+def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any] | None:
+    lowered = text.lower()
+    dipole_correction = _match_castep_dipole_correction(text)
+    has_trigger = bool(
+        re.search(
+            r"\b(?:castep|cutoff|k[- ]?point|kpoints?|band\s*structure|band[- ]?gap|electronic\s+bands?|density\s+of\s+states|projected\s+density\s+of\s+states|dos|pdos|optical|optics|phonons?|elastic(?:ity| constants?)?|geometry\s+optimi[sz]ation|geom\s*opt|relaxation|scf|self[- ]?consistent|dipole[- ]?corrections?)\b",
+            lowered,
+        )
+    ) or dipole_correction is not None or any(
         token in text
         for token in (
             "\u8ba1\u7b97\u5e26\u9699",
@@ -12363,6 +12421,8 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
             "\u5f1b\u8c6b",
             "\u5355\u70b9\u80fd",
             "\u81ea\u6d3d",
+            "\u5076\u6781\u4fee\u6b63",
+            "\u5076\u6781\u6821\u6b63",
         )
     )
     if not has_trigger:
@@ -12372,7 +12432,13 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
     cutoff = _match_castep_cutoff(text)
     kpoints = _match_castep_kpoint_grid(text)
     kpoint_separation = None if kpoints is not None else _match_castep_kpoint_separation(text)
-    if task is None and cutoff is None and kpoints is None and kpoint_separation is None:
+    if (
+        task is None
+        and cutoff is None
+        and kpoints is None
+        and kpoint_separation is None
+        and dipole_correction is None
+    ):
         return None
 
     simulation = current_spec.simulation
@@ -12399,6 +12465,15 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
             operation["kpoints"] = list(existing_kpoints)
         elif existing_kpoint_separation is not None:
             operation["kpoint_separation"] = float(existing_kpoint_separation)
+
+    if dipole_correction is not None:
+        operation["dipole_correction"] = dipole_correction
+    else:
+        existing_dipole_correction = getattr(simulation, "dipole_correction", None)
+        if existing_dipole_correction is not None:
+            operation["dipole_correction"] = str(
+                getattr(existing_dipole_correction, "value", existing_dipole_correction)
+            )
 
     return operation
 
@@ -12433,7 +12508,7 @@ def _match_castep_task(text: str) -> str | None:
         return "GeometryOptimization"
     if any(token in text for token in ("\u51e0\u4f55\u4f18\u5316", "\u7ed3\u6784\u4f18\u5316", "\u4f18\u5316\u7ed3\u6784", "\u5f1b\u8c6b")):
         return "GeometryOptimization"
-    if re.search(r"\b(?:single[- ]point\s+energy|static\s+energy|energy\s+calculation|scf|self[- ]?consistent(?:\s+field)?)\b", lowered):
+    if re.search(r"\b(?:single[- ]point\s+energy|static\s+energy|energy\s+calculation|scf)\b", lowered):
         return "Energy"
     if any(token in text for token in ("\u5355\u70b9\u80fd", "\u9759\u6001\u80fd\u91cf", "\u80fd\u91cf\u8ba1\u7b97", "\u81ea\u6d3d")):
         return "Energy"

@@ -10,7 +10,11 @@ from material_studio_mcp_server.castep_materialscript import (
     render_castep_run_snippet,
 )
 from material_studio_mcp_server.scripts import castep_energy_script
-from material_studio_mcp_server.specs.castep import CastepEnergySpec, CastepTask
+from material_studio_mcp_server.specs.castep import (
+    CastepDipoleCorrection,
+    CastepEnergySpec,
+    CastepTask,
+)
 from material_studio_mcp_server.specs.patch import SemanticPatchOperation
 from material_studio_mcp_server.validators import validate_generated_script
 
@@ -80,6 +84,63 @@ def test_castep_custom_grid_uses_parameter_axes() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value", "canonical"),
+    [
+        ("Self-consistent", CastepDipoleCorrection.SELF_CONSISTENT),
+        ("self consistent", CastepDipoleCorrection.SELF_CONSISTENT),
+        ("Non self-consistent", CastepDipoleCorrection.NON_SELF_CONSISTENT),
+        ("static", CastepDipoleCorrection.NON_SELF_CONSISTENT),
+        ("off", CastepDipoleCorrection.NONE),
+    ],
+)
+def test_castep_dipole_correction_uses_verified_ms_20_1_enum(
+    value: str,
+    canonical: CastepDipoleCorrection,
+) -> None:
+    spec = CastepEnergySpec(dipole_correction=value)
+    plan = build_castep_materialscript_plan(spec)
+    script = render_castep_run_snippet(spec)
+
+    assert spec.dipole_correction is canonical
+    assert {item["name"]: item["value"] for item in plan.summary()["settings"]}[
+        "DipoleCorrection"
+    ] == canonical.value
+    assert f"DipoleCorrection => '{canonical.value}'" in script
+    full_script = castep_energy_script(
+        "input.xsd",
+        quality="Medium",
+        task="Energy",
+        functional="PBE",
+        cutoff_energy_ev=None,
+        kpoint_separation=None,
+        dipole_correction=canonical.value,
+    )
+    assert validate_generated_script(full_script)["valid"] is True
+
+
+def test_castep_non_self_consistent_dipole_correction_is_energy_only() -> None:
+    with pytest.raises(ValidationError, match="only for the Energy task"):
+        CastepEnergySpec(
+            task="GeometryOptimization",
+            dipole_correction="Non self-consistent",
+        )
+
+    with pytest.raises(ValidationError, match="only for the Energy task"):
+        SemanticPatchOperation.model_validate(
+            {
+                "type": "set_castep_energy",
+                "task": "BandStructure",
+                "dipole_correction": "static",
+            }
+        )
+
+
+def test_castep_rejects_unknown_dipole_correction_mode() -> None:
+    with pytest.raises(ValidationError, match="Unsupported CASTEP dipole correction"):
+        CastepEnergySpec(dipole_correction="automatic")
+
+
+@pytest.mark.parametrize(
     ("alias", "canonical"),
     [
         ("single point energy", CastepTask.ENERGY),
@@ -143,6 +204,7 @@ def test_castep_mcp_preview_reports_resolved_dispatch() -> None:
         task="PDOS",
         cutoff_energy_ev=520,
         kpoints=(6, 6, 4),
+        dipole_correction="Self-consistent",
     )
 
     assert result["ok"] is True
@@ -155,6 +217,7 @@ def test_castep_mcp_preview_reports_resolved_dispatch() -> None:
         "value": "Partial",
     }
     assert "CalculateDOS => 'Partial'" in result["script"]
+    assert "DipoleCorrection => 'Self-consistent'" in result["script"]
 
 
 def test_castep_mcp_input_schema_exposes_only_canonical_tasks() -> None:
@@ -163,3 +226,8 @@ def test_castep_mcp_input_schema_exposes_only_canonical_tasks() -> None:
     assert schema["properties"]["task"]["$ref"] == "#/$defs/CastepTask"
     assert schema["$defs"]["CastepTask"]["enum"] == [task.value for task in CastepTask]
     assert "kpoints" in schema["properties"]
+    dipole_schema = schema["properties"]["dipole_correction"]["anyOf"][0]
+    assert dipole_schema["$ref"] == "#/$defs/CastepDipoleCorrection"
+    assert schema["$defs"]["CastepDipoleCorrection"]["enum"] == [
+        mode.value for mode in CastepDipoleCorrection
+    ]

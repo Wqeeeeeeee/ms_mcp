@@ -930,8 +930,29 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_2d_dipole_correction_api_verified"] = (
             two_dimensional_electrostatics.get("dipole_correction_api_verified")
         )
+        checks["semiconductor_2d_dipole_correction_api_contract"] = (
+            two_dimensional_electrostatics.get("dipole_correction_api_contract")
+        )
+        checks["semiconductor_2d_dipole_correction_api_property"] = (
+            two_dimensional_electrostatics.get("dipole_correction_api_property")
+        )
+        checks["semiconductor_2d_dipole_correction_mode"] = (
+            two_dimensional_electrostatics.get("dipole_correction_mode")
+        )
+        checks["semiconductor_2d_dipole_correction_enabled"] = (
+            two_dimensional_electrostatics.get("dipole_correction_enabled")
+        )
+        checks["semiconductor_2d_dipole_correction_task_compatible"] = (
+            two_dimensional_electrostatics.get("dipole_correction_task_compatible")
+        )
+        checks["semiconductor_2d_dipole_correction_vacuum_requirement_met"] = (
+            two_dimensional_electrostatics.get("dipole_correction_vacuum_requirement_met")
+        )
         checks["semiconductor_2d_dipole_correction_setting_verified"] = (
             two_dimensional_electrostatics.get("dipole_correction_setting_verified")
+        )
+        checks["semiconductor_2d_geometry_relaxation_required"] = (
+            two_dimensional_electrostatics.get("geometry_relaxation_required")
         )
         checks["semiconductor_2d_calculation_review_required"] = (
             two_dimensional_electrostatics.get("calculation_review_required")
@@ -948,8 +969,8 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             )
         elif two_dimensional_electrostatics.get("calculation_review_required"):
             warnings.append(
-                "Two-dimensional heterobilayer geometry is verified; out-of-plane dipole correction "
-                "still requires calculation-only review."
+                "Two-dimensional heterobilayer geometry is verified; configure the reviewed "
+                "Materials Studio 20.1 DipoleCorrection setting before quantitative calculation."
             )
 
     interface_quality = semiconductor.get("interface_quality_summary") or {}

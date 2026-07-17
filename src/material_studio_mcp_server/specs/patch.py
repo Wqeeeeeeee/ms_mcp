@@ -13,7 +13,13 @@ from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .castep import CastepEnergySpec, CastepTaskValue
+from .castep import (
+    CastepDipoleCorrection,
+    CastepDipoleCorrectionValue,
+    CastepEnergySpec,
+    CastepTask,
+    CastepTaskValue,
+)
 from .common import ExecutionMode, FractionalVector3, StrictModel, Vector3
 from .crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .forcite import ForciteConvergence, ForciteOptimizationSpec, ForciteQuality
@@ -105,6 +111,7 @@ class SemanticPatchOperation(StrictModel):
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
+    dipole_correction: CastepDipoleCorrectionValue | None = None
     matrix: tuple[int, int, int] | None = None
     axis: Literal["a", "b", "c", "x", "y", "z"] | None = None
     distance_angstrom: float | None = Field(default=None, ge=-1_000, le=1_000)
@@ -179,6 +186,15 @@ class SemanticPatchOperation(StrictModel):
         }
         if self.operation not in known:
             raise ValueError(f"不支持的补丁操作: {self.operation}")
+        if (
+            self.operation == "set_castep_energy"
+            and self.dipole_correction is CastepDipoleCorrection.NON_SELF_CONSISTENT
+            and self.task is not None
+            and self.task is not CastepTask.ENERGY
+        ):
+            raise ValueError(
+                "Non self-consistent CASTEP dipole correction is supported only for the Energy task"
+            )
         if self.operation == "translate_crystal_atoms":
             if not self.atom_ids or self.axis is None or self.distance_angstrom is None:
                 raise ValueError("translate_crystal_atoms requires atom_ids, axis, and distance_angstrom")
@@ -3097,6 +3113,7 @@ def _castep_from_operation(operation: SemanticPatchOperation) -> CastepEnergySpe
         cutoff_energy_ev=operation.cutoff_energy_ev,
         kpoint_separation=operation.kpoint_separation,
         kpoints=operation.kpoints,
+        dipole_correction=operation.dipole_correction,
     )
 
 

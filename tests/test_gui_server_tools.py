@@ -6839,7 +6839,19 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert heterobilayer_safety["two_dimensional_electrostatic_preflight_required"] is True
     assert heterobilayer_safety["charge_density_available_in_model_spec_diagnostics"] is False
     assert heterobilayer_safety["dipole_moment_calculated"] is False
-    assert heterobilayer_safety["dipole_correction_setting_verified"] is False
+    assert heterobilayer_safety["dipole_correction_api_contract"] == (
+        "Materials Studio 20.1 CASTEP DipoleCorrection"
+    )
+    assert heterobilayer_safety["dipole_correction_api_property"] == "DipoleCorrection"
+    assert heterobilayer_safety["dipole_correction_modes"] == [
+        "None",
+        "Non self-consistent",
+        "Self-consistent",
+    ]
+    assert heterobilayer_safety["dipole_correction_minimum_vacuum_angstrom"] == 8.0
+    assert heterobilayer_safety["non_self_consistent_energy_only"] is True
+    assert heterobilayer_safety["dipole_correction_direction_property_exposed"] is False
+    assert heterobilayer_safety["dipole_correction_setting_verified_from_model_spec"] is True
     assert heterobilayer_safety["quantitative_electrostatic_calculation_ready"] is False
     assert "Build AlGaN alloy x=0.25 as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
     assert "Build In0.25Ga0.75N as a 2x2x1 supercell." in capabilities["natural_language"]["new_structure_inline_modifiers"]["formula_alloy_examples"]
@@ -25759,7 +25771,9 @@ def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_stra
     assert electrostatic["model_geometry_verified"] is True
     assert electrostatic["charge_density_available"] is False
     assert electrostatic["dipole_moment_calculated"] is False
-    assert electrostatic["dipole_correction_api_verified"] is False
+    assert electrostatic["dipole_correction_api_verified"] is True
+    assert electrostatic["dipole_correction_api_property"] == "DipoleCorrection"
+    assert electrostatic["dipole_correction_mode"] is None
     assert electrostatic["dipole_correction_setting_verified"] is False
     electrostatic_csv_path = Path(
         result["modeling_report"]["diagnostics"]["semiconductor_2d_electrostatics_csv"]
@@ -25800,7 +25814,8 @@ def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_stra
     )
     assert summary_row["semiconductor_2d_model_geometry_verified"] == "True"
     assert summary_row["semiconductor_2d_charge_density_available"] == "False"
-    assert summary_row["semiconductor_2d_dipole_correction_api_verified"] == "False"
+    assert summary_row["semiconductor_2d_dipole_correction_api_verified"] == "True"
+    assert summary_row["semiconductor_2d_dipole_correction_api_property"] == "DipoleCorrection"
     assert summary_row["semiconductor_2d_dipole_correction_setting_verified"] == "False"
     receipt = result["modeling_report"]["change_receipt"]["semiconductor"][
         "commensurate_heterobilayer"
@@ -25811,6 +25826,59 @@ def test_live_modeling_request_previews_commensurate_tmd_heterobilayer_with_stra
     assert receipt["calculation_ready"] is False
     assert "commensurate_heterobilayer" in result["change_verification"]["domain_tags"]
     assert "tmd_heterostructure" in result["change_verification"]["domain_tags"]
+    assert isolated_fake_gui.opened == []
+
+
+def test_live_modeling_request_configures_verified_2d_dipole_correction(
+    isolated_fake_gui,
+    tmp_path: Path,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build MoS2/WSe2 commensurate twisted heterobilayer with m=2, n=1 and prepare preview.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+
+    updated = server.material_studio_live_modeling_request(
+        "Enable self-consistent dipole correction for the current CASTEP calculation.",
+        project_id=created["project_id"],
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+        response_mode="full",
+    )
+
+    assert updated["ok"] is True
+    assert updated["workflow"] == "patch"
+    assert updated["revision"] == created["revision"] + 1
+    assert updated["nl_plan"]["template_id"] == "castep_settings"
+    assert updated["diff"] == ["set_castep_energy"]
+    current = server.material_studio_model_get_current(
+        updated["project_id"],
+        working_dir=str(tmp_path),
+    )
+    assert current["spec"]["simulation"]["dipole_correction"] == "Self-consistent"
+    electrostatics = updated["modeling_report"]["inspection"]["semiconductor_health"][
+        "two_dimensional_electrostatic_summary"
+    ]
+    assert electrostatics["status"] == "dipole_correction_verified_geometry_relaxation_required"
+    assert electrostatics["dipole_correction_api_verified"] is True
+    assert electrostatics["dipole_correction_mode"] == "Self-consistent"
+    assert electrostatics["dipole_correction_setting_verified"] is True
+    assert electrostatics["calculation_review_required"] is False
+    assert electrostatics["calculation_blocking_reasons"] == [
+        "commensurate_tmd_heterobilayer_requires_geometry_relaxation"
+    ]
+    risk_flags = updated["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "two_dimensional_dipole_correction_review_required" not in risk_flags
+    assert "commensurate_tmd_heterobilayer_requires_geometry_relaxation" in risk_flags
+    assert "DipoleCorrection => 'Self-consistent'" in Path(
+        updated["calculation_preview"]["script_path"]
+    ).read_text(encoding="utf-8")
     assert isolated_fake_gui.opened == []
 
 

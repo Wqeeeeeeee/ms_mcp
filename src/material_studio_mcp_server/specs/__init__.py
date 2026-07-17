@@ -17,7 +17,13 @@ from .common import (
 )
 from .crystal import BasisAtomSpec, CrystalOperation, CrystalSpec, LatticeSpec
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
-from .castep import CastepEnergySpec, CastepTask, normalize_castep_task
+from .castep import (
+    CastepDipoleCorrection,
+    CastepEnergySpec,
+    CastepTask,
+    normalize_castep_dipole_correction,
+    normalize_castep_task,
+)
 from .molecule import AtomSpec, BondSpec, MoleculeSpec
 from .patch import (
     SemanticPatch,
@@ -33,6 +39,7 @@ __all__ = [
     "BasisAtomSpec",
     "BondSpec",
     "CastepEnergySpec",
+    "CastepDipoleCorrection",
     "CastepTask",
     "CrystalOperation",
     "CrystalSpec",
@@ -60,4 +67,5 @@ __all__ = [
     "apply_semantic_patch",
     "commensurate_twist_angle_degrees",
     "normalize_castep_task",
+    "normalize_castep_dipole_correction",
 ]

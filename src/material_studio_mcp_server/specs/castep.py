@@ -24,6 +24,19 @@ class CastepTask(str, Enum):
     ELASTIC_CONSTANTS = "ElasticConstants"
 
 
+class CastepDipoleCorrection(str, Enum):
+    """Dipole-correction modes documented by Materials Studio 20.1."""
+
+    NONE = "None"
+    NON_SELF_CONSISTENT = "Non self-consistent"
+    SELF_CONSISTENT = "Self-consistent"
+
+
+CASTEP_DIPOLE_CORRECTION_API_PROPERTY = "DipoleCorrection"
+CASTEP_DIPOLE_CORRECTION_API_CONTRACT = "Materials Studio 20.1 CASTEP DipoleCorrection"
+CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM = 8.0
+
+
 def _normalized_task_token(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
@@ -78,6 +91,39 @@ def normalize_castep_task(value: Any) -> CastepTask:
 CastepTaskValue = Annotated[CastepTask, BeforeValidator(normalize_castep_task)]
 
 
+def normalize_castep_dipole_correction(value: Any) -> CastepDipoleCorrection:
+    """Normalize reviewed aliases to the exact MaterialsScript enum strings."""
+
+    if isinstance(value, CastepDipoleCorrection):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("CASTEP dipole correction must be a string")
+    token = _normalized_task_token(value.strip())
+    aliases = {
+        "none": CastepDipoleCorrection.NONE,
+        "off": CastepDipoleCorrection.NONE,
+        "disabled": CastepDipoleCorrection.NONE,
+        "selfconsistent": CastepDipoleCorrection.SELF_CONSISTENT,
+        "selfconsistentdipole": CastepDipoleCorrection.SELF_CONSISTENT,
+        "nonselfconsistent": CastepDipoleCorrection.NON_SELF_CONSISTENT,
+        "nonselfconsistentdipole": CastepDipoleCorrection.NON_SELF_CONSISTENT,
+        "static": CastepDipoleCorrection.NON_SELF_CONSISTENT,
+    }
+    mode = aliases.get(token)
+    if mode is None:
+        supported = ", ".join(item.value for item in CastepDipoleCorrection)
+        raise ValueError(
+            f"Unsupported CASTEP dipole correction {value!r}; supported modes: {supported}"
+        )
+    return mode
+
+
+CastepDipoleCorrectionValue = Annotated[
+    CastepDipoleCorrection,
+    BeforeValidator(normalize_castep_dipole_correction),
+]
+
+
 class CastepEnergySpec(StrictModel):
     """CASTEP task settings rendered against the Materials Studio 20.1 API.
 
@@ -95,6 +141,7 @@ class CastepEnergySpec(StrictModel):
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
+    dipole_correction: CastepDipoleCorrectionValue | None = None
     output_file: str | None = None
 
     @model_validator(mode="after")
@@ -105,4 +152,11 @@ class CastepEnergySpec(StrictModel):
             raise ValueError("k-point grid values must be positive integers")
         if self.kpoints is not None and self.kpoint_separation is not None:
             raise ValueError("Use either kpoints or kpoint_separation, not both")
+        if (
+            self.dipole_correction is CastepDipoleCorrection.NON_SELF_CONSISTENT
+            and self.task is not CastepTask.ENERGY
+        ):
+            raise ValueError(
+                "Non self-consistent CASTEP dipole correction is supported only for the Energy task"
+            )
         return self

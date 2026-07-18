@@ -963,6 +963,141 @@ class GuiViewReplayConfirmationInput(BaseModel):
     )
 
 
+DIRECT_RUNTIME_GUARD_SCHEMA = "material_studio_mcp_direct_runtime_guard_v1"
+
+RUNTIME_SOURCE_GUARDED_TOOL_NAMES = (
+    "material_studio_run_script",
+    "material_studio_import_export",
+    "material_studio_structure_summary",
+    "material_studio_forcite_geometry_optimization",
+    "material_studio_build_molecule",
+    "material_studio_build_tnt",
+    "material_studio_model_create_from_spec",
+    "material_studio_model_modify_with_patch",
+    "material_studio_project_rollback",
+    "material_studio_forcite_dynamics_from_spec",
+    "material_studio_model_export_view_audit",
+    "material_studio_model_export_view_bundle",
+    "material_studio_project_reconcile_dopant_metadata",
+    "material_studio_live_update_with_patch",
+    "material_studio_castep_run_current",
+    "material_studio_castep_relax_current",
+    "material_studio_live_modeling_request",
+    "material_studio_gui_launch",
+    "material_studio_gui_activate",
+    "material_studio_gui_snapshot",
+    "material_studio_gui_record_visual_confirmation",
+    "material_studio_gui_open_structure",
+    "material_studio_gui_copy_script_assist",
+    "material_studio_gui_prepare_view_replay",
+    "material_studio_gui_execute_view_replay",
+    "material_studio_gui_record_view_replay",
+    "material_studio_gui_apply_current_revision",
+)
+_RUNTIME_SOURCE_GUARDED_TOOL_NAME_SET = frozenset(
+    RUNTIME_SOURCE_GUARDED_TOOL_NAMES
+)
+
+
+def _runtime_source_blocking_reason(runtime_provenance: dict[str, Any]) -> str:
+    if runtime_provenance.get("status") == "source_changed_since_start":
+        return "mcp_server_source_changed_since_start"
+    return "mcp_server_source_snapshot_unavailable"
+
+
+def _runtime_source_guard_status() -> dict[str, Any]:
+    """Read provenance for a direct-tool gate and fail closed on probe errors."""
+
+    try:
+        status = runtime_provenance_status()
+        if not isinstance(status, dict):
+            raise TypeError("runtime_provenance_status must return a dictionary")
+        return dict(status)
+    except Exception as exc:
+        return {
+            "schema": RUNTIME_PROVENANCE_SCHEMA,
+            "status": "source_snapshot_unavailable",
+            "source_current": False,
+            "source_changed_since_start": False,
+            "restart_required": True,
+            "runtime_instance_id": None,
+            "restart_action": "restart_mcp_server_then_retry_preflight",
+            "status_probe_error": f"{exc.__class__.__name__}: {exc}",
+        }
+
+
+def _stale_runtime_direct_tool_payload(
+    *,
+    tool_name: str,
+    runtime_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a stable no-side-effect receipt for a stale direct tool call."""
+
+    blocking_reason = _runtime_source_blocking_reason(runtime_provenance)
+    return {
+        "ok": False,
+        "status": "mcp_server_restart_required",
+        "state": "mcp_server_restart_required",
+        "error": (
+            "The running MCP server source is stale or unverifiable. Restart "
+            "only the MCP server session, keep Materials Studio open, rerun "
+            "material_studio_live_session_preflight, then retry this tool."
+        ),
+        "blocked_tool": tool_name,
+        "runtime_guard": {
+            "schema": DIRECT_RUNTIME_GUARD_SCHEMA,
+            "blocked": True,
+            "evaluated_before_tool_body": True,
+            "blocking_reason": blocking_reason,
+        },
+        "runtime_provenance": runtime_provenance,
+        "blocking_reasons": [blocking_reason],
+        "tool_body_started": False,
+        "side_effects_started": False,
+        "execution_started": False,
+        "runner_invoked": False,
+        "gui_input_started": False,
+        "gui_process_launched": False,
+        "revision_created": False,
+        "artifact_write_started": False,
+        "recommended_tool": "material_studio_get_status",
+        "recommended_action": "restart_mcp_server_then_verify_runtime_source",
+        "retry_tool": tool_name,
+        "retry_requires_fresh_preflight": True,
+        "restart_plan": {
+            "external_action_required": True,
+            "automatic_restart_allowed": False,
+            "restart_target": "mcp_server_session_only",
+            "preserve_materials_studio_process": True,
+            "post_restart_tool": "material_studio_live_session_preflight",
+        },
+    }
+
+
+def _require_current_runtime_source(method: Any) -> Any:
+    """Block side-effect-capable direct tools when loaded source is stale."""
+
+    tool_name = method.__name__
+    if tool_name not in _RUNTIME_SOURCE_GUARDED_TOOL_NAME_SET:
+        raise ValueError(f"Unregistered runtime-guarded tool: {tool_name}")
+
+    @wraps(method)
+    def guarded(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        runtime_provenance = _runtime_source_guard_status()
+        if not (
+            runtime_provenance.get("source_current") is True
+            and runtime_provenance.get("restart_required") is False
+        ):
+            return _stale_runtime_direct_tool_payload(
+                tool_name=tool_name,
+                runtime_provenance=runtime_provenance,
+            )
+        return method(*args, **kwargs)
+
+    setattr(guarded, "__runtime_source_guarded__", True)
+    return guarded
+
+
 def _ok(result: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, **result}
 
@@ -3884,7 +4019,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "source_snapshot_captured_at_process_import": True,
             "live_preflight_source_drift_blocks_continuation": True,
             "live_preflight_unverified_source_blocks_continuation": True,
-            "direct_tool_runtime_guard": False,
+            "direct_tool_runtime_guard": True,
+            "direct_tool_runtime_guard_schema": DIRECT_RUNTIME_GUARD_SCHEMA,
+            "direct_tool_runtime_guard_evaluated_before_tool_body": True,
+            "direct_tool_runtime_guard_fails_closed": True,
+            "guarded_tool_count": len(RUNTIME_SOURCE_GUARDED_TOOL_NAMES),
+            "guarded_tool_names": list(RUNTIME_SOURCE_GUARDED_TOOL_NAMES),
+            "guarded_preview_policy": (
+                "block_the_entire_side_effect_capable_tool_when_source_is_stale_"
+                "including_preview_or_dry_run_requests"
+            ),
+            "unguarded_recovery_tools": [
+                "material_studio_get_status",
+                "material_studio_live_capabilities",
+                "material_studio_live_session_preflight",
+            ],
             "restart_is_never_automatic": True,
             "restart_required_statuses": [
                 "source_changed_since_start",
@@ -7889,12 +8038,6 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     return response
 
 
-def _runtime_source_blocking_reason(runtime_provenance: dict[str, Any]) -> str:
-    if runtime_provenance.get("status") == "source_changed_since_start":
-        return "mcp_server_source_changed_since_start"
-    return "mcp_server_source_snapshot_unavailable"
-
-
 def _finalize_live_session_preflight_payload(
     payload: dict[str, Any],
 ) -> dict[str, Any]:
@@ -11269,6 +11412,7 @@ def material_studio_validate_script(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_run_script(
     script: Annotated[
         str,
@@ -11348,6 +11492,7 @@ def material_studio_run_script(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_import_export(
     source_file: Annotated[
         str,
@@ -11413,6 +11558,7 @@ def material_studio_import_export(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_structure_summary(
     source_file: Annotated[
         str,
@@ -11472,6 +11618,7 @@ def material_studio_structure_summary(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_forcite_geometry_optimization(
     input_file: Annotated[
         str,
@@ -11570,6 +11717,7 @@ def material_studio_forcite_geometry_optimization(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_build_molecule(
     output_file: Annotated[
         str,
@@ -11651,6 +11799,7 @@ def material_studio_build_molecule(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_build_tnt(
     output_file: Annotated[
         str,
@@ -34730,12 +34879,16 @@ def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
             "ambiguous_original_atom_id_policy",
         ),
     )
+    hotload_examples = [
+        str(item)
+        for item in value.get("cjk_semiconductor_hotload_examples") or []
+        if str(item).strip()
+    ]
     return _drop_none_values(
         {
             "mode": value.get("mode"),
-            "cjk_semiconductor_hotload_examples": value.get(
-                "cjk_semiconductor_hotload_examples"
-            ),
+            "cjk_semiconductor_hotload_example_count": len(hotload_examples),
+            "cjk_semiconductor_hotload_example_sample": hotload_examples[:1],
             "view_selection": compact_views,
             "patch_commands": patch_commands,
             "patch_command_count": len(patch_commands),
@@ -38131,6 +38284,20 @@ def _compact_capabilities_response(
             "safety",
         ),
     )
+    runtime_contract = compact.get("runtime_provenance_contract")
+    if isinstance(runtime_contract, dict):
+        compact["runtime_provenance_contract"] = _mapping_subset(
+            runtime_contract,
+            (
+                "schema",
+                "live_preflight_source_drift_blocks_continuation",
+                "direct_tool_runtime_guard",
+                "direct_tool_runtime_guard_schema",
+                "direct_tool_runtime_guard_fails_closed",
+                "guarded_tool_count",
+                "restart_is_never_automatic",
+            ),
+        )
     compact.update(
         {
             "response_mode": McpResponseMode.COMPACT.value,
@@ -38899,6 +39066,7 @@ def _materialize_crystal_cif(*, store: ProjectStore, spec: ModelSpec, generated:
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_model_create_from_spec(
     spec: Annotated[dict[str, Any], Field(description="Structured ModelSpec payload.")],
     user_text: Annotated[str | None, Field(description="Optional natural-language request that produced the spec.")] = None,
@@ -38969,6 +39137,7 @@ def material_studio_model_create_from_spec(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_model_modify_with_patch(
     project_id: Annotated[str, Field(description="Project ID to modify.")],
     base_revision: Annotated[int, Field(description="Expected current revision.", ge=0)],
@@ -40025,6 +40194,7 @@ def _current_revision_delta(store: ProjectStore, project_id: str, spec: ModelSpe
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_project_rollback(
     target_revision: Annotated[int, Field(description="要复制到新当前修订版本的修订版本。", ge=0)],
     project_id: Annotated[str | None, Field(description="项目 ID。省略时使用最近更新的当前项目。", min_length=1, max_length=120)] = None,
@@ -40228,6 +40398,7 @@ def material_studio_model_get_current(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_forcite_dynamics_from_spec(
     input_file: Annotated[str, Field(description="Structure file imported by the dynamics script.", min_length=1, max_length=500)],
     ensemble: Annotated[str, Field(description="NVE, NVT, or NPT.")],
@@ -40460,6 +40631,7 @@ def _diagnostic_export_current_revision_block(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_model_export_view_audit(
     spec: Annotated[dict[str, Any] | None, Field(description="Optional ModelSpec payload.")] = None,
     project_id: Annotated[str | None, Field(description="Optional project ID to load.")] = None,
@@ -40594,6 +40766,7 @@ def material_studio_model_export_view_audit(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_model_export_view_bundle(
     spec: Annotated[dict[str, Any] | None, Field(description="Optional ModelSpec payload.")] = None,
     project_id: Annotated[str | None, Field(description="Optional project ID to load.")] = None,
@@ -41103,6 +41276,7 @@ def _attach_recommended_kpoint_postcondition(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_project_reconcile_dopant_metadata(
     project_id: Annotated[str | None, Field(description="Project ID. When omitted, use the latest current structured project.", min_length=1, max_length=120)] = None,
     base_revision: Annotated[int | None, Field(description="Expected current revision. When omitted, use the current revision.", ge=0)] = None,
@@ -41304,6 +41478,7 @@ def material_studio_project_reconcile_dopant_metadata(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_live_update_with_patch(
     project_id: Annotated[str | None, Field(description="Project ID to update. When omitted, patch.project_id or the latest current project is used.", min_length=1, max_length=120)] = None,
     base_revision: Annotated[int | None, Field(description="Expected current revision. When omitted, patch.base_revision or the current revision is used.", ge=0)] = None,
@@ -42672,6 +42847,7 @@ def _write_json_artifact(path: Path, payload: dict[str, Any]) -> Path:
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_castep_run_current(
     project_id: Annotated[
         str | None,
@@ -43604,6 +43780,7 @@ def material_studio_castep_run_current(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_castep_relax_current(
     project_id: Annotated[str | None, Field(description="Current structured crystal project; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     execution_mode: Annotated[ExecutionMode, Field(description="preview returns the exact script and gates; execute runs CASTEP and promotes only a converged result.")] = ExecutionMode.PREVIEW,
@@ -44145,6 +44322,7 @@ def material_studio_castep_relax_current(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_live_modeling_request(
     user_request: Annotated[str, Field(description="Original natural-language modeling request.", min_length=1, max_length=5000)],
     spec: Annotated[dict[str, Any] | None, Field(description="ModelSpec payload for a new project.")] = None,
@@ -46639,6 +46817,7 @@ def material_studio_gui_status(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_launch(
     wait_seconds: Annotated[int, Field(description="Seconds to wait for the Materials Studio window.", ge=1, le=120)] = 20,
     take_snapshot: Annotated[bool, Field(description="Capture a GUI snapshot after launch or activation.")] = False,
@@ -46677,6 +46856,7 @@ def material_studio_gui_launch(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_activate(
     project_id: Annotated[str | None, Field(description="可选的用于 GUI 日志记录的结构化项目 ID。")] = None,
     revision: Annotated[int | None, Field(description="可选的用于 GUI 日志记录的修订版本。", ge=0)] = None,
@@ -46766,6 +46946,7 @@ def material_studio_gui_activate(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_snapshot(
     label: Annotated[str, Field(description="Short screenshot label.", min_length=1, max_length=120)] = "snapshot",
     project_id: Annotated[str | None, Field(description="Optional structured project ID for GUI logging.")] = None,
@@ -46947,6 +47128,7 @@ def _record_gui_visual_confirmation_action(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_record_visual_confirmation(
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
@@ -47077,6 +47259,7 @@ def _open_gui_structure_action(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_open_structure(
     structure_path: Annotated[str, Field(description="要打开的现有结构文件路径。", min_length=1, max_length=500)],
     project_id: Annotated[str | None, Field(description="可选的用于 GUI 日志记录的结构化项目 ID。")] = None,
@@ -47160,6 +47343,7 @@ def material_studio_gui_open_structure(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_copy_script_assist(
     context: Annotated[str | None, Field(description="Optional action/API context for Copy Script extraction.")] = None,
     project_id: Annotated[str | None, Field(description="Optional structured project ID for GUI logging.")] = None,
@@ -47196,6 +47380,7 @@ def material_studio_gui_copy_script_assist(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_prepare_view_replay(
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
@@ -47286,6 +47471,7 @@ def material_studio_gui_prepare_view_replay(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_execute_view_replay(
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
     revision: Annotated[int | None, Field(description="Optional revision; omitted uses the resolved current revision.", ge=0)] = None,
@@ -47383,6 +47569,7 @@ def material_studio_gui_execute_view_replay(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_record_view_replay(
     view_name: Annotated[str, Field(description="A view name present in the prepared replay manifest.", min_length=1, max_length=80)],
     project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
@@ -47680,6 +47867,7 @@ def material_studio_gui_record_view_replay(
         "openWorldHint": False,
     },
 )
+@_require_current_runtime_source
 def material_studio_gui_apply_current_revision(
     project_id: Annotated[str | None, Field(description="要应用的结构化项目 ID；省略时使用最近 current 项目。", min_length=1, max_length=120)] = None,
     execution_mode: Annotated[ExecutionMode, Field(description="preview 或 execute。默认为 preview。")] = ExecutionMode.PREVIEW,

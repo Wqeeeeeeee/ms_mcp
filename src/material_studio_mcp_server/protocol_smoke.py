@@ -54,6 +54,7 @@ EXPECTED_LIVE_COMPACT_SCHEMA = "material_studio_live_compact_v2"
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
+EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 27
 
 _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_capabilities": {"readOnlyHint": True, "destructiveHint": False},
@@ -652,6 +653,19 @@ async def _run_preview_calls(
             "live_preflight_source_drift_blocks_continuation"
         ) is not True:
             validation_errors.append("capabilities_runtime_source_drift_gate_missing")
+        if runtime_contract.get("direct_tool_runtime_guard") is not True:
+            validation_errors.append("capabilities_direct_runtime_guard_missing")
+        if runtime_contract.get("direct_tool_runtime_guard_fails_closed") is not True:
+            validation_errors.append(
+                "capabilities_direct_runtime_guard_fail_closed_missing"
+            )
+        if (
+            runtime_contract.get("guarded_tool_count")
+            != EXPECTED_RUNTIME_GUARDED_TOOL_COUNT
+        ):
+            validation_errors.append(
+                "capabilities_direct_runtime_guard_tool_count_mismatch"
+            )
         if runtime_contract.get("restart_is_never_automatic") is not True:
             validation_errors.append("capabilities_runtime_restart_policy_missing")
         runtime_provenance = capabilities.get("runtime_provenance")

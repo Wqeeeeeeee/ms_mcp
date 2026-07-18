@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -209,5 +210,149 @@ def test_status_and_capabilities_expose_runtime_provenance_contract() -> None:
     contract = capabilities["runtime_provenance_contract"]
     assert contract["schema"] == RUNTIME_PROVENANCE_SCHEMA
     assert contract["live_preflight_source_drift_blocks_continuation"] is True
-    assert contract["direct_tool_runtime_guard"] is False
+    assert contract["direct_tool_runtime_guard"] is True
+    assert (
+        contract["direct_tool_runtime_guard_schema"]
+        == server.DIRECT_RUNTIME_GUARD_SCHEMA
+    )
+    assert contract["direct_tool_runtime_guard_evaluated_before_tool_body"] is True
+    assert contract["direct_tool_runtime_guard_fails_closed"] is True
+    assert contract["guarded_tool_count"] == len(
+        server.RUNTIME_SOURCE_GUARDED_TOOL_NAMES
+    )
+    assert contract["guarded_tool_names"] == list(
+        server.RUNTIME_SOURCE_GUARDED_TOOL_NAMES
+    )
     assert contract["restart_is_never_automatic"] is True
+
+
+def test_direct_runtime_guard_blocks_every_side_effect_capable_tool_before_body(
+    monkeypatch,
+) -> None:
+    stale_runtime = {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "status": "source_changed_since_start",
+        "source_current": False,
+        "source_changed_since_start": True,
+        "restart_required": True,
+        "runtime_instance_id": "stale-direct-tool-runtime",
+        "restart_action": "restart_mcp_server_then_retry_preflight",
+    }
+
+    def unexpected_body(*args, **kwargs):
+        raise AssertionError("guarded tool body must not start")
+
+    monkeypatch.setattr(server, "runtime_provenance_status", lambda: stale_runtime)
+    monkeypatch.setattr(server, "_structured_store", unexpected_body)
+    monkeypatch.setattr(server, "_gui_controller", unexpected_body)
+    monkeypatch.setattr(server.runner, "run_script", unexpected_body)
+
+    for tool_name in server.RUNTIME_SOURCE_GUARDED_TOOL_NAMES:
+        tool = getattr(server, tool_name)
+        assert getattr(tool, "__runtime_source_guarded__", False) is True
+        result = tool()
+        assert result["ok"] is False
+        assert result["status"] == "mcp_server_restart_required"
+        assert result["blocked_tool"] == tool_name
+        assert result["runtime_guard"] == {
+            "schema": server.DIRECT_RUNTIME_GUARD_SCHEMA,
+            "blocked": True,
+            "evaluated_before_tool_body": True,
+            "blocking_reason": "mcp_server_source_changed_since_start",
+        }
+        assert result["tool_body_started"] is False
+        assert result["side_effects_started"] is False
+        assert result["execution_started"] is False
+        assert result["runner_invoked"] is False
+        assert result["gui_input_started"] is False
+        assert result["gui_process_launched"] is False
+        assert result["revision_created"] is False
+        assert result["artifact_write_started"] is False
+        assert result["retry_tool"] == tool_name
+        assert result["restart_plan"]["preserve_materials_studio_process"] is True
+
+
+def test_direct_runtime_guard_fails_closed_when_provenance_probe_raises(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "runtime_provenance_status",
+        lambda: (_ for _ in ()).throw(OSError("source tree read failed")),
+    )
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("GUI must not be probed")
+        ),
+    )
+
+    result = server.material_studio_gui_launch()
+
+    assert result["status"] == "mcp_server_restart_required"
+    assert result["blocked_tool"] == "material_studio_gui_launch"
+    runtime = result["runtime_provenance"]
+    assert runtime["status"] == "source_snapshot_unavailable"
+    assert runtime["source_current"] is False
+    assert runtime["restart_required"] is True
+    assert runtime["status_probe_error"] == "OSError: source tree read failed"
+    assert result["blocking_reasons"] == [
+        "mcp_server_source_snapshot_unavailable"
+    ]
+
+
+def test_direct_runtime_guard_preserves_signature_and_current_source_behavior(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "runtime_provenance_status",
+        lambda: {
+            "schema": RUNTIME_PROVENANCE_SCHEMA,
+            "status": "current",
+            "source_current": True,
+            "restart_required": False,
+        },
+    )
+
+    signature = inspect.signature(server.material_studio_model_create_from_spec)
+    assert "spec" in signature.parameters
+    assert "execution_mode" in signature.parameters
+    result = server.material_studio_run_script("use strict;\n", dry_run=True)
+    assert result["ok"] is True
+    assert result["dry_run"] is True
+    assert result.get("status") != "mcp_server_restart_required"
+
+
+def test_runtime_recovery_tools_remain_callable_when_source_is_stale(
+    monkeypatch,
+) -> None:
+    stale_runtime = {
+        "schema": RUNTIME_PROVENANCE_SCHEMA,
+        "status": "source_changed_since_start",
+        "source_current": False,
+        "source_changed_since_start": True,
+        "restart_required": True,
+        "runtime_instance_id": "stale-recovery-runtime",
+        "restart_action": "restart_mcp_server_then_retry_preflight",
+    }
+    monkeypatch.setattr(server, "runtime_provenance_status", lambda: stale_runtime)
+
+    for tool_name in (
+        "material_studio_get_status",
+        "material_studio_live_capabilities",
+        "material_studio_live_session_preflight",
+    ):
+        assert getattr(
+            getattr(server, tool_name), "__runtime_source_guarded__", False
+        ) is False
+
+    status = server.material_studio_get_status()
+    assert status["ok"] is True
+    assert status["runtime_provenance"] == stale_runtime
+    capabilities = server.material_studio_live_capabilities()
+    assert capabilities["ok"] is True
+    assert capabilities["runtime_provenance_contract"][
+        "direct_tool_runtime_guard"
+    ] is True

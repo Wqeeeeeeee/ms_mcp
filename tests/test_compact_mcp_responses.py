@@ -279,6 +279,15 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["natural_language"]["patch_command_count"] == len(
         compact["natural_language"]["patch_commands"]
     )
+    assert compact["natural_language"][
+        "cjk_semiconductor_hotload_example_count"
+    ] >= 1
+    assert len(
+        compact["natural_language"][
+            "cjk_semiconductor_hotload_example_sample"
+        ]
+    ) == 1
+    assert "cjk_semiconductor_hotload_examples" not in compact["natural_language"]
     assert any(
         command["template_id"]
         == "apply_recommended_semiconductor_kpoint_grid"

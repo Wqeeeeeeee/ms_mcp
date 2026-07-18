@@ -592,6 +592,17 @@ there. Restart the MCP server/Codex MCP session, leave the existing
 other `run_server.py` processes automatically because they may belong to other
 Codex tasks.
 
+Side-effect-capable direct tools enforce the same gate before their tool body.
+This includes revision-changing previews, runner-backed helpers, diagnostic
+exports, GUI logging/input, and calculation tools. A bypassed preflight therefore
+returns `status="mcp_server_restart_required"` with
+`tool_body_started=false`, `execution_started=false`,
+`gui_input_started=false`, `revision_created=false`, and
+`artifact_write_started=false`. The guard blocks the whole affected tool while
+source is stale, including a requested preview or dry run, because the loaded
+implementation cannot prove that its path is side-effect free. Status,
+capability discovery, and live preflight remain callable for recovery.
+
 The runner receipt may show different `default_workspace_root` and
 `request_workspace_root` values. This is not an implicit workspace migration:
 workspace-aware tool payloads use the explicit preflight `working_dir`, and the

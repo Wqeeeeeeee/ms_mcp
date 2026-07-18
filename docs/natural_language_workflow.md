@@ -190,6 +190,7 @@ ZnO wurtzite, AlN wurtzite, InN wurtzite, CdTe zinc blende, ZnS zinc blende, ZnS
 blende, 2D MoS2 monolayer, GaN wurtzite, a deterministic Si p-n junction start,
 and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
 Si/SiO2(100) semiconductor-oxide, Al/SiO2/Si MOS capacitor gate-stack,
+Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
 Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/4H-SiC(0001), and
 metal/6H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
@@ -206,6 +207,7 @@ InN(0001), ZnO(0001), and a hydrogen-backed 6H-SiC(0001) Si-face slab. Requests 
 "build Si/Ge heterostructure", "build Si/Ge MQW",
 "build a Si/SiO2 MOS interface",
 "build an Al/SiO2/Si MOS capacitor",
+"build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor",
 "build a TiN/HfO2/Si high-k MOS capacitor",
 "build a HfO2 high-k gate stack",
 "build a MOS capacitor gate stack",
@@ -238,13 +240,19 @@ reference lattice, and reference average Si-C bond length. Explicit execution
 materializes the reviewed bulk spec as CIF and may hot-load it into the current
 Materials Studio window.
 
-Two reviewed derived starts are also available. The
+Three reviewed derived starts are also available. The
 `silicon_carbide_6h_0001_si_face_slab` virtual template reorders the cited bulk
 cell into a centered `2x2` slab with six C-Si bilayers, a Si-terminated `(0001)`
 top face, and four H atoms saturating the C-terminated back face. The
 `metal_silicon_carbide_6h_0001_schottky_contact` virtual template adds a top-site
 metal layer plus a shifted second visualization layer so contact thickness can
-be diagnosed. The six-bilayer, `2x2`, back-H model is grounded in
+be diagnosed. The
+`aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor` virtual template
+adds two mixed Si/O marker planes and two Al planes above the same Si face. It
+supports deterministic oxide-thickness edits, gate-stack/interface diagnostics,
+preview-first CIF materialization, and explicit same-window hot-loading. Its
+planar oxide is a visualization and preflight scaffold, not amorphous or relaxed
+SiO2 and not a literature-exact interface. The six-bilayer, `2x2`, back-H model is grounded in
 [Tanaka et al., DOI 10.2320/matertrans.47.2690](https://www.jstage.jst.go.jp/article/matertrans/47/11/47_11_2690/_pdf),
 whose reference calculation used one metal monolayer. The generated contact
 records that difference and remains an unrelaxed, unreconstructed preflight
@@ -252,9 +260,10 @@ scaffold. The 3.85 eV electron affinity and 3.0 eV band gap come from the TCAD
 inputs reported by
 [Li et al., DOI 10.3390/ma10060583](https://www.mdpi.com/1996-1944/10/6/583);
 they are metadata-only screening values, not CASTEP or surface-reconstruction
-results. Explicit C-face `(000-1)`, ambiguous unoriented surfaces, 6H-SiC MOS,
-and other 6H-SiC interface/device requests remain unsupported and never fall
-back to 3C-SiC, 4H-SiC, or silicon.
+results. Explicit C-face `(000-1)`, ambiguous unoriented surfaces, bare
+SiO2/6H-SiC interfaces, complete MOS device/transistor geometries, and other
+6H-SiC heterostructures remain unsupported and never fall back to 3C-SiC,
+4H-SiC, or silicon.
 
 The metal/beta-Ga2O3(010) scaffold is centered in a vacuum cell and remains an
 unrelaxed visualization and diagnostic starting point. Its 4.0 eV electron

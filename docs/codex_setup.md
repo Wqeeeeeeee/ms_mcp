@@ -596,10 +596,12 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
-For preview-only 6H-SiC surface and contact acceptance, run
+For preview-only 6H-SiC surface, contact, and MOS gate-stack acceptance, run
 `ms-mcp-live-smoke --scenario sic_6h_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_slab`
 or
-`ms-mcp-live-smoke --scenario sic_6h_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_contact`.
+`ms-mcp-live-smoke --scenario sic_6h_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_contact`,
+or
+`ms-mcp-live-smoke --scenario sic_6h_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_mos`.
 
 For a preview-safe Chinese halide-perovskite acceptance run with seven exported
 views, alloy diagnostics, and the normality gate, use

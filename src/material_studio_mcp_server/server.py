@@ -2076,6 +2076,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "templates": [
                 "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_mos_capacitor",
+                "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
                 "silicon_silicon_dioxide_100_interface",
             ],
             "request_terms": [

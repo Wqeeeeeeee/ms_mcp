@@ -6064,6 +6064,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert sic_6h_contact["surface_orientation"] == "6H-SiC(0001) Si-face"
     assert "metal_semiconductor_contact" in sic_6h_contact["default_diagnostic_focuses"]
     assert "semiconductor_contact_csv" in sic_6h_contact["required_csv_keys"]
+    sic_6h_mos = virtual_profiles["aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"]
+    assert sic_6h_mos["base_template_id"] == "silicon_carbide_6h_hexagonal"
+    assert sic_6h_mos["variant_kind"] == "gate_stack_scaffold"
+    assert sic_6h_mos["materials"] == ["6H-SiC", "SiO2", "Al"]
+    assert sic_6h_mos["interface"] == "Al/SiO2/6H-SiC"
+    assert sic_6h_mos["surface_orientation"] == "6H-SiC(0001) Si-face"
+    assert "mos_gate_stack" in sic_6h_mos["default_diagnostic_focuses"]
+    assert "surface_slab_polarity" not in sic_6h_mos["default_diagnostic_focuses"]
+    assert "semiconductor_gate_stack_csv" in sic_6h_mos["required_csv_keys"]
     inp_contact = virtual_profiles["metal_indium_phosphide_001_schottky_contact"]
     assert inp_contact["base_template_id"] == "indium_phosphide_zincblende"
     assert inp_contact["variant_kind"] == "interface_scaffold"
@@ -6594,6 +6603,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "nearest-neighbor divacancy" in patch_commands["crystal_divacancy"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
+    assert "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor" in mos_gate_stack["templates"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
     assert "high-k gate dielectric" in mos_gate_stack["request_terms"]
     assert "silicon oxide interface" in mos_gate_stack["request_terms"]
@@ -27364,14 +27374,25 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
     assert reversed_contact.payload is not None
     assert reversed_contact.payload["metadata"]["metal_contact_material"] == "Pt"
 
+    mos = infer_modeling_plan("Build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor.")
+    chinese_mos = infer_modeling_plan(
+        "\u6784\u5efa6H\u78b3\u5316\u7845 MOS \u7535\u5bb9\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio"
+    )
+    for plan in (mos, chinese_mos):
+        assert plan.kind == "spec"
+        assert plan.template_id == "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 72
+        assert plan.payload["metadata"]["stack_sequence"] == ["6H-SiC", "SiO2", "Al"]
+        assert plan.payload["metadata"]["oxide_scaffold_model"]["amorphous_structure"] is False
+
     for request in (
         "Build a 6H-SiC surface.",
         "Build a 6H-SiC(000-1) C-face slab.",
         "Build an Au/6H-SiC(000-1) C-face Schottky contact.",
-        "Build a 6H-SiC MOS capacitor.",
+        "Build a 6H-SiC(000-1) C-face MOS capacitor.",
         "Build a 6H-SiC MOS device.",
         "Build a SiO2/6H-SiC interface.",
-        "\u6784\u5efa6H\u78b3\u5316\u7845 MOS \u7535\u5bb9\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio",
     ):
         plan = infer_modeling_plan(request)
         assert plan.kind == "unsupported"
@@ -27384,7 +27405,7 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
     assert any("non-silicon semiconductor host" in note for note in germanium_contact.notes)
 
     rejected_live = server.material_studio_live_modeling_request(
-        "Build a 6H-SiC MOS capacitor and hot-load it in Materials Studio.",
+        "Build a 6H-SiC MOS device and hot-load it in Materials Studio.",
         working_dir=str(tmp_path),
     )
     assert rejected_live["ok"] is False
@@ -27497,6 +27518,103 @@ def test_live_modeling_request_builds_sic_6h_si_face_slab_and_contact(
     assert hotload["mcp_same_window_hotload_ready"] is True
     assert hotload["mcp_same_window_hotload_status"] == "current_revision_loaded"
     assert backend.opened and backend.opened[-1].suffix == ".stp"
+
+
+def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_mos_capacitor(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    preview = server.material_studio_live_modeling_request(
+        "Build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor and export gate-stack, interface, and view diagnostics.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "preview"),
+    )
+
+    assert preview["ok"] is True
+    assert preview["execution_mode"] == "preview"
+    assert preview["nl_plan"]["template_id"] == "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
+    assert preview["semiconductor_virtual_template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
+    )
+    assert preview["view_audit"]["model"]["elements"] == {"Al": 8, "C": 24, "H": 4, "O": 8, "Si": 28}
+    assert preview["requested_diagnostic_focuses"] == ["mos_gate_stack", "view_quality"]
+    assert not backend.opened
+
+    metadata = preview["view_audit"]["metadata"]
+    assert metadata["polytype"] == "6H"
+    assert metadata["stack_sequence"] == ["6H-SiC", "SiO2", "Al"]
+    assert metadata["interface"] == "Al/SiO2/6H-SiC"
+    assert metadata["surface_orientation"] == "6H-SiC(0001) Si-face"
+    assert metadata["sic_bilayer_count"] == 6
+    assert metadata["oxide_scaffold_model"]["amorphous_structure"] is False
+    assert metadata["oxide_scaffold_model"]["literature_exact_interface"] is False
+    assert metadata["requires_geometry_relaxation"] is True
+
+    semiconductor = preview["modeling_report"]["inspection"]["semiconductor_health"]
+    gate_stack = semiconductor["gate_stack_summary"]
+    assert gate_stack["quality"] == "complete"
+    assert gate_stack["material_sequence"] == ["6H-SiC", "SiO2", "Al"]
+    assert gate_stack["sequence_matches_expected"] is True
+    assert gate_stack["role_counts"] == {"channel": 1, "gate": 1, "oxide": 1}
+    assert gate_stack["oxide_center_span_angstrom"] == pytest.approx(8.0, abs=1e-4)
+    assert gate_stack["gate_center_span_angstrom"] == pytest.approx(2.56, abs=1e-4)
+    assert semiconductor["coordination_outlier_count"] == 0
+    assert semiconductor["surface_model_summary"] is None
+    assert semiconductor["surface_termination_summary"] is None
+    assert semiconductor["surface_polarity_summary"] is None
+    assert preview["view_bundle_row_counts"]["semiconductor_gate_stack"] == 3
+    assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
+    assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
+    assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+
+    thickness = server.material_studio_live_modeling_request(
+        "\u6784\u5efa6H-\u78b3\u5316\u7845 MOS \u7535\u5bb9\uff0cSiO2\u539a\u5ea610\u57c3\uff0c\u5bfc\u51fa\u6805\u5806\u8bca\u65ad\u3002",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "thickness"),
+    )
+
+    assert thickness["ok"] is True
+    thickness_metadata = thickness["view_audit"]["metadata"]
+    assert thickness_metadata["oxide_thickness_angstrom"] == 10.0
+    assert thickness_metadata["nl_composite_operations"] == ["set_gate_stack_thickness oxide SiO2 10A"]
+    thickness_gate_stack = thickness["modeling_report"]["inspection"]["semiconductor_health"]["gate_stack_summary"]
+    assert thickness_gate_stack["declared_oxide_thickness_angstrom"] == 10.0
+    assert thickness_gate_stack["oxide_center_span_angstrom"] == pytest.approx(10.0, abs=1e-6)
+    assert not backend.opened
+
+    hotload = server.material_studio_live_modeling_request(
+        (
+            "Build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor and hot-load it in the current "
+            "Materials Studio window, export all view parameters, and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path / "hotload"),
+        take_snapshot=False,
+    )
+
+    assert hotload["ok"] is True
+    assert hotload["execution_mode"] == "execute"
+    assert hotload["execution_mode_source"] == "explicit_live_intent"
+    assert hotload["nl_plan"]["template_id"] == "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
+    assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotload["structure_artifact_validation"]["status"] == "matched"
+    assert hotload["gui_open"]["structure_path"].endswith(".cif")
+    assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert hotload["single_window_policy_ok"] is True
+    assert hotload["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[-1].suffix == ".stp"
 
 
 def test_live_modeling_request_hotloads_semiconductor_crystal_as_cif(monkeypatch, tmp_path: Path) -> None:

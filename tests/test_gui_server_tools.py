@@ -6848,6 +6848,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "quantum_well_layers" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "quantum_well_thickness" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "p_gan_gate_cap" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
+    assert "gate_stack_interface_gap" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "set_lattice_parameters" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "translate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
     assert "rotate_crystal_layer" in capabilities["natural_language"]["new_structure_inline_modifiers"]["operations"]
@@ -15283,6 +15284,9 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     assert oxide_geometry["boundary_connected_within_neighbor_cutoff"] is True
     assert oxide_geometry["short_contact_count"] == 0
     assert oxide_geometry["isolated_oxide_atom_count"] == 0
+    assert oxide_geometry["interface_spacing_count"] == 1
+    assert oxide_geometry["interface_spacing_mismatch_count"] == 0
+    assert oxide_geometry["interface_spacing_declared_values_match"] is True
     assert oxide_geometry["geometry_preflight_ready"] is True
     oxide_interface = semiconductor["oxide_interface_health_summary"]
     assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
@@ -15320,7 +15324,7 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     row_counts = result["view_bundle_row_counts"]
     assert row_counts["semiconductor_interface_profile"] == 6
     assert row_counts["semiconductor_interface_quality"] == 2
-    assert row_counts["semiconductor_oxide_interface_geometry"] == 25
+    assert row_counts["semiconductor_oxide_interface_geometry"] == 26
     assert row_counts["semiconductor_oxide_interface_health"] == 3
     assert "semiconductor_quantum_well" not in row_counts
     assert "semiconductor_surface_termination" not in row_counts
@@ -15412,12 +15416,17 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert semiconductor["gate_stack_summary"]["gate_center_span_angstrom"] == 1.68
     assert semiconductor["gate_stack_summary"]["declared_gate_thickness_angstrom"] == 1.68
     oxide_geometry = semiconductor["oxide_interface_geometry_summary"]
-    assert oxide_geometry["status"] == "boundary_disconnected_review"
+    assert oxide_geometry["status"] == "declared_interface_spacing_mismatch"
     assert oxide_geometry["quality"] == "review_required"
     assert oxide_geometry["boundary_candidate_pair_count"] == 12
     assert oxide_geometry["boundary_neighbor_pair_count"] == 0
     assert oxide_geometry["boundary_connected_within_neighbor_cutoff"] is False
     assert oxide_geometry["short_contact_count"] == 0
+    assert oxide_geometry["interface_spacing_count"] == 2
+    assert oxide_geometry["interface_spacing_mismatch_count"] == 1
+    assert oxide_geometry["interface_spacing_declared_values_match"] is False
+    assert oxide_geometry["interface_spacings"][0]["actual_gap_angstrom"] == 2.24
+    assert oxide_geometry["interface_spacings"][0]["declared_gap_angstrom"] == 1.76
     assert oxide_geometry["geometry_preflight_ready"] is False
     oxide_interface = semiconductor["oxide_interface_health_summary"]
     assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
@@ -15438,8 +15447,9 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert review["gate_stack"]["sequence_matches_expected"] is True
     assert review["gate_stack"]["gate_material"] == "Al"
     assert review["gate_stack"]["declared_gate_thickness_angstrom"] == 1.68
-    assert review["oxide_interface_geometry"]["status"] == "boundary_disconnected_review"
+    assert review["oxide_interface_geometry"]["status"] == "declared_interface_spacing_mismatch"
     assert "oxide_interface_boundary_disconnected" in review["risk_flags"]
+    assert "oxide_interface_declared_spacing_mismatch" in review["risk_flags"]
     assert review["oxide_interface"]["stoichiometry_status"] == "matched"
     assert "mixed_interface_layers" not in review["risk_flags"]
     assert "gate_stack_review" not in review["risk_flags"]
@@ -15453,12 +15463,15 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert result["modeling_health"]["checks"][
         "semiconductor_oxide_interface_boundary_connected"
     ] is False
+    assert result["modeling_health"]["checks"][
+        "semiconductor_oxide_interface_spacing_mismatch_count"
+    ] == 1
 
     row_counts = result["view_bundle_row_counts"]
     assert row_counts["semiconductor_interface_profile"] == 8
     assert row_counts["semiconductor_interface_quality"] == 3
     assert row_counts["semiconductor_gate_stack"] == 3
-    assert row_counts["semiconductor_oxide_interface_geometry"] == 25
+    assert row_counts["semiconductor_oxide_interface_geometry"] == 27
     assert row_counts["semiconductor_oxide_interface_health"] == 3
     assert "semiconductor_quantum_well" not in row_counts
     assert "semiconductor_surface_termination" not in row_counts
@@ -15680,12 +15693,15 @@ def test_live_modeling_request_infers_tin_hfo2_si_high_k_mos_capacitor_template(
     assert semiconductor["gate_stack_summary"]["gate_oxide_material"] == "HfO2"
     assert semiconductor["gate_stack_summary"]["role_counts"] == {"channel": 1, "gate": 1, "oxide": 1}
     oxide_geometry = semiconductor["oxide_interface_geometry_summary"]
-    assert oxide_geometry["status"] == "short_contact_review"
+    assert oxide_geometry["status"] == "declared_interface_spacing_mismatch"
     assert oxide_geometry["quality"] == "review_required"
     assert oxide_geometry["boundary_candidate_pair_count"] == 12
     assert oxide_geometry["boundary_neighbor_pair_count"] == 4
     assert oxide_geometry["short_contact_count"] == 8
     assert oxide_geometry["short_contact_scope_counts"] == {"oxide_internal": 8}
+    assert oxide_geometry["interface_spacing_count"] == 2
+    assert oxide_geometry["interface_spacing_mismatch_count"] == 1
+    assert oxide_geometry["interface_spacing_declared_values_match"] is False
     assert oxide_geometry["geometry_preflight_ready"] is False
     assert semiconductor["quantum_well_summary"] is None
     assert semiconductor["surface_termination_summary"] is None
@@ -15700,9 +15716,10 @@ def test_live_modeling_request_infers_tin_hfo2_si_high_k_mos_capacitor_template(
     assert review["gate_stack"]["sequence_matches_expected"] is True
     assert review["gate_stack"]["gate_material"] == "TiN"
     assert review["gate_stack"]["gate_oxide_material"] == "HfO2"
-    assert review["oxide_interface_geometry"]["status"] == "short_contact_review"
+    assert review["oxide_interface_geometry"]["status"] == "declared_interface_spacing_mismatch"
     assert review["oxide_interface_geometry"]["short_contact_count"] == 8
     assert "oxide_interface_short_contact_review" in review["risk_flags"]
+    assert "oxide_interface_declared_spacing_mismatch" in review["risk_flags"]
     assert "gate_stack_review" not in review["risk_flags"]
     assert "gate_stack_sequence_mismatch" not in review["risk_flags"]
     assert "mixed_interface_layers" not in review["risk_flags"]
@@ -15714,17 +15731,20 @@ def test_live_modeling_request_infers_tin_hfo2_si_high_k_mos_capacitor_template(
 
     diagnosis = result["modeling_report"]["semiconductor_normality_diagnosis"]
     assert diagnosis["primary_domain_reason"] == (
-        "semiconductor:oxide_interface_short_contact_review"
+        "semiconductor:oxide_interface_declared_spacing_mismatch"
     )
     assert diagnosis["primary_domain_category"] == "oxide_interface"
     assert diagnosis["recommended_action"] == (
-        "review_short_oxide_interface_contacts_before_relaxation"
+        "align_declared_and_measured_gate_stack_interface_spacing"
     )
     assert diagnosis["preview_payload_hint"]["execution_mode"] == "preview"
     assert diagnosis["preview_payload_hint"]["open_in_gui"] is False
-    assert "review_normalized_short_contacts" in diagnosis["preview_payload_hint"][
+    assert "set_gate_stack_interface_gap" in diagnosis["preview_payload_hint"][
         "remediation_operations"
     ]
+    assert diagnosis["preview_payload_hint"]["expected_result"] == (
+        "declared_and_measured_gate_stack_interface_spacing_aligned"
+    )
 
     live_summary = result["live_summary"]
     assert live_summary["semiconductor_gate_stack_quality"] == "complete"
@@ -15736,7 +15756,7 @@ def test_live_modeling_request_infers_tin_hfo2_si_high_k_mos_capacitor_template(
     assert row_counts["semiconductor_interface_profile"] == 8
     assert row_counts["semiconductor_interface_quality"] == 3
     assert row_counts["semiconductor_gate_stack"] == 3
-    assert row_counts["semiconductor_oxide_interface_geometry"] == 33
+    assert row_counts["semiconductor_oxide_interface_geometry"] == 35
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
     assert Path(
         result["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_geometry_csv"]
@@ -17390,6 +17410,69 @@ def test_live_modeling_request_infers_gate_stack_thickness_followup(
     current = server.material_studio_model_get_current(created["project_id"], working_dir=str(tmp_path))
     assert current["revision"] == 1
     assert current["spec"]["metadata"]["oxide_thickness_angstrom"] == 6.72
+
+
+def test_live_modeling_request_edits_gate_stack_interface_gaps_preview_then_same_window_hotload(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
+    backend = isolated_fake_gui
+    created = server.material_studio_live_modeling_request(
+        "Build a TiN/HfO2/Si high-k MOS capacitor.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    preview = server.material_studio_live_modeling_request(
+        "Set Si/HfO2 interface gap to 1.76 angstrom.",
+        working_dir=str(tmp_path),
+    )
+
+    assert preview["ok"] is True
+    assert preview["workflow"] == "patch"
+    assert preview["execution_mode"] == "preview"
+    assert preview["base_revision"] == 0
+    assert preview["new_revision"] == 1
+    assert preview["nl_plan"]["template_id"] == "gate_stack_interface_gap"
+    assert preview["diff"] == [
+        "set_gate_stack_interface_gap semiconductor_oxide Si/HfO2 1.76A"
+    ]
+    assert backend.opened == []
+    preview_geometry = preview["modeling_report"]["inspection"]["semiconductor_health"][
+        "oxide_interface_geometry_summary"
+    ]
+    assert preview_geometry["interface_spacing_mismatch_count"] == 0
+    assert preview_geometry["interface_spacings"][0]["status"] == "matched"
+
+    hotloaded = server.material_studio_live_modeling_request(
+        "Set HfO2/TiN interface gap to 0.3 nm and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+
+    assert hotloaded["ok"] is True
+    assert hotloaded["workflow"] == "patch"
+    assert hotloaded["execution_mode"] == "execute"
+    assert hotloaded["execution_mode_source"] == "explicit_live_intent"
+    assert hotloaded["base_revision"] == 1
+    assert hotloaded["new_revision"] == 2
+    assert hotloaded["diff"] == [
+        "set_gate_stack_interface_gap oxide_gate HfO2/TiN 3A"
+    ]
+    assert hotloaded["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotloaded["gui_status"]["process_count"] == 1
+    assert hotloaded["gui_status"]["window_count"] == 1
+    assert backend.opened and backend.opened[-1].suffix == ".cif"
+    hotloaded_geometry = hotloaded["modeling_report"]["inspection"]["semiconductor_health"][
+        "oxide_interface_geometry_summary"
+    ]
+    assert hotloaded_geometry["interface_spacing_mismatch_count"] == 0
+    spacing_by_target = {
+        row["target_interface"]: row
+        for row in hotloaded_geometry["interface_spacings"]
+    }
+    assert spacing_by_target["semiconductor_oxide"]["status"] == "matched"
+    assert spacing_by_target["oxide_gate"]["status"] == "matched"
 
 
 def test_live_modeling_request_infers_multiple_gate_stack_thickness_followup(
@@ -27749,7 +27832,7 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_mos_capacitor(
     assert semiconductor["surface_termination_summary"] is None
     assert semiconductor["surface_polarity_summary"] is None
     assert preview["view_bundle_row_counts"]["semiconductor_gate_stack"] == 3
-    assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 37
+    assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 39
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
@@ -27878,7 +27961,7 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
     )
     assert base_diagnosis["preview_payload_hint"]["execution_mode"] == "preview"
     assert base_diagnosis["preview_payload_hint"]["open_in_gui"] is False
-    assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 37
+    assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 38
     assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
@@ -27977,7 +28060,7 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
     assert "review_recorded_oxygen_vacancy_location" in vacancy_diagnosis[
         "preview_payload_hint"
     ]["remediation_operations"]
-    assert vacancy["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 32
+    assert vacancy["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 33
     assert vacancy["view_bundle_row_counts"]["semiconductor_oxide_interface_health"] == 4
     assert Path(
         vacancy["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_geometry_csv"]

@@ -479,7 +479,7 @@ SCENARIO_EXPECTATIONS = {
             "semiconductor_heterostructure": 1,
             "semiconductor_interface_profile": 1,
             "semiconductor_interface_quality": 1,
-            "semiconductor_oxide_interface_geometry": 37,
+            "semiconductor_oxide_interface_geometry": 39,
             "semiconductor_oxide_interface_health": 3,
             "semiconductor_calculation_preflight": 1,
             "requested_diagnostic_focus_status": 2,
@@ -502,7 +502,7 @@ SCENARIO_EXPECTATIONS = {
         "row_counts": {
             "semiconductor_interface_profile": 1,
             "semiconductor_interface_quality": 1,
-            "semiconductor_oxide_interface_geometry": 37,
+            "semiconductor_oxide_interface_geometry": 38,
             "semiconductor_oxide_interface_health": 3,
             "semiconductor_calculation_preflight": 1,
             "requested_diagnostic_focus_status": 2,
@@ -678,6 +678,13 @@ FOLLOW_UP_REQUESTS = {
         "as_vacancy": (
             "Create an As vacancy and hot-load it in Materials Studio, "
             "export front top isometric view parameters, defect diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_6h_mos": {
+        "interface_gaps_2p0_2p5": (
+            "Set the semiconductor-oxide interface gap to 2.0 angstrom and the oxide-gate interface gap "
+            "to 2.5 angstrom, then hot-load it in Materials Studio and export gate-stack, interface, "
+            "and view diagnostics."
         ),
     },
     "sic_6h_oxide_interface": {
@@ -892,6 +899,28 @@ FOLLOW_UP_EXPECTATIONS = {
             "files": ["semiconductor_defects_csv", "semiconductor_finite_size_csv"],
         },
     },
+    "sic_6h_mos": {
+        "interface_gaps_2p0_2p5": {
+            "row_counts": {
+                "semiconductor_gate_stack": 3,
+                "semiconductor_interface_profile": 1,
+                "semiconductor_interface_quality": 3,
+                "semiconductor_oxide_interface_geometry": 39,
+                "semiconductor_oxide_interface_health": 3,
+                "requested_diagnostic_focus_status": 1,
+                "view_summary": 1,
+                "view_quality": 1,
+                "view_projections": 1,
+            },
+            "files": [
+                "semiconductor_gate_stack_csv",
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
+                "semiconductor_oxide_interface_health_csv",
+            ],
+        },
+    },
     "sic_6h_oxide_interface": {
         "o_vacancy": {
             "row_counts": {
@@ -899,7 +928,7 @@ FOLLOW_UP_EXPECTATIONS = {
                 "semiconductor_finite_size": 1,
                 "semiconductor_interface_profile": 1,
                 "semiconductor_interface_quality": 1,
-                "semiconductor_oxide_interface_geometry": 32,
+                "semiconductor_oxide_interface_geometry": 33,
                 "semiconductor_oxide_interface_health": 4,
                 "requested_diagnostic_focus_status": 3,
                 "view_summary": 1,
@@ -1022,6 +1051,7 @@ def run_live_smoke(
     if resolved_follow_up_request and live.get("ok") and live.get("project_id"):
         followup_live = server.material_studio_live_modeling_request(
             resolved_follow_up_request,
+            project_id=str(live["project_id"]),
             execution_mode=mode,
             open_in_gui=True,
             take_snapshot=take_snapshot,

@@ -607,12 +607,17 @@ or
 To verify the deterministic O-vacancy continuation without touching a real GUI,
 add `--follow-up-preset o_vacancy` while keeping `--execution-mode preview` and
 the two `--no-*` GUI flags.
-The base 6H-SiC oxide-interface and MOS scenarios require
-`semiconductor_oxide_interface_geometry.csv` with at least 37 rows (one
-summary, 24 boundary candidates, and 12 oxide-atom coverage rows) and
+To verify both MOS boundary-spacing edits in one preview-only continuation, run
+the `sic_6h_mos` scenario with `--follow-up-preset interface_gaps_2p0_2p5`,
+`--execution-mode preview`, and the same two `--no-*` GUI flags.
+The base 6H-SiC oxide-interface scenario requires
+`semiconductor_oxide_interface_geometry.csv` with at least 38 rows (one
+summary, one interface-spacing row, 24 boundary candidates, and 12 oxide-atom
+coverage rows). The MOS scenario requires at least 39 rows because it reports
+both semiconductor/oxide and oxide/gate spacing rows. Both require
 `semiconductor_oxide_interface_health.csv` with at least three rows (one
 summary plus the deterministic oxide layers). The O-vacancy follow-up requires
-at least 32 geometry rows, at least four health rows, and a defect row bound to
+at least 33 geometry rows, at least four health rows, and a defect row bound to
 its oxide layer and interface distance. Inspect
 `oxide_interface_geometry_summary.status`,
 `boundary_neighbor_pair_count`, `short_contact_count`,

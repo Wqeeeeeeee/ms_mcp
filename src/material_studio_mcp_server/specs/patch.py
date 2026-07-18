@@ -54,6 +54,7 @@ PatchOperationType = Literal[
     "set_metadata",
     "reconcile_dopant_metadata",
     "set_interface_gap",
+    "set_gate_stack_interface_gap",
     "set_gate_stack_thickness",
     "set_p_gan_gate_cap_thickness",
     "set_quantum_well_thickness",
@@ -164,6 +165,7 @@ class SemanticPatchOperation(StrictModel):
     strain_policy: Literal["balanced", "bottom_fixed", "top_fixed"] | None = None
     max_strain_percent: float | None = Field(default=None, gt=0, le=10)
     thickness_angstrom: float | None = Field(default=None, gt=0)
+    target_interface: Literal["semiconductor_oxide", "oxide_gate"] | None = None
     target_layer: Literal["gate", "oxide", "channel", "well", "barrier"] | None = None
     lattice: LatticeSpec | None = None
     fractional: FractionalVector3 | None = None
@@ -217,6 +219,7 @@ class SemanticPatchOperation(StrictModel):
             "set_metadata",
             "reconcile_dopant_metadata",
             "set_interface_gap",
+            "set_gate_stack_interface_gap",
             "set_gate_stack_thickness",
             "set_p_gan_gate_cap_thickness",
             "set_quantum_well_thickness",
@@ -246,6 +249,12 @@ class SemanticPatchOperation(StrictModel):
                 raise ValueError("rotate_crystal_atoms angle_degrees must be finite")
             if abs(float(self.angle_degrees)) <= 1e-12 or abs(float(self.angle_degrees)) >= 360.0 - 1e-12:
                 raise ValueError("rotate_crystal_atoms angle_degrees must produce a non-identity rotation")
+        if self.operation == "set_gate_stack_interface_gap" and (
+            self.target_interface is None or self.thickness_angstrom is None
+        ):
+            raise ValueError(
+                "set_gate_stack_interface_gap requires target_interface and thickness_angstrom"
+            )
         if self.operation == "make_commensurate_twisted_bilayer":
             if (
                 self.commensurate_m is None
@@ -486,6 +495,14 @@ def _apply_crystal_patch(spec: ModelSpec, patch: SemanticPatch, diff: list[str])
         elif op == "center_slab":
             atoms = _apply_center_slab_patch(spec, lattice, atoms, operation)
             diff.append(f"center_slab {operation.axis or (spec.metadata or {}).get('surface_axis') or 'c'}")
+        elif op == "set_gate_stack_interface_gap":
+            lattice, atoms = _apply_gate_stack_interface_gap_patch(
+                spec,
+                lattice,
+                atoms,
+                operation,
+                diff,
+            )
         elif op == "set_gate_stack_thickness":
             atoms = _apply_gate_stack_thickness_patch(spec, lattice, atoms, operation, diff)
         elif op == "set_p_gan_gate_cap_thickness":
@@ -2069,6 +2086,163 @@ def _interface_scaffold_film_atom_ids(
     }
 
 
+def _apply_gate_stack_interface_gap_patch(
+    spec: ModelSpec,
+    lattice: LatticeSpec,
+    atoms: list[BasisAtomSpec],
+    operation: SemanticPatchOperation,
+    diff: list[str],
+) -> tuple[LatticeSpec, list[BasisAtomSpec]]:
+    """Set one adjacent gate-stack boundary spacing without scaling either segment."""
+
+    if operation.target_interface is None or operation.thickness_angstrom is None:
+        raise ValueError(
+            "set_gate_stack_interface_gap requires target_interface and thickness_angstrom"
+        )
+    target_gap = float(operation.thickness_angstrom)
+    if target_gap <= 0.0 or target_gap > 100.0:
+        raise ValueError(
+            "set_gate_stack_interface_gap target must be between 0 and 100 Angstrom"
+        )
+
+    metadata = dict(spec.metadata or {})
+    axis_key = _gate_stack_axis_key(metadata, operation.axis)
+    axis_index = {"a": 0, "b": 1, "c": 2}[axis_key]
+    old_axis_length = float(getattr(lattice, axis_key))
+    if old_axis_length <= 0.0:
+        raise ValueError(
+            "set_gate_stack_interface_gap requires a positive lattice axis length"
+        )
+
+    first_material, second_material = _gate_stack_interface_material_pair(
+        metadata,
+        operation.target_interface,
+    )
+    layers = _gate_stack_layers(atoms, axis_index, metadata)
+    boundary_index, lower_layer, upper_layer = _gate_stack_interface_boundary_layers(
+        layers,
+        first_material,
+        second_material,
+    )
+    previous_gap = (
+        float(upper_layer["center"]) - float(lower_layer["center"])
+    ) * old_axis_length
+    delta = target_gap - previous_gap
+    new_axis_length = old_axis_length + delta
+    if new_axis_length <= 0.0:
+        raise ValueError(
+            "set_gate_stack_interface_gap produced an invalid lattice axis length"
+        )
+
+    upper_atom_ids = {
+        atom_id
+        for layer in layers[boundary_index + 1 :]
+        for atom_id in layer["atom_ids"]
+    }
+    if not upper_atom_ids:
+        raise ValueError(
+            "set_gate_stack_interface_gap could not identify atoms above the target boundary"
+        )
+
+    updated_atoms: list[BasisAtomSpec] = []
+    for atom in atoms:
+        fractional = [
+            float(atom.fractional.x),
+            float(atom.fractional.y),
+            float(atom.fractional.z),
+        ]
+        cartesian_axis_value = fractional[axis_index] * old_axis_length
+        if atom.id in upper_atom_ids:
+            cartesian_axis_value += delta
+        new_fractional_value = cartesian_axis_value / new_axis_length
+        if new_fractional_value < -1e-9 or new_fractional_value > 1.0 + 1e-9:
+            raise ValueError(
+                "set_gate_stack_interface_gap would move atoms outside the unit cell"
+            )
+        fractional[axis_index] = min(max(new_fractional_value, 0.0), 1.0)
+        updated_atoms.append(
+            atom.model_copy(
+                update={
+                    "fractional": FractionalVector3(
+                        x=fractional[0],
+                        y=fractional[1],
+                        z=fractional[2],
+                    )
+                }
+            )
+        )
+
+    new_lattice = lattice.model_copy(update={axis_key: new_axis_length})
+    updated_layers = _gate_stack_layers(updated_atoms, axis_index, metadata)
+    _validate_gate_stack_layer_spacing(updated_layers, new_axis_length)
+    _, new_lower_layer, new_upper_layer = _gate_stack_interface_boundary_layers(
+        updated_layers,
+        first_material,
+        second_material,
+    )
+    measured_gap = (
+        float(new_upper_layer["center"]) - float(new_lower_layer["center"])
+    ) * new_axis_length
+    if abs(measured_gap - target_gap) > 1e-6:
+        raise ValueError(
+            "set_gate_stack_interface_gap failed to produce the requested layer-center spacing"
+        )
+
+    record = {
+        "target_interface": operation.target_interface,
+        "spacing_definition": "adjacent_boundary_layer_center_distance",
+        "axis": axis_key,
+        "lower_material": str(lower_layer["material"]),
+        "upper_material": str(upper_layer["material"]),
+        "lower_layer_index": int(lower_layer["index"]),
+        "upper_layer_index": int(upper_layer["index"]),
+        "previous_gap_angstrom": round(previous_gap, 6),
+        "target_gap_angstrom": round(target_gap, 6),
+        "measured_gap_angstrom": round(measured_gap, 6),
+        "delta_angstrom": round(delta, 6),
+        "old_axis_length_angstrom": round(old_axis_length, 6),
+        "new_axis_length_angstrom": round(new_axis_length, 6),
+        "moved_upper_atom_count": len(upper_atom_ids),
+        "preserved_lower_cartesian_geometry": True,
+        "preserved_upper_internal_cartesian_geometry": True,
+        "preserved_top_vacuum": True,
+        "geometry_changed": abs(delta) > 1e-12,
+        "source": "semantic_patch_set_gate_stack_interface_gap",
+    }
+    previous_edits = [
+        dict(item)
+        for item in metadata.get("gate_stack_interface_gap_edits", [])
+        if isinstance(item, dict)
+    ]
+    previous_edits.append(record)
+    metadata["gate_stack_interface_gap_definition"] = (
+        "adjacent_boundary_layer_center_distance"
+    )
+    metadata["gate_stack_interface_gap_edits"] = previous_edits
+    metadata["last_gate_stack_interface_gap_edit"] = record
+    if operation.target_interface == "semiconductor_oxide":
+        metadata["semiconductor_oxide_interface_gap_angstrom"] = round(
+            target_gap,
+            6,
+        )
+        metadata["interface_gap_angstrom"] = round(target_gap, 6)
+    else:
+        metadata["oxide_gate_interface_gap_angstrom"] = round(target_gap, 6)
+    slab_thickness = _metadata_optional_float(metadata.get("slab_thickness_angstrom"))
+    if slab_thickness is not None:
+        metadata["slab_thickness_angstrom"] = round(slab_thickness + delta, 6)
+    metadata["requires_geometry_relaxation"] = True
+    metadata["unrelaxed_interface"] = True
+    spec.metadata = metadata
+
+    diff.append(
+        "set_gate_stack_interface_gap "
+        f"{operation.target_interface} {lower_layer['material']}/{upper_layer['material']} "
+        f"{target_gap:g}A"
+    )
+    return new_lattice, updated_atoms
+
+
 def _apply_gate_stack_thickness_patch(
     spec: ModelSpec,
     lattice: LatticeSpec,
@@ -3005,6 +3179,53 @@ def _gate_stack_target_material(metadata: dict[str, Any], target_layer: str) -> 
     raise ValueError(f"Cannot infer {target_layer} material from gate-stack metadata.")
 
 
+def _gate_stack_interface_material_pair(
+    metadata: dict[str, Any],
+    target_interface: str,
+) -> tuple[str, str]:
+    oxide_material = _gate_stack_target_material(metadata, "oxide")
+    if target_interface == "semiconductor_oxide":
+        return _gate_stack_target_material(metadata, "channel"), oxide_material
+    if target_interface != "oxide_gate":
+        raise ValueError(f"Unsupported gate-stack target interface: {target_interface}")
+
+    sequence = metadata.get("stack_sequence") or metadata.get("materials") or []
+    if isinstance(sequence, str):
+        sequence = [sequence]
+    sequence = [str(item) for item in sequence if str(item)]
+    gate_material = metadata.get("gate_material")
+    if gate_material is None and len(sequence) < 3:
+        raise ValueError(
+            "set_gate_stack_interface_gap oxide_gate requires a gate material"
+        )
+    return oxide_material, str(gate_material or sequence[-1])
+
+
+def _gate_stack_interface_boundary_layers(
+    layers: list[dict[str, Any]],
+    first_material: str,
+    second_material: str,
+) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    matches: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    expected = {first_material, second_material}
+    for index in range(len(layers) - 1):
+        lower = layers[index]
+        upper = layers[index + 1]
+        if {str(lower["material"]), str(upper["material"])} == expected:
+            matches.append((index, lower, upper))
+    if not matches:
+        raise ValueError(
+            "Cannot find adjacent gate-stack boundary layers for "
+            f"{first_material}/{second_material}."
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            "Gate-stack interface boundary is ambiguous for "
+            f"{first_material}/{second_material}."
+        )
+    return matches[0]
+
+
 def _gate_stack_layers(
     atoms: list[BasisAtomSpec],
     axis_index: int,
@@ -3082,7 +3303,7 @@ def _validate_gate_stack_layer_spacing(layers: list[dict[str, Any]], axis_length
         return
     min_spacing = min((centers[index] - centers[index - 1]) * axis_length for index in range(1, len(centers)))
     if min_spacing < 0.5:
-        raise ValueError("Requested gate-stack thickness would create layer centers closer than 0.5 Angstrom.")
+        raise ValueError("Requested gate-stack edit would create layer centers closer than 0.5 Angstrom.")
 
 
 def _update_gate_stack_thickness_metadata(

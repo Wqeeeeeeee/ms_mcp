@@ -259,24 +259,35 @@ def test_default_sic_6h_contact_scenario_requires_contact_surface_and_view_diagn
 def test_default_sic_6h_mos_scenario_requires_gate_stack_interface_and_view_diagnostics() -> None:
     preview = live_smoke.default_request_for_scenario("sic_6h_mos")
     hotload = live_smoke.default_request_for_scenario("sic_6h_mos", hotload=True)
+    interface_gaps = live_smoke.default_follow_up_request_for_scenario(
+        "sic_6h_mos",
+        "interface_gaps_2p0_2p5",
+    )
     expectation = live_smoke.SCENARIO_EXPECTATIONS["sic_6h_mos"]
+    follow_up = live_smoke.FOLLOW_UP_EXPECTATIONS["sic_6h_mos"]["interface_gaps_2p0_2p5"]
 
     assert "Al/SiO2/6H-SiC(0001) Si-face MOS capacitor" in preview
     assert "gate-stack, interface, and view diagnostics" in preview
     assert "hot-load it in Materials Studio" in hotload
     assert "check whether the model is normal" in hotload
+    assert "semiconductor-oxide interface gap to 2.0 angstrom" in interface_gaps
+    assert "oxide-gate interface gap to 2.5 angstrom" in interface_gaps
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_mos"] == (
         "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
     )
     assert expectation["row_counts"]["semiconductor_gate_stack"] == 1
     assert expectation["row_counts"]["semiconductor_interface_quality"] == 1
-    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 37
+    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 39
     assert expectation["row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert expectation["row_counts"]["view_quality"] == 1
     assert "semiconductor_gate_stack_csv" in expectation["files"]
     assert "semiconductor_interface_quality_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_geometry_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_health_csv" in expectation["files"]
+    assert follow_up["row_counts"]["semiconductor_gate_stack"] == 3
+    assert follow_up["row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+    assert "semiconductor_gate_stack_csv" in follow_up["files"]
+    assert "semiconductor_oxide_interface_geometry_csv" in follow_up["files"]
 
 
 def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None:
@@ -295,14 +306,14 @@ def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None
         "silicon_dioxide_silicon_carbide_6h_0001_interface"
     )
     assert expectation["row_counts"]["semiconductor_interface_quality"] == 1
-    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 37
+    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 38
     assert expectation["row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert expectation["row_counts"]["semiconductor_calculation_preflight"] == 1
     assert "semiconductor_interface_quality_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_geometry_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_health_csv" in expectation["files"]
     assert follow_up["row_counts"]["semiconductor_defects"] == 1
-    assert follow_up["row_counts"]["semiconductor_oxide_interface_geometry"] == 32
+    assert follow_up["row_counts"]["semiconductor_oxide_interface_geometry"] == 33
     assert follow_up["row_counts"]["semiconductor_oxide_interface_health"] == 4
     assert follow_up["row_counts"]["requested_diagnostic_focus_status"] == 3
     assert "semiconductor_defects_csv" in follow_up["files"]
@@ -736,6 +747,7 @@ def test_run_live_smoke_can_run_follow_up_live_edit(monkeypatch, tmp_path: Path)
                 },
             }
         assert user_request.startswith("Make it n-type")
+        assert kwargs["project_id"] == "si_live"
         assert kwargs["execution_mode"] is None
         return {
             **common,

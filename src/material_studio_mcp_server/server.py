@@ -4838,6 +4838,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "quantum_well_thickness",
                     "p_gan_gate_cap",
                     "gate_stack_thickness",
+                    "gate_stack_interface_gap",
                     "add_vacuum",
                     "set_lattice_parameters",
                     "translate_crystal_layer",
@@ -22957,6 +22958,8 @@ _SEMICONDUCTOR_NORMALITY_REASON_PRIORITY = (
     "semiconductor:semiconductor_health_failed",
     "semiconductor:oxide_interface_geometry_binding_review",
     "semiconductor:oxide_interface_boundary_pair_evidence_missing",
+    "semiconductor:oxide_interface_spacing_binding_review",
+    "semiconductor:oxide_interface_declared_spacing_mismatch",
     "semiconductor:oxide_interface_boundary_disconnected",
     "semiconductor:oxide_interface_short_contact_review",
     "semiconductor:oxide_interface_isolated_oxide_atoms",
@@ -23171,7 +23174,39 @@ def _semiconductor_oxide_interface_action_hint(
     if not oxide_interface:
         return {}
     recorded_vacancies = oxide_interface.get("recorded_oxygen_vacancy_site_ids") or []
-    if oxide_interface_geometry.get("quality") == "review_required":
+    spacing_mismatches = [
+        row
+        for row in oxide_interface_geometry.get("interface_spacings", []) or []
+        if isinstance(row, dict) and row.get("status") == "mismatch"
+    ]
+    needs_user_confirmation = False
+    safe_to_call_without_confirmation = True
+    expected_result = "oxide_interface_chemistry_and_relaxation_requirements_reviewed"
+    if spacing_mismatches:
+        gap_requests = []
+        for row in spacing_mismatches:
+            target = str(row.get("target_interface") or "").replace("_", "-")
+            declared_gap = row.get("declared_gap_angstrom")
+            if target and declared_gap is not None:
+                gap_requests.append(
+                    f"set the {target} interface gap to {float(declared_gap):g} Angstrom"
+                )
+        request = (
+            "Explicitly preview the current gate-stack spacing repair: "
+            + "; ".join(gap_requests)
+            + ". Export semiconductor-oxide geometry, chemistry, electronic, and view diagnostics; "
+            "do not open the GUI."
+        )
+        operations = ["set_gate_stack_interface_gap"]
+        focuses = [
+            "semiconductor_oxide_interface",
+            "electronic_structure_preflight",
+            "view_quality",
+        ]
+        needs_user_confirmation = True
+        safe_to_call_without_confirmation = False
+        expected_result = "declared_and_measured_gate_stack_interface_spacing_aligned"
+    elif oxide_interface_geometry.get("quality") == "review_required":
         request = (
             "Inspect the current semiconductor-oxide boundary atom binding, periodic pair distances, "
             "normalized short contacts, oxide-atom neighbor coverage, and relaxation requirements; "
@@ -23238,10 +23273,10 @@ def _semiconductor_oxide_interface_action_hint(
             "remediation_intent": "semiconductor_oxide_interface_health_review",
             "remediation_operations": operations,
             "required_diagnostic_focuses": focuses,
-            "expected_result": "oxide_interface_chemistry_and_relaxation_requirements_reviewed",
+            "expected_result": expected_result,
         },
-        "needs_user_confirmation": False,
-        "safe_to_call_without_confirmation": True,
+        "needs_user_confirmation": needs_user_confirmation,
+        "safe_to_call_without_confirmation": safe_to_call_without_confirmation,
     }
 
 
@@ -23450,6 +23485,15 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
             ),
             "oxide_interface_boundary_connected": oxide_interface_geometry.get(
                 "boundary_connected_within_neighbor_cutoff"
+            ),
+            "oxide_interface_spacing_count": oxide_interface_geometry.get(
+                "interface_spacing_count"
+            ),
+            "oxide_interface_spacing_mismatch_count": oxide_interface_geometry.get(
+                "interface_spacing_mismatch_count"
+            ),
+            "oxide_interface_spacing_declared_values_match": oxide_interface_geometry.get(
+                "interface_spacing_declared_values_match"
             ),
             "oxide_interface_short_contact_count": oxide_interface_geometry.get(
                 "short_contact_count"
@@ -31815,6 +31859,15 @@ def _semiconductor_oxide_interface_geometry_review(
             "oxide_boundary_atom_count",
             "oxide_atom_count",
             "oxide_cation_elements",
+            "interface_spacing_definition",
+            "interface_spacing_tolerance_angstrom",
+            "interface_spacing_count",
+            "interface_spacing_declared_count",
+            "interface_spacing_binding_review_count",
+            "interface_spacing_mismatch_count",
+            "interface_spacing_all_declared",
+            "interface_spacing_declared_values_match",
+            "interface_spacings",
             "atom_binding_complete",
             "missing_bound_atom_ids",
             "boundary_candidate_pair_count",
@@ -32250,6 +32303,10 @@ def _semiconductor_review_next_action(
         return "repair_interface_layer_and_atom_binding_before_geometry_review"
     if "oxide_interface_boundary_pair_evidence_missing" in risk_flags:
         return "regenerate_boundary_pair_evidence_before_geometry_review"
+    if "oxide_interface_spacing_binding_review" in risk_flags:
+        return "repair_gate_stack_interface_spacing_binding_before_geometry_review"
+    if "oxide_interface_declared_spacing_mismatch" in risk_flags:
+        return "align_declared_and_measured_gate_stack_interface_spacing"
     if "oxide_interface_boundary_disconnected" in risk_flags:
         return "review_semiconductor_oxide_boundary_gap_before_relaxation"
     if "oxide_interface_short_contact_review" in risk_flags:

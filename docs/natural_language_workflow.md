@@ -364,6 +364,26 @@ inventing gate metadata; real gate stacks also update `gate_stack_summary` plus
 `semiconductor_gate_stack.csv`. GUI tools
 should then hot-load or snapshot the resulting revision rather than editing the
 stack by blind viewport clicks.
+Explicit interface-spacing follow-ups use `set_gate_stack_interface_gap` and
+must name either the semiconductor/oxide or oxide/gate boundary, for example
+`set Si/HfO2 interface gap to 1.9 angstrom`, `set HfO2/TiN interface gap to
+0.3 nm`, `set the semiconductor-oxide interface spacing to 2.0 angstrom`, or
+`把半导体-氧化物界面间距改为 2.1 埃`. A bare `set interface gap`
+request remains unsupported because a MOS stack can have two different
+boundaries. The requested value is the adjacent boundary layer-center distance
+along the declared interface axis. The patch translates every layer above that
+boundary and changes the lattice length by the same delta, preserving the lower
+segment's Cartesian geometry, the upper segment's internal Cartesian geometry,
+and the existing top vacuum. It records `gate_stack_interface_gap_edits`, marks
+the scaffold for relaxation, and never claims a relaxed interface.
+`oxide_interface_geometry_summary.interface_spacings` and the
+`interface_spacing` rows in `semiconductor_oxide_interface_geometry.csv` report
+the exact layer/material binding, declared and measured values, tolerance, and
+an exact repair patch when they differ. The default comparison tolerance is
+`0.05` Angstrom. A mismatch becomes
+`semiconductor:oxide_interface_declared_spacing_mismatch` and remains
+calculation-blocking until a reviewed preview aligns the values. GUI hot-load
+still requires explicit execute intent and the verified single-window gate.
 Semiconductor/oxide interface and MOS starts additionally emit
 `oxide_interface_health_summary` plus
 `semiconductor_oxide_interface_health.csv`. The receipt reports oxide-layer
@@ -587,6 +607,7 @@ patches: `make 2x2x1 supercell`, `make a 3-period superlattice`, `build a 3-peri
 `dope 6.25% P`, `replace 25% Si with P dopants`,
 `make 25% Ge alloy`, `replace 25% Si with Ge`,
 `set HfO2 thickness to 6 angstrom`, `make TiN gate thickness 2 angstrom`,
+`set Si/HfO2 interface gap to 1.9 angstrom`, `set HfO2/TiN interface gap to 0.3 nm`,
 `build an Al/Si Schottky contact`,
 `add 10 angstrom vacuum along z`, `hydrogen passivate the top surface`,
 `hydrogen passivate both surfaces`, `fully hydrogen passivate both surfaces`,

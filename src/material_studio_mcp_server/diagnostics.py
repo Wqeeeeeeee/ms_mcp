@@ -149,6 +149,7 @@ ORIENTED_FRAME_VIEW_SPECS: dict[str, tuple[str, str]] = {
 MAX_PROJECTED_ATOMS = 500
 MAX_HEALTH_DETAIL_ROWS = 1000
 OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION = 0.55
+OXIDE_INTERFACE_SPACING_TOLERANCE_ANGSTROM = 0.05
 ANGSTROM3_TO_CM3 = 1.0e-24
 VIEW_DEFINITIONS: dict[str, dict[str, tuple[float, float, float]]] = {
     "front": {"direction": (0.0, 0.0, 1.0), "up": (0.0, 1.0, 0.0)},
@@ -1970,6 +1971,32 @@ def write_view_audit_bundle(
                 "semiconductor_boundary_atom_count",
                 "oxide_boundary_atom_count",
                 "oxide_atom_count",
+                "interface_spacing_definition",
+                "interface_spacing_tolerance_angstrom",
+                "interface_spacing_count",
+                "interface_spacing_declared_count",
+                "interface_spacing_binding_review_count",
+                "interface_spacing_mismatch_count",
+                "interface_spacing_all_declared",
+                "interface_spacing_declared_values_match",
+                "target_interface",
+                "spacing_binding_status",
+                "interface_spacing_status",
+                "expected_materials",
+                "lower_material",
+                "upper_material",
+                "lower_layer_index",
+                "upper_layer_index",
+                "lower_axis_coordinate_angstrom",
+                "upper_axis_coordinate_angstrom",
+                "actual_gap_angstrom",
+                "declared_gap_angstrom",
+                "declared_gap_source",
+                "declared_gap_status",
+                "actual_minus_declared_angstrom",
+                "matches_declared_gap",
+                "transition_match_count",
+                "patch_operation",
                 "boundary_candidate_pair_count",
                 "boundary_neighbor_pair_count",
                 "boundary_connected_within_neighbor_cutoff",
@@ -2092,6 +2119,9 @@ def write_view_audit_bundle(
                 "geometry_preflight_ready",
                 "geometry_visualization_ready",
                 "geometry_boundary_neighbor_pair_count",
+                "geometry_interface_spacing_count",
+                "geometry_interface_spacing_mismatch_count",
+                "geometry_interface_spacing_declared_values_match",
                 "geometry_short_contact_count",
                 "geometry_isolated_oxide_atom_count",
                 "pre_relaxation_scaffold",
@@ -2713,6 +2743,9 @@ def write_view_audit_bundle(
             "semiconductor_oxide_interface_geometry_atom_binding_complete",
             "semiconductor_oxide_interface_boundary_neighbor_pair_count",
             "semiconductor_oxide_interface_boundary_connected",
+            "semiconductor_oxide_interface_spacing_count",
+            "semiconductor_oxide_interface_spacing_mismatch_count",
+            "semiconductor_oxide_interface_spacing_declared_values_match",
             "semiconductor_oxide_interface_short_contact_count",
             "semiconductor_oxide_interface_isolated_oxide_atom_count",
             "semiconductor_oxide_interface_geometry_preflight_ready",
@@ -2918,6 +2951,15 @@ def _modeling_health_summary_csv_row(
         ),
         "semiconductor_oxide_interface_boundary_connected": checks.get(
             "semiconductor_oxide_interface_boundary_connected"
+        ),
+        "semiconductor_oxide_interface_spacing_count": checks.get(
+            "semiconductor_oxide_interface_spacing_count"
+        ),
+        "semiconductor_oxide_interface_spacing_mismatch_count": checks.get(
+            "semiconductor_oxide_interface_spacing_mismatch_count"
+        ),
+        "semiconductor_oxide_interface_spacing_declared_values_match": checks.get(
+            "semiconductor_oxide_interface_spacing_declared_values_match"
         ),
         "semiconductor_oxide_interface_short_contact_count": checks.get(
             "semiconductor_oxide_interface_short_contact_count"
@@ -5153,6 +5195,26 @@ def _semiconductor_oxide_interface_geometry_csv_rows(
         "status": summary.get("status"),
         "quality": summary.get("quality"),
         "atom_binding_complete": summary.get("atom_binding_complete"),
+        "interface_spacing_definition": summary.get("interface_spacing_definition"),
+        "interface_spacing_tolerance_angstrom": summary.get(
+            "interface_spacing_tolerance_angstrom"
+        ),
+        "interface_spacing_count": summary.get("interface_spacing_count"),
+        "interface_spacing_declared_count": summary.get(
+            "interface_spacing_declared_count"
+        ),
+        "interface_spacing_binding_review_count": summary.get(
+            "interface_spacing_binding_review_count"
+        ),
+        "interface_spacing_mismatch_count": summary.get(
+            "interface_spacing_mismatch_count"
+        ),
+        "interface_spacing_all_declared": summary.get(
+            "interface_spacing_all_declared"
+        ),
+        "interface_spacing_declared_values_match": summary.get(
+            "interface_spacing_declared_values_match"
+        ),
         "boundary_candidate_pair_count": summary.get("boundary_candidate_pair_count"),
         "boundary_neighbor_pair_count": summary.get("boundary_neighbor_pair_count"),
         "boundary_connected_within_neighbor_cutoff": summary.get(
@@ -5207,6 +5269,47 @@ def _semiconductor_oxide_interface_geometry_csv_rows(
             "boundary_neighbor_distance_max_angstrom": neighbor_stats.get("max"),
         }
     ]
+    for spacing in summary.get("interface_spacings", []) or []:
+        rows.append(
+            {
+                **common,
+                "row_kind": "interface_spacing",
+                "target_interface": spacing.get("target_interface"),
+                "spacing_binding_status": spacing.get("binding_status"),
+                "interface_spacing_status": spacing.get("status"),
+                "expected_materials": _join_vector(
+                    spacing.get("expected_materials")
+                ),
+                "lower_material": spacing.get("lower_material"),
+                "upper_material": spacing.get("upper_material"),
+                "lower_layer_index": spacing.get("lower_layer_index"),
+                "upper_layer_index": spacing.get("upper_layer_index"),
+                "lower_axis_coordinate_angstrom": spacing.get(
+                    "lower_axis_coordinate_angstrom"
+                ),
+                "upper_axis_coordinate_angstrom": spacing.get(
+                    "upper_axis_coordinate_angstrom"
+                ),
+                "actual_gap_angstrom": spacing.get("actual_gap_angstrom"),
+                "declared_gap_angstrom": spacing.get("declared_gap_angstrom"),
+                "declared_gap_source": spacing.get("declared_gap_source"),
+                "declared_gap_status": spacing.get("declared_gap_status"),
+                "actual_minus_declared_angstrom": spacing.get(
+                    "actual_minus_declared_angstrom"
+                ),
+                "matches_declared_gap": spacing.get("matches_declared_gap"),
+                "transition_match_count": spacing.get("transition_match_count"),
+                "patch_operation": (
+                    json.dumps(
+                        spacing.get("patch_operation"),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    if spacing.get("patch_operation")
+                    else None
+                ),
+            }
+        )
     for pair in summary.get("boundary_pairs", []) or []:
         offset = pair.get("image_offset_oxide_atom") or [None, None, None]
         rows.append(
@@ -5341,6 +5444,15 @@ def _semiconductor_oxide_interface_health_csv_rows(summary: dict[str, Any]) -> l
         "geometry_visualization_ready": summary.get("geometry_visualization_ready"),
         "geometry_boundary_neighbor_pair_count": summary.get(
             "geometry_boundary_neighbor_pair_count"
+        ),
+        "geometry_interface_spacing_count": summary.get(
+            "geometry_interface_spacing_count"
+        ),
+        "geometry_interface_spacing_mismatch_count": summary.get(
+            "geometry_interface_spacing_mismatch_count"
+        ),
+        "geometry_interface_spacing_declared_values_match": summary.get(
+            "geometry_interface_spacing_declared_values_match"
         ),
         "geometry_short_contact_count": summary.get("geometry_short_contact_count"),
         "geometry_isolated_oxide_atom_count": summary.get(
@@ -11527,8 +11639,8 @@ def _semiconductor_oxide_interface_boundary(
             continue
         from_index = _optional_int(transition.get("from_layer_index"))
         to_index = _optional_int(transition.get("to_layer_index"))
-        from_layer = layers_by_index.get(from_index or -1, {})
-        to_layer = layers_by_index.get(to_index or -1, {})
+        from_layer = layers_by_index.get(from_index, {})
+        to_layer = layers_by_index.get(to_index, {})
         from_coordinate = _optional_float(from_layer.get("axis_coordinate_angstrom"))
         to_coordinate = _optional_float(to_layer.get("axis_coordinate_angstrom"))
         boundary_coordinate = (
@@ -11548,6 +11660,205 @@ def _semiconductor_oxide_interface_boundary(
             "axis_coordinate_angstrom": boundary_coordinate,
         }
     return None
+
+
+def _semiconductor_oxide_interface_spacing_rows(
+    metadata: dict[str, Any],
+    interface_profile: dict[str, Any],
+    *,
+    semiconductor_material: str | None,
+    oxide_material: str | None,
+) -> list[dict[str, Any]]:
+    if not semiconductor_material or not oxide_material:
+        return []
+
+    tolerance = _optional_float(
+        metadata.get("interface_spacing_tolerance_angstrom")
+    )
+    if tolerance is None or not math.isfinite(tolerance) or tolerance <= 0.0:
+        tolerance = OXIDE_INTERFACE_SPACING_TOLERANCE_ANGSTROM
+    layers_by_index = {
+        int(layer["layer_index"]): layer
+        for layer in interface_profile.get("layers", []) or []
+        if isinstance(layer, dict)
+        and _optional_int(layer.get("layer_index")) is not None
+    }
+    gate_material = str(metadata.get("gate_material") or "") or None
+    if gate_material is None and (
+        metadata.get("metal_gate_stack") or metadata.get("gate_stack")
+    ):
+        sequence = metadata.get("stack_sequence") or metadata.get("materials") or []
+        if isinstance(sequence, (list, tuple)) and len(sequence) >= 3:
+            candidate = sequence[-1]
+            if candidate is not None and str(candidate).strip():
+                gate_material = str(candidate).strip()
+    targets: list[tuple[str, str, str, str | None, str | None]] = [
+        (
+            "semiconductor_oxide",
+            semiconductor_material,
+            oxide_material,
+            "semiconductor_oxide_interface_gap_angstrom",
+            "interface_gap_angstrom",
+        )
+    ]
+    if gate_material:
+        targets.append(
+            (
+                "oxide_gate",
+                oxide_material,
+                gate_material,
+                "oxide_gate_interface_gap_angstrom",
+                None,
+            )
+        )
+
+    rows: list[dict[str, Any]] = []
+    transitions = [
+        transition
+        for transition in interface_profile.get("transitions", []) or []
+        if isinstance(transition, dict)
+    ]
+    for target_interface, first_material, second_material, primary_key, fallback_key in targets:
+        expected_materials = {first_material, second_material}
+        matches = [
+            transition
+            for transition in transitions
+            if {
+                str(transition.get("from_material_group") or ""),
+                str(transition.get("to_material_group") or ""),
+            }
+            == expected_materials
+        ]
+        declared_source = None
+        declared_gap = None
+        if primary_key and primary_key in metadata:
+            declared_source = primary_key
+            declared_gap = _optional_float(metadata.get(primary_key))
+        elif fallback_key and fallback_key in metadata:
+            declared_source = fallback_key
+            declared_gap = _optional_float(metadata.get(fallback_key))
+        declared_gap_status = "not_declared"
+        if declared_source is not None:
+            if (
+                declared_gap is None
+                or not math.isfinite(declared_gap)
+                or declared_gap <= 0.0
+                or declared_gap > 100.0
+            ):
+                declared_gap = None
+                declared_gap_status = "invalid"
+            else:
+                declared_gap_status = "valid"
+
+        row: dict[str, Any] = {
+            "target_interface": target_interface,
+            "spacing_definition": "adjacent_boundary_layer_center_distance",
+            "expected_materials": [first_material, second_material],
+            "declared_gap_angstrom": (
+                _round(declared_gap) if declared_gap is not None else None
+            ),
+            "declared_gap_source": declared_source,
+            "declared_gap_status": declared_gap_status,
+            "tolerance_angstrom": _round(tolerance),
+            "transition_match_count": len(matches),
+            "patch_operation": None,
+        }
+        if len(matches) != 1:
+            row.update(
+                {
+                    "binding_status": (
+                        "missing" if not matches else "ambiguous"
+                    ),
+                    "status": "binding_review",
+                    "matches_declared_gap": None,
+                    "actual_gap_angstrom": None,
+                    "actual_minus_declared_angstrom": None,
+                }
+            )
+            rows.append(row)
+            continue
+
+        transition = matches[0]
+        from_index = _optional_int(transition.get("from_layer_index"))
+        to_index = _optional_int(transition.get("to_layer_index"))
+        from_layer = layers_by_index.get(from_index, {})
+        to_layer = layers_by_index.get(to_index, {})
+        from_coordinate = _optional_float(from_layer.get("axis_coordinate_angstrom"))
+        to_coordinate = _optional_float(to_layer.get("axis_coordinate_angstrom"))
+        if from_coordinate is None or to_coordinate is None:
+            row.update(
+                {
+                    "binding_status": "coordinate_missing",
+                    "status": "binding_review",
+                    "matches_declared_gap": None,
+                    "actual_gap_angstrom": None,
+                    "actual_minus_declared_angstrom": None,
+                }
+            )
+            rows.append(row)
+            continue
+
+        if from_coordinate <= to_coordinate:
+            lower_layer, upper_layer = from_layer, to_layer
+            lower_coordinate, upper_coordinate = from_coordinate, to_coordinate
+        else:
+            lower_layer, upper_layer = to_layer, from_layer
+            lower_coordinate, upper_coordinate = to_coordinate, from_coordinate
+        actual_gap = upper_coordinate - lower_coordinate
+        bound_fields = {
+            "lower_material": lower_layer.get("material_group"),
+            "upper_material": upper_layer.get("material_group"),
+            "lower_layer_index": lower_layer.get("layer_index"),
+            "upper_layer_index": upper_layer.get("layer_index"),
+            "lower_axis_coordinate_angstrom": _round(lower_coordinate),
+            "upper_axis_coordinate_angstrom": _round(upper_coordinate),
+            "actual_gap_angstrom": _round(actual_gap),
+        }
+        if declared_gap_status == "invalid":
+            row.update(
+                {
+                    **bound_fields,
+                    "binding_status": "declared_value_invalid",
+                    "status": "binding_review",
+                    "matches_declared_gap": None,
+                    "actual_minus_declared_angstrom": None,
+                }
+            )
+            rows.append(row)
+            continue
+
+        delta = actual_gap - declared_gap if declared_gap is not None else None
+        matches_declared = (
+            abs(delta) <= tolerance if delta is not None else None
+        )
+        if declared_gap is None:
+            status = "not_declared"
+        elif matches_declared:
+            status = "matched"
+        else:
+            status = "mismatch"
+        row.update(
+            {
+                "binding_status": "bound",
+                "status": status,
+                **bound_fields,
+                "actual_minus_declared_angstrom": (
+                    _round(delta) if delta is not None else None
+                ),
+                "matches_declared_gap": matches_declared,
+                "patch_operation": (
+                    {
+                        "type": "set_gate_stack_interface_gap",
+                        "target_interface": target_interface,
+                        "thickness_angstrom": _round(declared_gap),
+                    }
+                    if status == "mismatch"
+                    else None
+                ),
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def _oxide_stoichiometry_status(
@@ -11626,6 +11937,18 @@ def _semiconductor_oxide_interface_geometry_summary(
         semiconductor_material=semiconductor_material,
         oxide_material=oxide_material,
     )
+    interface_spacings = _semiconductor_oxide_interface_spacing_rows(
+        metadata,
+        profile,
+        semiconductor_material=semiconductor_material,
+        oxide_material=oxide_material,
+    )
+    spacing_binding_reviews = [
+        row for row in interface_spacings if row.get("status") == "binding_review"
+    ]
+    spacing_mismatches = [
+        row for row in interface_spacings if row.get("status") == "mismatch"
+    ]
     semiconductor_boundary_layer_index = _optional_int(
         (boundary or {}).get("semiconductor_layer_index")
     )
@@ -11904,7 +12227,11 @@ def _semiconductor_oxide_interface_geometry_summary(
         normality_reason_codes.append("oxide_interface_geometry_binding_review")
     elif not boundary_pairs:
         normality_reason_codes.append("oxide_interface_boundary_pair_evidence_missing")
-    elif not boundary_neighbor_pairs:
+    if spacing_binding_reviews:
+        normality_reason_codes.append("oxide_interface_spacing_binding_review")
+    if spacing_mismatches:
+        normality_reason_codes.append("oxide_interface_declared_spacing_mismatch")
+    if boundary_pairs and not boundary_neighbor_pairs:
         normality_reason_codes.append("oxide_interface_boundary_disconnected")
     if short_contacts:
         normality_reason_codes.append("oxide_interface_short_contact_review")
@@ -11917,6 +12244,12 @@ def _semiconductor_oxide_interface_geometry_summary(
     elif "oxide_interface_boundary_pair_evidence_missing" in normality_reason_codes:
         status = "boundary_pair_evidence_missing"
         next_action = "regenerate_boundary_pair_evidence_before_geometry_review"
+    elif "oxide_interface_spacing_binding_review" in normality_reason_codes:
+        status = "interface_spacing_binding_review"
+        next_action = "repair_gate_stack_interface_spacing_binding_before_geometry_review"
+    elif "oxide_interface_declared_spacing_mismatch" in normality_reason_codes:
+        status = "declared_interface_spacing_mismatch"
+        next_action = "align_declared_and_measured_gate_stack_interface_spacing"
     elif "oxide_interface_boundary_disconnected" in normality_reason_codes:
         status = "boundary_disconnected_review"
         next_action = "review_semiconductor_oxide_boundary_gap_before_relaxation"
@@ -11943,6 +12276,14 @@ def _semiconductor_oxide_interface_geometry_summary(
     elif boundary_pairs and not boundary_neighbor_pairs:
         warnings.append(
             "No semiconductor/oxide boundary atom pair falls within the covalent-radius neighbor cutoff."
+        )
+    if spacing_binding_reviews:
+        warnings.append(
+            "At least one gate-stack interface spacing could not be bound to one adjacent layer transition or has an invalid declared value."
+        )
+    if spacing_mismatches:
+        warnings.append(
+            "At least one declared gate-stack interface gap differs from the measured adjacent layer-center spacing."
         )
     if short_contacts:
         warnings.append(
@@ -11997,6 +12338,34 @@ def _semiconductor_oxide_interface_geometry_summary(
         "oxide_atom_count": len(oxide_atom_ids),
         "oxide_atom_ids": oxide_atom_ids,
         "oxide_cation_elements": oxide_cation_elements,
+        "interface_spacing_definition": "adjacent_boundary_layer_center_distance",
+        "interface_spacing_tolerance_angstrom": (
+            interface_spacings[0].get("tolerance_angstrom")
+            if interface_spacings
+            else OXIDE_INTERFACE_SPACING_TOLERANCE_ANGSTROM
+        ),
+        "interface_spacing_count": len(interface_spacings),
+        "interface_spacing_declared_count": sum(
+            1 for row in interface_spacings if row.get("declared_gap_angstrom") is not None
+        ),
+        "interface_spacing_binding_review_count": len(spacing_binding_reviews),
+        "interface_spacing_mismatch_count": len(spacing_mismatches),
+        "interface_spacing_all_declared": bool(
+            interface_spacings
+            and all(
+                row.get("declared_gap_angstrom") is not None
+                for row in interface_spacings
+            )
+        ),
+        "interface_spacing_declared_values_match": bool(
+            any(
+                row.get("declared_gap_angstrom") is not None
+                for row in interface_spacings
+            )
+            and not spacing_binding_reviews
+            and not spacing_mismatches
+        ),
+        "interface_spacings": interface_spacings,
         "atom_binding_complete": atom_binding_complete,
         "missing_bound_atom_ids": missing_atom_ids,
         "boundary_candidate_pair_count": len(boundary_pairs),
@@ -12482,6 +12851,13 @@ def _semiconductor_oxide_interface_health_summary(
         "geometry_visualization_ready": geometry.get("visualization_ready"),
         "geometry_boundary_neighbor_pair_count": geometry.get(
             "boundary_neighbor_pair_count"
+        ),
+        "geometry_interface_spacing_count": geometry.get("interface_spacing_count"),
+        "geometry_interface_spacing_mismatch_count": geometry.get(
+            "interface_spacing_mismatch_count"
+        ),
+        "geometry_interface_spacing_declared_values_match": geometry.get(
+            "interface_spacing_declared_values_match"
         ),
         "geometry_short_contact_count": geometry.get("short_contact_count"),
         "geometry_isolated_oxide_atom_count": geometry.get(

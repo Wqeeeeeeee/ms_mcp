@@ -1216,6 +1216,198 @@ def test_gate_stack_thickness_patch_updates_oxide_geometry_and_metadata() -> Non
     assert gate_stack["sequence_matches_expected"] is True
 
 
+def test_gate_stack_interface_gap_patch_preserves_segment_geometry_and_top_vacuum() -> None:
+    base = load_example("aluminum_silicon_dioxide_silicon_mos_capacitor_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "set_gate_stack_interface_gap",
+                "target_interface": "semiconductor_oxide",
+                "thickness_angstrom": 1.76,
+            }
+        ],
+    )
+
+    updated, diff = apply_semantic_patch(base, patch)
+
+    assert diff == [
+        "set_gate_stack_interface_gap semiconductor_oxide Si/SiO2 1.76A"
+    ]
+    assert base.model.lattice.c == 28.0
+    assert updated.model.lattice.c == pytest.approx(27.52)
+    base_by_id = {atom.id: atom for atom in base.model.basis_atoms}
+    updated_by_id = {atom.id: atom for atom in updated.model.basis_atoms}
+    assert base_by_id["SiSub7"].fractional.z * 28.0 == pytest.approx(9.8)
+    assert updated_by_id["SiSub7"].fractional.z * 27.52 == pytest.approx(9.8)
+    assert updated_by_id["OxSi1"].fractional.z * 27.52 == pytest.approx(11.56)
+    assert updated_by_id["OxSi3"].fractional.z * 27.52 == pytest.approx(14.92)
+    assert (
+        updated_by_id["OxSi3"].fractional.z * 27.52
+        - updated_by_id["OxSi1"].fractional.z * 27.52
+    ) == pytest.approx(3.36)
+    assert 27.52 - updated_by_id["AlGate3"].fractional.z * 27.52 == pytest.approx(8.4)
+    assert base.metadata["interface_gap_angstrom"] == 1.76
+    assert "gate_stack_interface_gap_edits" not in base.metadata
+    assert updated.metadata["interface_gap_angstrom"] == 1.76
+    assert updated.metadata["semiconductor_oxide_interface_gap_angstrom"] == 1.76
+    record = updated.metadata["last_gate_stack_interface_gap_edit"]
+    assert record["previous_gap_angstrom"] == 2.24
+    assert record["measured_gap_angstrom"] == 1.76
+    assert record["moved_upper_atom_count"] == 16
+    assert record["preserved_top_vacuum"] is True
+    geometry = model_view_audit(updated)["health"]["semiconductor_health"][
+        "oxide_interface_geometry_summary"
+    ]
+    assert geometry["status"] == "connected_pre_relaxation_scaffold"
+    assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["interface_spacing_mismatch_count"] == 0
+    assert geometry["interface_spacings"][0]["status"] == "matched"
+
+
+def test_gate_stack_oxide_gate_gap_patch_moves_only_gate_segment() -> None:
+    base = load_example("aluminum_silicon_dioxide_silicon_mos_capacitor_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "set_gate_stack_interface_gap",
+                "target_interface": "oxide_gate",
+                "thickness_angstrom": 3.0,
+            }
+        ],
+    )
+
+    updated, diff = apply_semantic_patch(base, patch)
+
+    assert diff == ["set_gate_stack_interface_gap oxide_gate SiO2/Al 3A"]
+    assert updated.model.lattice.c == pytest.approx(28.48)
+    base_by_id = {atom.id: atom for atom in base.model.basis_atoms}
+    updated_by_id = {atom.id: atom for atom in updated.model.basis_atoms}
+    assert updated_by_id["OxSi3"].fractional.z * 28.48 == pytest.approx(
+        base_by_id["OxSi3"].fractional.z * 28.0
+    )
+    assert updated_by_id["AlGate1"].fractional.z * 28.48 == pytest.approx(18.4)
+    assert updated.metadata["oxide_gate_interface_gap_angstrom"] == 3.0
+    record = updated.metadata["last_gate_stack_interface_gap_edit"]
+    assert record["previous_gap_angstrom"] == 2.52
+    assert record["moved_upper_atom_count"] == 4
+
+
+def test_gate_stack_interface_gap_patch_rejects_missing_gate_boundary() -> None:
+    base = load_example("silicon_silicon_dioxide_100_interface_spec.json")
+    patch = SemanticPatch(
+        project_id=base.project_id,
+        base_revision=base.revision,
+        operations=[
+            {
+                "type": "set_gate_stack_interface_gap",
+                "target_interface": "oxide_gate",
+                "thickness_angstrom": 2.5,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="requires a gate material"):
+        apply_semantic_patch(base, patch)
+
+
+def test_gate_stack_interface_gap_natural_language_matches_explicit_boundaries() -> None:
+    base = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
+
+    semiconductor_oxide = infer_modeling_plan(
+        "Set Si/HfO2 interface gap to 1.9 angstrom.",
+        current_spec=base,
+    )
+    chinese = infer_modeling_plan(
+        "\u628a\u534a\u5bfc\u4f53-\u6c27\u5316\u7269\u754c\u9762\u95f4\u8ddd\u6539\u4e3a 2.1 \u57c3",
+        current_spec=base,
+    )
+    oxide_gate = infer_modeling_plan(
+        "Set HfO2/TiN interface gap to 0.3 nm.",
+        current_spec=base,
+    )
+
+    assert semiconductor_oxide.kind == "patch"
+    assert semiconductor_oxide.template_id == "gate_stack_interface_gap"
+    assert semiconductor_oxide.payload["operations"] == [
+        {
+            "type": "set_gate_stack_interface_gap",
+            "target_interface": "semiconductor_oxide",
+            "thickness_angstrom": 1.9,
+        }
+    ]
+    assert chinese.payload["operations"][0]["target_interface"] == "semiconductor_oxide"
+    assert chinese.payload["operations"][0]["thickness_angstrom"] == 2.1
+    assert oxide_gate.payload["operations"] == [
+        {
+            "type": "set_gate_stack_interface_gap",
+            "target_interface": "oxide_gate",
+            "thickness_angstrom": 3.0,
+        }
+    ]
+
+
+def test_gate_stack_interface_gap_natural_language_supports_composite_edits_only_when_explicit() -> None:
+    base = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
+
+    composite = infer_modeling_plan(
+        "Set HfO2 thickness to 6 angstrom and Si/HfO2 interface gap to 1.9 angstrom.",
+        current_spec=base,
+    )
+    ambiguous = infer_modeling_plan(
+        "Set interface gap to 2.0 angstrom.",
+        current_spec=base,
+    )
+
+    assert composite.kind == "patch"
+    assert composite.template_id == "crystal_composite_edit"
+    assert composite.payload["operations"] == [
+        {
+            "type": "set_gate_stack_interface_gap",
+            "target_interface": "semiconductor_oxide",
+            "thickness_angstrom": 1.9,
+        },
+        {
+            "type": "set_gate_stack_thickness",
+            "target_layer": "oxide",
+            "thickness_angstrom": 6.0,
+        },
+    ]
+    updated, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=composite.payload["operations"],
+        ),
+    )
+    assert updated.metadata["semiconductor_oxide_interface_gap_angstrom"] == 1.9
+    assert updated.metadata["oxide_thickness_angstrom"] == 6.0
+    assert ambiguous.kind == "unsupported"
+
+
+def test_new_gate_stack_request_applies_explicit_interface_gap_inline() -> None:
+    plan = infer_modeling_plan(
+        "Build a TiN/HfO2/Si high-k MOS capacitor with Si/HfO2 interface gap 1.9 angstrom."
+    )
+
+    assert plan.kind == "spec"
+    assert plan.template_id == "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor"
+    spec = ModelSpec.model_validate(plan.payload)
+    assert spec.metadata["semiconductor_oxide_interface_gap_angstrom"] == 1.9
+    assert spec.metadata["nl_composite_operations"] == [
+        "set_gate_stack_interface_gap semiconductor_oxide Si/HfO2 1.9A"
+    ]
+    geometry = model_view_audit(spec)["health"]["semiconductor_health"][
+        "oxide_interface_geometry_summary"
+    ]
+    assert geometry["interface_spacing_mismatch_count"] == 0
+    assert geometry["interface_spacings"][0]["status"] == "matched"
+
+
 def test_p_gan_gate_cap_thickness_patch_rebuilds_cap_without_mutating_base() -> None:
     plan = infer_modeling_plan("Build a p-GaN gate AlGaN/GaN HEMT and export 2DEG diagnostics.")
     base = ModelSpec.model_validate(plan.payload)

@@ -741,6 +741,23 @@ Follow-up MOS/gate-stack or bare oxide-interface thickness edits such as
 the interface axis, shifts upper stack segments, records
 `gate_stack_thickness_edits`, and leaves GUI tools to reload or snapshot the
 resulting revision.
+Interface-spacing edits are separate from layer-thickness edits. Use
+`set_gate_stack_interface_gap` only when the request explicitly identifies the
+`semiconductor_oxide` or `oxide_gate` boundary, or names the exact current
+material pair such as `Si/HfO2` or `HfO2/TiN`; a bare `interface gap` phrase is
+not enough. The value is the adjacent boundary layer-center distance along the
+interface axis. The patch translates the complete upper segment and adjusts
+the lattice length by the same delta, preserving lower Cartesian geometry,
+upper internal Cartesian geometry, and top vacuum. Preview remains the default.
+Only explicit execute intent may materialize and same-window hot-load the new
+current revision.
+`oxide_interface_geometry_summary.interface_spacings` and the
+`interface_spacing` rows in `semiconductor_oxide_interface_geometry.csv` bind
+each measured spacing to exact layers and materials. They compare declared and
+measured values with a default `0.05` Angstrom tolerance and expose the exact
+`set_gate_stack_interface_gap` repair payload for a mismatch. A clean spacing
+receipt validates deterministic scaffold geometry only; it is not relaxation,
+bonding, interface-energy, or electronic-structure evidence.
 Al/Si Schottky contact templates use `metal_semiconductor_contact_summary` and
 `semiconductor_contact.csv` so reports show metal/semiconductor roles, contact
 type, gap, thicknesses, sequence checks, and metadata-only Schottky-Mott barrier

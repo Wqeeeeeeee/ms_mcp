@@ -1434,6 +1434,15 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_oxide_interface_boundary_connected"] = (
             oxide_interface_geometry.get("boundary_connected_within_neighbor_cutoff")
         )
+        checks["semiconductor_oxide_interface_spacing_count"] = (
+            oxide_interface_geometry.get("interface_spacing_count")
+        )
+        checks["semiconductor_oxide_interface_spacing_mismatch_count"] = (
+            oxide_interface_geometry.get("interface_spacing_mismatch_count")
+        )
+        checks["semiconductor_oxide_interface_spacing_declared_values_match"] = (
+            oxide_interface_geometry.get("interface_spacing_declared_values_match")
+        )
         checks["semiconductor_oxide_interface_short_contact_count"] = (
             oxide_interface_geometry.get("short_contact_count")
         )

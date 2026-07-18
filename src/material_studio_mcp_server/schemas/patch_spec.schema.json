@@ -803,6 +803,22 @@
           "default": null,
           "title": "Strain Policy"
         },
+        "target_interface": {
+          "anyOf": [
+            {
+              "enum": [
+                "semiconductor_oxide",
+                "oxide_gate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Interface"
+        },
         "target_layer": {
           "anyOf": [
             {
@@ -913,6 +929,7 @@
             "set_metadata",
             "reconcile_dopant_metadata",
             "set_interface_gap",
+            "set_gate_stack_interface_gap",
             "set_gate_stack_thickness",
             "set_p_gan_gate_cap_thickness",
             "set_quantum_well_thickness"

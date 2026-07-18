@@ -2295,6 +2295,9 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
     assert summary["geometry_preflight_status"] == "connected_geometry_preflight"
     assert summary["geometry_preflight_ready"] is True
     assert summary["geometry_boundary_neighbor_pair_count"] == 4
+    assert summary["geometry_interface_spacing_count"] == 1
+    assert summary["geometry_interface_spacing_mismatch_count"] == 0
+    assert summary["geometry_interface_spacing_declared_values_match"] is True
     assert summary["geometry_short_contact_count"] == 0
     assert summary["normality_reason_codes"] == [
         "oxide_interface_geometry_relaxation_unverified"
@@ -2305,6 +2308,15 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
     assert geometry["atom_binding_complete"] is True
     assert geometry["boundary_candidate_pair_count"] == 12
     assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["interface_spacing_count"] == 1
+    assert geometry["interface_spacing_declared_count"] == 1
+    assert geometry["interface_spacing_mismatch_count"] == 0
+    assert geometry["interface_spacing_declared_values_match"] is True
+    spacing = geometry["interface_spacings"][0]
+    assert spacing["target_interface"] == "semiconductor_oxide"
+    assert spacing["actual_gap_angstrom"] == 1.76
+    assert spacing["declared_gap_angstrom"] == 1.76
+    assert spacing["status"] == "matched"
     assert geometry["boundary_neighbor_pair_type_counts"] == {"Si-Si": 4}
     assert geometry["boundary_neighbor_distance_stats_angstrom"] == {
         "min": 2.604721,
@@ -2324,6 +2336,7 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
         execution_mode="preview",
     )
     assert modeling_health["checks"]["semiconductor_oxide_interface_stoichiometry_status"] == "matched"
+    assert modeling_health["checks"]["semiconductor_oxide_interface_spacing_mismatch_count"] == 0
     assert modeling_health["checks"]["semiconductor_oxide_interface_calculation_ready"] is False
     bundle = write_view_audit_bundle(
         tmp_path,
@@ -2342,9 +2355,16 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
     geometry_rows = list(
         csv.DictReader(geometry_path.open(encoding="utf-8", newline=""))
     )
-    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 25
+    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 26
     assert geometry_rows[0]["row_kind"] == "summary"
     assert geometry_rows[0]["boundary_neighbor_pair_count"] == "4"
+    spacing_rows = [
+        row for row in geometry_rows if row["row_kind"] == "interface_spacing"
+    ]
+    assert len(spacing_rows) == 1
+    assert spacing_rows[0]["interface_spacing_status"] == "matched"
+    assert spacing_rows[0]["actual_gap_angstrom"] == "1.76"
+    assert spacing_rows[0]["declared_gap_angstrom"] == "1.76"
     assert sum(row["row_kind"] == "boundary_pair" for row in geometry_rows) == 12
     assert sum(row["row_kind"] == "oxide_atom" for row in geometry_rows) == 12
 
@@ -2474,7 +2494,7 @@ def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
     assert rows[-1]["row_kind"] == "oxygen_vacancy"
     assert rows[-1]["vacancy_site_id"] == "O1"
     assert rows[-1]["vacancy_region"] == "oxide"
-    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 22
+    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 23
 
     unrecorded_payload = base.model_dump(mode="json")
     unrecorded_payload["model"]["basis_atoms"] = [
@@ -2519,13 +2539,27 @@ def test_mos_gate_stack_reports_semiconductor_oxide_interface_health(tmp_path: P
     assert summary["oxygen_to_cation_ratio"] == 2.0
     assert summary["visual_preflight_ready"] is False
     assert summary["calculation_ready"] is False
-    assert geometry["status"] == "short_contact_review"
+    assert geometry["status"] == "declared_interface_spacing_mismatch"
     assert geometry["quality"] == "review_required"
     assert geometry["boundary_candidate_pair_count"] == 12
     assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["interface_spacing_count"] == 2
+    assert geometry["interface_spacing_mismatch_count"] == 1
+    assert geometry["interface_spacing_declared_values_match"] is False
+    semiconductor_oxide_spacing = geometry["interface_spacings"][0]
+    assert semiconductor_oxide_spacing["target_interface"] == "semiconductor_oxide"
+    assert semiconductor_oxide_spacing["actual_gap_angstrom"] == 2.24
+    assert semiconductor_oxide_spacing["declared_gap_angstrom"] == 1.76
+    assert semiconductor_oxide_spacing["actual_minus_declared_angstrom"] == 0.48
+    assert semiconductor_oxide_spacing["patch_operation"] == {
+        "type": "set_gate_stack_interface_gap",
+        "target_interface": "semiconductor_oxide",
+        "thickness_angstrom": 1.76,
+    }
     assert geometry["short_contact_count"] == 8
     assert geometry["short_contact_scope_counts"] == {"oxide_internal": 8}
     assert geometry["geometry_preflight_ready"] is False
+    assert "oxide_interface_declared_spacing_mismatch" in summary["normality_reason_codes"]
     assert "oxide_interface_short_contact_review" in summary["normality_reason_codes"]
 
     audit = model_view_audit(spec)
@@ -2545,6 +2579,37 @@ def test_mos_gate_stack_reports_semiconductor_oxide_interface_health(tmp_path: P
     assert all(row["pair_scope"] == "oxide_internal" for row in internal_short_contacts)
     assert all(row["atom1_id"] and row["atom2_id"] for row in internal_short_contacts)
     assert all(not row["semiconductor_atom_id"] for row in internal_short_contacts)
+    spacing_rows = [row for row in rows if row["row_kind"] == "interface_spacing"]
+    assert len(spacing_rows) == 2
+    assert spacing_rows[0]["interface_spacing_status"] == "mismatch"
+    assert json.loads(spacing_rows[0]["patch_operation"])["type"] == (
+        "set_gate_stack_interface_gap"
+    )
+
+
+def test_gate_stack_interface_spacing_rejects_invalid_declaration_and_infers_gate_from_sequence() -> None:
+    spec = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
+    metadata = dict(spec.metadata or {})
+    metadata.pop("gate_material")
+    metadata["interface_gap_angstrom"] = "invalid"
+    invalid = spec.model_copy(update={"metadata": metadata})
+
+    geometry = model_view_audit(invalid)["health"]["semiconductor_health"][
+        "oxide_interface_geometry_summary"
+    ]
+
+    assert geometry["status"] == "interface_spacing_binding_review"
+    assert geometry["interface_spacing_binding_review_count"] == 1
+    assert geometry["interface_spacing_mismatch_count"] == 0
+    assert geometry["interface_spacing_count"] == 2
+    semiconductor_oxide = geometry["interface_spacings"][0]
+    assert semiconductor_oxide["declared_gap_status"] == "invalid"
+    assert semiconductor_oxide["binding_status"] == "declared_value_invalid"
+    assert semiconductor_oxide["actual_gap_angstrom"] == 2.24
+    assert semiconductor_oxide["patch_operation"] is None
+    oxide_gate = geometry["interface_spacings"][1]
+    assert oxide_gate["expected_materials"] == ["HfO2", "TiN"]
+    assert oxide_gate["status"] == "not_declared"
 
 
 def test_model_view_audit_reports_group_iv_dopant_summary() -> None:

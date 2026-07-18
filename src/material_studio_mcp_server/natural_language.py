@@ -3355,7 +3355,13 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             "template_id": "gate_stack_thickness",
             "operations": ["set_gate_stack_thickness"],
             "requires_existing_project": True,
-            "pattern": "Adjust a MOS gate-stack or bare semiconductor-oxide layer thickness, e.g. 'set HfO2 thickness to 6 angstrom' or 'set SiO2 thickness to 10 angstrom'.",
+            "pattern": "Set a gate-stack channel, oxide, or gate thickness.",
+        },
+        {
+            "template_id": "gate_stack_interface_gap",
+            "operations": ["set_gate_stack_interface_gap"],
+            "requires_existing_project": True,
+            "pattern": "Set an explicit semiconductor-oxide or oxide-gate spacing.",
         },
         {
             "template_id": "quantum_well_thickness",
@@ -11438,6 +11444,9 @@ def _apply_new_crystal_composite_operations(
         if center_slab_axis is not None:
             apply_operations([{"type": "center_slab", "axis": center_slab_axis}])
 
+        for operation in _gate_stack_interface_gap_operations(text, working):
+            apply_operations([operation])
+
         if not (working.metadata or {}).get("p_gan_gate_cap"):
             for target_layer, thickness in _match_gate_stack_thicknesses(text):
                 apply_operations([{"type": "set_gate_stack_thickness", "target_layer": target_layer, "thickness_angstrom": thickness}])
@@ -12268,6 +12277,21 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
                 ),
             )
 
+        gate_stack_interface_gaps = _gate_stack_interface_gap_operations(text, working)
+        for operation in gate_stack_interface_gaps:
+            target = str(operation["target_interface"]).replace("_", "-")
+            apply_group(
+                [operation],
+                f"set {target} boundary spacing to {float(operation['thickness_angstrom']):g} Angstrom",
+            )
+
+        if gate_stack_interface_gaps and not (working.metadata or {}).get("p_gan_gate_cap"):
+            for target_layer, thickness in _match_gate_stack_thicknesses(text):
+                apply_group(
+                    [{"type": "set_gate_stack_thickness", "target_layer": target_layer, "thickness_angstrom": thickness}],
+                    f"set {target_layer} gate-stack thickness to {thickness:g} Angstrom",
+                )
+
         lattice_parameter_match = _match_crystal_lattice_parameters(text)
         if lattice_parameter_match is not None:
             changed_fields = ", ".join(lattice_parameter_match)
@@ -12545,6 +12569,21 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
                 contact_gap,
                 "metal_semiconductor_contact_gap",
                 f"Set metal/semiconductor contact gap to {float(gap_record.get('target_gap_angstrom', update.get('interface_gap_angstrom'))):g} Angstrom.",
+            )
+
+        gate_stack_interface_gaps = _gate_stack_interface_gap_operations(text, current_spec)
+        if gate_stack_interface_gaps:
+            description = "; ".join(
+                (
+                    f"set {str(operation['target_interface']).replace('_', '-')} boundary spacing "
+                    f"to {float(operation['thickness_angstrom']):g} Angstrom"
+                )
+                for operation in gate_stack_interface_gaps
+            )
+            return _patch_plan(
+                gate_stack_interface_gaps,
+                "gate_stack_interface_gap",
+                description[0].upper() + description[1:] + ".",
             )
 
         interface_gap = _interface_scaffold_gap_operation(text, current_spec)
@@ -13855,6 +13894,81 @@ def _match_add_vacuum(text: str) -> tuple[str, float] | None:
 def _match_gate_stack_thickness(text: str) -> tuple[str, float] | None:
     matches = _match_gate_stack_thicknesses(text)
     return matches[0] if matches else None
+
+
+def _gate_stack_interface_gap_operations(text: str, current_spec: ModelSpec) -> list[dict[str, Any]]:
+    if not (_is_gate_stack_spec(current_spec) or _is_oxide_interface_spec(current_spec)):
+        return []
+
+    metadata = dict(current_spec.metadata or {})
+    sequence = [
+        str(item).strip()
+        for item in (metadata.get("stack_sequence") or metadata.get("materials") or [])
+        if item is not None and str(item).strip()
+    ]
+    semiconductor = str(
+        metadata.get("semiconductor_channel_material")
+        or metadata.get("substrate")
+        or (sequence[0] if sequence else "")
+    ).strip()
+    gate = str(metadata.get("gate_material") or "").strip()
+    if not gate and _is_gate_stack_spec(current_spec) and len(sequence) >= 3:
+        gate = sequence[-1]
+    oxide = str(metadata.get("gate_oxide_material") or "").strip()
+    if not oxide and isinstance(metadata.get("oxide_material"), str):
+        oxide = str(metadata["oxide_material"]).strip()
+    if not oxide:
+        oxide = next(
+            (
+                material
+                for material in sequence
+                if material not in {semiconductor, gate}
+            ),
+            "",
+        )
+
+    spacing_terms = r"(?:gap|spacing|distance|\u95f4\u8ddd|\u8ddd\u79bb|\u7a7a\u9699)"
+    interface_terms = r"(?:interface|boundary|\u754c\u9762)?"
+
+    semiconductor_oxide_terms = [
+        rf"(?:semiconductor[-\s/]+oxide|channel[-\s/]+oxide)\s+{interface_terms}\s*{spacing_terms}",
+        rf"(?:\u534a\u5bfc\u4f53[-/\s]?\u6c27\u5316\u7269|\u6c9f\u9053[-/\s]?\u6c27\u5316\u7269)\s*{interface_terms}\s*{spacing_terms}",
+    ]
+    if semiconductor and oxide:
+        material_pair = rf"(?:{re.escape(semiconductor)}\s*/\s*{re.escape(oxide)}|{re.escape(oxide)}\s*/\s*{re.escape(semiconductor)})"
+        semiconductor_oxide_terms.insert(
+            0,
+            rf"{material_pair}\s*{interface_terms}\s*{spacing_terms}",
+        )
+
+    operations: list[dict[str, Any]] = []
+    semiconductor_oxide_gap = _match_contact_length_value(text, semiconductor_oxide_terms)
+    if semiconductor_oxide_gap is not None:
+        operations.append(
+            {
+                "type": "set_gate_stack_interface_gap",
+                "target_interface": "semiconductor_oxide",
+                "thickness_angstrom": semiconductor_oxide_gap,
+            }
+        )
+
+    if gate and oxide:
+        material_pair = rf"(?:{re.escape(oxide)}\s*/\s*{re.escape(gate)}|{re.escape(gate)}\s*/\s*{re.escape(oxide)})"
+        oxide_gate_terms = [
+            rf"{material_pair}\s*{interface_terms}\s*{spacing_terms}",
+            rf"(?:oxide[-\s/]+gate|gate[-\s/]+oxide)\s+{interface_terms}\s*{spacing_terms}",
+            rf"(?:\u6c27\u5316\u7269[-/\s]?\u6805\u6781|\u6805\u6781[-/\s]?\u6c27\u5316\u7269)\s*{interface_terms}\s*{spacing_terms}",
+        ]
+        oxide_gate_gap = _match_contact_length_value(text, oxide_gate_terms)
+        if oxide_gate_gap is not None:
+            operations.append(
+                {
+                    "type": "set_gate_stack_interface_gap",
+                    "target_interface": "oxide_gate",
+                    "thickness_angstrom": oxide_gate_gap,
+                }
+            )
+    return operations
 
 
 def _match_gate_stack_thicknesses(text: str) -> list[tuple[str, float]]:

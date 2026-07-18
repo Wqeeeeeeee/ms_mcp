@@ -129,6 +129,7 @@ def test_semantic_patch_operation_type_is_enumerated() -> None:
     assert "center_slab" in operation_type["enum"]
     assert "set_metadata" in operation_type["enum"]
     assert "reconcile_dopant_metadata" in operation_type["enum"]
+    assert "set_gate_stack_interface_gap" in operation_type["enum"]
     assert "set_gate_stack_thickness" in operation_type["enum"]
     assert "translate_crystal_atoms" in operation_type["enum"]
     assert "rotate_crystal_atoms" in operation_type["enum"]

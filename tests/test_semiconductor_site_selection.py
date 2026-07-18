@@ -10,6 +10,8 @@ from material_studio_mcp_server.diagnostics import model_view_audit, write_view_
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.semiconductor_site_selection import (
     PERIODIC_MAXIMIN_SCOPE,
+    SITE_PAIR_DISTRIBUTION_SCOPE,
+    analyze_periodic_site_pair_distribution,
     audit_periodic_maximin_selection,
     select_periodic_maximin_sites,
 )
@@ -78,6 +80,65 @@ def test_periodic_maximin_uses_minimum_image_across_cell_boundary() -> None:
     assert receipt["candidate_pair_distance_stats_angstrom"]["minimum_angstrom"] == 0.4
 
 
+def test_periodic_site_pair_distribution_is_deterministic_and_conserves_pairs() -> None:
+    crystal = _crystal(
+        ("Si1", 0.0, 0.0, 0.0),
+        ("Si2", 0.1, 0.0, 0.0),
+        ("Si3", 0.5, 0.0, 0.0),
+        ("Si4", 0.6, 0.0, 0.0),
+    )
+    _, receipt = select_periodic_maximin_sites(crystal, crystal.basis_atoms, 2)
+
+    distribution = analyze_periodic_site_pair_distribution(receipt)
+    repeated = analyze_periodic_site_pair_distribution(receipt)
+
+    assert distribution == repeated
+    assert distribution["scientific_scope"] == SITE_PAIR_DISTRIBUTION_SCOPE
+    assert distribution["integrity_ok"] is True
+    assert distribution["selection_replay_verified"] is True
+    assert distribution["atom_id_order_baseline_verified"] is True
+    assert distribution["pair_conservation_verified"] is True
+    assert distribution["candidate_pair_count"] == 6
+    assert distribution["selected_pair_count"] == 1
+    assert distribution["baseline_pair_count"] == 1
+    assert distribution["shell_count"] == 3
+    assert distribution["fixed_composition_expected_pair_probability"] == 0.166666666667
+    assert distribution["nearest_shell_selected_pair_count"] == 0
+    assert distribution["nearest_shell_baseline_pair_count"] == 1
+    assert distribution["nearest_shell_pair_count_reduction_vs_atom_id_order"] == 1
+    assert distribution["nearest_shell_pair_expectation_class"] == (
+        "below_fixed_composition_expectation"
+    )
+    assert distribution["nearest_shell_pair_avoidance_observed"] is True
+    assert distribution["selected_pair_first_occupied_shell_index"] == 3
+    assert distribution["analysis_sha256"]
+
+
+def test_periodic_site_pair_distribution_rejects_tampered_and_rehashed_selection() -> None:
+    crystal = _crystal(
+        ("Si1", 0.0, 0.0, 0.0),
+        ("Si2", 0.1, 0.0, 0.0),
+        ("Si3", 0.5, 0.0, 0.0),
+        ("Si4", 0.6, 0.0, 0.0),
+    )
+    _, receipt = select_periodic_maximin_sites(crystal, crystal.basis_atoms, 2)
+
+    tampered = copy.deepcopy(receipt)
+    tampered["selected_atom_ids"] = ["Si1", "Si2"]
+    tampered_distribution = analyze_periodic_site_pair_distribution(tampered)
+    assert tampered_distribution["integrity_ok"] is False
+    assert tampered_distribution["source_receipt_sha256_verified"] is False
+    assert tampered_distribution["analysis_sha256"] is None
+
+    rehashed = copy.deepcopy(tampered)
+    _rehash_receipt(rehashed)
+    rehashed_distribution = analyze_periodic_site_pair_distribution(rehashed)
+    assert rehashed_distribution["source_receipt_sha256_verified"] is True
+    assert rehashed_distribution["selection_replay_verified"] is False
+    assert rehashed_distribution["integrity_ok"] is False
+    assert rehashed_distribution["analysis_sha256"] is None
+
+
 def test_periodic_maximin_audit_rejects_tampering_and_degrades_on_geometry_change() -> None:
     crystal = _crystal(
         ("Si1", 0.0, 0.0, 0.0),
@@ -128,9 +189,17 @@ def test_explicit_distributed_alloy_exports_selection_audit_and_preserves_defaul
     assert summary["periodic_maximin_count"] == 1
     assert summary["site_selection_integrity_ok"] is True
     assert summary["site_selection_replay_verified"] is True
+    assert summary["site_pair_distribution_count"] == 1
+    assert summary["site_pair_distribution_integrity_ok"] is True
+    assert summary["site_pair_distribution_current_geometry_applicable"] is True
+    assert summary["site_pair_distribution_nearest_shell_pair_avoidance_observed"] is True
     assert summary["latest"]["selection_strategy"] == "periodic_maximin"
     assert summary["latest"]["site_selection_audit"]["receipt_sha256_verified"] is True
     assert summary["latest"]["selected_pair_minimum_angstrom"] > 0
+    assert summary["latest"]["site_pair_distribution_shell_count"] == 7
+    assert summary["latest"]["site_pair_distribution_nearest_shell_selected_pair_count"] == 0
+    assert summary["latest"]["site_pair_distribution_nearest_shell_baseline_pair_count"] == 4
+    assert summary["latest"]["site_pair_distribution_nearest_shell_pair_count_reduction"] == 4
 
     bundle = write_view_audit_bundle(tmp_path, distributed, audit)
     with Path(bundle["files"]["semiconductor_alloy_csv"]).open(encoding="utf-8", newline="") as handle:
@@ -139,6 +208,16 @@ def test_explicit_distributed_alloy_exports_selection_audit_and_preserves_defaul
     assert row["scientific_scope"] == PERIODIC_MAXIMIN_SCOPE
     assert row["site_selection_integrity_ok"] == "True"
     assert float(row["selected_pair_minimum_angstrom"]) > 0
+    pair_distribution_path = Path(bundle["files"]["semiconductor_site_pair_distribution_csv"])
+    with pair_distribution_path.open(encoding="utf-8", newline="") as handle:
+        pair_rows = list(csv.DictReader(handle))
+    assert len(pair_rows) == 7
+    assert pair_rows[0]["entry_kind"] == "alloy_fraction"
+    assert pair_rows[0]["replacement_element"] == "Ge"
+    assert pair_rows[0]["analysis_integrity_ok"] == "True"
+    assert pair_rows[0]["current_geometry_applicable"] == "True"
+    assert pair_rows[0]["nearest_shell_pair_count_reduction_vs_atom_id_order"] == "4"
+    assert pair_rows[0]["analysis_sha256"]
 
     default_plan = infer_modeling_plan(
         "Build silicon crystal as a 2x1x1 supercell and make 25% Ge alloy."
@@ -164,6 +243,9 @@ def test_explicit_distributed_dopant_fraction_is_preview_metadata_only() -> None
     assert summary["periodic_maximin_count"] == 1
     assert summary["site_selection_integrity_ok"] is True
     assert summary["site_selection_replay_verified"] is True
+    assert summary["site_pair_distribution_count"] == 1
+    assert summary["site_pair_distribution_integrity_ok"] is True
+    assert summary["site_pair_distribution_current_geometry_applicable"] is True
 
 
 def test_diagnostic_audit_fails_tampered_receipt_but_not_later_geometry_drift() -> None:
@@ -195,4 +277,6 @@ def test_diagnostic_audit_fails_tampered_receipt_but_not_later_geometry_drift() 
     moved_summary = model_view_audit(moved)["health"]["semiconductor_health"]["alloy_summary"]
     assert moved_summary["site_selection_integrity_ok"] is True
     assert moved_summary["site_selection_replay_verified"] is False
+    assert moved_summary["site_pair_distribution_integrity_ok"] is True
+    assert moved_summary["site_pair_distribution_current_geometry_applicable"] is False
     assert moved_summary["latest"]["site_selection_geometry_unchanged"] is False

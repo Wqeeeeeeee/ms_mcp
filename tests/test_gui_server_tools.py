@@ -6393,6 +6393,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "dopant_concentration_summary" in dopant_fraction["diagnostic_summaries"]
     assert "semiconductor_dopant_concentration_csv" in dopant_fraction["diagnostic_csvs"]
     assert "spatially distributed dopants" in dopant_fraction["request_terms"]
+    assert "dopant pair distribution" in dopant_fraction["request_terms"]
+    assert "semiconductor_site_pair_distribution_csv" in dopant_fraction["diagnostic_csvs"]
     alloy_preflight = use_cases["alloy_composition_preflight"]
     assert "alloy" in alloy_preflight["request_terms"]
     assert "SiGe alloy" in alloy_preflight["request_terms"]
@@ -6401,8 +6403,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "alloy_summary" in alloy_preflight["diagnostic_summaries"]
     assert "composition_summary" in alloy_preflight["diagnostic_summaries"]
     assert "semiconductor_alloy_csv" in alloy_preflight["diagnostic_csvs"]
+    assert "semiconductor_site_pair_distribution_csv" in alloy_preflight["diagnostic_csvs"]
     assert "semiconductor_neighbor_pairs_csv" in alloy_preflight["diagnostic_csvs"]
     assert "periodic maximin alloy sites" in alloy_preflight["request_terms"]
+    assert "alloy pair distribution" in alloy_preflight["request_terms"]
     assert "mos_gate_stack" in use_cases
     metal_contact = use_cases["metal_semiconductor_contact"]
     assert "Al/Si Schottky contact" in metal_contact["request_terms"]
@@ -6609,6 +6613,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "\u63ba\u6742\u6d53\u5ea6" in dopant_fraction["cjk_terms"]
     assert "dopant_fraction_summary" in dopant_fraction["diagnostic_summaries"]
     assert "semiconductor_dopant_fraction_csv" in dopant_fraction["diagnostic_csvs"]
+    assert "semiconductor_site_pair_distribution_csv" in dopant_fraction["diagnostic_csvs"]
     dopant_dilution = use_cases["dopant_dilution_remediation"]
     assert dopant_dilution["requires_existing_project"] is True
     assert dopant_dilution["patch_command_id"] == "crystal_dopant_dilution"
@@ -6616,6 +6621,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "\u7a00\u91ca\u63ba\u6742" in dopant_dilution["cjk_terms"]
     assert "dopant_fraction_summary" in dopant_dilution["diagnostic_summaries"]
     assert "semiconductor_dopant_fraction_csv" in dopant_dilution["diagnostic_csvs"]
+    assert "semiconductor_site_pair_distribution_csv" in dopant_dilution["diagnostic_csvs"]
     defects = use_cases["defects"]
     assert "vacancy" in defects["request_terms"]
     assert "antisite" in defects["request_terms"]
@@ -24903,11 +24909,26 @@ def test_live_modeling_request_previews_spatially_distributed_alloy_without_gui_
     assert alloy["periodic_maximin_count"] == 1
     assert alloy["site_selection_integrity_ok"] is True
     assert alloy["site_selection_replay_verified"] is True
+    assert alloy["site_pair_distribution_count"] == 1
+    assert alloy["site_pair_distribution_integrity_ok"] is True
+    assert alloy["site_pair_distribution_current_geometry_applicable"] is True
+    assert alloy["site_pair_distribution_nearest_shell_pair_avoidance_observed"] is True
     assert alloy["latest"]["selection_strategy"] == "periodic_maximin"
     assert alloy["latest"]["minimum_distance_improvement_over_atom_id_order_angstrom"] >= 0
+    assert alloy["latest"]["site_pair_distribution_nearest_shell_selected_pair_count"] == 0
+    assert alloy["latest"]["site_pair_distribution_nearest_shell_baseline_pair_count"] == 4
+    assert alloy["latest"]["site_pair_distribution_nearest_shell_pair_count_reduction"] == 4
     checks = result["modeling_health"]["checks"]
     assert checks["semiconductor_alloy_periodic_maximin_count"] == 1
     assert checks["semiconductor_alloy_site_selection_integrity_ok"] is True
+    assert checks["semiconductor_alloy_site_pair_distribution_count"] == 1
+    assert checks["semiconductor_alloy_site_pair_distribution_integrity_ok"] is True
+    assert checks["semiconductor_alloy_site_pair_distribution_current_geometry_applicable"] is True
+    assert checks["semiconductor_alloy_nearest_shell_pair_avoidance_observed"] is True
+    pair_distribution_csv = Path(
+        result["modeling_report"]["diagnostics"]["semiconductor_site_pair_distribution_csv"]
+    )
+    assert pair_distribution_csv.exists()
     risks = result["modeling_report"]["semiconductor_review"]["risk_flags"]
     assert "alloy_periodic_maximin_not_sqs" in risks
 

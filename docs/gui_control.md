@@ -766,6 +766,17 @@ unavailable. This heuristic is not an SQS or a claim of alloy optimality. It
 does not change preview-first execution or the one-window GUI policy. Exact
 selection is capped at 512 candidate sites so oversized requests fail closed
 instead of starting unbounded pair-distance work.
+The same receipt drives `semiconductor_site_pair_distribution.csv`, which bins
+all candidate pairs into numerical periodic-distance shells and compares the
+selected pair count with the atom-ID baseline and the exact fixed-composition
+expectation. A nearest-shell excess is a review warning, while receipt,
+selection-replay, geometry-digest, or pair-conservation failure is an integrity
+error. A nearest-shell reduction is descriptive evidence of the requested
+separation heuristic, not proof of SQS quality, random-alloy statistics,
+relaxation, or calculation readiness. After geometry drift, the historical CSV
+may still verify its recorded input but reports
+`current_geometry_applicable=false`; rerun the selection workflow or inspect the
+current geometry before using pair distances for live-model review.
 For heterostructure templates,
 it also reports interface metadata, in-plane lattice, cell volume, density, per-material reference
 lattice values, epitaxial strain percentages, and lattice mismatch relative to

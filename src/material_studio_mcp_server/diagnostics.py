@@ -21,6 +21,7 @@ from .castep_relaxation import (
 )
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
+    analyze_periodic_site_pair_distribution,
     audit_periodic_maximin_selection,
 )
 from .specs.castep import (
@@ -1307,6 +1308,70 @@ def write_view_audit_bundle(
                 "source",
             ],
             alloy_rows,
+        )
+
+    site_pair_distribution_rows = _semiconductor_site_pair_distribution_csv_rows(
+        dopant_fraction_summary,
+        alloy_summary,
+    )
+    if site_pair_distribution_rows:
+        files["semiconductor_site_pair_distribution_csv"] = str(
+            bundle_dir / "semiconductor_site_pair_distribution.csv"
+        )
+        row_counts["semiconductor_site_pair_distribution"] = _write_csv(
+            bundle_dir / "semiconductor_site_pair_distribution.csv",
+            [
+                "entry_kind",
+                "entry_index",
+                "host_element",
+                "replacement_element",
+                "selection_strategy",
+                "scientific_scope",
+                "geometry_basis",
+                "source_receipt_sha256",
+                "candidate_geometry_sha256",
+                "analysis_sha256",
+                "analysis_integrity_ok",
+                "current_geometry_applicable",
+                "candidate_site_count",
+                "selected_site_count",
+                "selected_fraction",
+                "fixed_composition_expected_pair_probability",
+                "pair_conservation_verified",
+                "shell_count",
+                "reported_shell_count",
+                "shells_truncated",
+                "shell_index",
+                "distance_min_angstrom",
+                "distance_mean_angstrom",
+                "distance_max_angstrom",
+                "candidate_pair_count",
+                "coordination_number_per_candidate",
+                "selected_pair_count",
+                "selected_pair_fraction",
+                "baseline_pair_count",
+                "baseline_pair_fraction",
+                "fixed_composition_expected_pair_count",
+                "fixed_composition_expected_pair_fraction",
+                "selected_minus_expected_pair_count",
+                "baseline_minus_expected_pair_count",
+                "selected_pair_avoidance_fraction",
+                "selected_pair_expectation_class",
+                "baseline_pair_expectation_class",
+                "selected_pair_examples",
+                "baseline_pair_examples",
+                "nearest_shell_pair_count_reduction_vs_atom_id_order",
+                "nearest_shell_pair_excess_review_required",
+                "nearest_shell_pair_avoidance_observed",
+                "selection_reduces_nearest_shell_pairs_vs_atom_id_order",
+                "selected_pair_fraction_rmse_from_fixed_composition_expectation",
+                "baseline_pair_fraction_rmse_from_fixed_composition_expectation",
+                "error_count",
+                "warning_count",
+                "errors",
+                "warnings",
+            ],
+            site_pair_distribution_rows,
         )
 
     layer_profile = semiconductor.get("layer_profile_summary") or {}
@@ -3420,6 +3485,109 @@ def _semiconductor_alloy_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any
                 "source": entry.get("source"),
             }
         )
+    return rows
+
+
+def _semiconductor_site_pair_distribution_csv_rows(
+    dopant_fraction_summary: dict[str, Any],
+    alloy_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for entry_kind, summary, replacement_field in (
+        ("dopant_fraction", dopant_fraction_summary, "dopant_element"),
+        ("alloy_fraction", alloy_summary, "alloy_element"),
+    ):
+        for entry_index, entry in enumerate(summary.get("entries", []) or [], start=1):
+            distribution = entry.get("site_pair_distribution")
+            if not isinstance(distribution, dict):
+                continue
+            shells = distribution.get("shells") or [{}]
+            for shell in shells:
+                rows.append(
+                    {
+                        "entry_kind": entry_kind,
+                        "entry_index": entry_index,
+                        "host_element": entry.get("host_element"),
+                        "replacement_element": entry.get(replacement_field),
+                        "selection_strategy": entry.get("selection_strategy"),
+                        "scientific_scope": distribution.get("scientific_scope"),
+                        "geometry_basis": distribution.get("geometry_basis"),
+                        "source_receipt_sha256": distribution.get("source_receipt_sha256"),
+                        "candidate_geometry_sha256": distribution.get("candidate_geometry_sha256"),
+                        "analysis_sha256": distribution.get("analysis_sha256"),
+                        "analysis_integrity_ok": distribution.get("integrity_ok"),
+                        "current_geometry_applicable": entry.get(
+                            "site_pair_distribution_current_geometry_applicable"
+                        ),
+                        "candidate_site_count": distribution.get("candidate_site_count"),
+                        "selected_site_count": distribution.get("selected_site_count"),
+                        "selected_fraction": distribution.get("selected_fraction"),
+                        "fixed_composition_expected_pair_probability": distribution.get(
+                            "fixed_composition_expected_pair_probability"
+                        ),
+                        "pair_conservation_verified": distribution.get("pair_conservation_verified"),
+                        "shell_count": distribution.get("shell_count"),
+                        "reported_shell_count": distribution.get("reported_shell_count"),
+                        "shells_truncated": distribution.get("shells_truncated"),
+                        "shell_index": shell.get("shell_index"),
+                        "distance_min_angstrom": shell.get("distance_min_angstrom"),
+                        "distance_mean_angstrom": shell.get("distance_mean_angstrom"),
+                        "distance_max_angstrom": shell.get("distance_max_angstrom"),
+                        "candidate_pair_count": shell.get("candidate_pair_count"),
+                        "coordination_number_per_candidate": shell.get(
+                            "coordination_number_per_candidate"
+                        ),
+                        "selected_pair_count": shell.get("selected_pair_count"),
+                        "selected_pair_fraction": shell.get("selected_pair_fraction"),
+                        "baseline_pair_count": shell.get("baseline_pair_count"),
+                        "baseline_pair_fraction": shell.get("baseline_pair_fraction"),
+                        "fixed_composition_expected_pair_count": shell.get(
+                            "fixed_composition_expected_pair_count"
+                        ),
+                        "fixed_composition_expected_pair_fraction": shell.get(
+                            "fixed_composition_expected_pair_fraction"
+                        ),
+                        "selected_minus_expected_pair_count": shell.get(
+                            "selected_minus_expected_pair_count"
+                        ),
+                        "baseline_minus_expected_pair_count": shell.get(
+                            "baseline_minus_expected_pair_count"
+                        ),
+                        "selected_pair_avoidance_fraction": shell.get(
+                            "selected_pair_avoidance_fraction"
+                        ),
+                        "selected_pair_expectation_class": shell.get(
+                            "selected_pair_expectation_class"
+                        ),
+                        "baseline_pair_expectation_class": shell.get(
+                            "baseline_pair_expectation_class"
+                        ),
+                        "selected_pair_examples": _join_vector(shell.get("selected_pair_examples")),
+                        "baseline_pair_examples": _join_vector(shell.get("baseline_pair_examples")),
+                        "nearest_shell_pair_count_reduction_vs_atom_id_order": distribution.get(
+                            "nearest_shell_pair_count_reduction_vs_atom_id_order"
+                        ),
+                        "nearest_shell_pair_excess_review_required": distribution.get(
+                            "nearest_shell_pair_excess_review_required"
+                        ),
+                        "nearest_shell_pair_avoidance_observed": distribution.get(
+                            "nearest_shell_pair_avoidance_observed"
+                        ),
+                        "selection_reduces_nearest_shell_pairs_vs_atom_id_order": distribution.get(
+                            "selection_reduces_nearest_shell_pairs_vs_atom_id_order"
+                        ),
+                        "selected_pair_fraction_rmse_from_fixed_composition_expectation": distribution.get(
+                            "selected_pair_fraction_rmse_from_fixed_composition_expectation"
+                        ),
+                        "baseline_pair_fraction_rmse_from_fixed_composition_expectation": distribution.get(
+                            "baseline_pair_fraction_rmse_from_fixed_composition_expectation"
+                        ),
+                        "error_count": distribution.get("error_count"),
+                        "warning_count": distribution.get("warning_count"),
+                        "errors": _join_vector(distribution.get("errors")),
+                        "warnings": _join_vector(distribution.get("warnings")),
+                    }
+                )
     return rows
 
 
@@ -6013,6 +6181,11 @@ def _semiconductor_health_summary(
             continue
         if fraction_summary.get("site_selection_integrity_ok") is False:
             errors.extend(str(item) for item in fraction_summary.get("site_selection_errors", []) or [])
+        if fraction_summary.get("site_pair_distribution_integrity_ok") is False:
+            errors.extend(
+                str(item)
+                for item in fraction_summary.get("site_pair_distribution_errors", []) or []
+            )
         warnings.append(
             f"Semiconductor {label} uses deterministic periodic maximin site separation; this is not an SQS."
         )
@@ -6023,6 +6196,12 @@ def _semiconductor_health_summary(
         if fraction_summary.get("adjacent_pair_review_required"):
             warnings.append(
                 f"Semiconductor {label} contains candidate-nearest substituted-site pairs; inspect local environments."
+            )
+        if fraction_summary.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        ):
+            warnings.append(
+                f"Semiconductor {label} has a nearest-shell selected-pair excess relative to the fixed-composition expectation; inspect site_pair_distribution."
             )
     heterostructure_summary = _heterostructure_summary(metadata)
     substrate_epitaxy_preflight_summary = _substrate_epitaxy_preflight_summary(metadata, lattice_summary)
@@ -12798,12 +12977,12 @@ def _alloy_summary(spec: ModelSpec, metadata: dict[str, Any]) -> dict[str, Any] 
         )
     return _fraction_site_selection_summary(
         {
-        "available": True,
-        "entry_count": len(entries),
-        "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
-        "latest": normalized_entries[-1],
-        "max_abs_rounding_error_fraction": _round(max_rounding),
-        "rounding_warning": max_rounding > 0.05,
+            "available": True,
+            "entry_count": len(entries),
+            "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
+            "latest": normalized_entries[-1],
+            "max_abs_rounding_error_fraction": _round(max_rounding),
+            "rounding_warning": max_rounding > 0.05,
         },
         normalized_entries,
     )
@@ -12834,12 +13013,12 @@ def _dopant_fraction_summary(spec: ModelSpec, metadata: dict[str, Any]) -> dict[
         )
     return _fraction_site_selection_summary(
         {
-        "available": True,
-        "entry_count": len(entries),
-        "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
-        "latest": normalized_entries[-1],
-        "max_abs_rounding_error_fraction": _round(max_rounding),
-        "rounding_warning": max_rounding > 0.05,
+            "available": True,
+            "entry_count": len(entries),
+            "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
+            "latest": normalized_entries[-1],
+            "max_abs_rounding_error_fraction": _round(max_rounding),
+            "rounding_warning": max_rounding > 0.05,
         },
         normalized_entries,
     )
@@ -12879,6 +13058,7 @@ def _fraction_site_selection_entry(
         )
     pair_stats = audit.get("current_selected_pair_distance_stats_angstrom") or {}
     candidate_stats = receipt.get("candidate_pair_distance_stats_angstrom") or {}
+    pair_distribution = analyze_periodic_site_pair_distribution(receipt)
     return {
         **entry,
         "selection_strategy": PERIODIC_MAXIMIN_STRATEGY,
@@ -12887,6 +13067,35 @@ def _fraction_site_selection_entry(
         "site_selection_integrity_ok": audit.get("integrity_ok"),
         "site_selection_replay_verified": audit.get("replay_verified"),
         "site_selection_geometry_unchanged": audit.get("geometry_unchanged"),
+        "site_pair_distribution": pair_distribution,
+        "site_pair_distribution_integrity_ok": pair_distribution.get("integrity_ok"),
+        "site_pair_distribution_current_geometry_applicable": bool(
+            pair_distribution.get("integrity_ok") and audit.get("geometry_unchanged")
+        ),
+        "site_pair_distribution_shell_count": pair_distribution.get("shell_count"),
+        "site_pair_distribution_nearest_shell_selected_pair_count": pair_distribution.get(
+            "nearest_shell_selected_pair_count"
+        ),
+        "site_pair_distribution_nearest_shell_baseline_pair_count": pair_distribution.get(
+            "nearest_shell_baseline_pair_count"
+        ),
+        "site_pair_distribution_nearest_shell_pair_count_reduction": pair_distribution.get(
+            "nearest_shell_pair_count_reduction_vs_atom_id_order"
+        ),
+        "site_pair_distribution_nearest_shell_expectation_class": pair_distribution.get(
+            "nearest_shell_pair_expectation_class"
+        ),
+        "site_pair_distribution_nearest_shell_pair_excess_review_required": pair_distribution.get(
+            "nearest_shell_pair_excess_review_required"
+        ),
+        "site_pair_distribution_nearest_shell_pair_avoidance_observed": pair_distribution.get(
+            "nearest_shell_pair_avoidance_observed"
+        ),
+        "site_pair_distribution_analysis_sha256": pair_distribution.get("analysis_sha256"),
+        "site_pair_distribution_error_count": pair_distribution.get("error_count"),
+        "site_pair_distribution_warning_count": pair_distribution.get("warning_count"),
+        "site_pair_distribution_errors": pair_distribution.get("errors") or [],
+        "site_pair_distribution_warnings": pair_distribution.get("warnings") or [],
         "selected_pair_minimum_angstrom": pair_stats.get("minimum_angstrom"),
         "selected_pair_mean_angstrom": pair_stats.get("mean_angstrom"),
         "selected_pair_maximum_angstrom": pair_stats.get("maximum_angstrom"),
@@ -12921,6 +13130,13 @@ def _fraction_site_selection_summary(
             "site_selection_replay_verified": None,
             "site_selection_review_required": False,
             "adjacent_pair_review_required": False,
+            "site_pair_distribution_count": 0,
+            "site_pair_distribution_integrity_ok": None,
+            "site_pair_distribution_current_geometry_applicable": None,
+            "site_pair_distribution_nearest_shell_pair_excess_review_required": False,
+            "site_pair_distribution_nearest_shell_pair_avoidance_observed": False,
+            "site_pair_distribution_errors": [],
+            "site_pair_distribution_warnings": [],
             "site_selection_errors": [],
             "site_selection_warnings": [],
         }
@@ -12944,6 +13160,40 @@ def _fraction_site_selection_summary(
         bool((entry.get("site_selection_audit") or {}).get("adjacent_pair_review_required"))
         for entry in distributed
     )
+    pair_distributions = [
+        entry.get("site_pair_distribution")
+        for entry in distributed
+        if isinstance(entry.get("site_pair_distribution"), dict)
+    ]
+    pair_distribution_errors = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_pair_distribution_errors", []) or []
+        )
+    )
+    pair_distribution_warnings = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_pair_distribution_warnings", []) or []
+        )
+    )
+    pair_distribution_integrity_ok = bool(pair_distributions) and all(
+        distribution.get("integrity_ok") is True for distribution in pair_distributions
+    )
+    pair_distribution_current_geometry_applicable = bool(pair_distributions) and all(
+        entry.get("site_pair_distribution_current_geometry_applicable") is True
+        for entry in distributed
+    )
+    pair_excess_review = any(
+        bool(distribution.get("nearest_shell_pair_excess_review_required"))
+        for distribution in pair_distributions
+    )
+    pair_avoidance_observed = any(
+        bool(distribution.get("nearest_shell_pair_avoidance_observed"))
+        for distribution in pair_distributions
+    )
     return {
         **summary,
         "periodic_maximin_count": len(distributed),
@@ -12955,6 +13205,17 @@ def _fraction_site_selection_summary(
         "site_selection_warning_count": len(warnings),
         "site_selection_errors": errors,
         "site_selection_warnings": warnings,
+        "site_pair_distribution_count": len(pair_distributions),
+        "site_pair_distribution_integrity_ok": pair_distribution_integrity_ok,
+        "site_pair_distribution_current_geometry_applicable": (
+            pair_distribution_current_geometry_applicable
+        ),
+        "site_pair_distribution_nearest_shell_pair_excess_review_required": pair_excess_review,
+        "site_pair_distribution_nearest_shell_pair_avoidance_observed": pair_avoidance_observed,
+        "site_pair_distribution_error_count": len(pair_distribution_errors),
+        "site_pair_distribution_warning_count": len(pair_distribution_warnings),
+        "site_pair_distribution_errors": pair_distribution_errors,
+        "site_pair_distribution_warnings": pair_distribution_warnings,
     }
 
 

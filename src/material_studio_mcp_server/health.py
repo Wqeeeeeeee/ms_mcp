@@ -732,6 +732,26 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_dopant_fraction_site_selection_replay_verified"] = dopant_fraction_summary.get(
             "site_selection_replay_verified"
         )
+        checks["semiconductor_dopant_fraction_site_pair_distribution_count"] = dopant_fraction_summary.get(
+            "site_pair_distribution_count",
+            0,
+        )
+        checks["semiconductor_dopant_fraction_site_pair_distribution_integrity_ok"] = dopant_fraction_summary.get(
+            "site_pair_distribution_integrity_ok"
+        )
+        checks[
+            "semiconductor_dopant_fraction_site_pair_distribution_current_geometry_applicable"
+        ] = dopant_fraction_summary.get("site_pair_distribution_current_geometry_applicable")
+        checks[
+            "semiconductor_dopant_fraction_nearest_shell_pair_excess_review_required"
+        ] = dopant_fraction_summary.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        )
+        checks[
+            "semiconductor_dopant_fraction_nearest_shell_pair_avoidance_observed"
+        ] = dopant_fraction_summary.get(
+            "site_pair_distribution_nearest_shell_pair_avoidance_observed"
+        )
         if dopant_fraction_summary.get("rounding_warning"):
             warnings.append("Semiconductor dopant fraction was rounded noticeably by finite cell size; inspect dopant_fraction_summary.")
         if dopant_fraction_summary.get("periodic_maximin_count"):
@@ -740,6 +760,14 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             )
         if dopant_fraction_summary.get("site_selection_integrity_ok") is False:
             warnings.append("Semiconductor dopant-fraction site-selection metadata failed integrity checks.")
+        if dopant_fraction_summary.get("site_pair_distribution_integrity_ok") is False:
+            warnings.append("Semiconductor dopant-fraction pair-distribution audit failed integrity checks.")
+        if dopant_fraction_summary.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        ):
+            warnings.append(
+                "Semiconductor dopant sites have a nearest-shell pair excess relative to the fixed-composition expectation."
+            )
 
     alloy_summary = semiconductor.get("alloy_summary") or {}
     if alloy_summary:
@@ -753,12 +781,34 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_alloy_site_selection_replay_verified"] = alloy_summary.get(
             "site_selection_replay_verified"
         )
+        checks["semiconductor_alloy_site_pair_distribution_count"] = alloy_summary.get(
+            "site_pair_distribution_count",
+            0,
+        )
+        checks["semiconductor_alloy_site_pair_distribution_integrity_ok"] = alloy_summary.get(
+            "site_pair_distribution_integrity_ok"
+        )
+        checks["semiconductor_alloy_site_pair_distribution_current_geometry_applicable"] = alloy_summary.get(
+            "site_pair_distribution_current_geometry_applicable"
+        )
+        checks["semiconductor_alloy_nearest_shell_pair_excess_review_required"] = alloy_summary.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        )
+        checks["semiconductor_alloy_nearest_shell_pair_avoidance_observed"] = alloy_summary.get(
+            "site_pair_distribution_nearest_shell_pair_avoidance_observed"
+        )
         if alloy_summary.get("rounding_warning"):
             warnings.append("Semiconductor alloy fraction was rounded noticeably by finite cell size; inspect alloy_summary.")
         if alloy_summary.get("periodic_maximin_count"):
             warnings.append("Semiconductor alloy sites use deterministic periodic maximin separation, not an SQS.")
         if alloy_summary.get("site_selection_integrity_ok") is False:
             warnings.append("Semiconductor alloy site-selection metadata failed integrity checks.")
+        if alloy_summary.get("site_pair_distribution_integrity_ok") is False:
+            warnings.append("Semiconductor alloy pair-distribution audit failed integrity checks.")
+        if alloy_summary.get("site_pair_distribution_nearest_shell_pair_excess_review_required"):
+            warnings.append(
+                "Semiconductor alloy sites have a nearest-shell pair excess relative to the fixed-composition expectation."
+            )
         if int(checks.get("semiconductor_alloy_same_sublattice_neighbor_pair_count") or 0) > 0:
             warnings.append(
                 "Semiconductor alloy has same-sublattice neighbor pairs under the preflight cutoff; inspect neighbor_distance_summary."

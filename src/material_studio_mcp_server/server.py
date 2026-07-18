@@ -1312,6 +1312,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "diagnostic_csvs": [
                 "semiconductor_alloy_csv",
+                "semiconductor_site_pair_distribution_csv",
                 "semiconductor_composition_csv",
                 "semiconductor_lattice_csv",
                 "semiconductor_neighbor_pairs_csv",
@@ -2017,6 +2018,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "composition diagnostics",
                 "periodic maximin alloy sites",
                 "spatially distributed alloy sites",
+                "alloy pair distribution",
+                "alloy distance shells",
                 "SiGe alloy",
                 "AlGaN alloy",
                 "InGaN alloy",
@@ -2033,6 +2036,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u5408\u91d1\u5206\u6570",
                 "\u5408\u91d1\u4f4d\u70b9\u5747\u5300\u5206\u5e03",
                 "\u5408\u91d1\u4f4d\u70b9\u7a7a\u95f4\u5206\u6563",
+                "\u5408\u91d1\u4f4d\u70b9\u6210\u5bf9\u5206\u5e03",
+                "\u5408\u91d1\u8ddd\u79bb\u58f3\u5c42",
             ],
             "examples": [
                 "Build Si0.75Ge0.25 alloy as a 2x1x1 supercell and export alloy diagnostics.",
@@ -2040,6 +2045,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Build ZnS0.5Se0.5 alloy as a 2x1x1 supercell and check same-sublattice neighbors.",
                 "Build MAPb(I0.67Br0.33)3 alloy and export alloy diagnostics.",
                 "Build a 2x2x1 silicon supercell and uniformly distribute 25% Ge alloy sites.",
+                "Audit finite-cell pair-distance shells for a spatially distributed SiGe alloy.",
             ],
             "diagnostic_summaries": [
                 "alloy_summary",
@@ -2053,6 +2059,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "semiconductor_composition_csv",
                 "semiconductor_local_environment_csv",
                 "semiconductor_neighbor_pairs_csv",
+                "semiconductor_site_pair_distribution_csv",
                 "semiconductor_charge_balance_csv",
                 "view_quality_csv",
             ],
@@ -2417,6 +2424,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "dopant percentage",
                 "periodic maximin dopant sites",
                 "spatially distributed dopants",
+                "dopant pair distribution",
+                "dopant distance shells",
             ],
             "cjk_terms": [
                 "\u63ba\u6742\u6d53\u5ea6",
@@ -2426,11 +2435,14 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u6742\u8d28\u6d53\u5ea6",
                 "\u63ba\u6742\u4f4d\u70b9\u5747\u5300\u5206\u5e03",
                 "\u63ba\u6742\u4f4d\u70b9\u7a7a\u95f4\u5206\u6563",
+                "\u63ba\u6742\u4f4d\u70b9\u6210\u5bf9\u5206\u5e03",
+                "\u63ba\u6742\u8ddd\u79bb\u58f3\u5c42",
             ],
             "examples": [
                 "Build silicon as a 2x1x1 supercell, dope 25% P, and export dopant concentration diagnostics.",
                 "Export dopant concentration and dopant fraction diagnostics for the current model.",
                 "Build a 2x2x1 silicon supercell and spatially distribute 6.25% P dopants.",
+                "Audit finite-cell pair-distance shells for spatially distributed P dopants.",
             ],
             "diagnostic_summaries": [
                 "dopant_summary",
@@ -2443,6 +2455,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "semiconductor_dopants_csv",
                 "semiconductor_dopant_concentration_csv",
                 "semiconductor_dopant_fraction_csv",
+                "semiconductor_site_pair_distribution_csv",
                 "semiconductor_finite_size_csv",
                 "view_quality_csv",
             ],
@@ -2495,6 +2508,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "semiconductor_dopant_sites_csv",
                 "semiconductor_dopant_concentration_csv",
                 "semiconductor_dopant_fraction_csv",
+                "semiconductor_site_pair_distribution_csv",
                 "semiconductor_finite_size_csv",
                 "semiconductor_charge_balance_csv",
                 "view_quality_csv",
@@ -13424,6 +13438,8 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "same sublattice neighbors",
                 "periodic maximin alloy sites",
                 "spatially distributed alloy sites",
+                "alloy pair distribution",
+                "alloy distance shells",
                 "\u5408\u91d1",
                 "\u56fa\u6eb6\u4f53",
                 "\u7ec4\u5206\u8bca\u65ad",
@@ -13432,6 +13448,8 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "\u540c\u4e9a\u6676\u683c\u90bb\u8fd1",
                 "\u5408\u91d1\u4f4d\u70b9\u5747\u5300\u5206\u5e03",
                 "\u5408\u91d1\u4f4d\u70b9\u7a7a\u95f4\u5206\u6563",
+                "\u5408\u91d1\u4f4d\u70b9\u6210\u5bf9\u5206\u5e03",
+                "\u5408\u91d1\u8ddd\u79bb\u58f3\u5c42",
             ),
         ),
         (
@@ -13483,6 +13501,8 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "dopant percentage",
                 "periodic maximin dopant sites",
                 "spatially distributed dopants",
+                "dopant pair distribution",
+                "dopant distance shells",
                 "\u63ba\u6742\u6d53\u5ea6",
                 "\u63ba\u6742\u6bd4\u4f8b",
                 "\u63ba\u6742\u5206\u6570",
@@ -13490,6 +13510,8 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "\u6742\u8d28\u6d53\u5ea6",
                 "\u63ba\u6742\u4f4d\u70b9\u5747\u5300\u5206\u5e03",
                 "\u63ba\u6742\u4f4d\u70b9\u7a7a\u95f4\u5206\u6563",
+                "\u63ba\u6742\u4f4d\u70b9\u6210\u5bf9\u5206\u5e03",
+                "\u63ba\u6742\u8ddd\u79bb\u58f3\u5c42",
             ),
         ),
         (
@@ -19854,6 +19876,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_junctions_csv", "semiconductor_junctions"),
         ("semiconductor_dopant_fraction_csv", "semiconductor_dopant_fraction"),
         ("semiconductor_alloy_csv", "semiconductor_alloy"),
+        ("semiconductor_site_pair_distribution_csv", "semiconductor_site_pair_distribution"),
         ("semiconductor_defects_csv", "semiconductor_defects"),
         ("semiconductor_defect_complexes_csv", "semiconductor_defect_complexes"),
         ("semiconductor_finite_size_csv", "semiconductor_finite_size"),
@@ -20854,6 +20877,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_junctions_csv": bundle_files.get("semiconductor_junctions_csv"),
             "semiconductor_dopant_fraction_csv": bundle_files.get("semiconductor_dopant_fraction_csv"),
             "semiconductor_alloy_csv": bundle_files.get("semiconductor_alloy_csv"),
+            "semiconductor_site_pair_distribution_csv": bundle_files.get(
+                "semiconductor_site_pair_distribution_csv"
+            ),
             "semiconductor_layer_profile_csv": bundle_files.get("semiconductor_layer_profile_csv"),
             "semiconductor_layer_translation_csv": bundle_files.get("semiconductor_layer_translation_csv"),
             "semiconductor_layer_rotation_csv": bundle_files.get("semiconductor_layer_rotation_csv"),
@@ -30808,6 +30834,19 @@ def _semiconductor_dopant_review(
         "site_selection_replay_verified": dopant_fraction.get("site_selection_replay_verified"),
         "site_selection_review_required": dopant_fraction.get("site_selection_review_required"),
         "adjacent_pair_review_required": dopant_fraction.get("adjacent_pair_review_required"),
+        "site_pair_distribution_count": dopant_fraction.get("site_pair_distribution_count", 0),
+        "site_pair_distribution_integrity_ok": dopant_fraction.get(
+            "site_pair_distribution_integrity_ok"
+        ),
+        "site_pair_distribution_current_geometry_applicable": dopant_fraction.get(
+            "site_pair_distribution_current_geometry_applicable"
+        ),
+        "nearest_shell_pair_excess_review_required": dopant_fraction.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        ),
+        "nearest_shell_pair_avoidance_observed": dopant_fraction.get(
+            "site_pair_distribution_nearest_shell_pair_avoidance_observed"
+        ),
         "site_metadata": _select_keys(
             dopant_site,
             [
@@ -31322,6 +31361,20 @@ def _semiconductor_alloy_review(alloy: dict[str, Any]) -> dict[str, Any] | None:
         "minimum_distance_improvement_over_atom_id_order_angstrom": latest.get(
             "minimum_distance_improvement_over_atom_id_order_angstrom"
         ),
+        "site_pair_distribution_count": alloy.get("site_pair_distribution_count", 0),
+        "site_pair_distribution_integrity_ok": alloy.get("site_pair_distribution_integrity_ok"),
+        "site_pair_distribution_current_geometry_applicable": alloy.get(
+            "site_pair_distribution_current_geometry_applicable"
+        ),
+        "nearest_shell_pair_excess_review_required": alloy.get(
+            "site_pair_distribution_nearest_shell_pair_excess_review_required"
+        ),
+        "nearest_shell_pair_avoidance_observed": alloy.get(
+            "site_pair_distribution_nearest_shell_pair_avoidance_observed"
+        ),
+        "nearest_shell_pair_count_reduction_vs_atom_id_order": latest.get(
+            "site_pair_distribution_nearest_shell_pair_count_reduction"
+        ),
         "same_sublattice_neighbor_pair_count": alloy.get("same_sublattice_neighbor_pair_count"),
     }
 
@@ -31607,6 +31660,10 @@ def _semiconductor_review_risk_flags(
         flags.append("dopant_fraction_site_selection_current_geometry_replay_unavailable")
     if dopant_fraction.get("adjacent_pair_review_required"):
         flags.append("dopant_fraction_candidate_nearest_pairs")
+    if dopant_fraction.get("site_pair_distribution_integrity_ok") is False:
+        flags.append("dopant_fraction_site_pair_distribution_inconsistent")
+    if dopant_fraction.get("site_pair_distribution_nearest_shell_pair_excess_review_required"):
+        flags.append("dopant_fraction_nearest_shell_pair_excess")
     if junction.get("junction_count"):
         flags.append("junction_model")
     if int(junction.get("warning_count") or 0) > 0:
@@ -31622,6 +31679,10 @@ def _semiconductor_review_risk_flags(
         flags.append("alloy_site_selection_current_geometry_replay_unavailable")
     if alloy.get("adjacent_pair_review_required"):
         flags.append("alloy_candidate_nearest_pairs")
+    if alloy.get("site_pair_distribution_integrity_ok") is False:
+        flags.append("alloy_site_pair_distribution_inconsistent")
+    if alloy.get("site_pair_distribution_nearest_shell_pair_excess_review_required"):
+        flags.append("alloy_nearest_shell_pair_excess")
     if int(alloy.get("same_sublattice_neighbor_pair_count") or 0) > 0:
         flags.append("alloy_same_sublattice_neighbors")
     if defect.get("defect_count"):

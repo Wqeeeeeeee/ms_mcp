@@ -599,6 +599,19 @@ thermodynamic optimization. At high fractions, nearest candidate-site pairs may
 be unavoidable and remain a review flag. Exact maximin selection is limited to
 512 candidate sites per request; larger candidate sets fail closed and require a
 smaller supercell or explicit site IDs.
+For every explicit periodic-maximin record, diagnostics also export
+`semiconductor_site_pair_distribution.csv`. Candidate pairs are grouped by
+numerically equal periodic minimum-image distance, then selected-selected pair
+counts are compared with both the atom-ID-order baseline and the exact
+fixed-composition probability `K(K-1) / [N(N-1)]` for selecting `K` of `N`
+candidate sites. The audit reports pair-count conservation, nearest-shell
+avoidance or excess, occupied-shell position, and a SHA-256-bound analysis.
+These are descriptive finite-supercell statistics only. The numerical shells
+are not crystallographic symmetry orbits, deviations are not significance
+tests, and the result does not establish an SQS, random-alloy thermodynamics,
+or a relaxed structure. If the current lattice or candidate coordinates change,
+the recorded-geometry analysis remains historical evidence but
+`site_pair_distribution_current_geometry_applicable` becomes false.
 Chinese semiconductor follow-ups use the same structured patch path, for example
 `创建硅空位`, `沿 z 添加 10 埃真空层`,
 `在分数坐标 0.5 0.5 0.24 添加 Htop1 H`,

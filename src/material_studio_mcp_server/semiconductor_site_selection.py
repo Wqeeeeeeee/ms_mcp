@@ -17,6 +17,12 @@ PERIODIC_MAXIMIN_STRATEGY = "periodic_maximin"
 PERIODIC_MAXIMIN_SCOPE = "deterministic_spatial_separation_heuristic_not_sqs"
 PERIODIC_DISTANCE_MODE = "periodic_minimum_image_3x3"
 MAX_EXACT_PERIODIC_MAXIMIN_CANDIDATES = 512
+SITE_PAIR_DISTRIBUTION_SCHEMA = "materials-studio-site-pair-distribution/v1"
+SITE_PAIR_DISTRIBUTION_SCOPE = "finite_supercell_pair_distribution_descriptive_not_sqs"
+MAX_REPORTED_PAIR_DISTANCE_SHELLS = 24
+MAX_PAIR_EXAMPLES_PER_SHELL = 12
+PAIR_SHELL_ABSOLUTE_TOLERANCE_ANGSTROM = 1e-5
+PAIR_SHELL_RELATIVE_TOLERANCE = 1e-6
 _DISTANCE_TOLERANCE = 1e-8
 
 
@@ -312,6 +318,350 @@ def audit_periodic_maximin_selection(
     }
 
 
+def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe selected-site pairs by periodic distance shell.
+
+    The fixed-composition expectation is the exact probability that two
+    distinct candidate sites are both selected when choosing K of N sites:
+    K(K-1) / N(N-1). The result is descriptive finite-cell evidence and does
+    not establish statistical significance, SQS quality, or thermodynamics.
+    """
+
+    errors: list[str] = []
+    warnings: list[str] = [
+        "Pair-distribution values describe one finite periodic supercell and do not establish SQS quality or thermodynamic randomness.",
+        "Distance shells use numerical distance tolerance and are not crystallographic symmetry-orbit classifications.",
+    ]
+    raw = dict(receipt) if isinstance(receipt, Mapping) else {}
+    _check_contract(raw, errors)
+
+    try:
+        computed_receipt_sha256 = _receipt_sha256(raw)
+    except (TypeError, ValueError):
+        computed_receipt_sha256 = None
+    receipt_sha256_verified = bool(
+        isinstance(raw.get("receipt_sha256"), str)
+        and raw.get("receipt_sha256") == computed_receipt_sha256
+    )
+    if not receipt_sha256_verified:
+        errors.append("Site pair-distribution input receipt SHA-256 is invalid.")
+
+    lattice = _validated_lattice_mapping(raw.get("lattice"), errors)
+    candidates = _validated_candidate_payloads(raw.get("candidate_sites"), errors)
+    geometry_sha256_verified = False
+    if lattice is not None and candidates is not None:
+        geometry_sha256_verified = raw.get("candidate_geometry_sha256") == _canonical_sha256(
+            {"lattice": lattice, "candidate_sites": candidates}
+        )
+        if not geometry_sha256_verified:
+            errors.append("Site pair-distribution candidate geometry SHA-256 is invalid.")
+
+    selected_ids = _string_list(raw.get("selected_atom_ids"))
+    baseline_ids = _string_list(raw.get("atom_id_order_baseline_atom_ids"))
+    target_count = _positive_int(raw.get("target_site_count"))
+    candidate_ids = [str(site["atom_id"]) for site in candidates or []]
+    candidate_id_set = set(candidate_ids)
+    recorded_candidate_count = _nonnegative_int(raw.get("candidate_site_count"))
+    if candidates is not None and recorded_candidate_count != len(candidates):
+        errors.append("Site pair-distribution candidate_site_count does not match candidate_sites.")
+    if not selected_ids:
+        errors.append("Site pair-distribution input has no selected_atom_ids.")
+    if len(selected_ids) != len(set(selected_ids)):
+        errors.append("Site pair-distribution selected_atom_ids contains duplicates.")
+    if len(baseline_ids) != len(set(baseline_ids)):
+        errors.append("Site pair-distribution atom-ID-order baseline contains duplicates.")
+    if target_count is None:
+        errors.append("Site pair-distribution target_site_count must be a positive integer.")
+    else:
+        if candidates is not None and target_count > len(candidates):
+            errors.append("Site pair-distribution target_site_count exceeds candidate_sites.")
+        if len(selected_ids) != target_count:
+            errors.append("Site pair-distribution selected-site count does not match target_site_count.")
+        if len(baseline_ids) != target_count:
+            errors.append("Site pair-distribution baseline-site count does not match target_site_count.")
+    if any(atom_id not in candidate_id_set for atom_id in selected_ids):
+        errors.append("Site pair-distribution selected_atom_ids contains a non-candidate site.")
+    if any(atom_id not in candidate_id_set for atom_id in baseline_ids):
+        errors.append("Site pair-distribution baseline atom IDs contain a non-candidate site.")
+
+    baseline_order_verified = False
+    selection_replay_verified = False
+    if (
+        lattice is not None
+        and candidates is not None
+        and target_count is not None
+        and target_count <= len(candidates)
+    ):
+        expected_baseline_ids = candidate_ids[:target_count]
+        baseline_order_verified = baseline_ids == expected_baseline_ids
+        if not baseline_order_verified:
+            errors.append(
+                "Site pair-distribution atom-ID-order baseline does not match the deterministic candidate order."
+            )
+        replay_sites, _ = _select_from_payload(lattice, candidates, target_count)
+        selection_replay_verified = [str(site["atom_id"]) for site in replay_sites] == selected_ids
+        if not selection_replay_verified:
+            errors.append(
+                "Site pair-distribution selected_atom_ids do not replay under periodic maximin."
+            )
+
+    base_result: dict[str, Any] = {
+        "available": bool(raw),
+        "schema": SITE_PAIR_DISTRIBUTION_SCHEMA,
+        "scientific_scope": SITE_PAIR_DISTRIBUTION_SCOPE,
+        "geometry_basis": "recorded_candidate_geometry",
+        "distance_mode": PERIODIC_DISTANCE_MODE,
+        "source_receipt_sha256": raw.get("receipt_sha256"),
+        "source_receipt_sha256_verified": receipt_sha256_verified,
+        "candidate_geometry_sha256": raw.get("candidate_geometry_sha256"),
+        "candidate_geometry_sha256_verified": geometry_sha256_verified,
+        "selection_replay_verified": selection_replay_verified,
+        "atom_id_order_baseline_verified": baseline_order_verified,
+        "candidate_site_count": len(candidate_ids),
+        "selected_site_count": len(selected_ids),
+        "selected_atom_ids": selected_ids,
+        "atom_id_order_baseline_atom_ids": baseline_ids,
+        "shell_absolute_tolerance_angstrom": PAIR_SHELL_ABSOLUTE_TOLERANCE_ANGSTROM,
+        "shell_relative_tolerance": PAIR_SHELL_RELATIVE_TOLERANCE,
+        "maximum_reported_shells": MAX_REPORTED_PAIR_DISTANCE_SHELLS,
+    }
+    if errors or lattice is None or candidates is None:
+        return {
+            **base_result,
+            "integrity_ok": False,
+            "shell_count": 0,
+            "reported_shell_count": 0,
+            "shells_truncated": False,
+            "shells": [],
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+            "errors": errors,
+            "warnings": warnings,
+            "analysis_sha256": None,
+        }
+
+    selected_set = set(selected_ids)
+    baseline_set = set(baseline_ids)
+    vectors = _lattice_vectors(lattice)
+    pair_rows: list[tuple[float, str, str]] = []
+    for left, right in combinations(candidates, 2):
+        pair_rows.append(
+            (
+                _site_distance(left, right, vectors),
+                str(left["atom_id"]),
+                str(right["atom_id"]),
+            )
+        )
+    pair_rows.sort(key=lambda item: (item[0], _natural_atom_id_key(item[1]), _natural_atom_id_key(item[2])))
+    distance_shells = _group_pair_distance_shells(pair_rows)
+
+    candidate_count = len(candidates)
+    selected_count = len(selected_ids)
+    candidate_pair_count_expected = candidate_count * (candidate_count - 1) // 2
+    selected_pair_count_expected = selected_count * (selected_count - 1) // 2
+    fixed_composition_pair_probability = (
+        selected_count * (selected_count - 1) / (candidate_count * (candidate_count - 1))
+        if candidate_count > 1
+        else 0.0
+    )
+
+    shell_rows: list[dict[str, Any]] = []
+    selected_pair_count_total = 0
+    baseline_pair_count_total = 0
+    selected_weighted_squared_deviation = 0.0
+    baseline_weighted_squared_deviation = 0.0
+    for shell_index, shell_pairs in enumerate(distance_shells, start=1):
+        distances = [item[0] for item in shell_pairs]
+        selected_pairs = [
+            item for item in shell_pairs if item[1] in selected_set and item[2] in selected_set
+        ]
+        baseline_pairs = [
+            item for item in shell_pairs if item[1] in baseline_set and item[2] in baseline_set
+        ]
+        candidate_pair_count = len(shell_pairs)
+        selected_pair_count = len(selected_pairs)
+        baseline_pair_count = len(baseline_pairs)
+        selected_pair_fraction = selected_pair_count / candidate_pair_count
+        baseline_pair_fraction = baseline_pair_count / candidate_pair_count
+        expected_selected_pair_count = candidate_pair_count * fixed_composition_pair_probability
+        selected_pair_count_total += selected_pair_count
+        baseline_pair_count_total += baseline_pair_count
+        selected_weighted_squared_deviation += candidate_pair_count * (
+            selected_pair_fraction - fixed_composition_pair_probability
+        ) ** 2
+        baseline_weighted_squared_deviation += candidate_pair_count * (
+            baseline_pair_fraction - fixed_composition_pair_probability
+        ) ** 2
+        shell_rows.append(
+            {
+                "shell_index": shell_index,
+                "distance_min_angstrom": _round_distance(min(distances)),
+                "distance_mean_angstrom": _round_distance(sum(distances) / len(distances)),
+                "distance_max_angstrom": _round_distance(max(distances)),
+                "candidate_pair_count": candidate_pair_count,
+                "coordination_number_per_candidate": _round_distance(
+                    2.0 * candidate_pair_count / candidate_count
+                ),
+                "selected_pair_count": selected_pair_count,
+                "selected_pair_fraction": _round_probability(selected_pair_fraction),
+                "baseline_pair_count": baseline_pair_count,
+                "baseline_pair_fraction": _round_probability(baseline_pair_fraction),
+                "fixed_composition_expected_pair_count": _round_distance(expected_selected_pair_count),
+                "fixed_composition_expected_pair_fraction": _round_probability(
+                    fixed_composition_pair_probability
+                ),
+                "selected_minus_expected_pair_count": _round_distance(
+                    selected_pair_count - expected_selected_pair_count
+                ),
+                "baseline_minus_expected_pair_count": _round_distance(
+                    baseline_pair_count - expected_selected_pair_count
+                ),
+                "selected_pair_avoidance_fraction": _pair_avoidance_fraction(
+                    selected_pair_count,
+                    expected_selected_pair_count,
+                ),
+                "selected_pair_expectation_class": _pair_expectation_class(
+                    selected_pair_count,
+                    expected_selected_pair_count,
+                ),
+                "baseline_pair_expectation_class": _pair_expectation_class(
+                    baseline_pair_count,
+                    expected_selected_pair_count,
+                ),
+                "selected_pair_examples": [
+                    f"{left_id}-{right_id}"
+                    for _, left_id, right_id in selected_pairs[:MAX_PAIR_EXAMPLES_PER_SHELL]
+                ],
+                "selected_pair_examples_truncated": len(selected_pairs) > MAX_PAIR_EXAMPLES_PER_SHELL,
+                "baseline_pair_examples": [
+                    f"{left_id}-{right_id}"
+                    for _, left_id, right_id in baseline_pairs[:MAX_PAIR_EXAMPLES_PER_SHELL]
+                ],
+                "baseline_pair_examples_truncated": len(baseline_pairs) > MAX_PAIR_EXAMPLES_PER_SHELL,
+            }
+        )
+
+    pair_conservation_verified = (
+        len(pair_rows) == candidate_pair_count_expected
+        and selected_pair_count_total == selected_pair_count_expected
+        and baseline_pair_count_total == selected_pair_count_expected
+    )
+    if not pair_conservation_verified:
+        errors.append("Site pair-distribution pair-count conservation failed.")
+
+    total_candidate_pairs = max(len(pair_rows), 1)
+    selected_rmse = math.sqrt(selected_weighted_squared_deviation / total_candidate_pairs)
+    baseline_rmse = math.sqrt(baseline_weighted_squared_deviation / total_candidate_pairs)
+    nearest_shell = shell_rows[0] if shell_rows else {}
+    nearest_selected = int(nearest_shell.get("selected_pair_count") or 0)
+    nearest_baseline = int(nearest_shell.get("baseline_pair_count") or 0)
+    nearest_expected = float(nearest_shell.get("fixed_composition_expected_pair_count") or 0.0)
+    nearest_class = str(nearest_shell.get("selected_pair_expectation_class") or "unavailable")
+    nearest_shell_pair_excess_review_required = nearest_class == "above_fixed_composition_expectation"
+    nearest_shell_pair_avoidance_observed = nearest_class == "below_fixed_composition_expectation"
+    if nearest_shell_pair_excess_review_required:
+        warnings.append(
+            "The nearest candidate-site distance shell has more selected-selected pairs than the fixed-composition expectation; review local clustering."
+        )
+
+    result = {
+        **base_result,
+        "integrity_ok": not errors,
+        "selected_fraction": _round_probability(selected_count / candidate_count),
+        "fixed_composition_expected_pair_probability": _round_probability(
+            fixed_composition_pair_probability
+        ),
+        "candidate_pair_count": len(pair_rows),
+        "expected_candidate_pair_count": candidate_pair_count_expected,
+        "selected_pair_count": selected_pair_count_total,
+        "expected_selected_pair_count": selected_pair_count_expected,
+        "baseline_pair_count": baseline_pair_count_total,
+        "pair_conservation_verified": pair_conservation_verified,
+        "shell_count": len(shell_rows),
+        "reported_shell_count": min(len(shell_rows), MAX_REPORTED_PAIR_DISTANCE_SHELLS),
+        "shells_truncated": len(shell_rows) > MAX_REPORTED_PAIR_DISTANCE_SHELLS,
+        "unreported_shell_count": max(len(shell_rows) - MAX_REPORTED_PAIR_DISTANCE_SHELLS, 0),
+        "shells": shell_rows[:MAX_REPORTED_PAIR_DISTANCE_SHELLS],
+        "nearest_shell_distance_mean_angstrom": nearest_shell.get("distance_mean_angstrom"),
+        "nearest_shell_candidate_pair_count": nearest_shell.get("candidate_pair_count"),
+        "nearest_shell_selected_pair_count": nearest_selected,
+        "nearest_shell_baseline_pair_count": nearest_baseline,
+        "nearest_shell_fixed_composition_expected_pair_count": _round_distance(nearest_expected),
+        "nearest_shell_pair_count_reduction_vs_atom_id_order": nearest_baseline - nearest_selected,
+        "nearest_shell_selected_pair_avoidance_fraction": nearest_shell.get(
+            "selected_pair_avoidance_fraction"
+        ),
+        "nearest_shell_pair_expectation_class": nearest_class,
+        "nearest_shell_pair_excess_review_required": nearest_shell_pair_excess_review_required,
+        "nearest_shell_pair_avoidance_observed": nearest_shell_pair_avoidance_observed,
+        "selection_reduces_nearest_shell_pairs_vs_atom_id_order": nearest_selected < nearest_baseline,
+        "selected_pair_first_occupied_shell_index": _first_occupied_shell_index(
+            shell_rows,
+            "selected_pair_count",
+        ),
+        "baseline_pair_first_occupied_shell_index": _first_occupied_shell_index(
+            shell_rows,
+            "baseline_pair_count",
+        ),
+        "selected_pair_fraction_rmse_from_fixed_composition_expectation": _round_probability(
+            selected_rmse
+        ),
+        "baseline_pair_fraction_rmse_from_fixed_composition_expectation": _round_probability(
+            baseline_rmse
+        ),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "errors": errors,
+        "warnings": warnings,
+    }
+    result["analysis_sha256"] = _canonical_sha256(result)
+    return result
+
+
+def _group_pair_distance_shells(
+    pair_rows: Sequence[tuple[float, str, str]],
+) -> list[list[tuple[float, str, str]]]:
+    shells: list[list[tuple[float, str, str]]] = []
+    for pair in pair_rows:
+        if not shells:
+            shells.append([pair])
+            continue
+        anchor = shells[-1][0][0]
+        tolerance = max(
+            PAIR_SHELL_ABSOLUTE_TOLERANCE_ANGSTROM,
+            PAIR_SHELL_RELATIVE_TOLERANCE * max(abs(anchor), abs(pair[0])),
+        )
+        if abs(pair[0] - anchor) <= tolerance:
+            shells[-1].append(pair)
+        else:
+            shells.append([pair])
+    return shells
+
+
+def _pair_avoidance_fraction(observed: int, expected: float) -> float | None:
+    if expected <= 0.0:
+        return None
+    return _round_probability(1.0 - observed / expected)
+
+
+def _pair_expectation_class(observed: int, expected: float) -> str:
+    if expected <= 0.0:
+        return "zero_fixed_composition_expectation"
+    tolerance = max(0.25, 0.1 * expected)
+    if observed > expected + tolerance:
+        return "above_fixed_composition_expectation"
+    if observed < expected - tolerance:
+        return "below_fixed_composition_expectation"
+    return "near_fixed_composition_expectation"
+
+
+def _first_occupied_shell_index(shells: Sequence[Mapping[str, Any]], field: str) -> int | None:
+    for shell in shells:
+        if int(shell.get(field) or 0) > 0:
+            return int(shell["shell_index"])
+    return None
+
+
 def _check_contract(receipt: Mapping[str, Any], errors: list[str]) -> None:
     expected = {
         "schema": PERIODIC_MAXIMIN_SCHEMA,
@@ -588,6 +938,10 @@ def _round_fractional(value: float) -> float:
 
 def _round_distance(value: float) -> float:
     return round(float(value), 9)
+
+
+def _round_probability(value: float) -> float:
+    return round(float(value), 12)
 
 
 def _finite_float(value: Any) -> float | None:

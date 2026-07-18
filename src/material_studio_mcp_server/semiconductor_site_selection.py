@@ -19,6 +19,10 @@ PERIODIC_DISTANCE_MODE = "periodic_minimum_image_3x3"
 MAX_EXACT_PERIODIC_MAXIMIN_CANDIDATES = 512
 SITE_PAIR_DISTRIBUTION_SCHEMA = "materials-studio-site-pair-distribution/v1"
 SITE_PAIR_DISTRIBUTION_SCOPE = "finite_supercell_pair_distribution_descriptive_not_sqs"
+SITE_SHORT_RANGE_ORDER_SCHEMA = "materials-studio-site-short-range-order/v1"
+SITE_SHORT_RANGE_ORDER_SCOPE = (
+    "finite_supercell_unique_pair_graph_warren_cowley_like_descriptive_not_sqs"
+)
 MAX_REPORTED_PAIR_DISTANCE_SHELLS = 24
 MAX_PAIR_EXAMPLES_PER_SHELL = 12
 PAIR_SHELL_ABSOLUTE_TOLERANCE_ANGSTROM = 1e-5
@@ -457,17 +461,34 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
 
     candidate_count = len(candidates)
     selected_count = len(selected_ids)
+    unselected_count = candidate_count - selected_count
     candidate_pair_count_expected = candidate_count * (candidate_count - 1) // 2
     selected_pair_count_expected = selected_count * (selected_count - 1) // 2
+    unselected_pair_count_expected = unselected_count * (unselected_count - 1) // 2
+    mixed_pair_count_expected = selected_count * unselected_count
     fixed_composition_pair_probability = (
         selected_count * (selected_count - 1) / (candidate_count * (candidate_count - 1))
+        if candidate_count > 1
+        else 0.0
+    )
+    fixed_composition_unselected_pair_probability = (
+        unselected_count * (unselected_count - 1) / (candidate_count * (candidate_count - 1))
+        if candidate_count > 1
+        else 0.0
+    )
+    fixed_composition_mixed_pair_probability = (
+        2.0 * selected_count * unselected_count / (candidate_count * (candidate_count - 1))
         if candidate_count > 1
         else 0.0
     )
 
     shell_rows: list[dict[str, Any]] = []
     selected_pair_count_total = 0
+    unselected_pair_count_total = 0
+    mixed_pair_count_total = 0
     baseline_pair_count_total = 0
+    baseline_unselected_pair_count_total = 0
+    baseline_mixed_pair_count_total = 0
     selected_weighted_squared_deviation = 0.0
     baseline_weighted_squared_deviation = 0.0
     for shell_index, shell_pairs in enumerate(distance_shells, start=1):
@@ -475,23 +496,60 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
         selected_pairs = [
             item for item in shell_pairs if item[1] in selected_set and item[2] in selected_set
         ]
+        unselected_pairs = [
+            item
+            for item in shell_pairs
+            if item[1] not in selected_set and item[2] not in selected_set
+        ]
+        mixed_pairs = [
+            item
+            for item in shell_pairs
+            if (item[1] in selected_set) != (item[2] in selected_set)
+        ]
         baseline_pairs = [
             item for item in shell_pairs if item[1] in baseline_set and item[2] in baseline_set
         ]
+        baseline_unselected_pairs = [
+            item
+            for item in shell_pairs
+            if item[1] not in baseline_set and item[2] not in baseline_set
+        ]
+        baseline_mixed_pairs = [
+            item
+            for item in shell_pairs
+            if (item[1] in baseline_set) != (item[2] in baseline_set)
+        ]
         candidate_pair_count = len(shell_pairs)
         selected_pair_count = len(selected_pairs)
+        unselected_pair_count = len(unselected_pairs)
+        mixed_pair_count = len(mixed_pairs)
         baseline_pair_count = len(baseline_pairs)
+        baseline_unselected_pair_count = len(baseline_unselected_pairs)
+        baseline_mixed_pair_count = len(baseline_mixed_pairs)
         selected_pair_fraction = selected_pair_count / candidate_pair_count
         baseline_pair_fraction = baseline_pair_count / candidate_pair_count
         expected_selected_pair_count = candidate_pair_count * fixed_composition_pair_probability
+        expected_unselected_pair_count = (
+            candidate_pair_count * fixed_composition_unselected_pair_probability
+        )
+        expected_mixed_pair_count = candidate_pair_count * fixed_composition_mixed_pair_probability
         selected_pair_count_total += selected_pair_count
+        unselected_pair_count_total += unselected_pair_count
+        mixed_pair_count_total += mixed_pair_count
         baseline_pair_count_total += baseline_pair_count
+        baseline_unselected_pair_count_total += baseline_unselected_pair_count
+        baseline_mixed_pair_count_total += baseline_mixed_pair_count
         selected_weighted_squared_deviation += candidate_pair_count * (
             selected_pair_fraction - fixed_composition_pair_probability
         ) ** 2
         baseline_weighted_squared_deviation += candidate_pair_count * (
             baseline_pair_fraction - fixed_composition_pair_probability
         ) ** 2
+        degree_by_id: dict[str, int] = {atom_id: 0 for atom_id in candidate_ids}
+        for _, left_id, right_id in shell_pairs:
+            degree_by_id[left_id] += 1
+            degree_by_id[right_id] += 1
+        degree_values = list(degree_by_id.values())
         shell_rows.append(
             {
                 "shell_index": shell_index,
@@ -502,13 +560,40 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
                 "coordination_number_per_candidate": _round_distance(
                     2.0 * candidate_pair_count / candidate_count
                 ),
+                "candidate_degree_min": min(degree_values),
+                "candidate_degree_mean": _round_distance(sum(degree_values) / candidate_count),
+                "candidate_degree_max": max(degree_values),
+                "candidate_degree_uniform": len(set(degree_values)) == 1,
                 "selected_pair_count": selected_pair_count,
                 "selected_pair_fraction": _round_probability(selected_pair_fraction),
+                "unselected_pair_count": unselected_pair_count,
+                "mixed_selected_unselected_pair_count": mixed_pair_count,
+                "occupancy_pair_partition_verified": (
+                    selected_pair_count + unselected_pair_count + mixed_pair_count
+                    == candidate_pair_count
+                ),
                 "baseline_pair_count": baseline_pair_count,
                 "baseline_pair_fraction": _round_probability(baseline_pair_fraction),
+                "baseline_unselected_pair_count": baseline_unselected_pair_count,
+                "baseline_mixed_selected_unselected_pair_count": baseline_mixed_pair_count,
+                "baseline_occupancy_pair_partition_verified": (
+                    baseline_pair_count
+                    + baseline_unselected_pair_count
+                    + baseline_mixed_pair_count
+                    == candidate_pair_count
+                ),
                 "fixed_composition_expected_pair_count": _round_distance(expected_selected_pair_count),
                 "fixed_composition_expected_pair_fraction": _round_probability(
                     fixed_composition_pair_probability
+                ),
+                "fixed_composition_expected_unselected_pair_count": _round_distance(
+                    expected_unselected_pair_count
+                ),
+                "fixed_composition_expected_mixed_pair_count": _round_distance(
+                    expected_mixed_pair_count
+                ),
+                "fixed_composition_expected_mixed_pair_fraction": _round_probability(
+                    fixed_composition_mixed_pair_probability
                 ),
                 "selected_minus_expected_pair_count": _round_distance(
                     selected_pair_count - expected_selected_pair_count
@@ -544,7 +629,13 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
     pair_conservation_verified = (
         len(pair_rows) == candidate_pair_count_expected
         and selected_pair_count_total == selected_pair_count_expected
+        and unselected_pair_count_total == unselected_pair_count_expected
+        and mixed_pair_count_total == mixed_pair_count_expected
         and baseline_pair_count_total == selected_pair_count_expected
+        and baseline_unselected_pair_count_total == unselected_pair_count_expected
+        and baseline_mixed_pair_count_total == mixed_pair_count_expected
+        and all(shell["occupancy_pair_partition_verified"] for shell in shell_rows)
+        and all(shell["baseline_occupancy_pair_partition_verified"] for shell in shell_rows)
     )
     if not pair_conservation_verified:
         errors.append("Site pair-distribution pair-count conservation failed.")
@@ -575,7 +666,14 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
         "expected_candidate_pair_count": candidate_pair_count_expected,
         "selected_pair_count": selected_pair_count_total,
         "expected_selected_pair_count": selected_pair_count_expected,
+        "unselected_site_count": unselected_count,
+        "unselected_pair_count": unselected_pair_count_total,
+        "expected_unselected_pair_count": unselected_pair_count_expected,
+        "mixed_selected_unselected_pair_count": mixed_pair_count_total,
+        "expected_mixed_selected_unselected_pair_count": mixed_pair_count_expected,
         "baseline_pair_count": baseline_pair_count_total,
+        "baseline_unselected_pair_count": baseline_unselected_pair_count_total,
+        "baseline_mixed_selected_unselected_pair_count": baseline_mixed_pair_count_total,
         "pair_conservation_verified": pair_conservation_verified,
         "shell_count": len(shell_rows),
         "reported_shell_count": min(len(shell_rows), MAX_REPORTED_PAIR_DISTANCE_SHELLS),
@@ -618,6 +716,229 @@ def analyze_periodic_site_pair_distribution(receipt: Mapping[str, Any]) -> dict[
     return result
 
 
+def analyze_periodic_site_short_range_order(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a finite-cell, pair-graph Warren-Cowley-like occupancy audit.
+
+    The classical pair-count alpha uses the global selected/unselected fractions.
+    A second alpha uses the exact unlike-pair expectation for choosing K of N
+    sites without replacement. Numerical distance shells contain each unique
+    finite-cell candidate pair once, so this is not a full periodic coordination-
+    shell multiplicity calculation and does not establish thermodynamic SRO.
+    """
+
+    pair_distribution = analyze_periodic_site_pair_distribution(receipt)
+    warnings = [
+        "Short-range-order values are descriptive for one finite supercell and do not establish SQS quality, statistical significance, temperature-dependent equilibrium, or thermodynamic ordering.",
+        "Each numerical shell contains unique candidate-site pairs once; periodic image multiplicities and crystallographic symmetry orbits are not reconstructed.",
+        "The finite-composition-corrected alpha uses the exact unlike-pair expectation for uniformly choosing K of N sites without replacement.",
+    ]
+    errors = [str(item) for item in pair_distribution.get("errors", []) or []]
+    selected_count = int(pair_distribution.get("selected_site_count") or 0)
+    candidate_count = int(pair_distribution.get("candidate_site_count") or 0)
+    unselected_count = candidate_count - selected_count
+    base_result: dict[str, Any] = {
+        "available": bool(pair_distribution.get("available")),
+        "schema": SITE_SHORT_RANGE_ORDER_SCHEMA,
+        "scientific_scope": SITE_SHORT_RANGE_ORDER_SCOPE,
+        "pair_graph_scope": "unique_finite_cell_candidate_pairs_grouped_by_numerical_distance",
+        "standard_periodic_shell_multiplicity_verified": False,
+        "crystallographic_symmetry_orbits_verified": False,
+        "source_pair_distribution_schema": pair_distribution.get("schema"),
+        "source_pair_distribution_analysis_sha256": pair_distribution.get("analysis_sha256"),
+        "source_pair_distribution_integrity_ok": pair_distribution.get("integrity_ok"),
+        "source_receipt_sha256": pair_distribution.get("source_receipt_sha256"),
+        "candidate_geometry_sha256": pair_distribution.get("candidate_geometry_sha256"),
+        "candidate_site_count": candidate_count,
+        "selected_site_count": selected_count,
+        "unselected_site_count": unselected_count,
+        "selected_fraction": pair_distribution.get("selected_fraction"),
+        "unselected_fraction": (
+            _round_probability(unselected_count / candidate_count) if candidate_count else None
+        ),
+    }
+    if pair_distribution.get("integrity_ok") is not True:
+        if not errors:
+            errors.append("Source site pair-distribution audit failed integrity checks.")
+        return {
+            **base_result,
+            "integrity_ok": False,
+            "binary_occupancy_available": False,
+            "shell_count": 0,
+            "reported_shell_count": 0,
+            "shells_truncated": False,
+            "shells": [],
+            "error_count": len(errors),
+            "warning_count": len(warnings),
+            "errors": errors,
+            "warnings": warnings,
+            "analysis_sha256": None,
+        }
+
+    binary_occupancy_available = selected_count > 0 and unselected_count > 0
+    if not binary_occupancy_available:
+        warnings.append(
+            "Short-range-order occupancy contrast requires both selected and unselected candidate sites."
+        )
+
+    selected_fraction = selected_count / candidate_count if candidate_count else 0.0
+    unselected_fraction = unselected_count / candidate_count if candidate_count else 0.0
+    shell_rows: list[dict[str, Any]] = []
+    for shell in pair_distribution.get("shells", []) or []:
+        candidate_pairs = int(shell.get("candidate_pair_count") or 0)
+        selected_selected = int(shell.get("selected_pair_count") or 0)
+        unselected_unselected = int(shell.get("unselected_pair_count") or 0)
+        mixed = int(shell.get("mixed_selected_unselected_pair_count") or 0)
+        baseline_selected_selected = int(shell.get("baseline_pair_count") or 0)
+        baseline_unselected_unselected = int(shell.get("baseline_unselected_pair_count") or 0)
+        baseline_mixed = int(shell.get("baseline_mixed_selected_unselected_pair_count") or 0)
+        classical_expected_mixed = 2.0 * candidate_pairs * selected_fraction * unselected_fraction
+        fixed_expected_mixed = (
+            candidate_pairs
+            * 2.0
+            * selected_count
+            * unselected_count
+            / (candidate_count * (candidate_count - 1))
+            if candidate_count > 1
+            else 0.0
+        )
+        partition_verified = bool(
+            shell.get("occupancy_pair_partition_verified")
+            and shell.get("baseline_occupancy_pair_partition_verified")
+            and selected_selected + unselected_unselected + mixed == candidate_pairs
+            and baseline_selected_selected + baseline_unselected_unselected + baseline_mixed
+            == candidate_pairs
+        )
+        if not partition_verified:
+            errors.append(
+                f"Short-range-order shell {shell.get('shell_index')} occupancy partition failed."
+            )
+        shell_rows.append(
+            {
+                "shell_index": shell.get("shell_index"),
+                "distance_min_angstrom": shell.get("distance_min_angstrom"),
+                "distance_mean_angstrom": shell.get("distance_mean_angstrom"),
+                "distance_max_angstrom": shell.get("distance_max_angstrom"),
+                "candidate_pair_count": candidate_pairs,
+                "candidate_degree_min": shell.get("candidate_degree_min"),
+                "candidate_degree_mean": shell.get("candidate_degree_mean"),
+                "candidate_degree_max": shell.get("candidate_degree_max"),
+                "candidate_degree_uniform": shell.get("candidate_degree_uniform"),
+                "selected_selected_pair_count": selected_selected,
+                "unselected_unselected_pair_count": unselected_unselected,
+                "mixed_selected_unselected_pair_count": mixed,
+                "baseline_selected_selected_pair_count": baseline_selected_selected,
+                "baseline_unselected_unselected_pair_count": baseline_unselected_unselected,
+                "baseline_mixed_selected_unselected_pair_count": baseline_mixed,
+                "occupancy_pair_partition_verified": partition_verified,
+                "classical_random_mixed_pair_expectation": _round_distance(
+                    classical_expected_mixed
+                ),
+                "fixed_composition_random_mixed_pair_expectation": _round_distance(
+                    fixed_expected_mixed
+                ),
+                "warren_cowley_pair_count_alpha_classical": _sro_alpha(
+                    mixed,
+                    classical_expected_mixed,
+                ),
+                "baseline_warren_cowley_pair_count_alpha_classical": _sro_alpha(
+                    baseline_mixed,
+                    classical_expected_mixed,
+                ),
+                "finite_composition_corrected_pair_alpha": _sro_alpha(
+                    mixed,
+                    fixed_expected_mixed,
+                ),
+                "baseline_finite_composition_corrected_pair_alpha": _sro_alpha(
+                    baseline_mixed,
+                    fixed_expected_mixed,
+                ),
+                "unlike_pair_expectation_class": _sro_expectation_class(
+                    mixed,
+                    fixed_expected_mixed,
+                ),
+                "baseline_unlike_pair_expectation_class": _sro_expectation_class(
+                    baseline_mixed,
+                    fixed_expected_mixed,
+                ),
+                "mixed_pair_count_change_vs_atom_id_order": mixed - baseline_mixed,
+                "unlike_pair_enrichment_ratio": _pair_ratio(mixed, fixed_expected_mixed),
+                "baseline_unlike_pair_enrichment_ratio": _pair_ratio(
+                    baseline_mixed,
+                    fixed_expected_mixed,
+                ),
+            }
+        )
+
+    nearest_shell = shell_rows[0] if shell_rows else {}
+    selected_rmse = _weighted_sro_alpha_rmse(
+        shell_rows,
+        "finite_composition_corrected_pair_alpha",
+    )
+    baseline_rmse = _weighted_sro_alpha_rmse(
+        shell_rows,
+        "baseline_finite_composition_corrected_pair_alpha",
+    )
+    degree_uniform_all_reported_shells = bool(shell_rows) and all(
+        shell.get("candidate_degree_uniform") is True for shell in shell_rows
+    )
+    result: dict[str, Any] = {
+        **base_result,
+        "integrity_ok": not errors,
+        "binary_occupancy_available": binary_occupancy_available,
+        "classical_warren_cowley_pair_count_definition": (
+            "1 - observed_mixed_pairs / (2 * shell_pair_count * x_selected * x_unselected)"
+        ),
+        "finite_composition_corrected_pair_alpha_definition": (
+            "1 - observed_mixed_pairs / exact_fixed_composition_expected_mixed_pairs"
+        ),
+        "interpretation_contract": {
+            "negative": "ordering_like_unlike_pair_enrichment",
+            "zero": "near_fixed_composition_pair_expectation",
+            "positive": "clustering_like_unlike_pair_depletion",
+        },
+        "degree_uniform_all_reported_shells": degree_uniform_all_reported_shells,
+        "classical_bulk_shell_interpretation_ready": False,
+        "shell_count": pair_distribution.get("shell_count"),
+        "reported_shell_count": len(shell_rows),
+        "shells_truncated": pair_distribution.get("shells_truncated"),
+        "unreported_shell_count": pair_distribution.get("unreported_shell_count"),
+        "shells": shell_rows,
+        "nearest_shell_index": nearest_shell.get("shell_index"),
+        "nearest_shell_distance_mean_angstrom": nearest_shell.get("distance_mean_angstrom"),
+        "nearest_shell_unlike_pair_expectation_class": nearest_shell.get(
+            "unlike_pair_expectation_class"
+        ),
+        "nearest_shell_finite_composition_corrected_pair_alpha": nearest_shell.get(
+            "finite_composition_corrected_pair_alpha"
+        ),
+        "nearest_shell_baseline_finite_composition_corrected_pair_alpha": nearest_shell.get(
+            "baseline_finite_composition_corrected_pair_alpha"
+        ),
+        "nearest_shell_mixed_pair_count": nearest_shell.get(
+            "mixed_selected_unselected_pair_count"
+        ),
+        "nearest_shell_baseline_mixed_pair_count": nearest_shell.get(
+            "baseline_mixed_selected_unselected_pair_count"
+        ),
+        "nearest_shell_ordering_like_unlike_pair_enrichment": (
+            nearest_shell.get("unlike_pair_expectation_class")
+            == "ordering_like_unlike_pair_enrichment"
+        ),
+        "nearest_shell_clustering_like_unlike_pair_depletion_review_required": (
+            nearest_shell.get("unlike_pair_expectation_class")
+            == "clustering_like_unlike_pair_depletion"
+        ),
+        "finite_composition_corrected_pair_alpha_rmse": selected_rmse,
+        "baseline_finite_composition_corrected_pair_alpha_rmse": baseline_rmse,
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "errors": errors,
+        "warnings": warnings,
+    }
+    result["analysis_sha256"] = _canonical_sha256(result) if not errors else None
+    return result
+
+
 def _group_pair_distance_shells(
     pair_rows: Sequence[tuple[float, str, str]],
 ) -> list[list[tuple[float, str, str]]]:
@@ -653,6 +974,47 @@ def _pair_expectation_class(observed: int, expected: float) -> str:
     if observed < expected - tolerance:
         return "below_fixed_composition_expectation"
     return "near_fixed_composition_expectation"
+
+
+def _sro_alpha(observed_mixed_pairs: int, expected_mixed_pairs: float) -> float | None:
+    if expected_mixed_pairs <= 0.0:
+        return None
+    return _round_probability(1.0 - observed_mixed_pairs / expected_mixed_pairs)
+
+
+def _pair_ratio(observed_pairs: int, expected_pairs: float) -> float | None:
+    if expected_pairs <= 0.0:
+        return None
+    return _round_probability(observed_pairs / expected_pairs)
+
+
+def _sro_expectation_class(observed_mixed_pairs: int, expected_mixed_pairs: float) -> str:
+    if expected_mixed_pairs <= 0.0:
+        return "binary_occupancy_unavailable"
+    tolerance = max(0.25, 0.1 * expected_mixed_pairs)
+    if observed_mixed_pairs > expected_mixed_pairs + tolerance:
+        return "ordering_like_unlike_pair_enrichment"
+    if observed_mixed_pairs < expected_mixed_pairs - tolerance:
+        return "clustering_like_unlike_pair_depletion"
+    return "near_fixed_composition_pair_expectation"
+
+
+def _weighted_sro_alpha_rmse(
+    shells: Sequence[Mapping[str, Any]],
+    field: str,
+) -> float | None:
+    weighted_squared_sum = 0.0
+    weight_sum = 0
+    for shell in shells:
+        alpha = _finite_float(shell.get(field))
+        weight = _nonnegative_int(shell.get("candidate_pair_count"))
+        if alpha is None or weight is None or weight == 0:
+            continue
+        weighted_squared_sum += weight * alpha * alpha
+        weight_sum += weight
+    if weight_sum == 0:
+        return None
+    return _round_probability(math.sqrt(weighted_squared_sum / weight_sum))
 
 
 def _first_occupied_shell_index(shells: Sequence[Mapping[str, Any]], field: str) -> int | None:

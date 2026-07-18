@@ -83,6 +83,7 @@ $env:MATERIAL_STUDIO_RUNNER = "<MS安装目录>\etc\Scripting\bin\RunMatScript.b
 - `castep_electronic_results` 诊断焦点支持“检查当前 CASTEP 结果”等只读请求，并导出结果摘要及 aggregate/per-spin/crossing-band 的 `semiconductor_castep_band_edges.csv`
 - `castep_convergence_audit` 从多个不可变、哈希绑定的 CASTEP 结果 revision 独立比较截断能、K 点间距、自定义 K 点网格或性质 K 点间距；两点只提供成对敏感性证据，至少三点才形成序列
 - `castep_convergence_series` 诊断焦点可只读检查收敛序列并导出 `semiconductor_castep_convergence_series.csv`；默认阈值为总能量变化 0.01 eV/atom、报告 `BandGap` 变化 0.05 eV，阈值内也不会宣称已科学收敛，后续计算只先给出 preview
+- 显式 `periodic_maximin` 合金/掺杂位点会导出逐壳层 AA/AB/BB 配对和有限组成修正的 Warren-Cowley 型描述性审计 `semiconductor_site_short_range_order.csv`；它只覆盖有限超胞唯一位点对，不等同于标准周期壳层 Warren-Cowley、SQS 质量、统计显著性或热力学短程有序
 
 ### 扩展工具（本地 crystal/interface builders）
 

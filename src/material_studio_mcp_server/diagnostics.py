@@ -22,6 +22,7 @@ from .castep_relaxation import (
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     analyze_periodic_site_pair_distribution,
+    analyze_periodic_site_short_range_order,
     audit_periodic_maximin_selection,
 )
 from .specs.castep import (
@@ -1347,12 +1348,25 @@ def write_view_audit_bundle(
                 "distance_max_angstrom",
                 "candidate_pair_count",
                 "coordination_number_per_candidate",
+                "candidate_degree_min",
+                "candidate_degree_mean",
+                "candidate_degree_max",
+                "candidate_degree_uniform",
                 "selected_pair_count",
                 "selected_pair_fraction",
+                "unselected_pair_count",
+                "mixed_selected_unselected_pair_count",
+                "occupancy_pair_partition_verified",
                 "baseline_pair_count",
                 "baseline_pair_fraction",
+                "baseline_unselected_pair_count",
+                "baseline_mixed_selected_unselected_pair_count",
+                "baseline_occupancy_pair_partition_verified",
                 "fixed_composition_expected_pair_count",
                 "fixed_composition_expected_pair_fraction",
+                "fixed_composition_expected_unselected_pair_count",
+                "fixed_composition_expected_mixed_pair_count",
+                "fixed_composition_expected_mixed_pair_fraction",
                 "selected_minus_expected_pair_count",
                 "baseline_minus_expected_pair_count",
                 "selected_pair_avoidance_fraction",
@@ -1372,6 +1386,81 @@ def write_view_audit_bundle(
                 "warnings",
             ],
             site_pair_distribution_rows,
+        )
+
+    site_short_range_order_rows = _semiconductor_site_short_range_order_csv_rows(
+        dopant_fraction_summary,
+        alloy_summary,
+    )
+    if site_short_range_order_rows:
+        files["semiconductor_site_short_range_order_csv"] = str(
+            bundle_dir / "semiconductor_site_short_range_order.csv"
+        )
+        row_counts["semiconductor_site_short_range_order"] = _write_csv(
+            bundle_dir / "semiconductor_site_short_range_order.csv",
+            [
+                "entry_kind",
+                "entry_index",
+                "host_element",
+                "replacement_element",
+                "selection_strategy",
+                "scientific_scope",
+                "pair_graph_scope",
+                "source_pair_distribution_analysis_sha256",
+                "analysis_sha256",
+                "analysis_integrity_ok",
+                "current_geometry_applicable",
+                "standard_periodic_shell_multiplicity_verified",
+                "crystallographic_symmetry_orbits_verified",
+                "candidate_site_count",
+                "selected_site_count",
+                "unselected_site_count",
+                "selected_fraction",
+                "unselected_fraction",
+                "binary_occupancy_available",
+                "degree_uniform_all_reported_shells",
+                "classical_bulk_shell_interpretation_ready",
+                "shell_count",
+                "reported_shell_count",
+                "shells_truncated",
+                "shell_index",
+                "distance_min_angstrom",
+                "distance_mean_angstrom",
+                "distance_max_angstrom",
+                "candidate_pair_count",
+                "candidate_degree_min",
+                "candidate_degree_mean",
+                "candidate_degree_max",
+                "candidate_degree_uniform",
+                "selected_selected_pair_count",
+                "unselected_unselected_pair_count",
+                "mixed_selected_unselected_pair_count",
+                "baseline_selected_selected_pair_count",
+                "baseline_unselected_unselected_pair_count",
+                "baseline_mixed_selected_unselected_pair_count",
+                "occupancy_pair_partition_verified",
+                "classical_random_mixed_pair_expectation",
+                "fixed_composition_random_mixed_pair_expectation",
+                "warren_cowley_pair_count_alpha_classical",
+                "baseline_warren_cowley_pair_count_alpha_classical",
+                "finite_composition_corrected_pair_alpha",
+                "baseline_finite_composition_corrected_pair_alpha",
+                "unlike_pair_expectation_class",
+                "baseline_unlike_pair_expectation_class",
+                "mixed_pair_count_change_vs_atom_id_order",
+                "unlike_pair_enrichment_ratio",
+                "baseline_unlike_pair_enrichment_ratio",
+                "nearest_shell_unlike_pair_expectation_class",
+                "nearest_shell_ordering_like_unlike_pair_enrichment",
+                "nearest_shell_clustering_like_unlike_pair_depletion_review_required",
+                "finite_composition_corrected_pair_alpha_rmse",
+                "baseline_finite_composition_corrected_pair_alpha_rmse",
+                "error_count",
+                "warning_count",
+                "errors",
+                "warnings",
+            ],
+            site_short_range_order_rows,
         )
 
     layer_profile = semiconductor.get("layer_profile_summary") or {}
@@ -3537,15 +3626,44 @@ def _semiconductor_site_pair_distribution_csv_rows(
                         "coordination_number_per_candidate": shell.get(
                             "coordination_number_per_candidate"
                         ),
+                        "candidate_degree_min": shell.get("candidate_degree_min"),
+                        "candidate_degree_mean": shell.get("candidate_degree_mean"),
+                        "candidate_degree_max": shell.get("candidate_degree_max"),
+                        "candidate_degree_uniform": shell.get("candidate_degree_uniform"),
                         "selected_pair_count": shell.get("selected_pair_count"),
                         "selected_pair_fraction": shell.get("selected_pair_fraction"),
+                        "unselected_pair_count": shell.get("unselected_pair_count"),
+                        "mixed_selected_unselected_pair_count": shell.get(
+                            "mixed_selected_unselected_pair_count"
+                        ),
+                        "occupancy_pair_partition_verified": shell.get(
+                            "occupancy_pair_partition_verified"
+                        ),
                         "baseline_pair_count": shell.get("baseline_pair_count"),
                         "baseline_pair_fraction": shell.get("baseline_pair_fraction"),
+                        "baseline_unselected_pair_count": shell.get(
+                            "baseline_unselected_pair_count"
+                        ),
+                        "baseline_mixed_selected_unselected_pair_count": shell.get(
+                            "baseline_mixed_selected_unselected_pair_count"
+                        ),
+                        "baseline_occupancy_pair_partition_verified": shell.get(
+                            "baseline_occupancy_pair_partition_verified"
+                        ),
                         "fixed_composition_expected_pair_count": shell.get(
                             "fixed_composition_expected_pair_count"
                         ),
                         "fixed_composition_expected_pair_fraction": shell.get(
                             "fixed_composition_expected_pair_fraction"
+                        ),
+                        "fixed_composition_expected_unselected_pair_count": shell.get(
+                            "fixed_composition_expected_unselected_pair_count"
+                        ),
+                        "fixed_composition_expected_mixed_pair_count": shell.get(
+                            "fixed_composition_expected_mixed_pair_count"
+                        ),
+                        "fixed_composition_expected_mixed_pair_fraction": shell.get(
+                            "fixed_composition_expected_mixed_pair_fraction"
                         ),
                         "selected_minus_expected_pair_count": shell.get(
                             "selected_minus_expected_pair_count"
@@ -3586,6 +3704,146 @@ def _semiconductor_site_pair_distribution_csv_rows(
                         "warning_count": distribution.get("warning_count"),
                         "errors": _join_vector(distribution.get("errors")),
                         "warnings": _join_vector(distribution.get("warnings")),
+                    }
+                )
+    return rows
+
+
+def _semiconductor_site_short_range_order_csv_rows(
+    dopant_fraction_summary: dict[str, Any],
+    alloy_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for entry_kind, summary, replacement_field in (
+        ("dopant_fraction", dopant_fraction_summary, "dopant_element"),
+        ("alloy_fraction", alloy_summary, "alloy_element"),
+    ):
+        for entry_index, entry in enumerate(summary.get("entries", []) or [], start=1):
+            analysis = entry.get("site_short_range_order")
+            if not isinstance(analysis, dict):
+                continue
+            shells = analysis.get("shells") or [{}]
+            for shell in shells:
+                rows.append(
+                    {
+                        "entry_kind": entry_kind,
+                        "entry_index": entry_index,
+                        "host_element": entry.get("host_element"),
+                        "replacement_element": entry.get(replacement_field),
+                        "selection_strategy": entry.get("selection_strategy"),
+                        "scientific_scope": analysis.get("scientific_scope"),
+                        "pair_graph_scope": analysis.get("pair_graph_scope"),
+                        "source_pair_distribution_analysis_sha256": analysis.get(
+                            "source_pair_distribution_analysis_sha256"
+                        ),
+                        "analysis_sha256": analysis.get("analysis_sha256"),
+                        "analysis_integrity_ok": analysis.get("integrity_ok"),
+                        "current_geometry_applicable": entry.get(
+                            "site_short_range_order_current_geometry_applicable"
+                        ),
+                        "standard_periodic_shell_multiplicity_verified": analysis.get(
+                            "standard_periodic_shell_multiplicity_verified"
+                        ),
+                        "crystallographic_symmetry_orbits_verified": analysis.get(
+                            "crystallographic_symmetry_orbits_verified"
+                        ),
+                        "candidate_site_count": analysis.get("candidate_site_count"),
+                        "selected_site_count": analysis.get("selected_site_count"),
+                        "unselected_site_count": analysis.get("unselected_site_count"),
+                        "selected_fraction": analysis.get("selected_fraction"),
+                        "unselected_fraction": analysis.get("unselected_fraction"),
+                        "binary_occupancy_available": analysis.get("binary_occupancy_available"),
+                        "degree_uniform_all_reported_shells": analysis.get(
+                            "degree_uniform_all_reported_shells"
+                        ),
+                        "classical_bulk_shell_interpretation_ready": analysis.get(
+                            "classical_bulk_shell_interpretation_ready"
+                        ),
+                        "shell_count": analysis.get("shell_count"),
+                        "reported_shell_count": analysis.get("reported_shell_count"),
+                        "shells_truncated": analysis.get("shells_truncated"),
+                        "shell_index": shell.get("shell_index"),
+                        "distance_min_angstrom": shell.get("distance_min_angstrom"),
+                        "distance_mean_angstrom": shell.get("distance_mean_angstrom"),
+                        "distance_max_angstrom": shell.get("distance_max_angstrom"),
+                        "candidate_pair_count": shell.get("candidate_pair_count"),
+                        "candidate_degree_min": shell.get("candidate_degree_min"),
+                        "candidate_degree_mean": shell.get("candidate_degree_mean"),
+                        "candidate_degree_max": shell.get("candidate_degree_max"),
+                        "candidate_degree_uniform": shell.get("candidate_degree_uniform"),
+                        "selected_selected_pair_count": shell.get(
+                            "selected_selected_pair_count"
+                        ),
+                        "unselected_unselected_pair_count": shell.get(
+                            "unselected_unselected_pair_count"
+                        ),
+                        "mixed_selected_unselected_pair_count": shell.get(
+                            "mixed_selected_unselected_pair_count"
+                        ),
+                        "baseline_selected_selected_pair_count": shell.get(
+                            "baseline_selected_selected_pair_count"
+                        ),
+                        "baseline_unselected_unselected_pair_count": shell.get(
+                            "baseline_unselected_unselected_pair_count"
+                        ),
+                        "baseline_mixed_selected_unselected_pair_count": shell.get(
+                            "baseline_mixed_selected_unselected_pair_count"
+                        ),
+                        "occupancy_pair_partition_verified": shell.get(
+                            "occupancy_pair_partition_verified"
+                        ),
+                        "classical_random_mixed_pair_expectation": shell.get(
+                            "classical_random_mixed_pair_expectation"
+                        ),
+                        "fixed_composition_random_mixed_pair_expectation": shell.get(
+                            "fixed_composition_random_mixed_pair_expectation"
+                        ),
+                        "warren_cowley_pair_count_alpha_classical": shell.get(
+                            "warren_cowley_pair_count_alpha_classical"
+                        ),
+                        "baseline_warren_cowley_pair_count_alpha_classical": shell.get(
+                            "baseline_warren_cowley_pair_count_alpha_classical"
+                        ),
+                        "finite_composition_corrected_pair_alpha": shell.get(
+                            "finite_composition_corrected_pair_alpha"
+                        ),
+                        "baseline_finite_composition_corrected_pair_alpha": shell.get(
+                            "baseline_finite_composition_corrected_pair_alpha"
+                        ),
+                        "unlike_pair_expectation_class": shell.get(
+                            "unlike_pair_expectation_class"
+                        ),
+                        "baseline_unlike_pair_expectation_class": shell.get(
+                            "baseline_unlike_pair_expectation_class"
+                        ),
+                        "mixed_pair_count_change_vs_atom_id_order": shell.get(
+                            "mixed_pair_count_change_vs_atom_id_order"
+                        ),
+                        "unlike_pair_enrichment_ratio": shell.get(
+                            "unlike_pair_enrichment_ratio"
+                        ),
+                        "baseline_unlike_pair_enrichment_ratio": shell.get(
+                            "baseline_unlike_pair_enrichment_ratio"
+                        ),
+                        "nearest_shell_unlike_pair_expectation_class": analysis.get(
+                            "nearest_shell_unlike_pair_expectation_class"
+                        ),
+                        "nearest_shell_ordering_like_unlike_pair_enrichment": analysis.get(
+                            "nearest_shell_ordering_like_unlike_pair_enrichment"
+                        ),
+                        "nearest_shell_clustering_like_unlike_pair_depletion_review_required": analysis.get(
+                            "nearest_shell_clustering_like_unlike_pair_depletion_review_required"
+                        ),
+                        "finite_composition_corrected_pair_alpha_rmse": analysis.get(
+                            "finite_composition_corrected_pair_alpha_rmse"
+                        ),
+                        "baseline_finite_composition_corrected_pair_alpha_rmse": analysis.get(
+                            "baseline_finite_composition_corrected_pair_alpha_rmse"
+                        ),
+                        "error_count": analysis.get("error_count"),
+                        "warning_count": analysis.get("warning_count"),
+                        "errors": _join_vector(analysis.get("errors")),
+                        "warnings": _join_vector(analysis.get("warnings")),
                     }
                 )
     return rows
@@ -6186,6 +6444,11 @@ def _semiconductor_health_summary(
                 str(item)
                 for item in fraction_summary.get("site_pair_distribution_errors", []) or []
             )
+        if fraction_summary.get("site_short_range_order_integrity_ok") is False:
+            errors.extend(
+                str(item)
+                for item in fraction_summary.get("site_short_range_order_errors", []) or []
+            )
         warnings.append(
             f"Semiconductor {label} uses deterministic periodic maximin site separation; this is not an SQS."
         )
@@ -6202,6 +6465,12 @@ def _semiconductor_health_summary(
         ):
             warnings.append(
                 f"Semiconductor {label} has a nearest-shell selected-pair excess relative to the fixed-composition expectation; inspect site_pair_distribution."
+            )
+        if fraction_summary.get(
+            "site_short_range_order_nearest_shell_clustering_like_review_required"
+        ):
+            warnings.append(
+                f"Semiconductor {label} has clustering-like unlike-pair depletion in the nearest finite-cell distance shell; inspect site_short_range_order."
             )
     heterostructure_summary = _heterostructure_summary(metadata)
     substrate_epitaxy_preflight_summary = _substrate_epitaxy_preflight_summary(metadata, lattice_summary)
@@ -13059,6 +13328,7 @@ def _fraction_site_selection_entry(
     pair_stats = audit.get("current_selected_pair_distance_stats_angstrom") or {}
     candidate_stats = receipt.get("candidate_pair_distance_stats_angstrom") or {}
     pair_distribution = analyze_periodic_site_pair_distribution(receipt)
+    short_range_order = analyze_periodic_site_short_range_order(receipt)
     return {
         **entry,
         "selection_strategy": PERIODIC_MAXIMIN_STRATEGY,
@@ -13096,6 +13366,32 @@ def _fraction_site_selection_entry(
         "site_pair_distribution_warning_count": pair_distribution.get("warning_count"),
         "site_pair_distribution_errors": pair_distribution.get("errors") or [],
         "site_pair_distribution_warnings": pair_distribution.get("warnings") or [],
+        "site_short_range_order": short_range_order,
+        "site_short_range_order_integrity_ok": short_range_order.get("integrity_ok"),
+        "site_short_range_order_current_geometry_applicable": bool(
+            short_range_order.get("integrity_ok") and audit.get("geometry_unchanged")
+        ),
+        "site_short_range_order_shell_count": short_range_order.get("shell_count"),
+        "site_short_range_order_nearest_shell_expectation_class": short_range_order.get(
+            "nearest_shell_unlike_pair_expectation_class"
+        ),
+        "site_short_range_order_nearest_shell_corrected_alpha": short_range_order.get(
+            "nearest_shell_finite_composition_corrected_pair_alpha"
+        ),
+        "site_short_range_order_nearest_shell_baseline_corrected_alpha": short_range_order.get(
+            "nearest_shell_baseline_finite_composition_corrected_pair_alpha"
+        ),
+        "site_short_range_order_nearest_shell_ordering_like_observed": short_range_order.get(
+            "nearest_shell_ordering_like_unlike_pair_enrichment"
+        ),
+        "site_short_range_order_nearest_shell_clustering_like_review_required": short_range_order.get(
+            "nearest_shell_clustering_like_unlike_pair_depletion_review_required"
+        ),
+        "site_short_range_order_analysis_sha256": short_range_order.get("analysis_sha256"),
+        "site_short_range_order_error_count": short_range_order.get("error_count"),
+        "site_short_range_order_warning_count": short_range_order.get("warning_count"),
+        "site_short_range_order_errors": short_range_order.get("errors") or [],
+        "site_short_range_order_warnings": short_range_order.get("warnings") or [],
         "selected_pair_minimum_angstrom": pair_stats.get("minimum_angstrom"),
         "selected_pair_mean_angstrom": pair_stats.get("mean_angstrom"),
         "selected_pair_maximum_angstrom": pair_stats.get("maximum_angstrom"),
@@ -13137,6 +13433,13 @@ def _fraction_site_selection_summary(
             "site_pair_distribution_nearest_shell_pair_avoidance_observed": False,
             "site_pair_distribution_errors": [],
             "site_pair_distribution_warnings": [],
+            "site_short_range_order_count": 0,
+            "site_short_range_order_integrity_ok": None,
+            "site_short_range_order_current_geometry_applicable": None,
+            "site_short_range_order_nearest_shell_ordering_like_observed": False,
+            "site_short_range_order_nearest_shell_clustering_like_review_required": False,
+            "site_short_range_order_errors": [],
+            "site_short_range_order_warnings": [],
             "site_selection_errors": [],
             "site_selection_warnings": [],
         }
@@ -13194,6 +13497,40 @@ def _fraction_site_selection_summary(
         bool(distribution.get("nearest_shell_pair_avoidance_observed"))
         for distribution in pair_distributions
     )
+    short_range_orders = [
+        entry.get("site_short_range_order")
+        for entry in distributed
+        if isinstance(entry.get("site_short_range_order"), dict)
+    ]
+    short_range_order_errors = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_short_range_order_errors", []) or []
+        )
+    )
+    short_range_order_warnings = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_short_range_order_warnings", []) or []
+        )
+    )
+    short_range_order_integrity_ok = bool(short_range_orders) and all(
+        analysis.get("integrity_ok") is True for analysis in short_range_orders
+    )
+    short_range_order_current_geometry_applicable = bool(short_range_orders) and all(
+        entry.get("site_short_range_order_current_geometry_applicable") is True
+        for entry in distributed
+    )
+    short_range_order_ordering_like_observed = any(
+        bool(analysis.get("nearest_shell_ordering_like_unlike_pair_enrichment"))
+        for analysis in short_range_orders
+    )
+    short_range_order_clustering_like_review = any(
+        bool(analysis.get("nearest_shell_clustering_like_unlike_pair_depletion_review_required"))
+        for analysis in short_range_orders
+    )
     return {
         **summary,
         "periodic_maximin_count": len(distributed),
@@ -13216,6 +13553,21 @@ def _fraction_site_selection_summary(
         "site_pair_distribution_warning_count": len(pair_distribution_warnings),
         "site_pair_distribution_errors": pair_distribution_errors,
         "site_pair_distribution_warnings": pair_distribution_warnings,
+        "site_short_range_order_count": len(short_range_orders),
+        "site_short_range_order_integrity_ok": short_range_order_integrity_ok,
+        "site_short_range_order_current_geometry_applicable": (
+            short_range_order_current_geometry_applicable
+        ),
+        "site_short_range_order_nearest_shell_ordering_like_observed": (
+            short_range_order_ordering_like_observed
+        ),
+        "site_short_range_order_nearest_shell_clustering_like_review_required": (
+            short_range_order_clustering_like_review
+        ),
+        "site_short_range_order_error_count": len(short_range_order_errors),
+        "site_short_range_order_warning_count": len(short_range_order_warnings),
+        "site_short_range_order_errors": short_range_order_errors,
+        "site_short_range_order_warnings": short_range_order_warnings,
     }
 
 

@@ -777,6 +777,19 @@ relaxation, or calculation readiness. After geometry drift, the historical CSV
 may still verify its recorded input but reports
 `current_geometry_applicable=false`; rerun the selection workflow or inspect the
 current geometry before using pair distances for live-model review.
+`semiconductor_site_short_range_order.csv` reuses those SHA-bound shells and
+partitions each one into selected-selected, unselected-unselected, and mixed
+pairs. It reports both the global-composition Warren-Cowley-like pair-count alpha
+and an exact fixed-composition correction. Negative corrected values are labeled
+ordering-like unlike-pair enrichment; positive values are labeled clustering-like
+unlike-pair depletion. A clustering-like nearest shell is a review warning, not
+proof of phase separation. Receipt, source pair-distribution, occupancy
+partition, or analysis integrity failure is blocking. Because the audit counts
+unique finite-cell pairs without reconstructing periodic-image multiplicity, it
+must keep `classical_bulk_shell_interpretation_ready=false` and cannot be used as
+an SQS, equilibrium SRO, thermodynamic, relaxation, or calculation-readiness
+claim. The GUI may display the same current revision for visual review, but no
+new automatic camera or structure mutation is authorized by this diagnostic.
 For heterostructure templates,
 it also reports interface metadata, in-plane lattice, cell volume, density, per-material reference
 lattice values, epitaxial strain percentages, and lattice mismatch relative to

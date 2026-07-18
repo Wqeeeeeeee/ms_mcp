@@ -11,7 +11,9 @@ from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.semiconductor_site_selection import (
     PERIODIC_MAXIMIN_SCOPE,
     SITE_PAIR_DISTRIBUTION_SCOPE,
+    SITE_SHORT_RANGE_ORDER_SCOPE,
     analyze_periodic_site_pair_distribution,
+    analyze_periodic_site_short_range_order,
     audit_periodic_maximin_selection,
     select_periodic_maximin_sites,
 )
@@ -100,7 +102,12 @@ def test_periodic_site_pair_distribution_is_deterministic_and_conserves_pairs() 
     assert distribution["pair_conservation_verified"] is True
     assert distribution["candidate_pair_count"] == 6
     assert distribution["selected_pair_count"] == 1
+    assert distribution["unselected_pair_count"] == 1
+    assert distribution["mixed_selected_unselected_pair_count"] == 4
+    assert distribution["expected_mixed_selected_unselected_pair_count"] == 4
     assert distribution["baseline_pair_count"] == 1
+    assert distribution["baseline_unselected_pair_count"] == 1
+    assert distribution["baseline_mixed_selected_unselected_pair_count"] == 4
     assert distribution["shell_count"] == 3
     assert distribution["fixed_composition_expected_pair_probability"] == 0.166666666667
     assert distribution["nearest_shell_selected_pair_count"] == 0
@@ -111,7 +118,56 @@ def test_periodic_site_pair_distribution_is_deterministic_and_conserves_pairs() 
     )
     assert distribution["nearest_shell_pair_avoidance_observed"] is True
     assert distribution["selected_pair_first_occupied_shell_index"] == 3
+    nearest_shell = distribution["shells"][0]
+    assert nearest_shell["selected_pair_count"] == 0
+    assert nearest_shell["unselected_pair_count"] == 0
+    assert nearest_shell["mixed_selected_unselected_pair_count"] == 2
+    assert nearest_shell["occupancy_pair_partition_verified"] is True
+    assert nearest_shell["baseline_pair_count"] == 1
+    assert nearest_shell["baseline_unselected_pair_count"] == 1
+    assert nearest_shell["baseline_mixed_selected_unselected_pair_count"] == 0
+    assert nearest_shell["baseline_occupancy_pair_partition_verified"] is True
+    assert nearest_shell["candidate_degree_uniform"] is True
     assert distribution["analysis_sha256"]
+
+
+def test_periodic_site_short_range_order_is_deterministic_and_finite_cell_scoped() -> None:
+    crystal = _crystal(
+        ("Si1", 0.0, 0.0, 0.0),
+        ("Si2", 0.1, 0.0, 0.0),
+        ("Si3", 0.5, 0.0, 0.0),
+        ("Si4", 0.6, 0.0, 0.0),
+    )
+    _, receipt = select_periodic_maximin_sites(crystal, crystal.basis_atoms, 2)
+
+    analysis = analyze_periodic_site_short_range_order(receipt)
+    repeated = analyze_periodic_site_short_range_order(receipt)
+
+    assert analysis == repeated
+    assert analysis["scientific_scope"] == SITE_SHORT_RANGE_ORDER_SCOPE
+    assert analysis["integrity_ok"] is True
+    assert analysis["source_pair_distribution_integrity_ok"] is True
+    assert analysis["binary_occupancy_available"] is True
+    assert analysis["shell_count"] == 3
+    assert analysis["nearest_shell_finite_composition_corrected_pair_alpha"] == -0.5
+    assert analysis["nearest_shell_baseline_finite_composition_corrected_pair_alpha"] == 1.0
+    assert analysis["nearest_shell_unlike_pair_expectation_class"] == (
+        "ordering_like_unlike_pair_enrichment"
+    )
+    assert analysis["nearest_shell_ordering_like_unlike_pair_enrichment"] is True
+    assert analysis["nearest_shell_clustering_like_unlike_pair_depletion_review_required"] is False
+    assert analysis["standard_periodic_shell_multiplicity_verified"] is False
+    assert analysis["crystallographic_symmetry_orbits_verified"] is False
+    assert analysis["classical_bulk_shell_interpretation_ready"] is False
+    nearest_shell = analysis["shells"][0]
+    assert nearest_shell["selected_selected_pair_count"] == 0
+    assert nearest_shell["unselected_unselected_pair_count"] == 0
+    assert nearest_shell["mixed_selected_unselected_pair_count"] == 2
+    assert nearest_shell["baseline_selected_selected_pair_count"] == 1
+    assert nearest_shell["baseline_unselected_unselected_pair_count"] == 1
+    assert nearest_shell["baseline_mixed_selected_unselected_pair_count"] == 0
+    assert nearest_shell["occupancy_pair_partition_verified"] is True
+    assert analysis["analysis_sha256"]
 
 
 def test_periodic_site_pair_distribution_rejects_tampered_and_rehashed_selection() -> None:
@@ -137,6 +193,11 @@ def test_periodic_site_pair_distribution_rejects_tampered_and_rehashed_selection
     assert rehashed_distribution["selection_replay_verified"] is False
     assert rehashed_distribution["integrity_ok"] is False
     assert rehashed_distribution["analysis_sha256"] is None
+
+    rehashed_short_range_order = analyze_periodic_site_short_range_order(rehashed)
+    assert rehashed_short_range_order["integrity_ok"] is False
+    assert rehashed_short_range_order["source_pair_distribution_integrity_ok"] is False
+    assert rehashed_short_range_order["analysis_sha256"] is None
 
 
 def test_periodic_maximin_audit_rejects_tampering_and_degrades_on_geometry_change() -> None:
@@ -193,6 +254,11 @@ def test_explicit_distributed_alloy_exports_selection_audit_and_preserves_defaul
     assert summary["site_pair_distribution_integrity_ok"] is True
     assert summary["site_pair_distribution_current_geometry_applicable"] is True
     assert summary["site_pair_distribution_nearest_shell_pair_avoidance_observed"] is True
+    assert summary["site_short_range_order_count"] == 1
+    assert summary["site_short_range_order_integrity_ok"] is True
+    assert summary["site_short_range_order_current_geometry_applicable"] is True
+    assert summary["site_short_range_order_nearest_shell_ordering_like_observed"] is True
+    assert summary["site_short_range_order_nearest_shell_clustering_like_review_required"] is False
     assert summary["latest"]["selection_strategy"] == "periodic_maximin"
     assert summary["latest"]["site_selection_audit"]["receipt_sha256_verified"] is True
     assert summary["latest"]["selected_pair_minimum_angstrom"] > 0
@@ -200,6 +266,16 @@ def test_explicit_distributed_alloy_exports_selection_audit_and_preserves_defaul
     assert summary["latest"]["site_pair_distribution_nearest_shell_selected_pair_count"] == 0
     assert summary["latest"]["site_pair_distribution_nearest_shell_baseline_pair_count"] == 4
     assert summary["latest"]["site_pair_distribution_nearest_shell_pair_count_reduction"] == 4
+    assert summary["latest"]["site_short_range_order_shell_count"] == 7
+    assert summary["latest"]["site_short_range_order_nearest_shell_expectation_class"] == (
+        "ordering_like_unlike_pair_enrichment"
+    )
+    assert summary["latest"]["site_short_range_order_nearest_shell_corrected_alpha"] == (
+        -0.291666666667
+    )
+    assert summary["latest"]["site_short_range_order_nearest_shell_baseline_corrected_alpha"] == (
+        0.03125
+    )
 
     bundle = write_view_audit_bundle(tmp_path, distributed, audit)
     with Path(bundle["files"]["semiconductor_alloy_csv"]).open(encoding="utf-8", newline="") as handle:
@@ -217,7 +293,32 @@ def test_explicit_distributed_alloy_exports_selection_audit_and_preserves_defaul
     assert pair_rows[0]["analysis_integrity_ok"] == "True"
     assert pair_rows[0]["current_geometry_applicable"] == "True"
     assert pair_rows[0]["nearest_shell_pair_count_reduction_vs_atom_id_order"] == "4"
+    assert pair_rows[0]["occupancy_pair_partition_verified"] == "True"
+    assert pair_rows[0]["baseline_occupancy_pair_partition_verified"] == "True"
+    assert pair_rows[0]["mixed_selected_unselected_pair_count"] == "32"
     assert pair_rows[0]["analysis_sha256"]
+    short_range_order_path = Path(
+        bundle["files"]["semiconductor_site_short_range_order_csv"]
+    )
+    with short_range_order_path.open(encoding="utf-8", newline="") as handle:
+        short_range_order_rows = list(csv.DictReader(handle))
+    assert len(short_range_order_rows) == 7
+    assert short_range_order_rows[0]["entry_kind"] == "alloy_fraction"
+    assert short_range_order_rows[0]["replacement_element"] == "Ge"
+    assert short_range_order_rows[0]["analysis_integrity_ok"] == "True"
+    assert short_range_order_rows[0]["current_geometry_applicable"] == "True"
+    assert short_range_order_rows[0]["standard_periodic_shell_multiplicity_verified"] == "False"
+    assert short_range_order_rows[0]["classical_bulk_shell_interpretation_ready"] == "False"
+    assert short_range_order_rows[0]["finite_composition_corrected_pair_alpha"] == (
+        "-0.291666666667"
+    )
+    assert short_range_order_rows[0]["baseline_finite_composition_corrected_pair_alpha"] == (
+        "0.03125"
+    )
+    assert short_range_order_rows[0]["unlike_pair_expectation_class"] == (
+        "ordering_like_unlike_pair_enrichment"
+    )
+    assert short_range_order_rows[0]["analysis_sha256"]
 
     default_plan = infer_modeling_plan(
         "Build silicon crystal as a 2x1x1 supercell and make 25% Ge alloy."
@@ -246,6 +347,9 @@ def test_explicit_distributed_dopant_fraction_is_preview_metadata_only() -> None
     assert summary["site_pair_distribution_count"] == 1
     assert summary["site_pair_distribution_integrity_ok"] is True
     assert summary["site_pair_distribution_current_geometry_applicable"] is True
+    assert summary["site_short_range_order_count"] == 1
+    assert summary["site_short_range_order_integrity_ok"] is True
+    assert summary["site_short_range_order_current_geometry_applicable"] is True
 
 
 def test_diagnostic_audit_fails_tampered_receipt_but_not_later_geometry_drift() -> None:
@@ -279,4 +383,6 @@ def test_diagnostic_audit_fails_tampered_receipt_but_not_later_geometry_drift() 
     assert moved_summary["site_selection_replay_verified"] is False
     assert moved_summary["site_pair_distribution_integrity_ok"] is True
     assert moved_summary["site_pair_distribution_current_geometry_applicable"] is False
+    assert moved_summary["site_short_range_order_integrity_ok"] is True
+    assert moved_summary["site_short_range_order_current_geometry_applicable"] is False
     assert moved_summary["latest"]["site_selection_geometry_unchanged"] is False

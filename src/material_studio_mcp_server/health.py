@@ -752,6 +752,25 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         ] = dopant_fraction_summary.get(
             "site_pair_distribution_nearest_shell_pair_avoidance_observed"
         )
+        checks["semiconductor_dopant_fraction_site_short_range_order_count"] = (
+            dopant_fraction_summary.get("site_short_range_order_count", 0)
+        )
+        checks["semiconductor_dopant_fraction_site_short_range_order_integrity_ok"] = (
+            dopant_fraction_summary.get("site_short_range_order_integrity_ok")
+        )
+        checks[
+            "semiconductor_dopant_fraction_site_short_range_order_current_geometry_applicable"
+        ] = dopant_fraction_summary.get("site_short_range_order_current_geometry_applicable")
+        checks[
+            "semiconductor_dopant_fraction_nearest_shell_ordering_like_observed"
+        ] = dopant_fraction_summary.get(
+            "site_short_range_order_nearest_shell_ordering_like_observed"
+        )
+        checks[
+            "semiconductor_dopant_fraction_nearest_shell_clustering_like_review_required"
+        ] = dopant_fraction_summary.get(
+            "site_short_range_order_nearest_shell_clustering_like_review_required"
+        )
         if dopant_fraction_summary.get("rounding_warning"):
             warnings.append("Semiconductor dopant fraction was rounded noticeably by finite cell size; inspect dopant_fraction_summary.")
         if dopant_fraction_summary.get("periodic_maximin_count"):
@@ -762,11 +781,19 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append("Semiconductor dopant-fraction site-selection metadata failed integrity checks.")
         if dopant_fraction_summary.get("site_pair_distribution_integrity_ok") is False:
             warnings.append("Semiconductor dopant-fraction pair-distribution audit failed integrity checks.")
+        if dopant_fraction_summary.get("site_short_range_order_integrity_ok") is False:
+            warnings.append("Semiconductor dopant-fraction short-range-order audit failed integrity checks.")
         if dopant_fraction_summary.get(
             "site_pair_distribution_nearest_shell_pair_excess_review_required"
         ):
             warnings.append(
                 "Semiconductor dopant sites have a nearest-shell pair excess relative to the fixed-composition expectation."
+            )
+        if dopant_fraction_summary.get(
+            "site_short_range_order_nearest_shell_clustering_like_review_required"
+        ):
+            warnings.append(
+                "Semiconductor dopant sites have clustering-like unlike-pair depletion in the nearest finite-cell distance shell."
             )
 
     alloy_summary = semiconductor.get("alloy_summary") or {}
@@ -797,6 +824,24 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_alloy_nearest_shell_pair_avoidance_observed"] = alloy_summary.get(
             "site_pair_distribution_nearest_shell_pair_avoidance_observed"
         )
+        checks["semiconductor_alloy_site_short_range_order_count"] = alloy_summary.get(
+            "site_short_range_order_count",
+            0,
+        )
+        checks["semiconductor_alloy_site_short_range_order_integrity_ok"] = alloy_summary.get(
+            "site_short_range_order_integrity_ok"
+        )
+        checks["semiconductor_alloy_site_short_range_order_current_geometry_applicable"] = (
+            alloy_summary.get("site_short_range_order_current_geometry_applicable")
+        )
+        checks["semiconductor_alloy_nearest_shell_ordering_like_observed"] = alloy_summary.get(
+            "site_short_range_order_nearest_shell_ordering_like_observed"
+        )
+        checks[
+            "semiconductor_alloy_nearest_shell_clustering_like_review_required"
+        ] = alloy_summary.get(
+            "site_short_range_order_nearest_shell_clustering_like_review_required"
+        )
         if alloy_summary.get("rounding_warning"):
             warnings.append("Semiconductor alloy fraction was rounded noticeably by finite cell size; inspect alloy_summary.")
         if alloy_summary.get("periodic_maximin_count"):
@@ -805,9 +850,15 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append("Semiconductor alloy site-selection metadata failed integrity checks.")
         if alloy_summary.get("site_pair_distribution_integrity_ok") is False:
             warnings.append("Semiconductor alloy pair-distribution audit failed integrity checks.")
+        if alloy_summary.get("site_short_range_order_integrity_ok") is False:
+            warnings.append("Semiconductor alloy short-range-order audit failed integrity checks.")
         if alloy_summary.get("site_pair_distribution_nearest_shell_pair_excess_review_required"):
             warnings.append(
                 "Semiconductor alloy sites have a nearest-shell pair excess relative to the fixed-composition expectation."
+            )
+        if alloy_summary.get("site_short_range_order_nearest_shell_clustering_like_review_required"):
+            warnings.append(
+                "Semiconductor alloy sites have clustering-like unlike-pair depletion in the nearest finite-cell distance shell."
             )
         if int(checks.get("semiconductor_alloy_same_sublattice_neighbor_pair_count") or 0) > 0:
             warnings.append(

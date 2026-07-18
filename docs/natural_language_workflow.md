@@ -612,6 +612,25 @@ tests, and the result does not establish an SQS, random-alloy thermodynamics,
 or a relaxed structure. If the current lattice or candidate coordinates change,
 the recorded-geometry analysis remains historical evidence but
 `site_pair_distribution_current_geometry_applicable` becomes false.
+The same explicit maximin records export
+`semiconductor_site_short_range_order.csv`. For each numerical distance shell,
+the audit partitions unique candidate pairs into selected-selected,
+unselected-unselected, and mixed pairs. It reports the standard pair-count
+Warren-Cowley-like value
+`alpha = 1 - N_mixed / (2 M x_selected x_unselected)` and a finite-composition
+correction that replaces the denominator with the exact expectation
+`M 2 K (N-K) / [N(N-1)]`. Negative corrected alpha means ordering-like unlike
+pair enrichment; positive alpha means clustering-like unlike-pair depletion.
+This follows the pair-count definition described by
+[Gehringer, Friak, and Holec (2023)](https://doi.org/10.1016/j.cpc.2023.108664),
+but the MCP audit deliberately counts each unique finite-cell pair once. It does
+not reconstruct periodic image multiplicities or crystallographic symmetry
+orbits, so `standard_periodic_shell_multiplicity_verified=false` and
+`classical_bulk_shell_interpretation_ready=false`. The values are descriptive
+configuration checks only, not SQS scores, significance tests, equilibrium SRO,
+temperature-dependent predictions, relaxation evidence, or calculation
+readiness. Geometry drift keeps the historical analysis but sets
+`site_short_range_order_current_geometry_applicable=false`.
 Chinese semiconductor follow-ups use the same structured patch path, for example
 `创建硅空位`, `沿 z 添加 10 埃真空层`,
 `在分数坐标 0.5 0.5 0.24 添加 Htop1 H`,

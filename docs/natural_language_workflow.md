@@ -266,7 +266,22 @@ inputs reported by
 they are metadata-only screening values, not CASTEP or surface-reconstruction
 results. The bare oxide start supports deterministic oxide-thickness and O-vacancy
 follow-ups, but it is not amorphous, relaxed, literature-exact, or device-ready.
-Both 6H-SiC starts and the Si/SiO2 and HfO2 gate-stack starts emit an
+
+The corresponding C-face virtual templates are
+`silicon_carbide_6h_000m1_c_face_slab`,
+`silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface`, and
+`aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor`.
+They require an explicit `(000-1)`, `C-face`, `carbon-terminated`, or `碳面`
+request. The deterministic slab preserves six Si-C bilayers, exposes a
+C-terminated top face, and places four H atoms on the Si-terminated back face.
+The oxide and MOS variants use the same marker-plane and gate construction as
+the Si-face starts, but bind their semiconductor boundary to the top C layer.
+`surface_orientation_summary` records `[0, 0, 0, -1]`, while the generated cell
+maps that parent-bulk normal to the positive current-cell `c` axis for view and
+vacuum diagnostics. All three variants remain unreconstructed, unrelaxed
+preflight scaffolds.
+
+All 6H-SiC oxide/MOS starts and the Si/SiO2 and HfO2 gate-stack starts emit an
 `oxide_interface_geometry_summary` plus
 `semiconductor_oxide_interface_geometry.csv`. The geometry preflight binds the
 declared semiconductor and oxide boundary layers to atom IDs, enumerates every
@@ -280,10 +295,10 @@ automatically. A clean result remains construction evidence only and does not
 establish an amorphous oxide, relaxation, charge state, convergence, or
 calculation readiness. Metal/oxide-only starts such as Cu/SiO2 remain outside
 this semiconductor/oxide geometry contract.
-Explicit C-face `(000-1)`, ambiguous unoriented surfaces, complete MOS
-device/transistor geometries, and other
-6H-SiC heterostructures remain unsupported and never fall back to 3C-SiC,
-4H-SiC, or silicon.
+Ambiguous unoriented surfaces, C-face metal contacts, complete MOS
+device/transistor geometries, and other 6H-SiC heterostructures remain
+unsupported and never fall back to 3C-SiC, 4H-SiC, or silicon. A request that
+names both Si-face and C-face is also rejected rather than choosing one.
 
 The metal/beta-Ga2O3(010) scaffold is centered in a vacuum cell and remains an
 unrelaxed visualization and diagnostic starting point. Its 4.0 eV electron

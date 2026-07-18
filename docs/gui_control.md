@@ -689,8 +689,8 @@ k-point estimates, band-path preflight, charge balance, dopant/alloy/defect
 state, interface or quantum-well state, surface passivation/polarity, risk
 flags, and the next action out of the full `semiconductor_health` object.
 Single oxide-interface or gate-stack templates such as Si/SiO2 MOS gate oxide,
-SiO2/6H-SiC(0001) Si-face, Al/SiO2/Si MOS capacitor,
-Al/SiO2/6H-SiC(0001) Si-face MOS capacitor,
+SiO2/6H-SiC(0001) Si-face, SiO2/6H-SiC(000-1) C-face,
+Al/SiO2/Si MOS capacitor, and Al/SiO2/6H-SiC MOS capacitors on either explicit face,
 TiN/HfO2/Si high-k MOS capacitor, and Cu/SiO2 use the
 same interface review fields, but are treated as one-shot interface starts
 rather than periodic quantum-well stacks or passivated semiconductor slabs. MOS
@@ -702,8 +702,9 @@ oxide/gate/channel thicknesses, and per-segment layer spans. Si/SiO2,
 Al/SiO2/Si, and TiN/HfO2/Si mark mixed oxide or compound gate layers as
 expected, so those layers remain visible in `interface_profile_summary` without
 becoming a mixed-interface risk flag.
-The bare 6H-SiC oxide-interface and MOS starts reuse the reviewed centered
-`2x2` six-bilayer Si-face substrate and its hydrogen-passivated C back face.
+The bare 6H-SiC oxide-interface and MOS starts reuse a reviewed centered `2x2`
+six-bilayer substrate. The `(0001)` Si-face starts have a hydrogen-passivated C
+back face; the `(000-1)` C-face starts have a hydrogen-passivated Si back face.
 Their two mixed Si/O planes are
 only deterministic thickness and visualization markers; they do not establish
 an amorphous oxide network, relaxed interface, band offsets, trap states, or
@@ -729,8 +730,9 @@ boundary, short contacts, or isolated oxide atoms supersede stoichiometry-only
 normality reasons. They produce preview-only review or relaxation operations;
 the GUI workflow must not silently repair atom coordinates. The deterministic
 HfO2 marker scaffold currently exercises the short-contact review path, while
-the 6H-SiC marker scaffold can pass geometry preflight but remains explicitly
-unrelaxed.
+the 6H-SiC Si-face and C-face marker scaffolds can pass geometry preflight but
+remain explicitly unrelaxed. Explicit execute may materialize and load only the
+current revision into the already verified single Materials Studio window.
 Accordingly, `modeling_report.normality_gate` uses the dedicated
 `oxide_interface` category and recommends a preview-only interface relaxation
 or O-vacancy review before quantitative use.

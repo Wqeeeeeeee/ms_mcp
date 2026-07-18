@@ -1515,9 +1515,16 @@ ZNO_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_zinc_oxide_0001_schottky_conta
 BETA_GA2O3_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_beta_gallium_oxide_010_schottky_contact"
 SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_4h_0001_schottky_contact"
 SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_6h_0001_si_face_slab"
+SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_6h_000m1_c_face_slab"
 SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_6h_0001_schottky_contact"
 SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = "silicon_dioxide_silicon_carbide_6h_0001_interface"
+SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = (
+    "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
+)
 SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
+SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = (
+    "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+)
 INP_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_indium_phosphide_001_schottky_contact"
 INAS_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_indium_arsenide_001_schottky_contact"
 ALAS_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_aluminum_arsenide_001_schottky_contact"
@@ -1603,9 +1610,25 @@ INSB_BAND_GAP_EV = 0.17
 
 
 @dataclass(frozen=True)
-class Sic6hSiFaceAssembly:
+class Sic6hSurfaceFaceProfile:
+    face: str
+    orientation: str
+    plane_slug: str
+    cut_origin: float
+    reflect_bulk_z: bool
+    bottom_element: str
+    top_element: str
+    slab_template_id: str
+    oxide_interface_template_id: str
+    mos_capacitor_template_id: str
+    axis_reorientation: str
+
+
+@dataclass(frozen=True)
+class Sic6hSurfaceAssembly:
     source_spec: ModelSpec
     source_model: CrystalSpec
+    profile: Sic6hSurfaceFaceProfile
     cell_c: float
     lattice_a: float
     lattice_b: float
@@ -1615,6 +1638,38 @@ class Sic6hSiFaceAssembly:
     semiconductor_bottom_fractional: float
     semiconductor_top_fractional: float
     semiconductor_thickness_angstrom: float
+
+
+SIC_6H_SURFACE_FACE_PROFILES: dict[str, Sic6hSurfaceFaceProfile] = {
+    "Si-face": Sic6hSurfaceFaceProfile(
+        face="Si-face",
+        orientation="6H-SiC(0001) Si-face",
+        plane_slug="0001",
+        cut_origin=SIC_6H_SI_FACE_CUT_ORIGIN,
+        reflect_bulk_z=True,
+        bottom_element="C",
+        top_element="Si",
+        slab_template_id=SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        oxide_interface_template_id=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        mos_capacitor_template_id=SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+        axis_reorientation="bulk_fractional_z_reflected_to_place_6H-SiC_0001_Si_face_at_top",
+    ),
+    "C-face": Sic6hSurfaceFaceProfile(
+        face="C-face",
+        orientation="6H-SiC(000-1) C-face",
+        plane_slug="000m1",
+        cut_origin=0.0,
+        reflect_bulk_z=False,
+        bottom_element="Si",
+        top_element="C",
+        slab_template_id=SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        oxide_interface_template_id=SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        mos_capacitor_template_id=SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+        axis_reorientation=(
+            "bulk_fractional_z_preserved_to_place_6H-SiC_000m1_C_face_at_top"
+        ),
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -1999,6 +2054,165 @@ def supported_semiconductor_template_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def _sic_6h_c_face_virtual_template_profiles() -> list[dict[str, Any]]:
+    common = {
+        "base_template_id": "silicon_carbide_6h_hexagonal",
+        "generated_by_tool": "material_studio_live_modeling_request",
+        "model_type": "crystal",
+        "polytype": "6H",
+        "surface_orientation": "6H-SiC(000-1) C-face",
+        "surface_axis": "c",
+        "simulation_module": "CASTEP",
+        "simulation_task": "Energy",
+        "execute_backend": "crystal_cif_materialize_for_gui_hotload",
+        "source_references": [
+            "10.2138/am.2007.2346",
+            "10.2320/matertrans.47.2690",
+            "10.3390/ma10060583",
+        ],
+    }
+    return [
+        {
+            **common,
+            "template_id": SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+            "variant_kind": "surface_scaffold",
+            "response_template_id": SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+            "example_request": "Build a 6H-SiC(000-1) C-face slab and export surface diagnostics.",
+            "terms": [
+                "6H-SiC(000-1) C-face slab",
+                "carbon-terminated 6H-SiC surface",
+                "6H-SiC C-face surface model",
+                "6H-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u8868\u9762",
+            ],
+            "notes": (
+                "Programmatic centered 2x2 six-bilayer 6H-SiC(000-1) C-face slab with a hydrogen-saturated "
+                "Si-terminated back surface. It is an unreconstructed pre-relaxation scaffold for same-window "
+                "visualization, surface diagnostics, and reviewed CASTEP setup."
+            ),
+            "model_name": SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+            "structure_family": "hexagonal 6H-SiC(000-1) C-face surface slab scaffold",
+            "materials": ["6H-SiC", "H"],
+            "default_diagnostic_focuses": _unique_preserving_order(
+                [
+                    "semiconductor_structure_health",
+                    "surface_slab_polarity",
+                    "electronic_structure_preflight",
+                    "view_quality",
+                ]
+            ),
+            "required_summary_keys": [
+                "surface_termination_summary",
+                "surface_polarity_summary",
+                "surface_orientation_summary",
+                "calculation_preflight_summary",
+            ],
+            "required_csv_keys": [
+                "semiconductor_surface_termination_csv",
+                "semiconductor_surface_polarity_csv",
+                "semiconductor_surface_model_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+        },
+        {
+            **common,
+            "template_id": SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "variant_kind": "interface_scaffold",
+            "response_template_id": SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "example_request": "Build a SiO2/6H-SiC(000-1) C-face interface and export interface diagnostics.",
+            "terms": [
+                "SiO2/6H-SiC(000-1) C-face interface",
+                "6H-SiC C-face oxide interface",
+                "silicon dioxide on 6H-SiC C-face",
+                "6H-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u4e8c\u6c27\u5316\u7845\u754c\u9762",
+            ],
+            "notes": (
+                "Programmatic centered SiO2/6H-SiC(000-1) C-face pre-relaxation interface scaffold. "
+                "Its mixed Si/O marker planes support deterministic visualization and thickness edits; "
+                "they are not amorphous or relaxed SiO2."
+            ),
+            "model_name": SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "structure_family": "6H-SiC C-face semiconductor oxide interface scaffold",
+            "materials": ["6H-SiC", "SiO2"],
+            "interface": "SiO2/6H-SiC",
+            "interface_orientation": "SiO2 / 6H-SiC(000-1) C-face",
+            "default_diagnostic_focuses": _unique_preserving_order(
+                [
+                    "semiconductor_structure_health",
+                    "semiconductor_oxide_interface",
+                    "epitaxial_strain_preflight",
+                    "electronic_structure_preflight",
+                    "view_quality",
+                ]
+            ),
+            "required_summary_keys": [
+                "interface_profile_summary",
+                "interface_quality_summary",
+                "oxide_interface_geometry_summary",
+                "oxide_interface_health_summary",
+                "calculation_preflight_summary",
+            ],
+            "required_csv_keys": [
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
+                "semiconductor_oxide_interface_health_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+        },
+        {
+            **common,
+            "template_id": SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+            "variant_kind": "gate_stack_scaffold",
+            "response_template_id": SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+            "example_request": "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor and export gate-stack diagnostics.",
+            "terms": [
+                "Al/SiO2/6H-SiC(000-1) C-face MOS capacitor",
+                "6H-SiC C-face MOS capacitor",
+                "6H-SiC C-face gate stack",
+                "6H-\u78b3\u5316\u7845(000-1)\u78b3\u9762 MOS \u7535\u5bb9",
+            ],
+            "notes": (
+                "Programmatic centered Al/SiO2/6H-SiC(000-1) C-face pre-relaxation gate-stack scaffold. "
+                "Its mixed Si/O marker planes support deterministic visualization and thickness edits; "
+                "they are not amorphous or relaxed SiO2."
+            ),
+            "model_name": SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+            "structure_family": "6H-SiC C-face MOS capacitor gate stack scaffold",
+            "materials": ["6H-SiC", "SiO2", "Al"],
+            "interface": "Al/SiO2/6H-SiC",
+            "interface_orientation": "Al gate / SiO2 / 6H-SiC(000-1) C-face",
+            "default_diagnostic_focuses": _unique_preserving_order(
+                [
+                    "semiconductor_structure_health",
+                    "mos_gate_stack",
+                    "epitaxial_strain_preflight",
+                    "electronic_structure_preflight",
+                    "view_quality",
+                ]
+            ),
+            "required_summary_keys": [
+                "gate_stack_summary",
+                "interface_profile_summary",
+                "interface_quality_summary",
+                "oxide_interface_geometry_summary",
+                "oxide_interface_health_summary",
+                "calculation_preflight_summary",
+            ],
+            "required_csv_keys": [
+                "semiconductor_gate_stack_csv",
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
+                "semiconductor_oxide_interface_health_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+        },
+    ]
+
+
 def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
     """Return discoverable semiconductor variants generated by deterministic modifiers."""
 
@@ -2008,6 +2222,7 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
     sapphire_base_template_id = "alpha_alumina_sapphire_substrate"
     sapphire_base = base_profiles.get(sapphire_base_template_id, {})
     return [
+        *_sic_6h_c_face_virtual_template_profiles(),
         {
             "template_id": f"{base_template_id}_p_gan_gate",
             "base_template_id": base_template_id,
@@ -4804,9 +5019,9 @@ def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLan
         template_id=None,
         notes=[
             "A 6H-SiC derived-geometry request was recognized outside the reviewed local template set.",
-            "Reviewed 6H-SiC starts cover P63mc bulk, the (0001) Si-face six-bilayer slab, metal contacts, a bare SiO2 interface, and an Al/SiO2 MOS capacitor scaffold on that Si face.",
+            "Reviewed 6H-SiC starts cover P63mc bulk, explicit (0001) Si-face and (000-1) C-face six-bilayer slabs, Si-face metal contacts, and bare SiO2 plus Al/SiO2 MOS capacitor scaffolds on either face.",
             "No 3C-SiC, 4H-SiC, or silicon substitute was selected.",
-            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, C-face interfaces, heterostructures, or device geometries before live loading.",
+            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, C-face metal contacts, heterostructures, or device geometries before live loading.",
         ],
     )
 
@@ -5794,6 +6009,11 @@ def _looks_like_sic_6h_surface_geometry_request(text: str) -> bool:
             text,
             flags=re.IGNORECASE,
         )
+        or (
+            bool(re.search(r"\b(?:build|create|construct|generate)\b", text, flags=re.IGNORECASE))
+            and (_sic_6h_si_face_requested(text) or _sic_6h_c_face_requested(text))
+            and not _is_semiconductor_heterostructure_request(text)
+        )
         or re.search(
             r"\(\s*0001\s*\).{0,24}\bsurface\b(?![-\s]+(?:normal|view|projection|parameter))",
             text,
@@ -5806,7 +6026,7 @@ def _looks_like_sic_6h_surface_geometry_request(text: str) -> bool:
     )
 
 
-def _infer_sic_6h_si_face_slab_template(
+def _infer_sic_6h_surface_slab_template(
     text: str,
     *,
     user_request: str,
@@ -5814,19 +6034,20 @@ def _infer_sic_6h_si_face_slab_template(
 ) -> NaturalLanguagePlan | None:
     if not _looks_like_sic_6h_surface_geometry_request(text):
         return None
-    if _sic_6h_c_face_requested(text):
+    c_face_requested = _sic_6h_c_face_requested(text)
+    si_face_requested = _sic_6h_si_face_requested(text)
+    if c_face_requested and si_face_requested:
         return NaturalLanguagePlan(
             kind="unsupported",
             payload=None,
             confidence=0.0,
             template_id=None,
             notes=[
-                "The reviewed 6H-SiC surface constructor covers only the Si-terminated (0001) face.",
-                "A C-terminated 6H-SiC(000-1) slab was not substituted with the Si-face scaffold.",
-                "Provide a reviewed C-face ModelSpec before preview or live loading.",
+                "The 6H-SiC slab request names both Si-face and C-face terminations.",
+                "Select exactly one of 6H-SiC(0001) Si-face or 6H-SiC(000-1) C-face before preview or live loading.",
             ],
         )
-    if not _sic_6h_si_face_requested(text):
+    if not c_face_requested and not si_face_requested:
         return NaturalLanguagePlan(
             kind="unsupported",
             payload=None,
@@ -5834,19 +6055,25 @@ def _infer_sic_6h_si_face_slab_template(
             template_id=None,
             notes=[
                 "A 6H-SiC surface request was recognized, but its orientation and termination are ambiguous.",
-                "The reviewed local surface scaffold is specifically 6H-SiC(0001) Si-face.",
-                "Request the (0001) Si face explicitly; no 3C-SiC, 4H-SiC, or silicon substitute was selected.",
+                "The reviewed local surface scaffolds require either 6H-SiC(0001) Si-face or 6H-SiC(000-1) C-face.",
+                "Request the Si face or C face explicitly; no 3C-SiC, 4H-SiC, or silicon substitute was selected.",
             ],
         )
 
-    chosen_project_id = project_id or _project_id(SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID, user_request)
-    model_spec = _sic_6h_si_face_slab_spec(
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_6H_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.slab_template_id, user_request)
+    model_spec = _sic_6h_surface_slab_spec(
+        surface_face=surface_face,
         user_request=user_request,
         project_id=chosen_project_id,
     )
     notes = [
-        "Generated a deterministic centered 2x2 six-bilayer 6H-SiC(0001) Si-face slab.",
-        "The C-terminated back surface is hydrogen-saturated; the Si-face remains unreconstructed for reviewed relaxation.",
+        f"Generated a deterministic centered 2x2 six-bilayer {profile.orientation} slab.",
+        (
+            f"The {profile.bottom_element}-terminated back surface is hydrogen-saturated; "
+            f"the {profile.face} remains unreconstructed for reviewed relaxation."
+        ),
     ]
     confidence = 0.9
     composite = _apply_new_crystal_composite_operations(user_request, model_spec)
@@ -5866,7 +6093,7 @@ def _infer_sic_6h_si_face_slab_template(
         kind="spec",
         payload=model_spec.model_dump(mode="json"),
         confidence=confidence,
-        template_id=SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        template_id=profile.slab_template_id,
         notes=notes,
     )
 
@@ -5933,26 +6160,30 @@ def _infer_sic_6h_mos_capacitor_template(
                 "No capacitor scaffold was substituted for source, drain, channel, or device-scale geometry.",
             ],
         )
-    if _sic_6h_c_face_requested(text):
+    c_face_requested = _sic_6h_c_face_requested(text)
+    si_face_requested = _sic_6h_si_face_requested(text)
+    if c_face_requested and si_face_requested:
         return NaturalLanguagePlan(
             kind="unsupported",
             payload=None,
             confidence=0.0,
             template_id=None,
             notes=[
-                "The reviewed 6H-SiC MOS capacitor scaffold covers only the Si-terminated (0001) face.",
-                "A C-terminated 6H-SiC(000-1) gate stack was not substituted with the Si-face scaffold.",
-                "Provide a reviewed C-face ModelSpec before preview or live loading.",
+                "The 6H-SiC MOS request names both Si-face and C-face terminations.",
+                "Select exactly one of 6H-SiC(0001) Si-face or 6H-SiC(000-1) C-face before preview or live loading.",
             ],
         )
 
-    chosen_project_id = project_id or _project_id(SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID, user_request)
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_6H_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.mos_capacitor_template_id, user_request)
     model_spec = _sic_6h_mos_capacitor_spec(
         user_request=user_request,
         project_id=chosen_project_id,
+        surface_face=surface_face,
     )
     notes = [
-        "Generated a deterministic centered Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold.",
+        f"Generated a deterministic centered Al/SiO2/{profile.orientation} MOS capacitor scaffold.",
         "The mixed Si/O planes are a thickness-edit and visualization model, not amorphous or relaxed SiO2.",
     ]
     confidence = 0.89
@@ -5973,7 +6204,7 @@ def _infer_sic_6h_mos_capacitor_template(
         kind="spec",
         payload=model_spec.model_dump(mode="json"),
         confidence=confidence,
-        template_id=SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+        template_id=profile.mos_capacitor_template_id,
         notes=notes,
     )
 
@@ -6004,26 +6235,30 @@ def _infer_sic_6h_oxide_interface_template(
 ) -> NaturalLanguagePlan | None:
     if not _looks_like_sic_6h_oxide_interface_request(text):
         return None
-    if _sic_6h_c_face_requested(text):
+    c_face_requested = _sic_6h_c_face_requested(text)
+    si_face_requested = _sic_6h_si_face_requested(text)
+    if c_face_requested and si_face_requested:
         return NaturalLanguagePlan(
             kind="unsupported",
             payload=None,
             confidence=0.0,
             template_id=None,
             notes=[
-                "The reviewed 6H-SiC oxide-interface scaffold covers only the Si-terminated (0001) face.",
-                "A C-terminated 6H-SiC(000-1)/SiO2 interface was not substituted with the Si-face scaffold.",
-                "Provide a reviewed C-face ModelSpec before preview or live loading.",
+                "The 6H-SiC oxide-interface request names both Si-face and C-face terminations.",
+                "Select exactly one of 6H-SiC(0001) Si-face or 6H-SiC(000-1) C-face before preview or live loading.",
             ],
         )
 
-    chosen_project_id = project_id or _project_id(SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID, user_request)
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_6H_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.oxide_interface_template_id, user_request)
     model_spec = _sic_6h_oxide_interface_spec(
         user_request=user_request,
         project_id=chosen_project_id,
+        surface_face=surface_face,
     )
     notes = [
-        "Generated a deterministic centered SiO2/6H-SiC(0001) Si-face interface scaffold.",
+        f"Generated a deterministic centered SiO2/{profile.orientation} interface scaffold.",
         "The mixed Si/O planes are a thickness-edit and visualization model, not amorphous or relaxed SiO2.",
         "No metal gate or MOS-capacitor geometry was added.",
     ]
@@ -6045,7 +6280,7 @@ def _infer_sic_6h_oxide_interface_template(
         kind="spec",
         payload=model_spec.model_dump(mode="json"),
         confidence=confidence,
-        template_id=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        template_id=profile.oxide_interface_template_id,
         notes=notes,
     )
 
@@ -6143,7 +6378,10 @@ def _match_sic_6h_contact_metal(text: str) -> str | None:
     return None
 
 
-def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
+def _sic_6h_surface_assembly(*, cell_c: float, surface_face: str) -> Sic6hSurfaceAssembly:
+    profile = SIC_6H_SURFACE_FACE_PROFILES.get(surface_face)
+    if profile is None:
+        raise ValueError(f"Unsupported 6H-SiC surface face: {surface_face}")
     source_spec = ModelSpec.model_validate(_load_example("silicon_carbide_6h_hexagonal_spec.json"))
     if not isinstance(source_spec.model, CrystalSpec):
         raise ValueError("6H-SiC surface source must be a crystal spec")
@@ -6153,9 +6391,10 @@ def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
     source_positions: list[tuple[BasisAtomSpec, float]] = []
     for source_atom in source_model.basis_atoms:
         _, _, source_z = _basis_atom_fractional_tuple(source_atom)
-        # Reverse the bulk c ordering so the retained slab has a C back face and
-        # a top Si face, with three bulk bonds retained at each surface atom.
-        wrapped_z = (SIC_6H_SI_FACE_CUT_ORIGIN - source_z) % 1.0
+        if profile.reflect_bulk_z:
+            wrapped_z = (profile.cut_origin - source_z) % 1.0
+        else:
+            wrapped_z = (source_z - profile.cut_origin) % 1.0
         if abs(wrapped_z - 1.0) < 1e-10:
             wrapped_z = 0.0
         source_positions.append((source_atom, wrapped_z))
@@ -6193,10 +6432,16 @@ def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
         for atom in semiconductor_atoms
         if abs(_basis_atom_fractional_tuple(atom)[2] - semiconductor_top) < 1e-7
     ]
-    if {atom.element for atom in bottom_atoms} != {"C"} or len(bottom_atoms) != 4:
-        raise ValueError("6H-SiC Si-face cut did not produce the expected four-atom C bottom layer")
-    if {atom.element for atom in top_atoms} != {"Si"} or len(top_atoms) != 4:
-        raise ValueError("6H-SiC Si-face cut did not produce the expected four-atom Si top layer")
+    if {atom.element for atom in bottom_atoms} != {profile.bottom_element} or len(bottom_atoms) != 4:
+        raise ValueError(
+            f"6H-SiC {profile.face} cut did not produce the expected four-atom "
+            f"{profile.bottom_element} bottom layer"
+        )
+    if {atom.element for atom in top_atoms} != {profile.top_element} or len(top_atoms) != 4:
+        raise ValueError(
+            f"6H-SiC {profile.face} cut did not produce the expected four-atom "
+            f"{profile.top_element} top layer"
+        )
 
     layer_elements: list[str] = []
     for layer_z in sorted({round(value, 8) for value in semiconductor_z}):
@@ -6208,8 +6453,12 @@ def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
         if len(elements) != 1:
             raise ValueError("6H-SiC surface assembly produced a mixed-element bilayer plane")
         layer_elements.append(next(iter(elements)))
-    if layer_elements != ["C", "Si"] * 6:
-        raise ValueError("6H-SiC surface assembly did not preserve six C-Si bilayers")
+    expected_layer_elements = [profile.bottom_element, profile.top_element] * 6
+    if layer_elements != expected_layer_elements:
+        raise ValueError(
+            f"6H-SiC {profile.face} surface assembly did not preserve six "
+            f"{profile.bottom_element}-{profile.top_element} bilayers"
+        )
 
     atoms = list(semiconductor_atoms)
     back_hydrogen_z = semiconductor_bottom - SIC_6H_BACK_SURFACE_H_BOND_ANGSTROM / cell_c
@@ -6226,9 +6475,10 @@ def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
     top_registry = tuple(
         sorted((_basis_atom_fractional_tuple(atom)[0], _basis_atom_fractional_tuple(atom)[1]) for atom in top_atoms)
     )
-    return Sic6hSiFaceAssembly(
+    return Sic6hSurfaceAssembly(
         source_spec=source_spec,
         source_model=source_model,
+        profile=profile,
         cell_c=cell_c,
         lattice_a=lattice_a,
         lattice_b=lattice_b,
@@ -6239,6 +6489,14 @@ def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSiFaceAssembly:
         semiconductor_top_fractional=semiconductor_top,
         semiconductor_thickness_angstrom=(semiconductor_top - semiconductor_bottom) * cell_c,
     )
+
+
+def _sic_6h_si_face_assembly(*, cell_c: float) -> Sic6hSurfaceAssembly:
+    return _sic_6h_surface_assembly(cell_c=cell_c, surface_face="Si-face")
+
+
+def _sic_6h_c_face_assembly(*, cell_c: float) -> Sic6hSurfaceAssembly:
+    return _sic_6h_surface_assembly(cell_c=cell_c, surface_face="C-face")
 
 
 def _center_sic_6h_atoms(
@@ -6269,12 +6527,16 @@ def _center_sic_6h_atoms(
 
 
 def _sic_6h_common_surface_metadata(
-    assembly: Sic6hSiFaceAssembly,
+    assembly: Sic6hSurfaceAssembly,
     *,
     center_shift: float,
     assembly_extent: float,
 ) -> dict[str, Any]:
     source_metadata = dict(assembly.source_spec.metadata or {})
+    profile = assembly.profile
+    top_name = "silicon" if profile.top_element == "Si" else "carbon"
+    bottom_name = "silicon" if profile.bottom_element == "Si" else "carbon"
+    plane_label = "(0001)" if profile.face == "Si-face" else "(000-1)"
     return {
         **source_metadata,
         "source": "local_dynamic_template_from_reviewed_6H-SiC_bulk",
@@ -6285,13 +6547,14 @@ def _sic_6h_common_surface_metadata(
         "space_group_number": 186,
         "surface_axis": "c",
         "surface_normal_cell_axis": "c",
-        "surface_orientation": "6H-SiC(0001) Si-face",
+        "surface_orientation": profile.orientation,
+        "surface_miller_bravais_indices": [0, 0, 0, 1 if profile.face == "Si-face" else -1],
         "surface_orientation_basis": "parent_bulk_mapped_to_cell_axis",
         "surface_axis_reoriented": True,
-        "surface_axis_reorientation": "bulk_fractional_z_reflected_to_place_6H-SiC_0001_Si_face_at_top",
-        "surface_face": "Si-face",
+        "surface_axis_reorientation": profile.axis_reorientation,
+        "surface_face": profile.face,
         "surface_context": True,
-        "surface_model": "6H-SiC(0001) silicon-terminated six-bilayer slab scaffold",
+        "surface_model": f"6H-SiC{plane_label} {top_name}-terminated six-bilayer slab scaffold",
         "surface_cell_axis_length_angstrom": assembly.cell_c,
         "slab_centering": {
             "axis": "c",
@@ -6309,9 +6572,11 @@ def _sic_6h_common_surface_metadata(
         "sic_bilayer_count": 6,
         "back_surface_hydrogen_count": 4,
         "back_surface_hydrogen_bond_angstrom": SIC_6H_BACK_SURFACE_H_BOND_ANGSTROM,
-        "termination": "silicon_terminated_top_carbon_terminated_hydrogen_passivated_bottom",
-        "bottom_termination": "carbon_terminated_hydrogen_passivated",
-        "top_semiconductor_termination": "silicon_terminated",
+        "termination": (
+            f"{top_name}_terminated_top_{bottom_name}_terminated_hydrogen_passivated_bottom"
+        ),
+        "bottom_termination": f"{bottom_name}_terminated_hydrogen_passivated",
+        "top_semiconductor_termination": f"{top_name}_terminated",
         "passivation": {
             "surfaces": ["bottom"],
             "element": "H",
@@ -6352,18 +6617,32 @@ def _sic_6h_common_surface_metadata(
         "surface_scaffold_reference": {
             "reference": "Tanaka et al., First-Principles Calculations of Schottky Barrier Heights of Monolayer Metal/6H-SiC{0001} Interfaces",
             "doi": "10.2320/matertrans.47.2690",
-            "model_scope": "six C-Si bilayers in a 2x2 cell with hydrogen-saturated back dangling bonds",
+            "model_scope": (
+                f"six {profile.bottom_element}-{profile.top_element} bilayers in a 2x2 cell "
+                "with hydrogen-saturated back dangling bonds"
+            ),
         },
         "surface_reconstruction_caveat": (
-            "6H-SiC(0001) surface electronic properties depend on preparation and reconstruction; "
+            f"6H-SiC{plane_label} surface electronic properties depend on preparation and reconstruction; "
             "the generated ideal termination is a pre-relaxation scaffold."
         ),
         "base_template_id": "silicon_carbide_6h_hexagonal",
     }
 
 
-def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpec:
-    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_SURFACE_CELL_C_ANGSTROM)
+def _sic_6h_surface_slab_spec(
+    *,
+    surface_face: str,
+    user_request: str,
+    project_id: str,
+) -> ModelSpec:
+    assembly = _sic_6h_surface_assembly(
+        cell_c=SIC_6H_SURFACE_CELL_C_ANGSTROM,
+        surface_face=surface_face,
+    )
+    profile = assembly.profile
+    top_name = "Si" if profile.top_element == "Si" else "C"
+    bottom_name = "C" if profile.bottom_element == "C" else "Si"
     centered_atoms, center_shift, assembly_extent = _center_sic_6h_atoms(
         assembly.atoms,
         cell_c=assembly.cell_c,
@@ -6374,16 +6653,19 @@ def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpe
             center_shift=center_shift,
             assembly_extent=assembly_extent,
         ),
-        "structure_family": "hexagonal 6H-SiC(0001) Si-face surface slab scaffold",
+        "structure_family": f"hexagonal {profile.orientation} surface slab scaffold",
         "materials": ["6H-SiC"],
-        "surface_asymmetry_expected_reason": "bare_Si_top_and_hydrogen_passivated_C_bottom_on_polar_6H-SiC_0001",
-        "nl_template": SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
-        "nl_virtual_template": SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
-        "nl_source": "sic_6h_si_face_surface_scaffold_template",
+        "surface_asymmetry_expected_reason": (
+            f"bare_{top_name}_top_and_hydrogen_passivated_{bottom_name}_bottom_on_polar_6H-SiC_"
+            f"{profile.plane_slug}"
+        ),
+        "nl_template": profile.slab_template_id,
+        "nl_virtual_template": profile.slab_template_id,
+        "nl_source": f"sic_6h_{profile.face.lower().replace('-', '_')}_surface_scaffold_template",
         "nl_user_request": user_request,
         "scaffold_notes": [
-            "Deterministic centered 2x2 six-bilayer 6H-SiC(0001) Si-face slab for live visualization and diagnostics.",
-            "The C-terminated back surface is hydrogen-saturated and the exposed Si face is unreconstructed.",
+            f"Deterministic centered 2x2 six-bilayer {profile.orientation} slab for live visualization and diagnostics.",
+            f"The {bottom_name}-terminated back surface is hydrogen-saturated and the exposed {top_name} face is unreconstructed.",
             "Relax and review the polar surface before quantitative surface-energy or electronic conclusions.",
             "Electron-affinity and band-gap values are metadata-only device screening references, not calculated results.",
         ],
@@ -6396,7 +6678,7 @@ def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpe
             "software": "Materials Studio",
             "model_type": "crystal",
             "model": CrystalSpec(
-                name=SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+                name=profile.slab_template_id,
                 lattice=LatticeSpec(
                     a=assembly.lattice_a,
                     b=assembly.lattice_b,
@@ -6421,7 +6703,7 @@ def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpe
                 "max_warnings": 14,
                 "require_convergence": False,
                 "notes": [
-                    "6H-SiC(0001) Si-face slab scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    f"{profile.orientation} slab scaffold; explicit execute materializes CIF for GUI hot-loading.",
                     "This polar unreconstructed slab requires reviewed relaxation before production calculations.",
                 ],
             },
@@ -6430,8 +6712,24 @@ def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpe
     )
 
 
+def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpec:
+    return _sic_6h_surface_slab_spec(
+        surface_face="Si-face",
+        user_request=user_request,
+        project_id=project_id,
+    )
+
+
+def _sic_6h_c_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpec:
+    return _sic_6h_surface_slab_spec(
+        surface_face="C-face",
+        user_request=user_request,
+        project_id=project_id,
+    )
+
+
 def _append_sic_6h_oxide_layers(
-    assembly: Sic6hSiFaceAssembly,
+    assembly: Sic6hSurfaceAssembly,
     atoms: Sequence[BasisAtomSpec],
 ) -> tuple[list[BasisAtomSpec], list[float]]:
     updated_atoms = list(atoms)
@@ -6477,8 +6775,19 @@ def _append_sic_6h_oxide_layers(
     return updated_atoms, oxide_layer_positions
 
 
-def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> ModelSpec:
-    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM)
+def _sic_6h_oxide_interface_spec(
+    *,
+    user_request: str,
+    project_id: str,
+    surface_face: str = "Si-face",
+) -> ModelSpec:
+    assembly = _sic_6h_surface_assembly(
+        cell_c=SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM,
+        surface_face=surface_face,
+    )
+    profile = assembly.profile
+    top_name = "Si" if profile.top_element == "Si" else "C"
+    bottom_name = "C" if profile.bottom_element == "C" else "Si"
     atoms, _ = _append_sic_6h_oxide_layers(assembly, assembly.atoms)
     centered_atoms, center_shift, assembly_extent = _center_sic_6h_atoms(
         atoms,
@@ -6499,7 +6808,7 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
         "materials": ["6H-SiC", "SiO2"],
         "stack_sequence": ["6H-SiC", "SiO2"],
         "interface": "SiO2/6H-SiC",
-        "interface_orientation": "SiO2 / 6H-SiC(0001) Si-face",
+        "interface_orientation": f"SiO2 / {profile.orientation}",
         "interface_axis": "c",
         "substrate": "6H-SiC",
         "semiconductor_channel_material": "6H-SiC",
@@ -6514,7 +6823,9 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
         "requires_geometry_relaxation": True,
         "surface_context": False,
         "semiconductor_back_surface_passivation": back_surface_passivation,
-        "surface_asymmetry_expected_reason": "SiO2_contacted_Si_face_and_hydrogen_passivated_C_back_face",
+        "surface_asymmetry_expected_reason": (
+            f"SiO2_contacted_{top_name}_face_and_hydrogen_passivated_{bottom_name}_back_face"
+        ),
         "interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
         "semiconductor_oxide_interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
         "oxide_thickness_angstrom": SIC_6H_MOS_OXIDE_THICKNESS_ANGSTROM,
@@ -6523,7 +6834,9 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
         "interface_extent_angstrom": round(assembly_extent, 6),
         "vacuum_angstrom": round(assembly.cell_c - assembly_extent, 6),
         "in_plane_lattice_angstrom": round(assembly.lattice_a, 6),
-        "coherent_strain_model": "idealized_planar_sio2_on_6h_sic_0001_visual_scaffold",
+        "coherent_strain_model": (
+            f"idealized_planar_sio2_on_6h_sic_{profile.plane_slug}_visual_scaffold"
+        ),
         "oxide_scaffold_model": {
             "kind": "two_mixed_planar_SiO2_marker_layers",
             "oxide_silicon_atom_count": 4,
@@ -6541,13 +6854,15 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
             "O;Si": "SiO2",
             "Si;O": "SiO2",
         },
-        "nl_template": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
-        "nl_virtual_template": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
-        "nl_source": "sic_6h_semiconductor_oxide_interface_scaffold_template",
+        "nl_template": profile.oxide_interface_template_id,
+        "nl_virtual_template": profile.oxide_interface_template_id,
+        "nl_source": (
+            f"sic_6h_{profile.face.lower().replace('-', '_')}_semiconductor_oxide_interface_scaffold_template"
+        ),
         "nl_user_request": user_request,
         "scaffold_notes": [
-            "Deterministic centered SiO2/6H-SiC(0001) Si-face interface scaffold for live visualization and diagnostics.",
-            "The 2x2 six-bilayer 6H-SiC substrate retains a hydrogen-saturated C back face.",
+            f"Deterministic centered SiO2/{profile.orientation} interface scaffold for live visualization and diagnostics.",
+            f"The 2x2 six-bilayer 6H-SiC substrate retains a hydrogen-saturated {bottom_name} back face.",
             "The two planar mixed Si/O marker layers encode oxide sequence and thickness but are not an amorphous SiO2 network.",
             "Relax and reconstruct the oxide interface before quantitative band-offset, trap-state, or device conclusions.",
             "No metal gate or MOS-capacitor geometry is included.",
@@ -6561,7 +6876,7 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
             "software": "Materials Studio",
             "model_type": "crystal",
             "model": CrystalSpec(
-                name=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+                name=profile.oxide_interface_template_id,
                 lattice=LatticeSpec(
                     a=assembly.lattice_a,
                     b=assembly.lattice_b,
@@ -6586,7 +6901,7 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
                 "max_warnings": 18,
                 "require_convergence": False,
                 "notes": [
-                    "SiO2/6H-SiC(0001) Si-face interface scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    f"SiO2/{profile.orientation} interface scaffold; explicit execute materializes CIF for GUI hot-loading.",
                     "The idealized oxide interface requires reviewed reconstruction and relaxation before production calculations.",
                 ],
             },
@@ -6595,8 +6910,19 @@ def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> Model
     )
 
 
-def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSpec:
-    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_MOS_CELL_C_ANGSTROM)
+def _sic_6h_mos_capacitor_spec(
+    *,
+    user_request: str,
+    project_id: str,
+    surface_face: str = "Si-face",
+) -> ModelSpec:
+    assembly = _sic_6h_surface_assembly(
+        cell_c=SIC_6H_MOS_CELL_C_ANGSTROM,
+        surface_face=surface_face,
+    )
+    profile = assembly.profile
+    top_name = "Si" if profile.top_element == "Si" else "C"
+    bottom_name = "C" if profile.bottom_element == "C" else "Si"
     atoms, oxide_layer_positions = _append_sic_6h_oxide_layers(assembly, assembly.atoms)
 
     gate_start = (
@@ -6639,7 +6965,7 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
         "materials": ["6H-SiC", "SiO2", "Al"],
         "stack_sequence": ["6H-SiC", "SiO2", "Al"],
         "interface": "Al/SiO2/6H-SiC",
-        "interface_orientation": "Al gate / SiO2 / 6H-SiC(0001) Si-face",
+        "interface_orientation": f"Al gate / SiO2 / {profile.orientation}",
         "interface_axis": "c",
         "substrate": "6H-SiC",
         "semiconductor_channel_material": "6H-SiC",
@@ -6656,7 +6982,9 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
         "requires_geometry_relaxation": True,
         "surface_context": False,
         "semiconductor_back_surface_passivation": back_surface_passivation,
-        "surface_asymmetry_expected_reason": "Al_SiO2_contacted_Si_face_and_hydrogen_passivated_C_back_face",
+        "surface_asymmetry_expected_reason": (
+            f"Al_SiO2_contacted_{top_name}_face_and_hydrogen_passivated_{bottom_name}_back_face"
+        ),
         "interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
         "semiconductor_oxide_interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
         "oxide_gate_interface_gap_angstrom": SIC_6H_MOS_OXIDE_GATE_GAP_ANGSTROM,
@@ -6667,7 +6995,9 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
         "gate_stack_extent_angstrom": round(assembly_extent, 6),
         "vacuum_angstrom": round(assembly.cell_c - assembly_extent, 6),
         "in_plane_lattice_angstrom": round(assembly.lattice_a, 6),
-        "coherent_strain_model": "idealized_planar_sio2_and_al_on_6h_sic_0001_visual_scaffold",
+        "coherent_strain_model": (
+            f"idealized_planar_sio2_and_al_on_6h_sic_{profile.plane_slug}_visual_scaffold"
+        ),
         "oxide_scaffold_model": {
             "kind": "two_mixed_planar_SiO2_marker_layers",
             "oxide_silicon_atom_count": 4,
@@ -6686,13 +7016,15 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
             "Si;O": "SiO2",
             "Al": "Al",
         },
-        "nl_template": SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
-        "nl_virtual_template": SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
-        "nl_source": "sic_6h_mos_capacitor_gate_stack_scaffold_template",
+        "nl_template": profile.mos_capacitor_template_id,
+        "nl_virtual_template": profile.mos_capacitor_template_id,
+        "nl_source": (
+            f"sic_6h_{profile.face.lower().replace('-', '_')}_mos_capacitor_gate_stack_scaffold_template"
+        ),
         "nl_user_request": user_request,
         "scaffold_notes": [
-            "Deterministic centered Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold for live visualization and diagnostics.",
-            "The 2x2 six-bilayer 6H-SiC channel retains a hydrogen-saturated C back face.",
+            f"Deterministic centered Al/SiO2/{profile.orientation} MOS capacitor scaffold for live visualization and diagnostics.",
+            f"The 2x2 six-bilayer 6H-SiC channel retains a hydrogen-saturated {bottom_name} back face.",
             "The two planar mixed Si/O marker layers encode oxide sequence and thickness but are not an amorphous SiO2 network.",
             "Relax and reconstruct the oxide and both interfaces before quantitative band-offset, trap-state, or device conclusions.",
             "The structure is a capacitor preflight model, not a transistor or device-scale geometry.",
@@ -6706,7 +7038,7 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
             "software": "Materials Studio",
             "model_type": "crystal",
             "model": CrystalSpec(
-                name=SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
+                name=profile.mos_capacitor_template_id,
                 lattice=LatticeSpec(
                     a=assembly.lattice_a,
                     b=assembly.lattice_b,
@@ -6731,7 +7063,7 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
                 "max_warnings": 22,
                 "require_convergence": False,
                 "notes": [
-                    "Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    f"Al/SiO2/{profile.orientation} MOS capacitor scaffold; explicit execute materializes CIF for GUI hot-loading.",
                     "The idealized oxide and interfaces require reviewed reconstruction and relaxation before production calculations.",
                 ],
             },
@@ -8158,7 +8490,7 @@ def _infer_template(text: str, *, user_request: str, project_id: str | None) -> 
     if sic_6h_contact_plan is not None:
         return sic_6h_contact_plan
 
-    sic_6h_surface_plan = _infer_sic_6h_si_face_slab_template(
+    sic_6h_surface_plan = _infer_sic_6h_surface_slab_template(
         text,
         user_request=user_request,
         project_id=project_id,

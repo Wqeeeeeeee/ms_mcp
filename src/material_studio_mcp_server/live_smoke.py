@@ -29,6 +29,16 @@ SCENARIO_REQUESTS = {
             "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
         ),
     },
+    "sic_6h_c_face_mos": {
+        "preview": (
+            "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor and export gate-stack, "
+            "interface, and view diagnostics."
+        ),
+        "hotload": (
+            "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor and hot-load it in Materials Studio, "
+            "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
+        ),
+    },
     "sic_6h_oxide_interface": {
         "preview": (
             "Build a SiO2/6H-SiC(0001) Si-face interface and export semiconductor-oxide interface "
@@ -36,6 +46,16 @@ SCENARIO_REQUESTS = {
         ),
         "hotload": (
             "Build a SiO2/6H-SiC(0001) Si-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_6h_c_face_oxide_interface": {
+        "preview": (
+            "Build a SiO2/6H-SiC(000-1) C-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/6H-SiC(000-1) C-face interface and hot-load it in Materials Studio, "
             "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
         ),
     },
@@ -154,6 +174,13 @@ SCENARIO_REQUESTS = {
             "export surface and all-view diagnostics and check whether the model is normal."
         ),
     },
+    "sic_6h_c_face_slab": {
+        "preview": "Build a 6H-SiC(000-1) C-face slab and export surface and all-view diagnostics.",
+        "hotload": (
+            "Build a 6H-SiC(000-1) C-face slab and hot-load it in Materials Studio, "
+            "export surface and all-view diagnostics and check whether the model is normal."
+        ),
+    },
     "sic_6h_contact": {
         "preview": "Build an Au/6H-SiC(0001) Si-face Schottky contact and export contact and view diagnostics.",
         "hotload": (
@@ -184,9 +211,12 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
     "beta_ga2o3_contact": "metal_beta_gallium_oxide_010_schottky_contact",
     "sic_4h_contact": "metal_silicon_carbide_4h_0001_schottky_contact",
     "sic_6h_slab": "silicon_carbide_6h_0001_si_face_slab",
+    "sic_6h_c_face_slab": "silicon_carbide_6h_000m1_c_face_slab",
     "sic_6h_contact": "metal_silicon_carbide_6h_0001_schottky_contact",
     "sic_6h_oxide_interface": "silicon_dioxide_silicon_carbide_6h_0001_interface",
+    "sic_6h_c_face_oxide_interface": "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface",
     "sic_6h_mos": "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
+    "sic_6h_c_face_mos": "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor",
 }
 
 
@@ -592,6 +622,18 @@ SCENARIO_EXPECTATIONS = {
     },
 }
 
+for _c_face_scenario, _si_face_scenario in (
+    ("sic_6h_c_face_slab", "sic_6h_slab"),
+    ("sic_6h_c_face_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_6h_c_face_mos", "sic_6h_mos"),
+):
+    _source_expectation = SCENARIO_EXPECTATIONS[_si_face_scenario]
+    SCENARIO_EXPECTATIONS[_c_face_scenario] = {
+        "row_counts": dict(_source_expectation["row_counts"]),
+        "files": list(_source_expectation["files"]),
+    }
+del _c_face_scenario, _si_face_scenario, _source_expectation
+
 
 FOLLOW_UP_REQUESTS = {
     "silicon": {
@@ -687,7 +729,20 @@ FOLLOW_UP_REQUESTS = {
             "and view diagnostics."
         ),
     },
+    "sic_6h_c_face_mos": {
+        "interface_gaps_2p0_2p5": (
+            "Set the semiconductor-oxide interface gap to 2.0 angstrom and the oxide-gate interface gap "
+            "to 2.5 angstrom, then hot-load it in Materials Studio and export gate-stack, interface, "
+            "and view diagnostics."
+        ),
+    },
     "sic_6h_oxide_interface": {
+        "o_vacancy": (
+            "Create an O vacancy and hot-load it in Materials Studio, export defect, "
+            "semiconductor-oxide interface, and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_6h_c_face_oxide_interface": {
         "o_vacancy": (
             "Create an O vacancy and hot-load it in Materials Studio, export defect, "
             "semiconductor-oxide interface, and view diagnostics, and check whether the model is normal."
@@ -946,6 +1001,19 @@ FOLLOW_UP_EXPECTATIONS = {
         },
     },
 }
+
+for _c_face_scenario, _si_face_scenario in (
+    ("sic_6h_c_face_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_6h_c_face_mos", "sic_6h_mos"),
+):
+    FOLLOW_UP_EXPECTATIONS[_c_face_scenario] = {
+        preset: {
+            "row_counts": dict(expectation["row_counts"]),
+            "files": list(expectation["files"]),
+        }
+        for preset, expectation in FOLLOW_UP_EXPECTATIONS[_si_face_scenario].items()
+    }
+del _c_face_scenario, _si_face_scenario
 
 
 def default_request_for_scenario(scenario: str, *, hotload: bool = False) -> str:

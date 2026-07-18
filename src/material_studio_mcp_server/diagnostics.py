@@ -7770,6 +7770,12 @@ def _parse_surface_plane_indices(surface_orientation: str) -> tuple[tuple[int, .
         return known[compact], None
     if re.fullmatch(r"\d{3,4}", compact):
         return tuple(int(value) for value in compact), None
+    compact_signed_values = tuple(int(value) for value in re.findall(r"-?\d", compact))
+    if (
+        len(compact_signed_values) in {3, 4}
+        and "".join(str(value) for value in compact_signed_values) == compact
+    ):
+        return compact_signed_values, None
     if "," in content or re.search(r"\s", content.strip()):
         values = tuple(int(value) for value in re.findall(r"-?\d+", content))
         if len(values) in {3, 4}:

@@ -245,6 +245,11 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["domain_focus"]["semiconductor_template_count"] >= 50
     assert "silicon_diamond" in compact["domain_focus"]["semiconductor_template_ids"]
     assert compact["domain_focus"]["semiconductor_virtual_template_count"] >= 1
+    assert {
+        "silicon_carbide_6h_000m1_c_face_slab",
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface",
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor",
+    } <= set(compact["domain_focus"]["semiconductor_virtual_template_ids"])
     assert "front" in compact["diagnostics"]["supported_view_names"]
     assert "electronic_structure_preflight" in compact["diagnostics"]["diagnostic_focus_ids"]
     assert "castep_electronic_results" in compact["diagnostics"][

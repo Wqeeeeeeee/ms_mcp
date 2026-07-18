@@ -604,16 +604,21 @@ or
 `ms-mcp-live-smoke --scenario sic_6h_oxide_interface --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_oxide_interface`,
 or
 `ms-mcp-live-smoke --scenario sic_6h_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_mos`.
+The equivalent explicit C-face checks are
+`ms-mcp-live-smoke --scenario sic_6h_c_face_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_slab`,
+`ms-mcp-live-smoke --scenario sic_6h_c_face_oxide_interface --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_oxide_interface`, and
+`ms-mcp-live-smoke --scenario sic_6h_c_face_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_mos`.
 To verify the deterministic O-vacancy continuation without touching a real GUI,
 add `--follow-up-preset o_vacancy` while keeping `--execution-mode preview` and
 the two `--no-*` GUI flags.
 To verify both MOS boundary-spacing edits in one preview-only continuation, run
-the `sic_6h_mos` scenario with `--follow-up-preset interface_gaps_2p0_2p5`,
+the `sic_6h_mos` or `sic_6h_c_face_mos` scenario with
+`--follow-up-preset interface_gaps_2p0_2p5`,
 `--execution-mode preview`, and the same two `--no-*` GUI flags.
-The base 6H-SiC oxide-interface scenario requires
+The Si-face and C-face 6H-SiC oxide-interface scenarios each require
 `semiconductor_oxide_interface_geometry.csv` with at least 38 rows (one
 summary, one interface-spacing row, 24 boundary candidates, and 12 oxide-atom
-coverage rows). The MOS scenario requires at least 39 rows because it reports
+coverage rows). Each MOS scenario requires at least 39 rows because it reports
 both semiconductor/oxide and oxide/gate spacing rows. Both require
 `semiconductor_oxide_interface_health.csv` with at least three rows (one
 summary plus the deterministic oxide layers). The O-vacancy follow-up requires

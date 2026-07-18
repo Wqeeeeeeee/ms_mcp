@@ -321,6 +321,88 @@ def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None
     assert "semiconductor_oxide_interface_health_csv" in follow_up["files"]
 
 
+def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
+    slab = live_smoke.default_request_for_scenario("sic_6h_c_face_slab")
+    oxide = live_smoke.default_request_for_scenario("sic_6h_c_face_oxide_interface")
+    mos = live_smoke.default_request_for_scenario("sic_6h_c_face_mos", hotload=True)
+    gaps = live_smoke.default_follow_up_request_for_scenario(
+        "sic_6h_c_face_mos",
+        "interface_gaps_2p0_2p5",
+    )
+
+    assert "6H-SiC(000-1) C-face slab" in slab
+    assert "SiO2/6H-SiC(000-1) C-face interface" in oxide
+    assert "Al/SiO2/6H-SiC(000-1) C-face MOS capacitor" in mos
+    assert "hot-load" in mos
+    assert "semiconductor-oxide interface gap to 2.0 angstrom" in gaps
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_slab"] == (
+        "silicon_carbide_6h_000m1_c_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_mos"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_slab"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_oxide_interface"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_oxide_interface"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_mos"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_mos"]
+    )
+
+
+def test_live_smoke_previews_sic_6h_c_face_mos_gap_follow_up(tmp_path: Path) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="sic_6h_c_face_mos",
+        follow_up_preset="interface_gaps_2p0_2p5",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is True
+    assert result["base_live"]["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+    )
+    assert result["followup_live"]["workflow"] == "patch"
+    assert result["followup_live"]["base_revision"] == 0
+    assert result["followup_live"]["new_revision"] == 1
+    assert result["followup_live"]["project_id"] == result["base_live"]["project_id"]
+    metadata = result["followup_live"]["view_audit"]["metadata"]
+    assert metadata["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.0
+    assert metadata["oxide_gate_interface_gap_angstrom"] == 2.5
+    assert result["summary"]["follow_up_expected_diagnostics_ok"] is True
+    assert result["bundle"]["row_counts"]["semiconductor_gate_stack"] == 3
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+
+
+def test_live_smoke_previews_sic_6h_c_face_oxide_vacancy_follow_up(tmp_path: Path) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="sic_6h_c_face_oxide_interface",
+        follow_up_preset="o_vacancy",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is True
+    assert result["followup_live"]["workflow"] == "patch"
+    assert result["followup_live"]["view_audit"]["metadata"]["surface_orientation"] == (
+        "6H-SiC(000-1) C-face"
+    )
+    assert result["summary"]["follow_up_expected_diagnostics_ok"] is True
+    assert result["bundle"]["row_counts"]["semiconductor_defects"] == 1
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_geometry"] == 33
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_health"] == 4
+
+
 def test_live_smoke_custom_request_preserves_inferred_crystallographic_views(tmp_path: Path) -> None:
     result = live_smoke.run_live_smoke(
         request="Build 4H-SiC crystal and export [0001], [100], and [010] crystallographic view parameters.",

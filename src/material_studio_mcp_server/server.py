@@ -2076,11 +2076,13 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "templates": [
                 "silicon_silicon_dioxide_100_interface",
                 "silicon_dioxide_silicon_carbide_6h_0001_interface",
+                "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface",
             ],
             "request_terms": [
                 "semiconductor oxide interface",
                 "Si/SiO2 interface",
                 "SiO2/6H-SiC interface",
+                "SiO2/6H-SiC C-face interface",
                 "oxide interface diagnostics",
             ],
             "cjk_terms": [
@@ -2090,6 +2092,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "examples": [
                 "Build a SiO2/6H-SiC(0001) Si-face interface and export interface diagnostics.",
+                "Build a SiO2/6H-SiC(000-1) C-face interface and export interface diagnostics.",
             ],
             "diagnostic_summaries": [
                 "interface_profile_summary",
@@ -2116,12 +2119,14 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
+                "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor",
             ],
             "request_terms": [
                 "high-k MOS capacitor",
                 "HfO2 gate stack",
                 "gate stack diagnostics",
                 "Al/SiO2/Si MOS capacitor",
+                "Al/SiO2/6H-SiC C-face MOS capacitor",
                 "gate dielectric diagnostics",
                 "high-k gate dielectric",
             ],
@@ -2137,6 +2142,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "examples": [
                 "Build a TiN/HfO2/Si high-k MOS capacitor and export diagnostics.",
+                "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor and export diagnostics.",
             ],
             "diagnostic_summaries": [
                 "gate_stack_summary",
@@ -2638,6 +2644,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "virtual_templates": [
                 "silicon_carbide_6h_0001_si_face_slab",
+                "silicon_carbide_6h_000m1_c_face_slab",
                 "metal_silicon_carbide_6h_0001_schottky_contact",
             ],
             "request_terms": [
@@ -2645,6 +2652,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "ZnO(0001) surface",
                 "beta-Ga2O3(010) surface",
                 "6H-SiC(0001) Si-face slab",
+                "6H-SiC(000-1) C-face slab",
                 "polar surface",
                 "add vacuum along z",
                 "center slab in vacuum",
@@ -2656,6 +2664,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Build ZnO(0001) surface with 15 angstrom vacuum.",
                 "Build beta-Ga2O3(010) surface slab and check vacuum diagnostics.",
                 "Build a 6H-SiC(0001) Si-face slab and export surface diagnostics.",
+                "Build a 6H-SiC(000-1) C-face slab and export surface diagnostics.",
                 "Center the current slab in the vacuum and hot-load it.",
             ],
             "diagnostic_summaries": [

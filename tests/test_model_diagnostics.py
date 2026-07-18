@@ -1155,6 +1155,15 @@ def test_surface_orientation_summary_validates_parent_mapping_and_current_cell_a
         assert summary["alignment_applicable"] is False
         assert summary["blocking"] is False
 
+    c_face_plan = infer_modeling_plan("Build a 6H-SiC(000-1) C-face slab.")
+    assert c_face_plan.payload is not None
+    c_face_audit = model_view_audit(ModelSpec.model_validate(c_face_plan.payload), ["front"])
+    c_face_summary = c_face_audit["health"]["semiconductor_health"]["surface_orientation_summary"]
+    assert c_face_summary["status"] == "parent_plane_mapped_to_surface_axis"
+    assert c_face_summary["surface_plane_label"] == "(000-1)"
+    assert c_face_summary["surface_plane_indices"] == [0, 0, 0, -1]
+    assert c_face_summary["blocking"] is False
+
     base = load_example("gallium_arsenide_001_slab_spec.json")
     aligned = base.model_copy(
         update={

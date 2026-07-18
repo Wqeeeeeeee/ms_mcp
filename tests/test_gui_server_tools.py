@@ -6057,6 +6057,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert sic_6h_slab["surface_orientation"] == "6H-SiC(0001) Si-face"
     assert "surface_slab_polarity" in sic_6h_slab["default_diagnostic_focuses"]
     assert "semiconductor_surface_termination_csv" in sic_6h_slab["required_csv_keys"]
+    sic_6h_c_face_slab = virtual_profiles["silicon_carbide_6h_000m1_c_face_slab"]
+    assert sic_6h_c_face_slab["base_template_id"] == "silicon_carbide_6h_hexagonal"
+    assert sic_6h_c_face_slab["variant_kind"] == "surface_scaffold"
+    assert sic_6h_c_face_slab["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert "surface_slab_polarity" in sic_6h_c_face_slab["default_diagnostic_focuses"]
     sic_6h_contact = virtual_profiles["metal_silicon_carbide_6h_0001_schottky_contact"]
     assert sic_6h_contact["base_template_id"] == "silicon_carbide_6h_hexagonal"
     assert sic_6h_contact["variant_kind"] == "interface_scaffold"
@@ -6077,6 +6082,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_gate_stack_csv" in sic_6h_mos["required_csv_keys"]
     assert "semiconductor_oxide_interface_geometry_csv" in sic_6h_mos["required_csv_keys"]
     assert "semiconductor_oxide_interface_health_csv" in sic_6h_mos["required_csv_keys"]
+    sic_6h_c_face_mos = virtual_profiles[
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+    ]
+    assert sic_6h_c_face_mos["variant_kind"] == "gate_stack_scaffold"
+    assert sic_6h_c_face_mos["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert "mos_gate_stack" in sic_6h_c_face_mos["default_diagnostic_focuses"]
     sic_6h_oxide_interface = virtual_profiles["silicon_dioxide_silicon_carbide_6h_0001_interface"]
     assert sic_6h_oxide_interface["base_template_id"] == "silicon_carbide_6h_hexagonal"
     assert sic_6h_oxide_interface["variant_kind"] == "interface_scaffold"
@@ -6089,6 +6100,12 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "semiconductor_interface_quality_csv" in sic_6h_oxide_interface["required_csv_keys"]
     assert "semiconductor_oxide_interface_geometry_csv" in sic_6h_oxide_interface["required_csv_keys"]
     assert "semiconductor_oxide_interface_health_csv" in sic_6h_oxide_interface["required_csv_keys"]
+    sic_6h_c_face_oxide = virtual_profiles[
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
+    ]
+    assert sic_6h_c_face_oxide["variant_kind"] == "interface_scaffold"
+    assert sic_6h_c_face_oxide["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert "semiconductor_oxide_interface" in sic_6h_c_face_oxide["default_diagnostic_focuses"]
     inp_contact = virtual_profiles["metal_indium_phosphide_001_schottky_contact"]
     assert inp_contact["base_template_id"] == "indium_phosphide_zincblende"
     assert inp_contact["variant_kind"] == "interface_scaffold"
@@ -6620,6 +6637,10 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor" in mos_gate_stack["templates"]
+    assert (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+        in mos_gate_stack["templates"]
+    )
     assert "silicon_silicon_dioxide_100_interface" not in mos_gate_stack["templates"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
     assert "high-k gate dielectric" in mos_gate_stack["request_terms"]
@@ -6630,6 +6651,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert oxide_interface["templates"] == [
         "silicon_silicon_dioxide_100_interface",
         "silicon_dioxide_silicon_carbide_6h_0001_interface",
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface",
     ]
     assert "SiO2/6H-SiC interface" in oxide_interface["request_terms"]
     assert "\u7845\u6c27\u754c\u9762" in oxide_interface["cjk_terms"]
@@ -6688,6 +6710,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "hexagonal_boron_nitride_2d_hbn_monolayer" in surface["templates"]
     assert "beta_gallium_oxide_010_slab" in surface["templates"]
     assert "silicon_carbide_6h_0001_si_face_slab" in surface["virtual_templates"]
+    assert "silicon_carbide_6h_000m1_c_face_slab" in surface["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in surface["virtual_templates"]
     assert "surface_termination_summary" in surface["diagnostic_summaries"]
     assert "surface_model_summary" in surface["diagnostic_summaries"]
@@ -27593,6 +27616,21 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
     assert slab.payload["metadata"]["surface_orientation"] == "6H-SiC(0001) Si-face"
     assert slab.payload["metadata"]["bottom_termination"] == "carbon_terminated_hydrogen_passivated"
 
+    c_face_slab = infer_modeling_plan("Build a 6H-SiC(000-1) C-face slab and export all view parameters.")
+    concise_c_face_slab = infer_modeling_plan("Build 6H-SiC(000-1) C-face.")
+    chinese_c_face_slab = infer_modeling_plan(
+        "\u6784\u5efa6H-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u8868\u9762\u5e76\u5bfc\u51fa\u5168\u89c6\u89d2\u53c2\u6570"
+    )
+    for plan in (c_face_slab, concise_c_face_slab, chinese_c_face_slab):
+        assert plan.kind == "spec"
+        assert plan.template_id == "silicon_carbide_6h_000m1_c_face_slab"
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 52
+        assert plan.payload["metadata"]["surface_orientation"] == "6H-SiC(000-1) C-face"
+        assert plan.payload["metadata"]["surface_miller_bravais_indices"] == [0, 0, 0, -1]
+        assert plan.payload["metadata"]["bottom_termination"] == "silicon_terminated_hydrogen_passivated"
+        assert plan.payload["metadata"]["top_semiconductor_termination"] == "carbon_terminated"
+
     contact = infer_modeling_plan("Build an Au/6H-SiC(0001) Si-face Schottky contact.")
     assert contact.kind == "spec"
     assert contact.template_id == "metal_silicon_carbide_6h_0001_schottky_contact"
@@ -27617,6 +27655,16 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
         assert plan.payload["metadata"]["stack_sequence"] == ["6H-SiC", "SiO2", "Al"]
         assert plan.payload["metadata"]["oxide_scaffold_model"]["amorphous_structure"] is False
 
+    c_face_mos = infer_modeling_plan("Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor.")
+    assert c_face_mos.kind == "spec"
+    assert c_face_mos.template_id == (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+    )
+    assert c_face_mos.payload is not None
+    assert len(c_face_mos.payload["model"]["basis_atoms"]) == 72
+    assert c_face_mos.payload["metadata"]["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert c_face_mos.payload["metadata"]["stack_sequence"] == ["6H-SiC", "SiO2", "Al"]
+
     oxide_interface = infer_modeling_plan("Build a SiO2/6H-SiC interface.")
     chinese_oxide_interface = infer_modeling_plan(
         "\u6784\u5efa\u4e8c\u6c27\u5316\u7845/6H-\u78b3\u5316\u7845(0001)\u7845\u9762\u754c\u9762"
@@ -27632,14 +27680,25 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
         assert "gate_material" not in plan.payload["metadata"]
         assert plan.payload["metadata"]["oxide_scaffold_model"]["amorphous_structure"] is False
 
+    c_face_oxide = infer_modeling_plan("Build a SiO2/6H-SiC(000-1) C-face interface.")
+    assert c_face_oxide.kind == "spec"
+    assert c_face_oxide.template_id == (
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
+    )
+    assert c_face_oxide.payload is not None
+    assert len(c_face_oxide.payload["model"]["basis_atoms"]) == 64
+    assert c_face_oxide.payload["metadata"]["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert c_face_oxide.payload["metadata"]["interface_orientation"] == (
+        "SiO2 / 6H-SiC(000-1) C-face"
+    )
+
     for request in (
         "Build a 6H-SiC surface.",
-        "Build a 6H-SiC(000-1) C-face slab.",
         "Build an Au/6H-SiC(000-1) C-face Schottky contact.",
-        "Build a 6H-SiC(000-1) C-face MOS capacitor.",
-        "Build a SiO2/6H-SiC(000-1) C-face interface.",
         "Build a 6H-SiC MOS device.",
         "Build a GaN/6H-SiC heterostructure.",
+        "Build a GaN/6H-SiC(000-1) C-face heterostructure.",
+        "Build a 6H-SiC(0001) Si-face and (000-1) C-face slab.",
     ):
         plan = infer_modeling_plan(request)
         assert plan.kind == "unsupported"
@@ -27662,6 +27721,112 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
 
     assert infer_modeling_plan("Build 4H-SiC crystal.").template_id == "silicon_carbide_4h_hexagonal"
     assert infer_modeling_plan("Build 3C-SiC crystal.").template_id == "silicon_carbide_3c_zincblende"
+
+
+def test_live_modeling_request_builds_and_hotloads_sic_6h_c_face_models(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    slab = server.material_studio_live_modeling_request(
+        "Build a 6H-SiC(000-1) C-face slab and export all view and surface diagnostics.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "slab"),
+    )
+
+    assert slab["ok"] is True
+    assert slab["nl_plan"]["template_id"] == "silicon_carbide_6h_000m1_c_face_slab"
+    assert slab["semiconductor_virtual_template_id"] == "silicon_carbide_6h_000m1_c_face_slab"
+    assert slab["view_audit"]["model"]["elements"] == {"C": 24, "H": 4, "Si": 24}
+    slab_health = slab["modeling_report"]["inspection"]["semiconductor_health"]
+    termination = slab_health["surface_termination_summary"]
+    assert termination["surfaces"]["bottom"]["element_counts"] == {"Si": 4}
+    assert termination["surfaces"]["bottom"]["passivant_bond_count"] == 4
+    assert termination["surfaces"]["bottom"]["dangling_bond_estimate"] == 0
+    assert termination["surfaces"]["top"]["element_counts"] == {"C": 4}
+    assert termination["surfaces"]["top"]["dangling_bond_estimate"] == 4
+    orientation = slab_health["surface_orientation_summary"]
+    assert orientation["surface_plane_indices"] == [0, 0, 0, -1]
+    assert orientation["surface_plane_label"] == "(000-1)"
+    assert orientation["status"] == "parent_plane_mapped_to_surface_axis"
+    assert slab["view_bundle_row_counts"]["view_summary"] == 7
+    assert slab["view_bundle_row_counts"]["view_projections"] == 364
+    assert not backend.opened
+
+    oxide = server.material_studio_live_modeling_request(
+        (
+            "Build a SiO2/6H-SiC(000-1) C-face interface and export "
+            "semiconductor-oxide interface and view diagnostics."
+        ),
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "oxide"),
+    )
+
+    assert oxide["ok"] is True
+    assert oxide["nl_plan"]["template_id"] == (
+        "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
+    )
+    oxide_health = oxide["modeling_report"]["inspection"]["semiconductor_health"]
+    oxide_geometry = oxide_health["oxide_interface_geometry_summary"]
+    assert oxide_geometry["status"] == "connected_pre_relaxation_scaffold"
+    assert oxide_geometry["semiconductor_boundary_atom_ids"] == [
+        "C6_00",
+        "C6_01",
+        "C6_10",
+        "C6_11",
+    ]
+    assert oxide_geometry["interface_spacings"][0]["actual_gap_angstrom"] == pytest.approx(2.2)
+    assert oxide_geometry["interface_spacings"][0]["matches_declared_gap"] is True
+    assert oxide["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 38
+    assert not backend.opened
+
+    hotload = server.material_studio_live_modeling_request(
+        (
+            "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor, set the semiconductor-oxide "
+            "interface gap to 2.0 angstrom and the oxide-gate interface gap to 2.5 angstrom, "
+            "hot-load it in the current Materials Studio window, export all view parameters, "
+            "and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path / "mos"),
+        take_snapshot=False,
+    )
+
+    assert hotload["ok"] is True
+    assert hotload["execution_mode"] == "execute"
+    assert hotload["execution_mode_source"] == "explicit_live_intent"
+    assert hotload["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
+    )
+    assert hotload["view_audit"]["metadata"]["nl_composite_operations"] == [
+        "set_gate_stack_interface_gap semiconductor_oxide 6H-SiC/SiO2 2A",
+        "set_gate_stack_interface_gap oxide_gate SiO2/Al 2.5A",
+    ]
+    metadata = hotload["view_audit"]["metadata"]
+    assert metadata["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.0
+    assert metadata["oxide_gate_interface_gap_angstrom"] == 2.5
+    gate_stack = hotload["modeling_report"]["inspection"]["semiconductor_health"]["gate_stack_summary"]
+    assert gate_stack["quality"] == "complete"
+    assert gate_stack["material_sequence"] == ["6H-SiC", "SiO2", "Al"]
+    assert hotload["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+    assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotload["structure_artifact_validation"]["status"] == "matched"
+    assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert hotload["single_window_policy_ok"] is True
+    assert hotload["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[0].suffix == ".stp"
 
 
 def test_live_modeling_request_builds_sic_6h_si_face_slab_and_contact(

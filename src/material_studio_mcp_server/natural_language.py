@@ -1516,6 +1516,7 @@ BETA_GA2O3_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_beta_gallium_oxide_010_
 SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_4h_0001_schottky_contact"
 SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_6h_0001_si_face_slab"
 SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_6h_0001_schottky_contact"
+SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = "silicon_dioxide_silicon_carbide_6h_0001_interface"
 SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"
 INP_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_indium_phosphide_001_schottky_contact"
 INAS_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_indium_arsenide_001_schottky_contact"
@@ -1555,6 +1556,7 @@ SIC_6H_ELECTRON_AFFINITY_EV = 3.85
 SIC_6H_BAND_GAP_EV = 3.0
 SIC_6H_SURFACE_CELL_C_ANGSTROM = 36.0
 SIC_6H_CONTACT_CELL_C_ANGSTROM = 36.0
+SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM = 44.0
 SIC_6H_MOS_CELL_C_ANGSTROM = 52.0
 SIC_6H_SI_FACE_CUT_ORIGIN = 0.8746
 SIC_6H_BACK_SURFACE_H_BOND_ANGSTROM = 1.1
@@ -2418,6 +2420,64 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
             ],
         },
         {
+            "template_id": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "base_template_id": "silicon_carbide_6h_hexagonal",
+            "variant_kind": "interface_scaffold",
+            "generated_by_tool": "material_studio_live_modeling_request",
+            "response_template_id": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "example_request": "Build a SiO2/6H-SiC(0001) Si-face interface and export interface diagnostics.",
+            "terms": [
+                "SiO2/6H-SiC interface",
+                "6H-SiC oxide interface",
+                "6H-SiC MOS interface",
+                "silicon dioxide on 6H-SiC Si-face",
+                "6H-SiC(0001) gate-oxide interface",
+                "6H-\u78b3\u5316\u7845(0001)\u7845\u9762\u4e8c\u6c27\u5316\u7845\u754c\u9762",
+            ],
+            "notes": (
+                "Programmatic centered SiO2/6H-SiC(0001) Si-face pre-relaxation interface scaffold "
+                "built from the reviewed 2x2 six-bilayer 6H-SiC surface. The two mixed Si/O marker planes "
+                "are a deterministic visualization and thickness-edit model, not amorphous or relaxed SiO2."
+            ),
+            "model_type": "crystal",
+            "model_name": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+            "structure_family": "6H-SiC semiconductor oxide interface scaffold",
+            "materials": ["6H-SiC", "SiO2"],
+            "polytype": "6H",
+            "interface": "SiO2/6H-SiC",
+            "interface_orientation": "SiO2 / 6H-SiC(0001) Si-face",
+            "surface_orientation": "6H-SiC(0001) Si-face",
+            "surface_axis": "c",
+            "simulation_module": "CASTEP",
+            "simulation_task": "Energy",
+            "execute_backend": "crystal_cif_materialize_for_gui_hotload",
+            "default_diagnostic_focuses": _unique_preserving_order(
+                [
+                    "semiconductor_structure_health",
+                    "semiconductor_oxide_interface",
+                    "epitaxial_strain_preflight",
+                    "electronic_structure_preflight",
+                    "view_quality",
+                ]
+            ),
+            "required_summary_keys": [
+                "interface_profile_summary",
+                "interface_quality_summary",
+                "calculation_preflight_summary",
+            ],
+            "required_csv_keys": [
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+            "source_references": [
+                "10.2138/am.2007.2346",
+                "10.2320/matertrans.47.2690",
+                "10.3390/ma10060583",
+            ],
+        },
+        {
             "template_id": SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
             "base_template_id": "silicon_carbide_6h_hexagonal",
             "variant_kind": "gate_stack_scaffold",
@@ -2977,10 +3037,18 @@ def _semiconductor_template_default_focuses(template_id: str, metadata: dict[str
     gate_stack_like = bool(
         metadata.get("high_k_gate_stack")
         or metadata.get("metal_gate_stack")
-        or metadata.get("semiconductor_oxide_interface")
-        or metadata.get("oxide_interface")
+        or metadata.get("gate_stack")
+        or metadata.get("gate_material")
         or "mos" in family
         or "gate stack" in family
+    )
+    oxide_interface_like = bool(
+        not gate_stack_like
+        and (
+            metadata.get("semiconductor_oxide_interface")
+            or metadata.get("oxide_interface")
+            or "oxide interface" in family
+        )
     )
     surface_like = bool(
         "slab" in family
@@ -3013,13 +3081,20 @@ def _semiconductor_template_default_focuses(template_id: str, metadata: dict[str
         focuses.append("surface_slab_polarity")
     if gate_stack_like:
         focuses.append("mos_gate_stack")
+    if oxide_interface_like:
+        focuses.append("semiconductor_oxide_interface")
     if metadata.get("metal_semiconductor_interface") or metadata.get("schottky_contact") or "schottky" in family:
         focuses.append("metal_semiconductor_contact")
     if metadata.get("substrate") is True or metadata.get("insulating_substrate") or "substrate" in family:
         if metadata.get("epitaxy_targets") or metadata.get("substrate_epitaxy_targets"):
             _append_unique(focuses, "substrate_epitaxy_preflight")
         _append_unique(focuses, "epitaxial_strain_preflight")
-    if metadata.get("interface") and "mos_gate_stack" not in focuses and "metal_semiconductor_contact" not in focuses:
+    if (
+        metadata.get("interface")
+        and not oxide_interface_like
+        and "mos_gate_stack" not in focuses
+        and "metal_semiconductor_contact" not in focuses
+    ):
         focuses.extend(["quantum_well_heterostructure", "band_alignment", "epitaxial_strain_preflight"])
     if metadata.get("band_alignment_model") or metadata.get("band_alignment_reference"):
         _append_unique(focuses, "band_alignment")
@@ -3272,7 +3347,7 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             "template_id": "gate_stack_thickness",
             "operations": ["set_gate_stack_thickness"],
             "requires_existing_project": True,
-            "pattern": "Adjust a MOS gate-stack layer thickness, e.g. 'set HfO2 thickness to 6 angstrom' or 'make TiN gate thickness 2 angstrom'.",
+            "pattern": "Adjust a MOS gate-stack or bare semiconductor-oxide layer thickness, e.g. 'set HfO2 thickness to 6 angstrom' or 'set SiO2 thickness to 10 angstrom'.",
         },
         {
             "template_id": "quantum_well_thickness",
@@ -4659,7 +4734,7 @@ def _mentions_sic_6h(text: str) -> bool:
 
 
 def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLanguagePlan | None:
-    """Reject 6H-SiC geometries outside the reviewed bulk, Si-face slab, contact, and MOS set."""
+    """Reject 6H-SiC geometries outside the reviewed bulk and Si-face scaffold set."""
 
     if not _mentions_sic_6h(text):
         return None
@@ -4715,9 +4790,9 @@ def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLan
         template_id=None,
         notes=[
             "A 6H-SiC derived-geometry request was recognized outside the reviewed local template set.",
-            "Reviewed 6H-SiC starts cover P63mc bulk, the (0001) Si-face six-bilayer slab, metal contacts, and an Al/SiO2 MOS capacitor scaffold on that Si face.",
+            "Reviewed 6H-SiC starts cover P63mc bulk, the (0001) Si-face six-bilayer slab, metal contacts, a bare SiO2 interface, and an Al/SiO2 MOS capacitor scaffold on that Si face.",
             "No 3C-SiC, 4H-SiC, or silicon substitute was selected.",
-            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, bare oxide interfaces, or device geometries before live loading.",
+            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, C-face interfaces, heterostructures, or device geometries before live loading.",
         ],
     )
 
@@ -5889,6 +5964,78 @@ def _infer_sic_6h_mos_capacitor_template(
     )
 
 
+def _looks_like_sic_6h_oxide_interface_request(text: str) -> bool:
+    if not _mentions_sic_6h(text) or _sic_6h_mos_device_requested(text):
+        return False
+    oxide_marker = bool(
+        re.search(
+            r"\b(?:sio2|silicon[-\s]+dioxide|silicon[-\s]+oxide|mos\s+interface)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(term in text for term in ("\u4e8c\u6c27\u5316\u7845", "\u7845\u6c27", "mos\u754c\u9762"))
+    )
+    interface_intent = bool(
+        re.search(r"\b(?:interface|heterointerface)\b", text, flags=re.IGNORECASE)
+        or "\u754c\u9762" in text
+    )
+    return oxide_marker and interface_intent
+
+
+def _infer_sic_6h_oxide_interface_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    if not _looks_like_sic_6h_oxide_interface_request(text):
+        return None
+    if _sic_6h_c_face_requested(text):
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "The reviewed 6H-SiC oxide-interface scaffold covers only the Si-terminated (0001) face.",
+                "A C-terminated 6H-SiC(000-1)/SiO2 interface was not substituted with the Si-face scaffold.",
+                "Provide a reviewed C-face ModelSpec before preview or live loading.",
+            ],
+        )
+
+    chosen_project_id = project_id or _project_id(SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID, user_request)
+    model_spec = _sic_6h_oxide_interface_spec(
+        user_request=user_request,
+        project_id=chosen_project_id,
+    )
+    notes = [
+        "Generated a deterministic centered SiO2/6H-SiC(0001) Si-face interface scaffold.",
+        "The mixed Si/O planes are a thickness-edit and visualization model, not amorphous or relaxed SiO2.",
+        "No metal gate or MOS-capacitor geometry was added.",
+    ]
+    confidence = 0.89
+    composite = _apply_new_crystal_composite_operations(user_request, model_spec)
+    if isinstance(composite, NaturalLanguagePlan):
+        return composite
+    if composite is not None:
+        model_spec, diff = composite
+        metadata = {
+            **dict(model_spec.metadata or {}),
+            "nl_composite_operations": diff,
+        }
+        model_spec = model_spec.model_copy(update={"revision": 0, "metadata": metadata})
+        notes.append("Applied deterministic oxide-interface patch operations during planning: " + ", ".join(diff) + ".")
+        confidence = 0.85
+
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=model_spec.model_dump(mode="json"),
+        confidence=confidence,
+        template_id=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        notes=notes,
+    )
+
+
 def _infer_sic_6h_schottky_contact_template(
     text: str,
     *,
@@ -6269,10 +6416,11 @@ def _sic_6h_si_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpe
     )
 
 
-def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSpec:
-    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_MOS_CELL_C_ANGSTROM)
-    atoms = list(assembly.atoms)
-
+def _append_sic_6h_oxide_layers(
+    assembly: Sic6hSiFaceAssembly,
+    atoms: Sequence[BasisAtomSpec],
+) -> tuple[list[BasisAtomSpec], list[float]]:
+    updated_atoms = list(atoms)
     oxide_start = (
         assembly.semiconductor_top_fractional
         + SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM / assembly.cell_c
@@ -6295,7 +6443,7 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
     oxide_o_index = 1
     for z_value, (silicon_sites, oxygen_sites) in zip(oxide_layer_positions, oxide_layer_sites):
         for x_value, y_value in silicon_sites:
-            atoms.append(
+            updated_atoms.append(
                 BasisAtomSpec(
                     id=f"OxSi{oxide_si_index}",
                     element="Si",
@@ -6304,7 +6452,7 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
             )
             oxide_si_index += 1
         for x_value, y_value in oxygen_sites:
-            atoms.append(
+            updated_atoms.append(
                 BasisAtomSpec(
                     id=f"O{oxide_o_index}",
                     element="O",
@@ -6312,6 +6460,130 @@ def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSp
                 )
             )
             oxide_o_index += 1
+    return updated_atoms, oxide_layer_positions
+
+
+def _sic_6h_oxide_interface_spec(*, user_request: str, project_id: str) -> ModelSpec:
+    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM)
+    atoms, _ = _append_sic_6h_oxide_layers(assembly, assembly.atoms)
+    centered_atoms, center_shift, assembly_extent = _center_sic_6h_atoms(
+        atoms,
+        cell_c=assembly.cell_c,
+    )
+    common_metadata = _sic_6h_common_surface_metadata(
+        assembly,
+        center_shift=center_shift,
+        assembly_extent=assembly_extent,
+    )
+    back_surface_passivation = common_metadata.pop("passivation", None)
+    for surface_only_key in ("surface_model", "slab_thickness_angstrom", "termination"):
+        common_metadata.pop(surface_only_key, None)
+    metadata = {
+        **common_metadata,
+        "structure_family": "6H-SiC semiconductor oxide interface scaffold",
+        "material": "SiO2/6H-SiC",
+        "materials": ["6H-SiC", "SiO2"],
+        "stack_sequence": ["6H-SiC", "SiO2"],
+        "interface": "SiO2/6H-SiC",
+        "interface_orientation": "SiO2 / 6H-SiC(0001) Si-face",
+        "interface_axis": "c",
+        "substrate": "6H-SiC",
+        "semiconductor_channel_material": "6H-SiC",
+        "oxide_material": "SiO2",
+        "oxide_interface": True,
+        "semiconductor_oxide_interface": True,
+        "mixed_oxide_layers_expected": True,
+        "mixed_layers_expected_reason": "Each idealized oxide marker plane deliberately contains Si and O atoms.",
+        "interface_scaffold": True,
+        "unrelaxed_interface": True,
+        "pre_relaxation_scaffold": True,
+        "requires_geometry_relaxation": True,
+        "surface_context": False,
+        "semiconductor_back_surface_passivation": back_surface_passivation,
+        "surface_asymmetry_expected_reason": "SiO2_contacted_Si_face_and_hydrogen_passivated_C_back_face",
+        "interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
+        "semiconductor_oxide_interface_gap_angstrom": SIC_6H_MOS_SEMICONDUCTOR_OXIDE_GAP_ANGSTROM,
+        "oxide_thickness_angstrom": SIC_6H_MOS_OXIDE_THICKNESS_ANGSTROM,
+        "channel_thickness_angstrom": round(assembly.semiconductor_thickness_angstrom, 6),
+        "semiconductor_channel_thickness_angstrom": round(assembly.semiconductor_thickness_angstrom, 6),
+        "interface_extent_angstrom": round(assembly_extent, 6),
+        "vacuum_angstrom": round(assembly.cell_c - assembly_extent, 6),
+        "in_plane_lattice_angstrom": round(assembly.lattice_a, 6),
+        "coherent_strain_model": "idealized_planar_sio2_on_6h_sic_0001_visual_scaffold",
+        "oxide_scaffold_model": {
+            "kind": "two_mixed_planar_SiO2_marker_layers",
+            "oxide_silicon_atom_count": 4,
+            "oxygen_atom_count": 8,
+            "purpose": "deterministic_visualization_thickness_edit_and_diagnostic_segmentation",
+            "amorphous_structure": False,
+            "geometry_relaxed": False,
+            "literature_exact_interface": False,
+        },
+        "material_marker_map": {
+            "C": "6H-SiC",
+            "Si": "6H-SiC",
+            "C;Si": "6H-SiC",
+            "Si;C": "6H-SiC",
+            "O;Si": "SiO2",
+            "Si;O": "SiO2",
+        },
+        "nl_template": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        "nl_virtual_template": SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        "nl_source": "sic_6h_semiconductor_oxide_interface_scaffold_template",
+        "nl_user_request": user_request,
+        "scaffold_notes": [
+            "Deterministic centered SiO2/6H-SiC(0001) Si-face interface scaffold for live visualization and diagnostics.",
+            "The 2x2 six-bilayer 6H-SiC substrate retains a hydrogen-saturated C back face.",
+            "The two planar mixed Si/O marker layers encode oxide sequence and thickness but are not an amorphous SiO2 network.",
+            "Relax and reconstruct the oxide interface before quantitative band-offset, trap-state, or device conclusions.",
+            "No metal gate or MOS-capacitor geometry is included.",
+        ],
+    }
+    lattice = assembly.source_model.lattice
+    return ModelSpec.model_validate(
+        {
+            "project_id": project_id,
+            "revision": 0,
+            "software": "Materials Studio",
+            "model_type": "crystal",
+            "model": CrystalSpec(
+                name=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+                lattice=LatticeSpec(
+                    a=assembly.lattice_a,
+                    b=assembly.lattice_b,
+                    c=assembly.cell_c,
+                    alpha=lattice.alpha,
+                    beta=lattice.beta,
+                    gamma=lattice.gamma,
+                ),
+                basis_atoms=centered_atoms,
+                operations=[],
+            ).model_dump(mode="json"),
+            "simulation": {
+                "module": "CASTEP",
+                "task": "Energy",
+                "functional": "PBE",
+                "quality": "Medium",
+                "cutoff_energy_ev": 600,
+                "kpoint_separation": 0.04,
+            },
+            "outputs": {},
+            "acceptance": {
+                "max_warnings": 18,
+                "require_convergence": False,
+                "notes": [
+                    "SiO2/6H-SiC(0001) Si-face interface scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    "The idealized oxide interface requires reviewed reconstruction and relaxation before production calculations.",
+                ],
+            },
+            "metadata": metadata,
+        }
+    )
+
+
+def _sic_6h_mos_capacitor_spec(*, user_request: str, project_id: str) -> ModelSpec:
+    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_MOS_CELL_C_ANGSTROM)
+    atoms, oxide_layer_positions = _append_sic_6h_oxide_layers(assembly, assembly.atoms)
 
     gate_start = (
         oxide_layer_positions[-1]
@@ -7855,6 +8127,14 @@ def _infer_template(text: str, *, user_request: str, project_id: str | None) -> 
     )
     if sic_6h_mos_plan is not None:
         return sic_6h_mos_plan
+
+    sic_6h_oxide_interface_plan = _infer_sic_6h_oxide_interface_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if sic_6h_oxide_interface_plan is not None:
+        return sic_6h_oxide_interface_plan
 
     sic_6h_contact_plan = _infer_sic_6h_schottky_contact_template(
         text,
@@ -12379,13 +12659,16 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
             )
 
         gate_stack_thickness_matches = _match_gate_stack_thicknesses(text)
-        if gate_stack_thickness_matches and _is_gate_stack_spec(current_spec):
+        if gate_stack_thickness_matches and (
+            _is_gate_stack_spec(current_spec) or _is_oxide_interface_spec(current_spec)
+        ):
             operations = [
                 {"type": "set_gate_stack_thickness", "target_layer": target_layer, "thickness_angstrom": thickness}
                 for target_layer, thickness in gate_stack_thickness_matches
             ]
+            layer_context = "gate-stack" if _is_gate_stack_spec(current_spec) else "oxide-interface"
             description = "; ".join(
-                f"set {target_layer} gate-stack layer thickness to {thickness:g} Angstrom"
+                f"set {target_layer} {layer_context} layer thickness to {thickness:g} Angstrom"
                 for target_layer, thickness in gate_stack_thickness_matches
             )
             return _patch_plan(
@@ -13637,6 +13920,18 @@ def _is_gate_stack_spec(spec: ModelSpec) -> bool:
         or metadata.get("gate_oxide_material")
         or "gate stack" in family
         or "mos capacitor" in family
+    )
+
+
+def _is_oxide_interface_spec(spec: ModelSpec) -> bool:
+    if not isinstance(spec.model, CrystalSpec):
+        return False
+    metadata = dict(spec.metadata or {})
+    family = str(metadata.get("structure_family") or "").lower()
+    return bool(
+        metadata.get("semiconductor_oxide_interface")
+        or metadata.get("oxide_interface")
+        or "oxide interface" in family
     )
 
 

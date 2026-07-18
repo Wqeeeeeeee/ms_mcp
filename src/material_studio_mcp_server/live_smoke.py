@@ -29,6 +29,16 @@ SCENARIO_REQUESTS = {
             "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
         ),
     },
+    "sic_6h_oxide_interface": {
+        "preview": (
+            "Build a SiO2/6H-SiC(0001) Si-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/6H-SiC(0001) Si-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
     "mos2": {
         "preview": "Build MoS2 monolayer and export current view parameters and check whether the model is normal.",
         "hotload": (
@@ -175,6 +185,7 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
     "sic_4h_contact": "metal_silicon_carbide_4h_0001_schottky_contact",
     "sic_6h_slab": "silicon_carbide_6h_0001_si_face_slab",
     "sic_6h_contact": "metal_silicon_carbide_6h_0001_schottky_contact",
+    "sic_6h_oxide_interface": "silicon_dioxide_silicon_carbide_6h_0001_interface",
     "sic_6h_mos": "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
 }
 
@@ -483,6 +494,23 @@ SCENARIO_EXPECTATIONS = {
             "requested_diagnostic_focus_status_json",
         ],
     },
+    "sic_6h_oxide_interface": {
+        "row_counts": {
+            "semiconductor_interface_profile": 1,
+            "semiconductor_interface_quality": 1,
+            "semiconductor_calculation_preflight": 1,
+            "requested_diagnostic_focus_status": 2,
+            "view_summary": 1,
+            "view_quality": 1,
+            "view_projections": 1,
+        },
+        "files": [
+            "semiconductor_interface_profile_csv",
+            "semiconductor_interface_quality_csv",
+            "semiconductor_calculation_preflight_csv",
+            "requested_diagnostic_focus_status_json",
+        ],
+    },
     "sic_6h_slab": {
         "row_counts": {
             "semiconductor_surface_model": 1,
@@ -642,6 +670,12 @@ FOLLOW_UP_REQUESTS = {
         "as_vacancy": (
             "Create an As vacancy and hot-load it in Materials Studio, "
             "export front top isometric view parameters, defect diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_6h_oxide_interface": {
+        "o_vacancy": (
+            "Create an O vacancy and hot-load it in Materials Studio, export defect, "
+            "semiconductor-oxide interface, and view diagnostics, and check whether the model is normal."
         ),
     },
 }
@@ -848,6 +882,26 @@ FOLLOW_UP_EXPECTATIONS = {
                 "view_projections": 1,
             },
             "files": ["semiconductor_defects_csv", "semiconductor_finite_size_csv"],
+        },
+    },
+    "sic_6h_oxide_interface": {
+        "o_vacancy": {
+            "row_counts": {
+                "semiconductor_defects": 1,
+                "semiconductor_finite_size": 1,
+                "semiconductor_interface_profile": 1,
+                "semiconductor_interface_quality": 1,
+                "requested_diagnostic_focus_status": 3,
+                "view_summary": 1,
+                "view_quality": 1,
+                "view_projections": 1,
+            },
+            "files": [
+                "semiconductor_defects_csv",
+                "semiconductor_finite_size_csv",
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+            ],
         },
     },
 }

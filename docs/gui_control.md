@@ -689,7 +689,8 @@ k-point estimates, band-path preflight, charge balance, dopant/alloy/defect
 state, interface or quantum-well state, surface passivation/polarity, risk
 flags, and the next action out of the full `semiconductor_health` object.
 Single oxide-interface or gate-stack templates such as Si/SiO2 MOS gate oxide,
-Al/SiO2/Si MOS capacitor, Al/SiO2/6H-SiC(0001) Si-face MOS capacitor,
+SiO2/6H-SiC(0001) Si-face, Al/SiO2/Si MOS capacitor,
+Al/SiO2/6H-SiC(0001) Si-face MOS capacitor,
 TiN/HfO2/Si high-k MOS capacitor, and Cu/SiO2 use the
 same interface review fields, but are treated as one-shot interface starts
 rather than periodic quantum-well stacks or passivated semiconductor slabs. MOS
@@ -701,13 +702,17 @@ oxide/gate/channel thicknesses, and per-segment layer spans. Si/SiO2,
 Al/SiO2/Si, and TiN/HfO2/Si mark mixed oxide or compound gate layers as
 expected, so those layers remain visible in `interface_profile_summary` without
 becoming a mixed-interface risk flag.
-The 6H-SiC MOS start reuses the reviewed centered `2x2` six-bilayer Si-face
-channel and its hydrogen-passivated C back face. Its two mixed Si/O planes are
+The bare 6H-SiC oxide-interface and MOS starts reuse the reviewed centered
+`2x2` six-bilayer Si-face substrate and its hydrogen-passivated C back face.
+Their two mixed Si/O planes are
 only deterministic thickness and visualization markers; they do not establish
 an amorphous oxide network, relaxed interface, band offsets, trap states, or
-device readiness.
-Follow-up MOS/gate-stack thickness edits such as `set HfO2 thickness to 6
-angstrom` or `make TiN gate thickness 2 angstrom` use a structured
+device readiness. The bare interface has no metal gate, uses
+`semiconductor_oxide_interface` diagnostics, and can accept an O-vacancy patch
+before explicit same-window hot-loading.
+Follow-up MOS/gate-stack or bare oxide-interface thickness edits such as
+`set HfO2 thickness to 6 angstrom`, `set SiO2 thickness to 10 angstrom`, or
+`make TiN gate thickness 2 angstrom` use a structured
 `set_gate_stack_thickness` patch. The patch adjusts the target segment along
 the interface axis, shifts upper stack segments, records
 `gate_stack_thickness_edits`, and leaves GUI tools to reload or snapshot the

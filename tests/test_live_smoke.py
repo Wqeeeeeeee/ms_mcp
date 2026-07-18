@@ -275,6 +275,29 @@ def test_default_sic_6h_mos_scenario_requires_gate_stack_interface_and_view_diag
     assert "semiconductor_interface_quality_csv" in expectation["files"]
 
 
+def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None:
+    preview = live_smoke.default_request_for_scenario("sic_6h_oxide_interface")
+    hotload = live_smoke.default_request_for_scenario("sic_6h_oxide_interface", hotload=True)
+    vacancy = live_smoke.default_follow_up_request_for_scenario("sic_6h_oxide_interface", "o_vacancy")
+    expectation = live_smoke.SCENARIO_EXPECTATIONS["sic_6h_oxide_interface"]
+    follow_up = live_smoke.FOLLOW_UP_EXPECTATIONS["sic_6h_oxide_interface"]["o_vacancy"]
+
+    assert "SiO2/6H-SiC(0001) Si-face interface" in preview
+    assert "semiconductor-oxide interface" in preview
+    assert "hot-load it in Materials Studio" in hotload
+    assert "O vacancy" in vacancy
+    assert "semiconductor-oxide interface" in vacancy
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_6h_0001_interface"
+    )
+    assert expectation["row_counts"]["semiconductor_interface_quality"] == 1
+    assert expectation["row_counts"]["semiconductor_calculation_preflight"] == 1
+    assert "semiconductor_interface_quality_csv" in expectation["files"]
+    assert follow_up["row_counts"]["semiconductor_defects"] == 1
+    assert follow_up["row_counts"]["requested_diagnostic_focus_status"] == 3
+    assert "semiconductor_defects_csv" in follow_up["files"]
+
+
 def test_live_smoke_custom_request_preserves_inferred_crystallographic_views(tmp_path: Path) -> None:
     result = live_smoke.run_live_smoke(
         request="Build 4H-SiC crystal and export [0001], [100], and [010] crystallographic view parameters.",

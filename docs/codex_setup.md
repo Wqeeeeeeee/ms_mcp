@@ -596,12 +596,17 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
-For preview-only 6H-SiC surface, contact, and MOS gate-stack acceptance, run
+For preview-only 6H-SiC surface, contact, oxide-interface, and MOS gate-stack acceptance, run
 `ms-mcp-live-smoke --scenario sic_6h_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_slab`
 or
 `ms-mcp-live-smoke --scenario sic_6h_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_contact`,
 or
+`ms-mcp-live-smoke --scenario sic_6h_oxide_interface --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_oxide_interface`,
+or
 `ms-mcp-live-smoke --scenario sic_6h_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_mos`.
+To verify the deterministic O-vacancy continuation without touching a real GUI,
+add `--follow-up-preset o_vacancy` while keeping `--execution-mode preview` and
+the two `--no-*` GUI flags.
 
 For a preview-safe Chinese halide-perovskite acceptance run with seven exported
 views, alloy diagnostics, and the normality gate, use

@@ -6073,6 +6073,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "mos_gate_stack" in sic_6h_mos["default_diagnostic_focuses"]
     assert "surface_slab_polarity" not in sic_6h_mos["default_diagnostic_focuses"]
     assert "semiconductor_gate_stack_csv" in sic_6h_mos["required_csv_keys"]
+    sic_6h_oxide_interface = virtual_profiles["silicon_dioxide_silicon_carbide_6h_0001_interface"]
+    assert sic_6h_oxide_interface["base_template_id"] == "silicon_carbide_6h_hexagonal"
+    assert sic_6h_oxide_interface["variant_kind"] == "interface_scaffold"
+    assert sic_6h_oxide_interface["materials"] == ["6H-SiC", "SiO2"]
+    assert sic_6h_oxide_interface["interface"] == "SiO2/6H-SiC"
+    assert "semiconductor_oxide_interface" in sic_6h_oxide_interface["default_diagnostic_focuses"]
+    assert "mos_gate_stack" not in sic_6h_oxide_interface["default_diagnostic_focuses"]
+    assert "semiconductor_interface_quality_csv" in sic_6h_oxide_interface["required_csv_keys"]
     inp_contact = virtual_profiles["metal_indium_phosphide_001_schottky_contact"]
     assert inp_contact["base_template_id"] == "indium_phosphide_zincblende"
     assert inp_contact["variant_kind"] == "interface_scaffold"
@@ -6604,13 +6612,20 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor" in mos_gate_stack["templates"]
+    assert "silicon_silicon_dioxide_100_interface" not in mos_gate_stack["templates"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
     assert "high-k gate dielectric" in mos_gate_stack["request_terms"]
-    assert "silicon oxide interface" in mos_gate_stack["request_terms"]
     assert "\u6805\u5806\u8bca\u65ad" in mos_gate_stack["cjk_terms"]
     assert "\u9ad8\u4ecb\u7535" in mos_gate_stack["cjk_terms"]
     assert "\u6c27\u5316\u94ea" in mos_gate_stack["cjk_terms"]
-    assert "\u7845\u6c27\u754c\u9762" in mos_gate_stack["cjk_terms"]
+    oxide_interface = use_cases["semiconductor_oxide_interface"]
+    assert oxide_interface["templates"] == [
+        "silicon_silicon_dioxide_100_interface",
+        "silicon_dioxide_silicon_carbide_6h_0001_interface",
+    ]
+    assert "SiO2/6H-SiC interface" in oxide_interface["request_terms"]
+    assert "\u7845\u6c27\u754c\u9762" in oxide_interface["cjk_terms"]
+    assert "semiconductor_interface_quality_csv" in oxide_interface["diagnostic_csvs"]
     dopant_preflight = use_cases["dopant_site_preflight"]
     assert "dope silicon with P" in dopant_preflight["request_terms"]
     assert "n-type GaAs" in dopant_preflight["request_terms"]
@@ -15222,6 +15237,12 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     assert result["view_audit"]["model"]["name"] == "silicon_silicon_dioxide_100_interface"
     assert result["view_audit"]["model"]["atom_count"] == 20
     assert result["view_audit"]["model"]["elements"] == {"O": 8, "Si": 12}
+    assert result["requested_diagnostic_focuses"] == ["semiconductor_oxide_interface"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    focus_status = result["requested_diagnostic_focus_status"]
+    assert focus_status["missing_summary_keys"] == []
+    assert focus_status["missing_csv_keys"] == []
+    assert "semiconductor_gate_stack_csv" not in focus_status["focuses"][0]["csv_keys"]
 
     current = server.material_studio_model_get_current(result["project_id"], working_dir=str(tmp_path))
     assert current["spec"]["metadata"]["domain"] == "semiconductor"
@@ -15264,6 +15285,24 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     assert "semiconductor_surface_termination" not in row_counts
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+
+    diagnostic_request = server.material_studio_live_modeling_request(
+        "Build a Si/SiO2 MOS interface and export interface diagnostics.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "diagnostic_focus"),
+    )
+    assert diagnostic_request["requested_diagnostic_focuses"] == [
+        "semiconductor_oxide_interface",
+        "view_quality",
+    ]
+    assert diagnostic_request["requested_diagnostic_focus_ok"] is True
+    assert diagnostic_request["requested_diagnostic_focus_status"]["missing_summary_keys"] == []
+    assert diagnostic_request["requested_diagnostic_focus_status"]["missing_csv_keys"] == []
+    assert "semiconductor_gate_stack_csv" not in diagnostic_request["requested_diagnostic_focus_status"]["focuses"][0][
+        "csv_keys"
+    ]
 
     alias = server.material_studio_live_modeling_request(
         "Build a silicon gate oxide interface.",
@@ -27386,13 +27425,29 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
         assert plan.payload["metadata"]["stack_sequence"] == ["6H-SiC", "SiO2", "Al"]
         assert plan.payload["metadata"]["oxide_scaffold_model"]["amorphous_structure"] is False
 
+    oxide_interface = infer_modeling_plan("Build a SiO2/6H-SiC interface.")
+    chinese_oxide_interface = infer_modeling_plan(
+        "\u6784\u5efa\u4e8c\u6c27\u5316\u7845/6H-\u78b3\u5316\u7845(0001)\u7845\u9762\u754c\u9762"
+    )
+    mos_interface = infer_modeling_plan("Build a 6H-SiC MOS interface.")
+    for plan in (oxide_interface, chinese_oxide_interface, mos_interface):
+        assert plan.kind == "spec"
+        assert plan.template_id == "silicon_dioxide_silicon_carbide_6h_0001_interface"
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 64
+        assert plan.payload["metadata"]["stack_sequence"] == ["6H-SiC", "SiO2"]
+        assert "metal_gate_stack" not in plan.payload["metadata"]
+        assert "gate_material" not in plan.payload["metadata"]
+        assert plan.payload["metadata"]["oxide_scaffold_model"]["amorphous_structure"] is False
+
     for request in (
         "Build a 6H-SiC surface.",
         "Build a 6H-SiC(000-1) C-face slab.",
         "Build an Au/6H-SiC(000-1) C-face Schottky contact.",
         "Build a 6H-SiC(000-1) C-face MOS capacitor.",
+        "Build a SiO2/6H-SiC(000-1) C-face interface.",
         "Build a 6H-SiC MOS device.",
-        "Build a SiO2/6H-SiC interface.",
+        "Build a GaN/6H-SiC heterostructure.",
     ):
         plan = infer_modeling_plan(request)
         assert plan.kind == "unsupported"
@@ -27615,6 +27670,122 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_mos_capacitor(
     assert len(backend.list_processes()) == 1
     assert len(backend.opened) == 1
     assert backend.opened[-1].suffix == ".stp"
+
+
+def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+    working_dir = tmp_path / "sic_6h_oxide_interface"
+
+    preview = server.material_studio_live_modeling_request(
+        (
+            "Build a SiO2/6H-SiC(0001) Si-face interface and export "
+            "semiconductor-oxide interface and view diagnostics."
+        ),
+        project_id="sic_6h_oxide_interface",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(working_dir),
+    )
+
+    assert preview["ok"] is True
+    assert preview["execution_mode"] == "preview"
+    assert preview["nl_plan"]["template_id"] == "silicon_dioxide_silicon_carbide_6h_0001_interface"
+    assert preview["semiconductor_virtual_template_id"] == "silicon_dioxide_silicon_carbide_6h_0001_interface"
+    assert preview["view_audit"]["model"]["elements"] == {"C": 24, "H": 4, "O": 8, "Si": 28}
+    assert preview["requested_diagnostic_focuses"] == ["semiconductor_oxide_interface", "view_quality"]
+    assert preview["requested_diagnostic_focus_ok"] is True
+    assert not backend.opened
+
+    metadata = preview["view_audit"]["metadata"]
+    assert metadata["polytype"] == "6H"
+    assert metadata["stack_sequence"] == ["6H-SiC", "SiO2"]
+    assert metadata["interface"] == "SiO2/6H-SiC"
+    assert metadata["surface_orientation"] == "6H-SiC(0001) Si-face"
+    assert metadata["semiconductor_oxide_interface"] is True
+    assert metadata["oxide_scaffold_model"]["amorphous_structure"] is False
+    assert "metal_gate_stack" not in metadata
+    assert "gate_material" not in metadata
+
+    semiconductor = preview["modeling_report"]["inspection"]["semiconductor_health"]
+    assert semiconductor["interface_quality_summary"]["quality"] == "complete"
+    assert semiconductor["interface_quality_summary"]["material_sequence"] == ["6H-SiC", "SiO2"]
+    assert semiconductor["gate_stack_summary"] is None
+    assert semiconductor["surface_model_summary"] is None
+    assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
+    assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+
+    thickness = server.material_studio_live_modeling_request(
+        "Set SiO2 thickness to 10 angstrom and export semiconductor-oxide interface diagnostics.",
+        project_id=preview["project_id"],
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(working_dir),
+    )
+
+    assert thickness["ok"] is True
+    assert thickness["workflow"] == "patch"
+    assert thickness["base_revision"] == 0
+    assert thickness["new_revision"] == 1
+    assert thickness["nl_plan"]["template_id"] == "gate_stack_thickness"
+    thickness_metadata = thickness["view_audit"]["metadata"]
+    assert thickness_metadata["oxide_thickness_angstrom"] == 10.0
+    assert "gate_oxide_thickness_angstrom" not in thickness_metadata
+    assert thickness["modeling_report"]["inspection"]["semiconductor_health"]["interface_quality_summary"][
+        "material_sequence"
+    ] == ["6H-SiC", "SiO2"]
+    assert thickness["requested_diagnostic_focus_ok"] is True
+    assert not backend.opened
+
+    vacancy = server.material_studio_live_modeling_request(
+        (
+            "Create an O vacancy and hot-load it in the current Materials Studio window, export defect, "
+            "semiconductor-oxide interface, and view diagnostics."
+        ),
+        project_id=preview["project_id"],
+        working_dir=str(working_dir),
+        take_snapshot=False,
+    )
+
+    assert vacancy["ok"] is True
+    assert vacancy["workflow"] == "patch"
+    assert vacancy["execution_mode"] == "execute"
+    assert vacancy["base_revision"] == 1
+    assert vacancy["new_revision"] == 2
+    assert vacancy["nl_plan"]["template_id"] == "crystal_auto_vacancy"
+    assert vacancy["view_audit"]["model"]["elements"] == {"C": 24, "H": 4, "O": 7, "Si": 28}
+    assert vacancy["view_audit"]["metadata"]["defects"][-1]["site_id"] == "O1"
+    assert vacancy["requested_diagnostic_focuses"] == [
+        "semiconductor_oxide_interface",
+        "defects",
+        "view_quality",
+    ]
+    assert vacancy["requested_diagnostic_focus_ok"] is True
+    vacancy_semiconductor = vacancy["modeling_report"]["inspection"]["semiconductor_health"]
+    assert vacancy_semiconductor["defect_summary"]["vacancy_count"] == 1
+    assert vacancy_semiconductor["defect_summary"]["defects"][0]["site_element"] == "O"
+    assert vacancy_semiconductor["interface_quality_summary"]["material_sequence"] == ["6H-SiC", "SiO2"]
+    assert vacancy["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert vacancy["structure_artifact_validation"]["status"] == "matched"
+    assert vacancy["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert vacancy["single_window_policy_ok"] is True
+    assert vacancy["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[-1].suffix == ".stp"
+
+    current = server.material_studio_model_get_current(preview["project_id"], working_dir=str(working_dir))
+    assert current["revision"] == 2
+    assert current["spec"]["metadata"]["defects"][-1]["site_id"] == "O1"
 
 
 def test_live_modeling_request_hotloads_semiconductor_crystal_as_cif(monkeypatch, tmp_path: Path) -> None:

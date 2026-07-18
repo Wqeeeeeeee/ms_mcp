@@ -189,8 +189,8 @@ InP zinc blende, InAs zinc blende, InSb zinc blende, 3C-SiC zinc blende,
 ZnO wurtzite, AlN wurtzite, InN wurtzite, CdTe zinc blende, ZnS zinc blende, ZnSe zinc blende, ZnTe zinc blende, CdS zinc blende, CdSe zinc
 blende, 2D MoS2 monolayer, GaN wurtzite, a deterministic Si p-n junction start,
 and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
-Si/SiO2(100) semiconductor-oxide, Al/SiO2/Si MOS capacitor gate-stack,
-Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold,
+Si/SiO2(100) and SiO2/6H-SiC(0001) Si-face semiconductor-oxide interfaces,
+Al/SiO2/Si MOS capacitor gate-stack, Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
 Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/4H-SiC(0001), and
 metal/6H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
@@ -206,6 +206,8 @@ InN(0001), ZnO(0001), and a hydrogen-backed 6H-SiC(0001) Si-face slab. Requests 
 "build ZnS zinc blende", "build ZnSe zinc blende", "build ZnTe zinc blende", "build CdS zinc blende", "build CdSe zinc blende", "build MoS2 monolayer",
 "build Si/Ge heterostructure", "build Si/Ge MQW",
 "build a Si/SiO2 MOS interface",
+"build a SiO2/6H-SiC(0001) Si-face interface",
+"build a 6H-SiC MOS interface",
 "build an Al/SiO2/Si MOS capacitor",
 "build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor",
 "build a TiN/HfO2/Si high-k MOS capacitor",
@@ -240,13 +242,15 @@ reference lattice, and reference average Si-C bond length. Explicit execution
 materializes the reviewed bulk spec as CIF and may hot-load it into the current
 Materials Studio window.
 
-Three reviewed derived starts are also available. The
+Four reviewed derived starts are also available. The
 `silicon_carbide_6h_0001_si_face_slab` virtual template reorders the cited bulk
 cell into a centered `2x2` slab with six C-Si bilayers, a Si-terminated `(0001)`
 top face, and four H atoms saturating the C-terminated back face. The
 `metal_silicon_carbide_6h_0001_schottky_contact` virtual template adds a top-site
 metal layer plus a shifted second visualization layer so contact thickness can
-be diagnosed. The
+be diagnosed. The `silicon_dioxide_silicon_carbide_6h_0001_interface` virtual
+template adds two mixed Si/O marker planes without a metal gate and uses the
+dedicated `semiconductor_oxide_interface` diagnostic focus. The
 `aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor` virtual template
 adds two mixed Si/O marker planes and two Al planes above the same Si face. It
 supports deterministic oxide-thickness edits, gate-stack/interface diagnostics,
@@ -260,8 +264,10 @@ scaffold. The 3.85 eV electron affinity and 3.0 eV band gap come from the TCAD
 inputs reported by
 [Li et al., DOI 10.3390/ma10060583](https://www.mdpi.com/1996-1944/10/6/583);
 they are metadata-only screening values, not CASTEP or surface-reconstruction
-results. Explicit C-face `(000-1)`, ambiguous unoriented surfaces, bare
-SiO2/6H-SiC interfaces, complete MOS device/transistor geometries, and other
+results. The bare oxide start supports deterministic oxide-thickness and O-vacancy
+follow-ups, but it is not amorphous, relaxed, literature-exact, or device-ready.
+Explicit C-face `(000-1)`, ambiguous unoriented surfaces, complete MOS
+device/transistor geometries, and other
 6H-SiC heterostructures remain unsupported and never fall back to 3C-SiC,
 4H-SiC, or silicon.
 
@@ -331,14 +337,17 @@ layer sequences and emit `gate_stack_summary` plus
 thicknesses, and per-segment layer spans. The Si/SiO2, Al/SiO2/Si, and
 TiN/HfO2/Si templates mark mixed oxide or compound gate layers as expected, so
 `mixed_interface_layers` is not raised for these idealized setup layers.
-MOS/gate-stack follow-ups can adjust layer-center thicknesses through a
-structured `set_gate_stack_thickness` patch, for example `set HfO2 thickness to
+MOS/gate-stack and bare semiconductor-oxide-interface follow-ups can adjust
+layer-center thicknesses through a structured `set_gate_stack_thickness` patch,
+for example `set HfO2 thickness to
 6 angstrom`, `make SiO2 gate oxide thickness 5 angstrom`, `make TiN gate
 thickness 2 angstrom`, `set channel thickness to 8 angstrom`, `把 HfO2 厚度改为
 6 埃`, `栅氧厚度设为 5 Å`, `金属栅厚度 2 埃`, or `沟道厚度设为 8 埃`. The patch
 rescales the target gate/oxide/channel segment along the interface axis, shifts
-upper stack segments to preserve ordering, records `gate_stack_thickness_edits`,
-and updates `gate_stack_summary` plus `semiconductor_gate_stack.csv`; GUI tools
+upper segments to preserve ordering, and records `gate_stack_thickness_edits`.
+Bare oxide interfaces retain interface profile/quality diagnostics without
+inventing gate metadata; real gate stacks also update `gate_stack_summary` plus
+`semiconductor_gate_stack.csv`. GUI tools
 should then hot-load or snapshot the resulting revision rather than editing the
 stack by blind viewport clicks.
 The Al/Si Schottky contact template is treated as a metal/semiconductor contact,

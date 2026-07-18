@@ -2070,6 +2070,43 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
         },
         {
+            "id": "semiconductor_oxide_interface",
+            "default_tool": "material_studio_live_modeling_request",
+            "execution_policy": "preview_by_default_execute_only_for_explicit_hotload_or_execution_mode_execute",
+            "templates": [
+                "silicon_silicon_dioxide_100_interface",
+                "silicon_dioxide_silicon_carbide_6h_0001_interface",
+            ],
+            "request_terms": [
+                "semiconductor oxide interface",
+                "Si/SiO2 interface",
+                "SiO2/6H-SiC interface",
+                "MOS interface",
+                "oxide interface diagnostics",
+            ],
+            "cjk_terms": [
+                "\u534a\u5bfc\u4f53\u6c27\u5316\u7269\u754c\u9762",
+                "\u4e8c\u6c27\u5316\u7845\u754c\u9762",
+                "\u7845\u6c27\u754c\u9762",
+            ],
+            "examples": [
+                "Build a Si/SiO2 MOS interface and export interface diagnostics.",
+                "Build a SiO2/6H-SiC(0001) Si-face interface and export interface diagnostics.",
+            ],
+            "diagnostic_summaries": [
+                "interface_profile_summary",
+                "interface_quality_summary",
+                "calculation_preflight_summary",
+                "view_review",
+            ],
+            "diagnostic_csvs": [
+                "semiconductor_interface_profile_csv",
+                "semiconductor_interface_quality_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+        },
+        {
             "id": "mos_gate_stack",
             "default_tool": "material_studio_live_modeling_request",
             "execution_policy": "preview_by_default_execute_only_for_explicit_hotload_or_execution_mode_execute",
@@ -2077,18 +2114,15 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
-                "silicon_silicon_dioxide_100_interface",
             ],
             "request_terms": [
                 "high-k MOS capacitor",
                 "HfO2 gate stack",
                 "gate stack diagnostics",
                 "Al/SiO2/Si MOS capacitor",
-                "Si/SiO2 gate-oxide interface",
                 "gate dielectric diagnostics",
                 "high-k gate dielectric",
                 "high dielectric constant gate stack",
-                "silicon oxide interface",
             ],
             "cjk_terms": [
                 "\u6805\u5806",
@@ -2099,7 +2133,6 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u9ad8\u4ecb\u7535",
                 "\u9ad8\u4ecb\u7535\u5e38\u6570",
                 "\u6c27\u5316\u94ea",
-                "\u7845\u6c27\u754c\u9762",
             ],
             "examples": [
                 "Build a TiN/HfO2/Si high-k MOS capacitor and export diagnostics.",
@@ -13074,10 +13107,29 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
             ),
         ),
         (
+            "semiconductor_oxide_interface",
+            (
+                "semiconductor oxide interface",
+                "oxide interface diagnostics",
+                "sio2 interface",
+                "si/sio2 interface",
+                "sio2/6h-sic interface",
+                "6h-sic oxide interface",
+                "mos interface",
+                "gate-oxide interface",
+                "gate oxide interface",
+                "silicon oxide interface",
+                "\u534a\u5bfc\u4f53\u6c27\u5316\u7269\u754c\u9762",
+                "\u6c27\u5316\u7269\u754c\u9762",
+                "\u4e8c\u6c27\u5316\u7845\u754c\u9762",
+                "\u7845\u6c27\u754c\u9762",
+                "mos\u754c\u9762",
+            ),
+        ),
+        (
             "mos_gate_stack",
             (
                 "mos capacitor",
-                "mos interface",
                 "mos gate",
                 "mos cap",
                 "moscap",
@@ -13086,15 +13138,12 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "gate stack",
                 "gate-stack diagnostics",
                 "gate stack diagnostics",
-                "gate oxide",
                 "gate dielectric",
                 "high-k",
                 "high k",
                 "high dielectric",
                 "high dielectric constant",
                 "hfo2",
-                "sio2",
-                "silicon oxide interface",
                 "\u6805\u5806",
                 "\u6805\u5806\u8bca\u65ad",
                 "\u6805\u6781\u5806\u53e0",
@@ -13106,7 +13155,6 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
                 "\u9ad8\u4ecb\u7535\u5e38\u6570",
                 "\u6c27\u5316\u94ea",
                 "\u4e8c\u6c27\u5316\u94ea",
-                "\u7845\u6c27\u754c\u9762",
             ),
         ),
         (
@@ -13667,6 +13715,19 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
         ]
     if _calculation_readiness_requested_from_text(user_request) and "electronic_structure_preflight" not in focuses:
         focuses.append("electronic_structure_preflight")
+    oxide_interface_focus = _oxide_interface_focus_requested(text)
+    explicit_gate_stack_focus = _explicit_mos_gate_stack_focus_requested(text)
+    if oxide_interface_focus and not explicit_gate_stack_focus:
+        focuses = [
+            focus
+            for focus in focuses
+            if focus not in {"mos_gate_stack", "quantum_well_heterostructure"}
+        ]
+        if "semiconductor_oxide_interface" not in focuses:
+            insert_at = 1 if focuses[:1] == ["comprehensive_model_parameters"] else 0
+            focuses.insert(insert_at, "semiconductor_oxide_interface")
+    elif explicit_gate_stack_focus:
+        focuses = [focus for focus in focuses if focus != "semiconductor_oxide_interface"]
     if (
         "mos_gate_stack" in focuses
         and "quantum_well_heterostructure" in focuses
@@ -13695,6 +13756,48 @@ def _requested_diagnostic_focuses_from_text(user_request: str | None) -> list[st
     if _diagnostic_export_requested_from_text(user_request) and "view_quality" not in focuses:
         focuses.append("view_quality")
     return _dedupe_strings(focuses)
+
+
+def _oxide_interface_focus_requested(text: str) -> bool:
+    if not text:
+        return False
+    interface_requested = bool(
+        re.search(r"\b(?:interface|heterointerface)\b", text, flags=re.IGNORECASE)
+        or "\u754c\u9762" in text
+    )
+    oxide_requested = bool(
+        re.search(
+            r"\b(?:sio2|silicon[-\s]+dioxide|silicon[-\s]+oxide|semiconductor[-\s]+oxide|mos\s+interface)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(term in text for term in ("\u6c27\u5316\u7269", "\u4e8c\u6c27\u5316\u7845", "\u7845\u6c27", "mos\u754c\u9762"))
+    )
+    return interface_requested and oxide_requested
+
+
+def _explicit_mos_gate_stack_focus_requested(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:mos\s+(?:capacitor|capacitance|cap|stack|gate|device|transistor)|moscap|mosfet|"
+            r"gate[-\s]+stack|metal[-\s]+gate|gate[-\s]+dielectric|high[-\s]*k|high\s+dielectric|hfo2)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(
+            term in text
+            for term in (
+                "\u6805\u5806",
+                "\u6805\u6781\u5806\u53e0",
+                "\u91d1\u5c5e\u6805",
+                "\u6805\u4ecb\u8d28",
+                "\u9ad8k",
+                "\u9ad8-k",
+                "\u9ad8\u4ecb\u7535",
+                "\u6c27\u5316\u94ea",
+            )
+        )
+    )
 
 
 def _commensurate_tmd_heterobilayer_focus_requested(text: str) -> bool:
@@ -14156,6 +14259,21 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
             "view_quality_csv",
         ],
     },
+    "semiconductor_oxide_interface": {
+        "summary_keys": [
+            "inspection.semiconductor_health.interface_profile_summary",
+            "inspection.semiconductor_health.interface_quality_summary",
+            "semiconductor_review.interface",
+            "semiconductor_review.calculation",
+            "view_review",
+        ],
+        "csv_keys": [
+            "semiconductor_interface_profile_csv",
+            "semiconductor_interface_quality_csv",
+            "semiconductor_calculation_preflight_csv",
+            "view_quality_csv",
+        ],
+    },
     "mos_gate_stack": {
         "summary_keys": [
             "semiconductor_review.gate_stack",
@@ -14436,6 +14554,10 @@ _REQUESTED_DIAGNOSTIC_FOCUS_EXAMPLES: dict[str, list[str]] = {
         "Build SiGe alloy x=0.25 and export composition diagnostics.",
         "Build MAPb(I0.67Br0.33)3 alloy and export composition diagnostics.",
         "Check alloy fraction and same-sublattice neighbors.",
+    ],
+    "semiconductor_oxide_interface": [
+        "Build a Si/SiO2 MOS interface and export interface diagnostics.",
+        "Build a SiO2/6H-SiC(0001) Si-face interface and export interface diagnostics.",
     ],
     "mos_gate_stack": [
         "Build a TiN/HfO2/Si MOS capacitor and export gate-stack diagnostics.",

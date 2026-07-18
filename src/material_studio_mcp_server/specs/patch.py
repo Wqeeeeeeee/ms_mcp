@@ -3094,7 +3094,14 @@ def _update_gate_stack_thickness_metadata(
     value = round(float(thickness), 6)
     if target_layer == "oxide":
         metadata["oxide_thickness_angstrom"] = value
-        metadata["gate_oxide_thickness_angstrom"] = value
+        gate_stack_metadata = bool(
+            metadata.get("metal_gate_stack")
+            or metadata.get("gate_stack")
+            or metadata.get("gate_material")
+            or "gate_oxide_thickness_angstrom" in metadata
+        )
+        if gate_stack_metadata:
+            metadata["gate_oxide_thickness_angstrom"] = value
     elif target_layer == "gate":
         metadata["gate_thickness_angstrom"] = value
         if target_material == "Al" or "aluminum_gate_thickness_angstrom" in metadata:

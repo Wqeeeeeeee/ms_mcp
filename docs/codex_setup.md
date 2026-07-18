@@ -573,6 +573,30 @@ Call `material_studio_live_session_preflight` when starting a live @mcp
 session or when runner/GUI/latest-project readiness is uncertain. It returns
 runner status, GUI status, latest current project metadata, readiness flags,
 safe smoke-test prompts, and the next recommended tool.
+
+### Detect a stale MCP server process
+
+`material_studio_get_status`, `material_studio_live_capabilities` with
+`include_status=true`, and `material_studio_live_session_preflight` expose a
+`runtime_provenance` receipt. Compare:
+
+- `runtime_instance_id` and `process_id` to distinguish concurrent Codex MCP sessions.
+- `source_snapshot_at_start.sha256` with `source_snapshot_current.sha256`.
+- `source_current` and `restart_required` before following any modeling or GUI action.
+
+When source files changed after the server started, preflight returns
+`state="mcp_server_restart_required"`, marks preview/execute/hot-load readiness
+false, and returns an external restart plan with `tool_call_ready=false`. Stop
+there. Restart the MCP server/Codex MCP session, leave the existing
+`MatStudio.exe` window open, and rerun the exact `retry_payload`. Do not kill
+other `run_server.py` processes automatically because they may belong to other
+Codex tasks.
+
+The runner receipt may show different `default_workspace_root` and
+`request_workspace_root` values. This is not an implicit workspace migration:
+workspace-aware tool payloads use the explicit preflight `working_dir`, and the
+receipt records `execution_working_dir_policy=explicit_tool_working_dir_overrides_runner_default`.
+
 For resumed projects, `next_action_plan` is retained as the immediate
 session-control compatibility plan. Use
 `coordinated_next_action_plan.recommended_sequence` for the complete order

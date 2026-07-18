@@ -72,6 +72,10 @@ from .natural_language import (
     supported_templates,
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
+from .runtime_provenance import (
+    RUNTIME_PROVENANCE_SCHEMA,
+    runtime_provenance_status,
+)
 from .parsers.castep_log import (
     validate_castep_electronic_result,
     validate_castep_geometry_result,
@@ -1184,9 +1188,12 @@ def material_studio_get_status() -> dict[str, Any]:
             - runner (str | None): resolved RunMatserver/RunMatScript path
             - workspace_root (str): base folder used for generated job folders
             - searched_candidates (list[str]): runner paths checked
+            - runtime_provenance (dict): process identity and startup/current source hashes
     """
 
-    return _ok(runner.status())
+    status = dict(runner.status())
+    status["runtime_provenance"] = runtime_provenance_status()
+    return _ok(status)
 
 
 @mcp.tool(
@@ -3868,6 +3875,23 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "live_preflight_tool": "material_studio_live_session_preflight",
         "live_entry_tool": "material_studio_live_modeling_request",
         "live_status_tool": "material_studio_live_project_status",
+        "runtime_provenance_contract": {
+            "schema": RUNTIME_PROVENANCE_SCHEMA,
+            "status_tool": "material_studio_get_status",
+            "available_on_live_capabilities_when_include_status": True,
+            "available_on_live_session_preflight": True,
+            "source_scope": "material_studio_mcp_server_python_sources",
+            "source_snapshot_captured_at_process_import": True,
+            "live_preflight_source_drift_blocks_continuation": True,
+            "live_preflight_unverified_source_blocks_continuation": True,
+            "direct_tool_runtime_guard": False,
+            "restart_is_never_automatic": True,
+            "restart_required_statuses": [
+                "source_changed_since_start",
+                "source_snapshot_unavailable",
+            ],
+            "restart_action": "restart_mcp_server_then_retry_preflight",
+        },
         "live_status_project_id_optional": True,
         "live_update_tool": "material_studio_live_update_with_patch",
         "dopant_metadata_reconcile_tool": "material_studio_project_reconcile_dopant_metadata",
@@ -4576,6 +4600,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "window_management_single_window_violation_reasons",
             ],
             "readiness_fields": [
+                "server_source_current",
+                "server_restart_required",
+                "server_source_blocking_reason",
+                "runtime_instance_id",
                 "latest_project_gui_loaded",
                 "latest_project_selected_window_matches_current",
                 "latest_project_foreground_window_matches_current",
@@ -4602,6 +4630,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ],
             "mcp_client_readiness_fields": [
                 "status",
+                "server_source_status",
+                "server_source_current",
+                "server_restart_required",
+                "server_source_blocking_reason",
+                "runtime_instance_id",
                 "semiconductor_normality_diagnosis",
                 "semiconductor_normality_status",
                 "semiconductor_normality_primary_reason",
@@ -4669,6 +4702,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "hotload_blocking_reasons",
             ],
             "visible_followup_contract_fields": [
+                "server_source_status",
+                "server_source_current",
+                "server_restart_required",
+                "server_source_blocking_reason",
+                "runtime_instance_id",
                 "visible_followup_ready",
                 "visible_followup_status",
                 "visible_followup_blocking_reasons",
@@ -7839,6 +7877,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     }
     if include_status:
         response["runner_status"] = runner.status()
+        response["runtime_provenance"] = runtime_provenance_status()
         try:
             gui_status = _gui_controller(None).status()
         except Exception as exc:
@@ -7850,6 +7889,94 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     return response
 
 
+def _runtime_source_blocking_reason(runtime_provenance: dict[str, Any]) -> str:
+    if runtime_provenance.get("status") == "source_changed_since_start":
+        return "mcp_server_source_changed_since_start"
+    return "mcp_server_source_snapshot_unavailable"
+
+
+def _finalize_live_session_preflight_payload(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    payload["next_action_plan"] = _session_preflight_next_action_plan(payload)
+    payload["session_next_action_plan"] = dict(payload["next_action_plan"])
+    _attach_session_preflight_action_coordination(payload)
+    payload["mcp_client_readiness"] = _session_preflight_mcp_client_readiness(
+        payload
+    )
+    _promote_session_preflight_visible_followup(payload)
+    return _compact_live_session_preflight_payload(payload)
+
+
+def _stale_runtime_preflight_payload(
+    *,
+    store: ProjectStore,
+    runner_status: dict[str, Any],
+    runtime_provenance: dict[str, Any],
+    include_latest_project: bool,
+    include_gui_status: bool,
+) -> dict[str, Any]:
+    """Stop before project or GUI probes when the loaded source is stale."""
+
+    blocking_reason = _runtime_source_blocking_reason(runtime_provenance)
+    runner_ready = bool(
+        runner_status.get("connected") or runner_status.get("runner_exists")
+    )
+    payload = {
+        "ok": True,
+        "state": "mcp_server_restart_required",
+        "working_dir": str(store.workspace_root),
+        "runner_status": runner_status,
+        "runtime_provenance": runtime_provenance,
+        "gui_status": None,
+        "latest_project": None,
+        "latest_project_modeling": None,
+        "latest_project_visual_diagnostics": None,
+        "latest_project_gui": None,
+        "workspace_context": None,
+        "workspace_context_mismatch": False,
+        "recommended_working_dir": None,
+        "deferred_probes": {
+            "latest_project": bool(include_latest_project),
+            "gui_status": bool(include_gui_status),
+            "reason": blocking_reason,
+        },
+        "readiness": {
+            "preview_ready": False,
+            "semiconductor_templates_ready": bool(
+                supported_semiconductor_template_ids()
+            ),
+            "server_source_status": runtime_provenance.get("status"),
+            "server_source_current": False,
+            "server_restart_required": True,
+            "server_source_blocking_reason": blocking_reason,
+            "runtime_instance_id": runtime_provenance.get(
+                "runtime_instance_id"
+            ),
+            "runner_ready": runner_ready,
+            "execute_ready": False,
+            "live_hotload_ready": False,
+            "crystal_cif_hotload_ready": False,
+            "latest_project_available": None,
+            "gui_probe_deferred_due_to_stale_runtime": bool(include_gui_status),
+        },
+        "blocking_reasons": [blocking_reason],
+        "review_reasons": [],
+        "recommended_tool": "material_studio_get_status",
+        "recommended_action": "restart_mcp_server_then_verify_runtime_source",
+        "recommended_tools": [
+            "material_studio_get_status",
+            "material_studio_live_session_preflight",
+        ],
+        "safe_smoke_requests": {},
+        "notes": [
+            "Project and GUI probes were deferred because the running MCP source no longer matches disk.",
+            "Restart only the MCP server session; do not close or launch Materials Studio.",
+        ],
+    }
+    return _finalize_live_session_preflight_payload(payload)
+
+
 def _live_session_preflight_payload(
     *,
     working_dir: str | None = None,
@@ -7859,7 +7986,30 @@ def _live_session_preflight_payload(
     """Return a read-only readiness summary for live @mcp modeling sessions."""
 
     store = _structured_store(working_dir)
-    runner_status = runner.status()
+    runner_status = dict(runner.status())
+    default_runner_workspace = runner_status.get("workspace_root")
+    runner_status["default_workspace_root"] = default_runner_workspace
+    runner_status["request_workspace_root"] = str(store.workspace_root)
+    try:
+        runner_status["workspace_bound_to_request"] = bool(
+            default_runner_workspace
+            and Path(str(default_runner_workspace)).resolve()
+            == store.workspace_root.resolve()
+        )
+    except OSError:
+        runner_status["workspace_bound_to_request"] = False
+    runner_status["execution_working_dir_policy"] = (
+        "explicit_tool_working_dir_overrides_runner_default"
+    )
+    runtime_provenance = runtime_provenance_status()
+    if runtime_provenance.get("restart_required") is True:
+        return _stale_runtime_preflight_payload(
+            store=store,
+            runner_status=runner_status,
+            runtime_provenance=runtime_provenance,
+            include_latest_project=include_latest_project,
+            include_gui_status=include_gui_status,
+        )
     latest_project: dict[str, Any] | None = None
     if include_latest_project:
         latest_project = _latest_project_preflight_summary(store)
@@ -7888,6 +8038,11 @@ def _live_session_preflight_payload(
     latest_project_gui: dict[str, Any] | None = None
 
     runner_ready = bool(runner_status.get("connected") or runner_status.get("runner_exists"))
+    server_source_current = runtime_provenance.get("source_current") is True
+    server_restart_required = runtime_provenance.get("restart_required") is True
+    server_source_blocking_reason = _runtime_source_blocking_reason(
+        runtime_provenance
+    )
     gui_supported = bool(gui_status and gui_status.get("supported")) if include_gui_status else None
     gui_process_found = bool(gui_status and gui_status.get("process_found")) if include_gui_status else None
     gui_process_count = (
@@ -7957,16 +8112,26 @@ def _live_session_preflight_payload(
         "activation_required_before_capture_or_input"
     )
     latest_available = bool(latest_project and latest_project.get("available"))
-    preview_ready = True
+    preview_ready = server_source_current
     semiconductor_template_ready = bool(supported_semiconductor_template_ids())
     single_window_ready = gui_single_window_policy_ok is not False
     gui_workspace_context_ready = not gui_workspace_context_mismatch
     live_hotload_ready = (
-        bool(runner_ready and gui_can_open and single_window_ready and gui_workspace_context_ready)
+        bool(
+            server_source_current
+            and runner_ready
+            and gui_can_open
+            and single_window_ready
+            and gui_workspace_context_ready
+        )
         if include_gui_status
-        else runner_ready
+        else bool(server_source_current and runner_ready)
     )
-    crystal_cif_hotload_ready = bool(gui_can_open and single_window_ready) if include_gui_status else None
+    crystal_cif_hotload_ready = (
+        bool(server_source_current and gui_can_open and single_window_ready)
+        if include_gui_status
+        else None
+    )
     if include_gui_status and latest_available and isinstance(latest_project, dict):
         latest_project_gui = _latest_project_gui_preflight_summary(latest_project, gui_status)
     latest_gui_target_loaded = bool(
@@ -8009,6 +8174,8 @@ def _live_session_preflight_payload(
 
     blocking_reasons: list[str] = []
     review_reasons: list[str] = []
+    if not server_source_current:
+        blocking_reasons.append(server_source_blocking_reason)
     if not runner_ready:
         blocking_reasons.append("materials_script_runner_missing")
     if include_gui_status:
@@ -8041,7 +8208,11 @@ def _live_session_preflight_payload(
         if latest_project_gui.get("foreground_window_matches_current") is False and not latest_gui_needs_activation:
             review_reasons.append("latest_project_foreground_window_stale")
 
-    if not runner_ready:
+    if server_restart_required:
+        state = "mcp_server_restart_required"
+        recommended_tool = "material_studio_get_status"
+        recommended_action = "restart_mcp_server_then_verify_runtime_source"
+    elif not runner_ready:
         state = "runner_setup_required"
         recommended_tool = "material_studio_get_status"
         recommended_action = "configure_material_studio_runner_before_execute_mode"
@@ -8092,6 +8263,7 @@ def _live_session_preflight_payload(
         "state": state,
         "working_dir": str(store.workspace_root),
         "runner_status": runner_status,
+        "runtime_provenance": runtime_provenance,
         "gui_status": gui_status,
         "latest_project": latest_project,
         "latest_project_modeling": latest_project_modeling,
@@ -8103,8 +8275,15 @@ def _live_session_preflight_payload(
         "readiness": {
             "preview_ready": preview_ready,
             "semiconductor_templates_ready": semiconductor_template_ready,
+            "server_source_status": runtime_provenance.get("status"),
+            "server_source_current": server_source_current,
+            "server_restart_required": server_restart_required,
+            "server_source_blocking_reason": (
+                server_source_blocking_reason if not server_source_current else None
+            ),
+            "runtime_instance_id": runtime_provenance.get("runtime_instance_id"),
             "runner_ready": runner_ready,
-            "execute_ready": runner_ready,
+            "execute_ready": bool(server_source_current and runner_ready),
             "gui_supported": gui_supported,
             "gui_process_found": gui_process_found,
             "gui_process_count": gui_process_count,
@@ -8163,17 +8342,13 @@ def _live_session_preflight_payload(
             "follow_up": "dope Si1_000 with P and hot-load it in Materials Studio",
         },
         "notes": [
+            "Runtime source drift requires an MCP server restart before modeling or GUI actions.",
             "Preview mode does not call RunMatScript.bat or change the GUI.",
             "Execute mode must be explicit; crystal specs materialize CIF artifacts for GUI hot-load.",
             "Precise structural edits should still use ModelSpec/SemanticPatch as the source of truth.",
         ],
     }
-    payload["next_action_plan"] = _session_preflight_next_action_plan(payload)
-    payload["session_next_action_plan"] = dict(payload["next_action_plan"])
-    _attach_session_preflight_action_coordination(payload)
-    payload["mcp_client_readiness"] = _session_preflight_mcp_client_readiness(payload)
-    _promote_session_preflight_visible_followup(payload)
-    return _compact_live_session_preflight_payload(payload)
+    return _finalize_live_session_preflight_payload(payload)
 
 
 def _compact_live_session_preflight_window(value: Any) -> dict[str, Any]:
@@ -8207,6 +8382,49 @@ def _compact_live_session_preflight_window(value: Any) -> dict[str, Any]:
     )
 
 
+def _compact_runtime_provenance(value: Any) -> dict[str, Any]:
+    """Keep process/source identity and both source hashes in bounded receipts."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "schema",
+            "status",
+            "source_current",
+            "source_changed_since_start",
+            "restart_required",
+            "runtime_instance_id",
+            "process_id",
+            "loaded_at_utc",
+            "observed_at_utc",
+            "package_name",
+            "package_version",
+            "python_version",
+            "python_executable",
+            "package_root",
+            "restart_action",
+        ),
+    )
+    for snapshot_key in (
+        "source_snapshot_at_start",
+        "source_snapshot_current",
+    ):
+        compact[snapshot_key] = _mapping_subset(
+            value.get(snapshot_key),
+            (
+                "status",
+                "sha256",
+                "file_count",
+                "total_bytes",
+                "unreadable_files",
+                "error",
+            ),
+        )
+    return compact
+
+
 def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Deduplicate verbose probes after all preflight decisions have been derived."""
 
@@ -8221,6 +8439,10 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
                 "runner_source",
                 "install_home",
                 "workspace_root",
+                "default_workspace_root",
+                "request_workspace_root",
+                "workspace_bound_to_request",
+                "execution_working_dir_policy",
                 "default_timeout_seconds",
                 "extra_runner_args",
                 "searched_candidate_count",
@@ -8232,6 +8454,12 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
             compact_runner["searched_candidates_omitted"] = True
         compact_runner["detail_tool"] = "material_studio_get_status"
         payload["runner_status"] = compact_runner
+
+    runtime_provenance = payload.get("runtime_provenance")
+    if isinstance(runtime_provenance, dict):
+        compact_runtime = _compact_runtime_provenance(runtime_provenance)
+        compact_runtime["detail_tool"] = "material_studio_get_status"
+        payload["runtime_provenance"] = compact_runtime
 
     gui_status = payload.get("gui_status")
     if isinstance(gui_status, dict):
@@ -8395,6 +8623,7 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
         "deduplicated_context": True,
         "full_detail_tools": {
             "runner_status": "material_studio_get_status",
+            "runtime_provenance": "material_studio_get_status",
             "gui_status": "material_studio_gui_status",
             "project_status": "material_studio_live_project_status",
         },
@@ -8436,6 +8665,13 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
         {
             "project_id": latest.get("project_id"),
             "revision": latest.get("revision"),
+            "server_source_status": client.get("server_source_status"),
+            "server_source_current": client.get("server_source_current"),
+            "server_restart_required": client.get("server_restart_required"),
+            "server_source_blocking_reason": client.get(
+                "server_source_blocking_reason"
+            ),
+            "runtime_instance_id": client.get("runtime_instance_id"),
             "latest_project_available": client.get("latest_project_available"),
             "current_revision_materialized": client.get("current_revision_materialized"),
             "current_revision_loaded_in_gui": client.get("current_revision_loaded_in_gui"),
@@ -8472,6 +8708,13 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
                 "mcp_visible_followup_recommended_tool": contract.get("visible_followup_recommended_tool"),
                 "mcp_visible_followup_recommended_action": contract.get("visible_followup_recommended_action"),
                 "mcp_visible_followup_payload_hint": contract.get("visible_followup_payload_hint") or {},
+                "mcp_server_source_status": contract.get("server_source_status"),
+                "mcp_server_source_current": contract.get("server_source_current"),
+                "mcp_server_restart_required": contract.get("server_restart_required"),
+                "mcp_server_source_blocking_reason": contract.get(
+                    "server_source_blocking_reason"
+                ),
+                "mcp_runtime_instance_id": contract.get("runtime_instance_id"),
                 "mcp_must_reuse_existing_gui_window": contract.get("must_reuse_existing_gui_window"),
                 "mcp_auto_launch_during_hotload_allowed": contract.get("auto_launch_during_hotload_allowed"),
                 "mcp_single_window_policy_ok": contract.get("single_window_policy_ok"),
@@ -8514,7 +8757,17 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         else {}
     )
 
-    preview_ready = bool(readiness.get("preview_ready") and readiness.get("semiconductor_templates_ready"))
+    server_source_current = readiness.get("server_source_current") is True
+    server_restart_required = readiness.get("server_restart_required") is True
+    server_source_blocking_reason = str(
+        readiness.get("server_source_blocking_reason")
+        or "mcp_server_source_snapshot_unavailable"
+    )
+    preview_ready = bool(
+        server_source_current
+        and readiness.get("preview_ready")
+        and readiness.get("semiconductor_templates_ready")
+    )
     live_hotload_ready = bool(readiness.get("live_hotload_ready"))
     single_window_policy_ok = readiness.get("gui_single_window_policy_ok")
     gui_window_found = readiness.get("gui_window_found")
@@ -8526,21 +8779,25 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
     current_script_ready = bool(latest_project.get("script_exists") and latest_project.get("script_valid") is not False)
 
     hotload_blocking_reasons: list[str] = []
-    if gui_process_found and not gui_window_found:
-        hotload_blocking_reasons.append("matstudio_process_without_usable_window")
-    elif not gui_window_found:
-        hotload_blocking_reasons.append("gui_window_not_found")
-    if single_window_policy_ok is False:
-        hotload_blocking_reasons.append("single_window_policy_violation")
-        hotload_blocking_reasons.extend(
-            f"single_window:{reason}" for reason in readiness.get("gui_single_window_violation_reasons") or []
-        )
-    if readiness.get("gui_workspace_context_mismatch") is True:
-        hotload_blocking_reasons.append("gui_wrapper_workspace_context_mismatch")
-    if not readiness.get("runner_ready"):
-        hotload_blocking_reasons.append("materials_script_runner_missing")
-    if not readiness.get("gui_can_open_structure"):
-        hotload_blocking_reasons.append("same_window_structure_open_not_ready")
+    if not server_source_current:
+        hotload_blocking_reasons.append(server_source_blocking_reason)
+    else:
+        if gui_process_found and not gui_window_found:
+            hotload_blocking_reasons.append("matstudio_process_without_usable_window")
+        elif not gui_window_found:
+            hotload_blocking_reasons.append("gui_window_not_found")
+        if single_window_policy_ok is False:
+            hotload_blocking_reasons.append("single_window_policy_violation")
+            hotload_blocking_reasons.extend(
+                f"single_window:{reason}"
+                for reason in readiness.get("gui_single_window_violation_reasons") or []
+            )
+        if readiness.get("gui_workspace_context_mismatch") is True:
+            hotload_blocking_reasons.append("gui_wrapper_workspace_context_mismatch")
+        if not readiness.get("runner_ready"):
+            hotload_blocking_reasons.append("materials_script_runner_missing")
+        if not readiness.get("gui_can_open_structure"):
+            hotload_blocking_reasons.append("same_window_structure_open_not_ready")
 
     can_hotload_without_new_window = bool(live_hotload_ready and not hotload_blocking_reasons)
     can_apply_current_revision = bool(
@@ -8567,7 +8824,9 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
     ready_for_live_edit = bool(preview_ready and can_hotload_without_new_window)
 
     visible_followup_blocking_reasons: list[str] = []
-    if not latest_available:
+    if not server_source_current:
+        visible_followup_blocking_reasons.append(server_source_blocking_reason)
+    elif not latest_available:
         visible_followup_blocking_reasons.append("no_current_project")
     elif not current_revision_materialized:
         visible_followup_blocking_reasons.append("current_revision_not_materialized")
@@ -8584,7 +8843,12 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         and can_hotload_without_new_window
         and target_window_selected is not False
     )
-    if visible_followup_ready:
+    if not server_source_current:
+        visible_followup_status = "mcp_server_restart_required"
+        visible_followup_recommended_tool = next_action.get("recommended_tool")
+        visible_followup_recommended_action = next_action.get("recommended_action")
+        visible_followup_payload_hint = next_action.get("payload_hint") or {}
+    elif visible_followup_ready:
         visible_followup_status = "ready"
         visible_followup_recommended_tool = "material_studio_live_modeling_request"
         visible_followup_recommended_action = "continue_next_visible_model_edit"
@@ -8653,6 +8917,13 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         {
             "status": status,
             "state": payload.get("state"),
+            "server_source_status": readiness.get("server_source_status"),
+            "server_source_current": server_source_current,
+            "server_restart_required": server_restart_required,
+            "server_source_blocking_reason": (
+                server_source_blocking_reason if not server_source_current else None
+            ),
+            "runtime_instance_id": readiness.get("runtime_instance_id"),
             "can_accept_modeling_request": preview_ready,
             "can_accept_preview_request": preview_ready,
             "can_accept_hotload_request_without_new_window": can_hotload_without_new_window,
@@ -9262,7 +9533,24 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
     action_id = "inspect_live_session"
     payload_hint: dict[str, Any] = {}
     needs_user_confirmation = False
-    if recommended_tool == "material_studio_gui_launch":
+    external_action_required = False
+    tool_call_ready = True
+    if state == "mcp_server_restart_required":
+        action_id = "restart_stale_mcp_server"
+        payload_hint = {
+            "external_action": "restart_mcp_server_session",
+            "verification_tool": "material_studio_get_status",
+            "retry_tool": "material_studio_live_session_preflight",
+            "retry_payload": {
+                "working_dir": payload.get("working_dir"),
+                "include_latest_project": True,
+                "include_gui_status": True,
+            },
+        }
+        needs_user_confirmation = True
+        external_action_required = True
+        tool_call_ready = False
+    elif recommended_tool == "material_studio_gui_launch":
         action_id = "launch_or_activate_materials_studio_gui"
         payload_hint = {"take_snapshot": True}
     elif recommended_tool == "material_studio_get_status":
@@ -9343,6 +9631,8 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
         "recommended_action": payload.get("recommended_action"),
         "needs_user_confirmation": needs_user_confirmation,
         "safe_to_call_without_confirmation": not needs_user_confirmation,
+        "external_action_required": external_action_required,
+        "tool_call_ready": tool_call_ready,
         "payload_hint": _drop_none_values(payload_hint),
         "blocking_reasons": payload.get("blocking_reasons") or [],
         "review_reasons": payload.get("review_reasons") or [],
@@ -9368,6 +9658,8 @@ def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
             "recommended_action",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
+            "external_action_required",
+            "tool_call_ready",
             "action_scope",
             "binding_verified",
             "mutates_structure",
@@ -36827,6 +37119,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_entry_tool",
             "live_status_tool",
             "live_update_tool",
+            "runtime_provenance_contract",
             "dopant_metadata_reconcile_tool",
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
@@ -36845,6 +37138,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "target_response_bytes",
             "full_detail_hint",
             "runner_status",
+            "runtime_provenance",
             "gui_status",
             "view_replay_runtime_availability",
             "domain_focus",
@@ -37815,6 +38109,7 @@ def _compact_capabilities_response(
             "live_entry_tool",
             "live_status_tool",
             "live_update_tool",
+            "runtime_provenance_contract",
             "dopant_metadata_reconcile_tool",
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
@@ -37891,6 +38186,10 @@ def _compact_capabilities_response(
     if isinstance(response.get("runner_status"), dict):
         compact["runner_status"] = _compact_capabilities_runner_status(
             response["runner_status"]
+        )
+    if isinstance(response.get("runtime_provenance"), dict):
+        compact["runtime_provenance"] = _compact_runtime_provenance(
+            response["runtime_provenance"]
         )
     if isinstance(response.get("gui_status"), dict):
         compact["gui_status"] = _compact_capabilities_gui_status(

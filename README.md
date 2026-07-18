@@ -136,6 +136,16 @@ hard budget. Its `response_compaction` receipt reports the exact serialized
 size and points to the full runner, GUI, and project-status tools when a compact
 `*_ref` replaces duplicated probe internals.
 
+Long-lived MCP processes also return `runtime_provenance`. It binds one process
+instance to a deterministic SHA-256 snapshot of every Python source under
+`material_studio_mcp_server` at import time and compares it with the current
+source tree. If `source_current=false`, preflight returns
+`state="mcp_server_restart_required"` and blocks preview, execution, and GUI
+input until the MCP server is restarted and both source hashes match. Restarting
+the MCP server does not require closing or launching Materials Studio. The
+runner receipt separately reports `default_workspace_root` and
+`request_workspace_root`; explicit tool `working_dir` values remain authoritative.
+
 Use the real MCP stdio client to verify initialization, tool discovery, input
 schemas, safety annotations, and preview-only live modeling calls:
 

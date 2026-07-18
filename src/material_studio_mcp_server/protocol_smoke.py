@@ -644,6 +644,30 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_response_not_compact")
         if capabilities.get("response_schema") != EXPECTED_CAPABILITIES_COMPACT_SCHEMA:
             validation_errors.append("capabilities_compact_schema_mismatch")
+        runtime_contract = capabilities.get("runtime_provenance_contract")
+        if not isinstance(runtime_contract, dict):
+            validation_errors.append("capabilities_runtime_provenance_contract_missing")
+            runtime_contract = {}
+        if runtime_contract.get(
+            "live_preflight_source_drift_blocks_continuation"
+        ) is not True:
+            validation_errors.append("capabilities_runtime_source_drift_gate_missing")
+        if runtime_contract.get("restart_is_never_automatic") is not True:
+            validation_errors.append("capabilities_runtime_restart_policy_missing")
+        runtime_provenance = capabilities.get("runtime_provenance")
+        if not isinstance(runtime_provenance, dict):
+            validation_errors.append("capabilities_runtime_provenance_missing")
+            runtime_provenance = {}
+        if runtime_provenance.get("source_current") is not True:
+            validation_errors.append("capabilities_runtime_source_not_current")
+        if runtime_provenance.get("restart_required") is not False:
+            validation_errors.append("capabilities_runtime_restart_unexpected")
+        initial_source = runtime_provenance.get("source_snapshot_at_start")
+        current_source = runtime_provenance.get("source_snapshot_current")
+        if not isinstance(initial_source, dict) or not isinstance(current_source, dict):
+            validation_errors.append("capabilities_runtime_source_snapshots_missing")
+        elif initial_source.get("sha256") != current_source.get("sha256"):
+            validation_errors.append("capabilities_runtime_source_hash_mismatch")
         diagnostic_capability = capabilities.get("diagnostics")
         if not isinstance(diagnostic_capability, dict):
             validation_errors.append("capabilities_diagnostics_missing")
@@ -978,6 +1002,32 @@ async def _run_preview_calls(
             validation_errors.append("capabilities_runtime_execute_tool_mismatch")
         if preflight.get("ok") is not True:
             validation_errors.append("preflight_call_not_ok")
+        preflight_runtime = preflight.get("runtime_provenance")
+        if not isinstance(preflight_runtime, dict):
+            validation_errors.append("preflight_runtime_provenance_missing")
+            preflight_runtime = {}
+        if preflight_runtime.get("runtime_instance_id") != runtime_provenance.get(
+            "runtime_instance_id"
+        ):
+            validation_errors.append("preflight_runtime_instance_mismatch")
+        preflight_readiness = preflight.get("mcp_client_readiness")
+        if not isinstance(preflight_readiness, dict):
+            validation_errors.append("preflight_mcp_client_readiness_missing")
+            preflight_readiness = {}
+        if preflight_readiness.get("server_source_current") is not True:
+            validation_errors.append("preflight_runtime_source_not_current")
+        if preflight_readiness.get("server_restart_required") is not False:
+            validation_errors.append("preflight_runtime_restart_unexpected")
+        preflight_runner = preflight.get("runner_status")
+        if not isinstance(preflight_runner, dict):
+            validation_errors.append("preflight_runner_status_missing")
+            preflight_runner = {}
+        if preflight_runner.get("request_workspace_root") != str(workspace):
+            validation_errors.append("preflight_runner_request_workspace_mismatch")
+        if preflight_runner.get("execution_working_dir_policy") != (
+            "explicit_tool_working_dir_overrides_runner_default"
+        ):
+            validation_errors.append("preflight_runner_working_dir_policy_missing")
         if created.get("ok") is not True:
             validation_errors.append("preview_create_not_ok")
         if created.get("execution_mode") != "preview":
@@ -1308,6 +1358,29 @@ async def _run_preview_calls(
                 "response_mode": created.get("response_mode"),
                 "response_sizes_bytes": response_sizes_bytes,
                 "capabilities_runner_status_present": bool(runner_status),
+                "runtime_instance_id": runtime_provenance.get(
+                    "runtime_instance_id"
+                ),
+                "runtime_source_current": runtime_provenance.get(
+                    "source_current"
+                ),
+                "runtime_restart_required": runtime_provenance.get(
+                    "restart_required"
+                ),
+                "runtime_source_sha256_at_start": initial_source.get(
+                    "sha256"
+                )
+                if isinstance(initial_source, dict)
+                else None,
+                "runtime_source_sha256_current": current_source.get("sha256")
+                if isinstance(current_source, dict)
+                else None,
+                "preflight_runner_default_workspace": preflight_runner.get(
+                    "default_workspace_root"
+                ),
+                "preflight_runner_request_workspace": preflight_runner.get(
+                    "request_workspace_root"
+                ),
                 "capabilities_gui_status_present": bool(gui_status),
                 "capabilities_replay_runtime_status": replay_runtime.get(
                     "status"

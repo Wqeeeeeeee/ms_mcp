@@ -584,6 +584,21 @@ halide-alloy path.
 These requests reuse the
 structured alloy patch path, record `formula_alloy_request`, and still export
 `semiconductor_alloy.csv` plus composition and local-environment diagnostics.
+Alloy and dopant fractions preserve the historical atom-ID-order selection by
+default. Add explicit separation wording such as `uniformly distribute 25% Ge
+alloy`, `spatially distribute 6.25% P dopants`, `均匀分布 25% Ge 合金位点`, or
+`空间分散 6.25% P 掺杂位点` to request deterministic periodic maximin selection.
+The first site is the naturally lowest atom ID; every later site maximizes its
+minimum 3x3 periodic-image distance to the selected set, with atom ID as the
+stable tie-break. The revision stores the candidate geometry, selection steps,
+distance statistics, and SHA-256 receipt. Diagnostics replay that receipt and
+export the audit in `semiconductor_alloy.csv` or
+`semiconductor_dopant_fraction.csv`. This is a spatial-separation preflight
+heuristic only, not an SQS, random-alloy ensemble, relaxed structure, or
+thermodynamic optimization. At high fractions, nearest candidate-site pairs may
+be unavoidable and remain a review flag. Exact maximin selection is limited to
+512 candidate sites per request; larger candidate sets fail closed and require a
+smaller supercell or explicit site IDs.
 Chinese semiconductor follow-ups use the same structured patch path, for example
 `创建硅空位`, `沿 z 添加 10 埃真空层`,
 `在分数坐标 0.5 0.5 0.24 添加 Htop1 H`,

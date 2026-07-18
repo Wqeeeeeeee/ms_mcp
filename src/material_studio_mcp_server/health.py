@@ -722,16 +722,43 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_dopant_fraction_count"] = dopant_fraction_summary.get("entry_count")
         checks["semiconductor_dopant_fraction_max_abs_rounding_error_fraction"] = dopant_fraction_summary.get("max_abs_rounding_error_fraction")
         checks["semiconductor_dopant_fraction_rounding_warning"] = dopant_fraction_summary.get("rounding_warning")
+        checks["semiconductor_dopant_fraction_periodic_maximin_count"] = dopant_fraction_summary.get(
+            "periodic_maximin_count",
+            0,
+        )
+        checks["semiconductor_dopant_fraction_site_selection_integrity_ok"] = dopant_fraction_summary.get(
+            "site_selection_integrity_ok"
+        )
+        checks["semiconductor_dopant_fraction_site_selection_replay_verified"] = dopant_fraction_summary.get(
+            "site_selection_replay_verified"
+        )
         if dopant_fraction_summary.get("rounding_warning"):
             warnings.append("Semiconductor dopant fraction was rounded noticeably by finite cell size; inspect dopant_fraction_summary.")
+        if dopant_fraction_summary.get("periodic_maximin_count"):
+            warnings.append(
+                "Semiconductor dopant sites use deterministic periodic maximin separation, not an SQS."
+            )
+        if dopant_fraction_summary.get("site_selection_integrity_ok") is False:
+            warnings.append("Semiconductor dopant-fraction site-selection metadata failed integrity checks.")
 
     alloy_summary = semiconductor.get("alloy_summary") or {}
     if alloy_summary:
         checks["semiconductor_alloy_count"] = alloy_summary.get("entry_count")
         checks["semiconductor_alloy_max_abs_rounding_error_fraction"] = alloy_summary.get("max_abs_rounding_error_fraction")
         checks["semiconductor_alloy_rounding_warning"] = alloy_summary.get("rounding_warning")
+        checks["semiconductor_alloy_periodic_maximin_count"] = alloy_summary.get("periodic_maximin_count", 0)
+        checks["semiconductor_alloy_site_selection_integrity_ok"] = alloy_summary.get(
+            "site_selection_integrity_ok"
+        )
+        checks["semiconductor_alloy_site_selection_replay_verified"] = alloy_summary.get(
+            "site_selection_replay_verified"
+        )
         if alloy_summary.get("rounding_warning"):
             warnings.append("Semiconductor alloy fraction was rounded noticeably by finite cell size; inspect alloy_summary.")
+        if alloy_summary.get("periodic_maximin_count"):
+            warnings.append("Semiconductor alloy sites use deterministic periodic maximin separation, not an SQS.")
+        if alloy_summary.get("site_selection_integrity_ok") is False:
+            warnings.append("Semiconductor alloy site-selection metadata failed integrity checks.")
         if int(checks.get("semiconductor_alloy_same_sublattice_neighbor_pair_count") or 0) > 0:
             warnings.append(
                 "Semiconductor alloy has same-sublattice neighbor pairs under the preflight cutoff; inspect neighbor_distance_summary."

@@ -19,6 +19,10 @@ from .castep_relaxation import (
     CASTEP_RELAXATION_RECEIPT_SCHEMA,
     crystal_structure_sha256,
 )
+from .semiconductor_site_selection import (
+    PERIODIC_MAXIMIN_STRATEGY,
+    audit_periodic_maximin_selection,
+)
 from .specs.castep import (
     CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
     CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
@@ -1244,6 +1248,21 @@ def write_view_audit_bundle(
                 "candidate_site_count",
                 "substituted_site_count",
                 "selected_atom_ids",
+                "selection_strategy",
+                "scientific_scope",
+                "site_selection_integrity_ok",
+                "site_selection_replay_verified",
+                "site_selection_geometry_unchanged",
+                "selected_pair_minimum_angstrom",
+                "selected_pair_mean_angstrom",
+                "selected_pair_maximum_angstrom",
+                "candidate_nearest_pair_distance_angstrom",
+                "selected_pairs_at_candidate_nearest_distance",
+                "minimum_distance_improvement_over_atom_id_order_angstrom",
+                "site_selection_warning_count",
+                "site_selection_error_count",
+                "site_selection_warnings",
+                "site_selection_errors",
                 "rounding_error_fraction",
                 "rounding_warning",
                 "source",
@@ -1268,6 +1287,21 @@ def write_view_audit_bundle(
                 "candidate_site_count",
                 "substituted_site_count",
                 "selected_atom_ids",
+                "selection_strategy",
+                "scientific_scope",
+                "site_selection_integrity_ok",
+                "site_selection_replay_verified",
+                "site_selection_geometry_unchanged",
+                "selected_pair_minimum_angstrom",
+                "selected_pair_mean_angstrom",
+                "selected_pair_maximum_angstrom",
+                "candidate_nearest_pair_distance_angstrom",
+                "selected_pairs_at_candidate_nearest_distance",
+                "minimum_distance_improvement_over_atom_id_order_angstrom",
+                "site_selection_warning_count",
+                "site_selection_error_count",
+                "site_selection_warnings",
+                "site_selection_errors",
                 "rounding_error_fraction",
                 "rounding_warning",
                 "source",
@@ -3316,6 +3350,27 @@ def _semiconductor_dopant_fraction_csv_rows(summary: dict[str, Any]) -> list[dic
                 "candidate_site_count": entry.get("candidate_site_count"),
                 "substituted_site_count": entry.get("substituted_site_count"),
                 "selected_atom_ids": _join_vector(entry.get("selected_atom_ids")),
+                "selection_strategy": entry.get("selection_strategy") or "atom_id_order",
+                "scientific_scope": entry.get("scientific_scope"),
+                "site_selection_integrity_ok": entry.get("site_selection_integrity_ok"),
+                "site_selection_replay_verified": entry.get("site_selection_replay_verified"),
+                "site_selection_geometry_unchanged": entry.get("site_selection_geometry_unchanged"),
+                "selected_pair_minimum_angstrom": entry.get("selected_pair_minimum_angstrom"),
+                "selected_pair_mean_angstrom": entry.get("selected_pair_mean_angstrom"),
+                "selected_pair_maximum_angstrom": entry.get("selected_pair_maximum_angstrom"),
+                "candidate_nearest_pair_distance_angstrom": entry.get(
+                    "candidate_nearest_pair_distance_angstrom"
+                ),
+                "selected_pairs_at_candidate_nearest_distance": entry.get(
+                    "selected_pairs_at_candidate_nearest_distance"
+                ),
+                "minimum_distance_improvement_over_atom_id_order_angstrom": entry.get(
+                    "minimum_distance_improvement_over_atom_id_order_angstrom"
+                ),
+                "site_selection_warning_count": entry.get("site_selection_warning_count"),
+                "site_selection_error_count": entry.get("site_selection_error_count"),
+                "site_selection_warnings": _join_vector(entry.get("site_selection_warnings")),
+                "site_selection_errors": _join_vector(entry.get("site_selection_errors")),
                 "rounding_error_fraction": entry.get("rounding_error_fraction"),
                 "rounding_warning": entry.get("rounding_warning"),
                 "source": entry.get("source"),
@@ -3339,6 +3394,27 @@ def _semiconductor_alloy_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any
                 "candidate_site_count": entry.get("candidate_site_count"),
                 "substituted_site_count": entry.get("substituted_site_count"),
                 "selected_atom_ids": _join_vector(entry.get("selected_atom_ids")),
+                "selection_strategy": entry.get("selection_strategy") or "atom_id_order",
+                "scientific_scope": entry.get("scientific_scope"),
+                "site_selection_integrity_ok": entry.get("site_selection_integrity_ok"),
+                "site_selection_replay_verified": entry.get("site_selection_replay_verified"),
+                "site_selection_geometry_unchanged": entry.get("site_selection_geometry_unchanged"),
+                "selected_pair_minimum_angstrom": entry.get("selected_pair_minimum_angstrom"),
+                "selected_pair_mean_angstrom": entry.get("selected_pair_mean_angstrom"),
+                "selected_pair_maximum_angstrom": entry.get("selected_pair_maximum_angstrom"),
+                "candidate_nearest_pair_distance_angstrom": entry.get(
+                    "candidate_nearest_pair_distance_angstrom"
+                ),
+                "selected_pairs_at_candidate_nearest_distance": entry.get(
+                    "selected_pairs_at_candidate_nearest_distance"
+                ),
+                "minimum_distance_improvement_over_atom_id_order_angstrom": entry.get(
+                    "minimum_distance_improvement_over_atom_id_order_angstrom"
+                ),
+                "site_selection_warning_count": entry.get("site_selection_warning_count"),
+                "site_selection_error_count": entry.get("site_selection_error_count"),
+                "site_selection_warnings": _join_vector(entry.get("site_selection_warnings")),
+                "site_selection_errors": _join_vector(entry.get("site_selection_errors")),
                 "rounding_error_fraction": entry.get("rounding_error_fraction"),
                 "rounding_warning": entry.get("rounding_warning"),
                 "source": entry.get("source"),
@@ -5927,8 +6003,27 @@ def _semiconductor_health_summary(
     )
     if sublattice_balance_summary and sublattice_balance_summary.get("warning"):
         warnings.append("Semiconductor sublattice balance is off; inspect sublattice_balance_summary.")
-    dopant_fraction_summary = _dopant_fraction_summary(metadata)
-    alloy_summary = _alloy_summary(metadata)
+    dopant_fraction_summary = _dopant_fraction_summary(spec, metadata)
+    alloy_summary = _alloy_summary(spec, metadata)
+    for label, fraction_summary in (
+        ("dopant fraction", dopant_fraction_summary),
+        ("alloy fraction", alloy_summary),
+    ):
+        if not fraction_summary or not fraction_summary.get("periodic_maximin_count"):
+            continue
+        if fraction_summary.get("site_selection_integrity_ok") is False:
+            errors.extend(str(item) for item in fraction_summary.get("site_selection_errors", []) or [])
+        warnings.append(
+            f"Semiconductor {label} uses deterministic periodic maximin site separation; this is not an SQS."
+        )
+        if fraction_summary.get("site_selection_replay_verified") is False:
+            warnings.append(
+                f"Semiconductor {label} periodic maximin selection cannot be replayed on the current geometry."
+            )
+        if fraction_summary.get("adjacent_pair_review_required"):
+            warnings.append(
+                f"Semiconductor {label} contains candidate-nearest substituted-site pairs; inspect local environments."
+            )
     heterostructure_summary = _heterostructure_summary(metadata)
     substrate_epitaxy_preflight_summary = _substrate_epitaxy_preflight_summary(metadata, lattice_summary)
     strain_summary = _applied_strain_summary(metadata)
@@ -12678,7 +12773,7 @@ def _reduced_counts(counts: Counter[str]) -> dict[str, int]:
     return {element: int(count / divisor) for element, count in counts.items() if count > 0}
 
 
-def _alloy_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
+def _alloy_summary(spec: ModelSpec, metadata: dict[str, Any]) -> dict[str, Any] | None:
     entries = [
         dict(item)
         for item in metadata.get("applied_alloy", []) or []
@@ -12692,22 +12787,29 @@ def _alloy_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
         rounding = abs(float(entry.get("rounding_error_fraction") or 0.0))
         max_rounding = max(max_rounding, rounding)
         normalized_entries.append(
-            {
-                **entry,
-                "rounding_warning": rounding > 0.05,
-            }
+            _fraction_site_selection_entry(
+                spec,
+                {
+                    **entry,
+                    "rounding_warning": rounding > 0.05,
+                },
+                expected_element_field="alloy_element",
+            )
         )
-    return {
+    return _fraction_site_selection_summary(
+        {
         "available": True,
         "entry_count": len(entries),
         "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
         "latest": normalized_entries[-1],
         "max_abs_rounding_error_fraction": _round(max_rounding),
         "rounding_warning": max_rounding > 0.05,
-    }
+        },
+        normalized_entries,
+    )
 
 
-def _dopant_fraction_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
+def _dopant_fraction_summary(spec: ModelSpec, metadata: dict[str, Any]) -> dict[str, Any] | None:
     entries = [
         dict(item)
         for item in metadata.get("applied_dopant_fraction", []) or []
@@ -12721,18 +12823,138 @@ def _dopant_fraction_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
         rounding = abs(float(entry.get("rounding_error_fraction") or 0.0))
         max_rounding = max(max_rounding, rounding)
         normalized_entries.append(
-            {
-                **entry,
-                "rounding_warning": rounding > 0.05,
-            }
+            _fraction_site_selection_entry(
+                spec,
+                {
+                    **entry,
+                    "rounding_warning": rounding > 0.05,
+                },
+                expected_element_field="dopant_element",
+            )
         )
-    return {
+    return _fraction_site_selection_summary(
+        {
         "available": True,
         "entry_count": len(entries),
         "entries": normalized_entries[:MAX_HEALTH_DETAIL_ROWS],
         "latest": normalized_entries[-1],
         "max_abs_rounding_error_fraction": _round(max_rounding),
         "rounding_warning": max_rounding > 0.05,
+        },
+        normalized_entries,
+    )
+
+
+def _fraction_site_selection_entry(
+    spec: ModelSpec,
+    entry: dict[str, Any],
+    *,
+    expected_element_field: str,
+) -> dict[str, Any]:
+    receipt = entry.get("site_selection")
+    strategy = entry.get("selection_strategy")
+    if not isinstance(receipt, dict) or strategy != PERIODIC_MAXIMIN_STRATEGY:
+        return {
+            **entry,
+            "selection_strategy": strategy or "atom_id_order",
+        }
+    if not isinstance(spec.model, CrystalSpec):
+        audit = {
+            "integrity_ok": False,
+            "replay_verified": False,
+            "geometry_unchanged": False,
+            "adjacent_pair_review_required": False,
+            "selected_pairs_at_candidate_nearest_distance": 0,
+            "current_selected_pair_distance_stats_angstrom": {},
+            "error_count": 1,
+            "warning_count": 0,
+            "errors": ["Periodic maximin site selection requires a crystal model."],
+            "warnings": [],
+        }
+    else:
+        audit = audit_periodic_maximin_selection(
+            spec.model,
+            receipt,
+            expected_selected_element=str(entry.get(expected_element_field) or "") or None,
+        )
+    pair_stats = audit.get("current_selected_pair_distance_stats_angstrom") or {}
+    candidate_stats = receipt.get("candidate_pair_distance_stats_angstrom") or {}
+    return {
+        **entry,
+        "selection_strategy": PERIODIC_MAXIMIN_STRATEGY,
+        "scientific_scope": receipt.get("scientific_scope"),
+        "site_selection_audit": audit,
+        "site_selection_integrity_ok": audit.get("integrity_ok"),
+        "site_selection_replay_verified": audit.get("replay_verified"),
+        "site_selection_geometry_unchanged": audit.get("geometry_unchanged"),
+        "selected_pair_minimum_angstrom": pair_stats.get("minimum_angstrom"),
+        "selected_pair_mean_angstrom": pair_stats.get("mean_angstrom"),
+        "selected_pair_maximum_angstrom": pair_stats.get("maximum_angstrom"),
+        "candidate_nearest_pair_distance_angstrom": candidate_stats.get("minimum_angstrom"),
+        "selected_pairs_at_candidate_nearest_distance": audit.get(
+            "selected_pairs_at_candidate_nearest_distance"
+        ),
+        "minimum_distance_improvement_over_atom_id_order_angstrom": audit.get(
+            "minimum_distance_improvement_over_atom_id_order_angstrom"
+        ),
+        "site_selection_warning_count": audit.get("warning_count"),
+        "site_selection_error_count": audit.get("error_count"),
+        "site_selection_warnings": audit.get("warnings") or [],
+        "site_selection_errors": audit.get("errors") or [],
+    }
+
+
+def _fraction_site_selection_summary(
+    summary: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    distributed = [
+        entry
+        for entry in entries
+        if entry.get("selection_strategy") == PERIODIC_MAXIMIN_STRATEGY
+    ]
+    if not distributed:
+        return {
+            **summary,
+            "periodic_maximin_count": 0,
+            "site_selection_integrity_ok": None,
+            "site_selection_replay_verified": None,
+            "site_selection_review_required": False,
+            "adjacent_pair_review_required": False,
+            "site_selection_errors": [],
+            "site_selection_warnings": [],
+        }
+    errors = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_selection_errors", []) or []
+        )
+    )
+    warnings = list(
+        dict.fromkeys(
+            str(item)
+            for entry in distributed
+            for item in entry.get("site_selection_warnings", []) or []
+        )
+    )
+    integrity_ok = all(entry.get("site_selection_integrity_ok") is True for entry in distributed)
+    replay_verified = all(entry.get("site_selection_replay_verified") is True for entry in distributed)
+    adjacent_review = any(
+        bool((entry.get("site_selection_audit") or {}).get("adjacent_pair_review_required"))
+        for entry in distributed
+    )
+    return {
+        **summary,
+        "periodic_maximin_count": len(distributed),
+        "site_selection_integrity_ok": integrity_ok,
+        "site_selection_replay_verified": replay_verified,
+        "site_selection_review_required": True,
+        "adjacent_pair_review_required": adjacent_review,
+        "site_selection_error_count": len(errors),
+        "site_selection_warning_count": len(warnings),
+        "site_selection_errors": errors,
+        "site_selection_warnings": warnings,
     }
 
 

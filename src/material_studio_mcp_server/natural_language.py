@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from .semiconductor_site_selection import (
+    PERIODIC_MAXIMIN_STRATEGY,
+    select_periodic_maximin_sites,
+)
 from .specs.castep import CastepTask, normalize_castep_task
 from .specs.common import ELEMENTS
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
@@ -9101,6 +9105,7 @@ def _infer_formula_alloy_template(text: str, *, user_request: str, project_id: s
                     str(match["host_element"]),
                     str(match["alloy_element"]),
                     float(match["fraction"]),
+                    selection_strategy=_requested_fraction_site_selection_strategy(user_request),
                 ),
             ),
         )
@@ -10829,7 +10834,13 @@ def _apply_new_crystal_composite_operations(
             dopant_fraction_match = _match_crystal_dopant_fraction(text)
             if dopant_fraction_match is not None:
                 host_element, dopant_element, fraction = dopant_fraction_match
-                operations = _crystal_dopant_fraction_operations(working, host_element, dopant_element, fraction)
+                operations = _crystal_dopant_fraction_operations(
+                    working,
+                    host_element,
+                    dopant_element,
+                    fraction,
+                    selection_strategy=_requested_fraction_site_selection_strategy(text),
+                )
                 apply_operations(_with_optional_carrier_intent(working, text, operations, dopant_element, fraction))
                 dopant_fraction_applied = True
             else:
@@ -10881,7 +10892,15 @@ def _apply_new_crystal_composite_operations(
             alloy_match = _match_crystal_alloy_fraction(text)
             if alloy_match is not None:
                 host_element, alloy_element, fraction = alloy_match
-                apply_operations(_crystal_alloy_operations(working, host_element, alloy_element, fraction))
+                apply_operations(
+                    _crystal_alloy_operations(
+                        working,
+                        host_element,
+                        alloy_element,
+                        fraction,
+                        selection_strategy=_requested_fraction_site_selection_strategy(text),
+                    )
+                )
 
         interstitial_match = _match_crystal_interstitial_fractional(text)
         if interstitial_match is not None:
@@ -11128,7 +11147,13 @@ def _infer_crystal_surface_preparation_patch(text: str, current_spec: ModelSpec)
         dopant_fraction_match = _match_crystal_dopant_fraction(text)
         if dopant_fraction_match is not None:
             host_element, dopant_element, fraction = dopant_fraction_match
-            dopant_operations = _crystal_dopant_fraction_operations(working, host_element, dopant_element, fraction)
+            dopant_operations = _crystal_dopant_fraction_operations(
+                working,
+                host_element,
+                dopant_element,
+                fraction,
+                selection_strategy=_requested_fraction_site_selection_strategy(text),
+            )
             apply_group(
                 _with_optional_carrier_intent(working, text, dopant_operations, dopant_element, fraction),
                 f"create {fraction:.3f} {dopant_element} dopant fraction",
@@ -11198,7 +11223,13 @@ def _infer_crystal_surface_preparation_patch(text: str, current_spec: ModelSpec)
         if alloy_match is not None:
             host_element, alloy_element, fraction = alloy_match
             apply_group(
-                _crystal_alloy_operations(working, host_element, alloy_element, fraction),
+                _crystal_alloy_operations(
+                    working,
+                    host_element,
+                    alloy_element,
+                    fraction,
+                    selection_strategy=_requested_fraction_site_selection_strategy(text),
+                ),
                 f"create {fraction:.3f} {alloy_element} alloy fraction",
             )
 
@@ -11656,7 +11687,13 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
         dopant_fraction_match = _match_crystal_dopant_fraction(text)
         if dopant_fraction_match is not None:
             host_element, dopant_element, fraction = dopant_fraction_match
-            dopant_operations = _crystal_dopant_fraction_operations(working, host_element, dopant_element, fraction)
+            dopant_operations = _crystal_dopant_fraction_operations(
+                working,
+                host_element,
+                dopant_element,
+                fraction,
+                selection_strategy=_requested_fraction_site_selection_strategy(text),
+            )
             apply_group(
                 _with_optional_carrier_intent(working, text, dopant_operations, dopant_element, fraction),
                 f"create {fraction:.3f} {dopant_element} dopant fraction",
@@ -11726,7 +11763,13 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
         if alloy_match is not None:
             host_element, alloy_element, fraction = alloy_match
             apply_group(
-                _crystal_alloy_operations(working, host_element, alloy_element, fraction),
+                _crystal_alloy_operations(
+                    working,
+                    host_element,
+                    alloy_element,
+                    fraction,
+                    selection_strategy=_requested_fraction_site_selection_strategy(text),
+                ),
                 f"create {fraction:.3f} {alloy_element} alloy fraction",
             )
 
@@ -12176,7 +12219,13 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
         dopant_fraction_match = _match_crystal_dopant_fraction(text)
         if dopant_fraction_match is not None:
             host_element, dopant_element, fraction = dopant_fraction_match
-            operations = _crystal_dopant_fraction_operations(current_spec, host_element, dopant_element, fraction)
+            operations = _crystal_dopant_fraction_operations(
+                current_spec,
+                host_element,
+                dopant_element,
+                fraction,
+                selection_strategy=_requested_fraction_site_selection_strategy(text),
+            )
             return _patch_plan(
                 _with_optional_carrier_intent(current_spec, text, operations, dopant_element, fraction),
                 "crystal_dopant_fraction",
@@ -12250,7 +12299,13 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
         if alloy_match is not None:
             host_element, alloy_element, fraction = alloy_match
             return _patch_plan(
-                _crystal_alloy_operations(current_spec, host_element, alloy_element, fraction),
+                _crystal_alloy_operations(
+                    current_spec,
+                    host_element,
+                    alloy_element,
+                    fraction,
+                    selection_strategy=_requested_fraction_site_selection_strategy(text),
+                ),
                 "crystal_alloy_fraction",
                 f"Create deterministic {fraction:.3f} {alloy_element} alloy fraction.",
             )
@@ -15975,10 +16030,11 @@ def _dopant_site_record(
 def _match_crystal_dopant_fraction(text: str) -> tuple[str | None, str, float] | None:
     percent = r"(?P<percent>\d+(?:\.\d+)?)\s*[%\uff05]"
     patterns = [
+        rf"\b(?:uniform(?:ly)?|spatially)\s+(?:distribute|distributed|spread)\s+{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\s+dopants?\b",
         rf"\b(?:replace|substitute)\s+{percent}\s+(?:of\s+)?(?P<host>{ELEMENT_TERM_PATTERN})\s+(?:with|by|to)\s+(?P<dopant>{ELEMENT_TERM_PATTERN})\s*(?:dopants?|doping)?\b",
         rf"\b(?:dope|doping)\s+(?P<host>{ELEMENT_TERM_PATTERN})\s+(?:with|using)\s+{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\b",
         rf"\b(?:dope|doping|dopant)\s+(?:with\s+)?{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})(?:\s+(?:dopants?|doped|doping))?\b",
-        rf"\b(?:make|create|build|set|form|generate)\b.*?{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\s+(?:doped|dopant|doping)\b(?:\s+(?P<host>{ELEMENT_TERM_PATTERN}))?",
+        rf"\b(?:make|create|build|set|form|generate)\b.*?{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\s+(?:doped|dopants?|doping)\b(?:\s+(?P<host>{ELEMENT_TERM_PATTERN}))?",
         rf"\b(?P<host>{ELEMENT_TERM_PATTERN})\s+(?:with\s+)?{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\s+(?:doped|doping|dopant)\b",
         rf"\b{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})\s+(?:doped|doping|dopant)\s+(?P<host>{ELEMENT_TERM_PATTERN})\b",
         rf"(?:\u63ba\u6742|\u63ba\u5165|\u5f15\u5165\u63ba\u6742|\u52a0\u5165\u63ba\u6742)\s*(?:with\s+)?{percent}\s*(?P<dopant>{ELEMENT_TERM_PATTERN})",
@@ -16039,11 +16095,46 @@ def _text_explicitly_requests_dopant_fraction(text: str) -> bool:
     )
 
 
+def _requested_fraction_site_selection_strategy(text: str) -> str:
+    """Return maximin only when the request explicitly asks for site separation."""
+
+    if re.search(
+        r"\b(?:"
+        r"uniform(?:ly)?\s+(?:distribut(?:e|ed)|spread|spaced)|"
+        r"spatially\s+(?:distribut(?:e|ed)|separat(?:e|ed)|spread)|"
+        r"maximi[sz]e\s+(?:the\s+)?(?:dopant|alloy|substitution|site)?\s*"
+        r"(?:separation|spacing|distance)|"
+        r"maximum\s+(?:dopant|alloy|substitution|site)?\s*(?:separation|spacing|distance)|"
+        r"avoid\s+(?:dopant|alloy|substitution|site)?\s*(?:clustering|clusters?|aggregation)|"
+        r"well[- ]separated"
+        r")\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return PERIODIC_MAXIMIN_STRATEGY
+    if any(
+        term in text
+        for term in (
+            "\u5747\u5300\u5206\u5e03",
+            "\u5747\u5300\u5206\u6563",
+            "\u7a7a\u95f4\u5206\u6563",
+            "\u6700\u5927\u5316\u95f4\u8ddd",
+            "\u6700\u5927\u95f4\u8ddd",
+            "\u907f\u514d\u805a\u96c6",
+            "\u907f\u514d\u56e2\u7c07",
+        )
+    ):
+        return PERIODIC_MAXIMIN_STRATEGY
+    return "atom_id_order"
+
+
 def _crystal_dopant_fraction_operations(
     current_spec: ModelSpec,
     host_element: str | None,
     dopant_element: str,
     fraction: float,
+    *,
+    selection_strategy: str = "atom_id_order",
 ) -> list[dict[str, Any]]:
     if not isinstance(current_spec.model, CrystalSpec):
         raise ValueError("crystal dopant fraction requires a crystal model.")
@@ -16056,7 +16147,13 @@ def _crystal_dopant_fraction_operations(
         raise ValueError(f"No {host} sites are available for doping.")
     target_count = max(1, int(math.floor(len(candidates) * fraction + 0.5)))
     target_count = min(target_count, len(candidates))
-    selected = sorted(candidates, key=lambda atom: _crystal_atom_sort_key(atom.id))[:target_count]
+    site_selection = None
+    if selection_strategy == PERIODIC_MAXIMIN_STRATEGY:
+        selected, site_selection = select_periodic_maximin_sites(crystal, candidates, target_count)
+    elif selection_strategy == "atom_id_order":
+        selected = sorted(candidates, key=lambda atom: _crystal_atom_sort_key(atom.id))[:target_count]
+    else:
+        raise ValueError(f"Unsupported dopant-fraction site-selection strategy: {selection_strategy}.")
     operations: list[dict[str, Any]] = [
         {"type": "substitute_atom", "atom_id": atom.id, "new_element": dopant_element}
         for atom in selected
@@ -16075,6 +16172,9 @@ def _crystal_dopant_fraction_operations(
         "rounding_error_fraction": round(actual_fraction - fraction, 6),
         "source": "natural_language_crystal_dopant_fraction",
     }
+    if site_selection is not None:
+        record["selection_strategy"] = selection_strategy
+        record["site_selection"] = site_selection
     previous = [
         dict(item)
         for item in (current_spec.metadata or {}).get("applied_dopant_fraction", [])
@@ -16179,6 +16279,8 @@ def _crystal_alloy_operations(
     host_element: str | None,
     alloy_element: str,
     fraction: float,
+    *,
+    selection_strategy: str = "atom_id_order",
 ) -> list[dict[str, Any]]:
     if not isinstance(current_spec.model, CrystalSpec):
         raise ValueError("crystal alloy fraction requires a crystal model.")
@@ -16191,7 +16293,13 @@ def _crystal_alloy_operations(
         raise ValueError(f"No {host} sites are available for alloying.")
     target_count = max(1, int(math.floor(len(candidates) * fraction + 0.5)))
     target_count = min(target_count, len(candidates))
-    selected = sorted(candidates, key=lambda atom: _crystal_atom_sort_key(atom.id))[:target_count]
+    site_selection = None
+    if selection_strategy == PERIODIC_MAXIMIN_STRATEGY:
+        selected, site_selection = select_periodic_maximin_sites(crystal, candidates, target_count)
+    elif selection_strategy == "atom_id_order":
+        selected = sorted(candidates, key=lambda atom: _crystal_atom_sort_key(atom.id))[:target_count]
+    else:
+        raise ValueError(f"Unsupported alloy site-selection strategy: {selection_strategy}.")
     operations: list[dict[str, Any]] = [
         {"type": "substitute_atom", "atom_id": atom.id, "new_element": alloy_element}
         for atom in selected
@@ -16210,6 +16318,9 @@ def _crystal_alloy_operations(
         "rounding_error_fraction": round(actual_fraction - fraction, 6),
         "source": "natural_language_crystal_alloy_fraction",
     }
+    if site_selection is not None:
+        record["selection_strategy"] = selection_strategy
+        record["site_selection"] = site_selection
     previous = [
         dict(item)
         for item in (current_spec.metadata or {}).get("applied_alloy", [])

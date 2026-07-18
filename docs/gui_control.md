@@ -754,6 +754,18 @@ receipt verifies the deterministic structural edit only; it does not establish
 a relaxed geometry, charge state, or formation energy. Preview remains the
 default, while explicit execute/hot-load continues through the existing
 single-window GUI path.
+Explicitly distributed alloy or dopant-fraction requests use a deterministic
+periodic maximin site-selection receipt. The receipt binds the full candidate
+site geometry, 3x3 minimum-image distance mode, selected IDs, each farthest-point
+step, atom-ID-order baseline, and SHA-256. The alloy and dopant-fraction CSVs
+include current selected-pair distance statistics, baseline improvement,
+candidate-nearest pair count, integrity, and current-geometry replay status.
+Receipt inconsistency is a structural health error; a later legitimate geometry
+change preserves historical integrity but marks current-geometry replay
+unavailable. This heuristic is not an SQS or a claim of alloy optimality. It
+does not change preview-first execution or the one-window GUI policy. Exact
+selection is capped at 512 candidate sites so oversized requests fail closed
+instead of starting unbounded pair-distance work.
 For heterostructure templates,
 it also reports interface metadata, in-plane lattice, cell volume, density, per-material reference
 lattice values, epitaxial strain percentages, and lattice mismatch relative to

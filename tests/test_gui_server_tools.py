@@ -6392,6 +6392,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     dopant_fraction = use_cases["dopant_fraction_preflight"]
     assert "dopant_concentration_summary" in dopant_fraction["diagnostic_summaries"]
     assert "semiconductor_dopant_concentration_csv" in dopant_fraction["diagnostic_csvs"]
+    assert "spatially distributed dopants" in dopant_fraction["request_terms"]
     alloy_preflight = use_cases["alloy_composition_preflight"]
     assert "alloy" in alloy_preflight["request_terms"]
     assert "SiGe alloy" in alloy_preflight["request_terms"]
@@ -6401,6 +6402,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "composition_summary" in alloy_preflight["diagnostic_summaries"]
     assert "semiconductor_alloy_csv" in alloy_preflight["diagnostic_csvs"]
     assert "semiconductor_neighbor_pairs_csv" in alloy_preflight["diagnostic_csvs"]
+    assert "periodic maximin alloy sites" in alloy_preflight["request_terms"]
     assert "mos_gate_stack" in use_cases
     metal_contact = use_cases["metal_semiconductor_contact"]
     assert "Al/Si Schottky contact" in metal_contact["request_terms"]
@@ -24879,6 +24881,35 @@ def test_live_modeling_request_infers_semiconductor_dopant_fraction_patch(monkey
     dopant_fraction = result["modeling_report"]["inspection"]["semiconductor_health"]["dopant_fraction_summary"]
     assert dopant_fraction["latest"]["selected_atom_ids"] == ["Si1_000", "Si1_100", "Si2_000", "Si2_100"]
     assert result["modeling_health"]["checks"]["semiconductor_total_dopant_fraction"] == 0.25
+
+
+def test_live_modeling_request_previews_spatially_distributed_alloy_without_gui_open(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = FakeGuiBackend()
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
+
+    result = server.material_studio_live_modeling_request(
+        "Build silicon crystal as a 2x2x1 supercell and uniformly distribute 25% Ge alloy.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["execution_mode"] == "preview"
+    assert not result.get("gui_action_performed", False)
+    assert backend.opened == []
+    alloy = result["modeling_report"]["inspection"]["semiconductor_health"]["alloy_summary"]
+    assert alloy["periodic_maximin_count"] == 1
+    assert alloy["site_selection_integrity_ok"] is True
+    assert alloy["site_selection_replay_verified"] is True
+    assert alloy["latest"]["selection_strategy"] == "periodic_maximin"
+    assert alloy["latest"]["minimum_distance_improvement_over_atom_id_order_angstrom"] >= 0
+    checks = result["modeling_health"]["checks"]
+    assert checks["semiconductor_alloy_periodic_maximin_count"] == 1
+    assert checks["semiconductor_alloy_site_selection_integrity_ok"] is True
+    risks = result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert "alloy_periodic_maximin_not_sqs" in risks
 
 
 def test_live_modeling_request_infers_chinese_dopant_concentration_patch(

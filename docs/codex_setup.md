@@ -607,6 +607,14 @@ or
 To verify the deterministic O-vacancy continuation without touching a real GUI,
 add `--follow-up-preset o_vacancy` while keeping `--execution-mode preview` and
 the two `--no-*` GUI flags.
+The base 6H-SiC oxide-interface and MOS scenarios require
+`semiconductor_oxide_interface_health.csv` with at least three rows (one
+summary plus the deterministic oxide layers). The O-vacancy follow-up requires
+at least four rows and a defect row bound to its oxide layer and interface
+distance. Inspect `oxide_interface_health_summary.stoichiometry_status`,
+`recorded_oxygen_vacancy_binding`, and
+`modeling_report.normality_gate.primary_reason_code`; none of these fields is a
+claim that the oxide is amorphous, relaxed, or calculation-ready.
 
 For a preview-safe Chinese halide-perovskite acceptance run with seven exported
 views, alloy diagnostics, and the normality gate, use

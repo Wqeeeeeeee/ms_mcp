@@ -1414,6 +1414,45 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append("Semiconductor interface quality preflight has warnings; inspect interface_quality_summary.")
         warnings.extend(str(item) for item in interface_quality.get("warnings", []) or [])
 
+    oxide_interface = semiconductor.get("oxide_interface_health_summary") or {}
+    if oxide_interface:
+        checks["semiconductor_oxide_interface_status"] = oxide_interface.get("status")
+        checks["semiconductor_oxide_interface_quality"] = oxide_interface.get("quality")
+        checks["semiconductor_oxide_interface_oxide_material"] = oxide_interface.get("oxide_material")
+        checks["semiconductor_oxide_interface_layer_count"] = oxide_interface.get("oxide_layer_count")
+        checks["semiconductor_oxide_interface_element_counts"] = oxide_interface.get("oxide_element_counts")
+        checks["semiconductor_oxide_interface_stoichiometry_status"] = oxide_interface.get(
+            "stoichiometry_status"
+        )
+        checks["semiconductor_oxide_interface_oxygen_to_cation_ratio"] = oxide_interface.get(
+            "oxygen_to_cation_ratio"
+        )
+        checks["semiconductor_oxide_interface_oxygen_deficit_count"] = oxide_interface.get(
+            "oxygen_deficit_count"
+        )
+        checks["semiconductor_oxide_interface_oxygen_deficit_binding_status"] = oxide_interface.get(
+            "oxygen_deficit_binding_status"
+        )
+        checks["semiconductor_oxide_interface_recorded_oxygen_vacancy_count"] = oxide_interface.get(
+            "recorded_oxygen_vacancy_count"
+        )
+        checks["semiconductor_oxide_interface_vacancy_locations_verified"] = oxide_interface.get(
+            "all_recorded_oxygen_vacancy_locations_verified"
+        )
+        checks["semiconductor_oxide_interface_requires_geometry_relaxation"] = oxide_interface.get(
+            "requires_geometry_relaxation"
+        )
+        checks["semiconductor_oxide_interface_visual_preflight_ready"] = oxide_interface.get(
+            "visual_preflight_ready"
+        )
+        checks["semiconductor_oxide_interface_calculation_ready"] = oxide_interface.get(
+            "calculation_ready"
+        )
+        if oxide_interface.get("quality") == "review_required":
+            warnings.append(
+                "Semiconductor oxide-interface chemistry requires review; inspect oxide_interface_health_summary."
+            )
+
     gate_stack = semiconductor.get("gate_stack_summary") or {}
     if gate_stack:
         checks["semiconductor_gate_stack_quality"] = gate_stack.get("quality")

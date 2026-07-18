@@ -350,6 +350,17 @@ inventing gate metadata; real gate stacks also update `gate_stack_summary` plus
 `semiconductor_gate_stack.csv`. GUI tools
 should then hot-load or snapshot the resulting revision rather than editing the
 stack by blind viewport clicks.
+Semiconductor/oxide interface and MOS starts additionally emit
+`oxide_interface_health_summary` plus
+`semiconductor_oxide_interface_health.csv`. The receipt reports oxide-layer
+chemistry, formula-derived O/cation ratio, oxygen deficit or excess, and the
+layer and interface-boundary distance of an explicitly recorded O vacancy.
+It is not emitted for metal/oxide-only starts such as Cu/SiO2. A matched ratio
+or bound defect record validates the deterministic construction history only;
+it does not establish an amorphous oxide network, interface relaxation, defect
+charge state, electronic convergence, or calculation readiness. The normality
+gate therefore keeps these starts in an oxide-interface review category and
+returns a preview-first relaxation or defect-review action.
 The Al/Si Schottky contact template is treated as a metal/semiconductor contact,
 not as a quantum-well stack or an unpassivated slab. It emits
 `metal_semiconductor_contact_summary` plus `semiconductor_contact.csv` with

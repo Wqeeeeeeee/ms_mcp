@@ -2463,11 +2463,13 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
             "required_summary_keys": [
                 "interface_profile_summary",
                 "interface_quality_summary",
+                "oxide_interface_health_summary",
                 "calculation_preflight_summary",
             ],
             "required_csv_keys": [
                 "semiconductor_interface_profile_csv",
                 "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_health_csv",
                 "semiconductor_calculation_preflight_csv",
                 "view_quality_csv",
             ],
@@ -2523,12 +2525,14 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
                 "gate_stack_summary",
                 "interface_profile_summary",
                 "interface_quality_summary",
+                "oxide_interface_health_summary",
                 "calculation_preflight_summary",
             ],
             "required_csv_keys": [
                 "semiconductor_gate_stack_csv",
                 "semiconductor_interface_profile_csv",
                 "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_health_csv",
                 "semiconductor_calculation_preflight_csv",
                 "view_quality_csv",
             ],

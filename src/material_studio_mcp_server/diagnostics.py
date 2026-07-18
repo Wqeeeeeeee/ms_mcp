@@ -1945,6 +1945,80 @@ def write_view_audit_bundle(
             interface_quality_rows,
         )
 
+    oxide_interface_health = semiconductor.get("oxide_interface_health_summary") or {}
+    if oxide_interface_health:
+        oxide_interface_rows = _semiconductor_oxide_interface_health_csv_rows(
+            oxide_interface_health
+        )
+        files["semiconductor_oxide_interface_health_csv"] = str(
+            bundle_dir / "semiconductor_oxide_interface_health.csv"
+        )
+        row_counts["semiconductor_oxide_interface_health"] = _write_csv(
+            bundle_dir / "semiconductor_oxide_interface_health.csv",
+            [
+                "row_kind",
+                "interface",
+                "axis",
+                "semiconductor_material",
+                "oxide_material",
+                "metal_gate_present",
+                "material_sequence",
+                "sequence_matches_expected",
+                "status",
+                "quality",
+                "layer_profile_complete",
+                "oxide_layer_count",
+                "layer_index",
+                "fractional_center",
+                "axis_coordinate_angstrom",
+                "material_group",
+                "atom_count",
+                "element_counts",
+                "atom_ids",
+                "oxide_cation_elements",
+                "cation_count",
+                "oxygen_count",
+                "oxygen_to_cation_ratio",
+                "expected_oxygen_per_cation_ratio",
+                "expected_oxygen_count",
+                "oxygen_delta_count",
+                "oxygen_deficit_count",
+                "oxygen_excess_count",
+                "stoichiometry_status",
+                "oxygen_deficit_binding_status",
+                "oxygen_deficit_explained_by_recorded_vacancies",
+                "recorded_oxygen_vacancy_count",
+                "recorded_oxygen_vacancy_site_ids",
+                "all_recorded_oxygen_vacancy_locations_verified",
+                "vacancy_site_id",
+                "vacancy_fractional_a",
+                "vacancy_fractional_b",
+                "vacancy_fractional_c",
+                "vacancy_axis_coordinate_angstrom",
+                "vacancy_region",
+                "vacancy_nearest_layer_index",
+                "vacancy_nearest_layer_material",
+                "vacancy_nearest_layer_delta_angstrom",
+                "vacancy_distance_to_boundary_angstrom",
+                "vacancy_interface_proximal",
+                "vacancy_position_verified",
+                "vacancy_auto_selected_site",
+                "semiconductor_oxide_boundary_angstrom",
+                "pre_relaxation_scaffold",
+                "requires_geometry_relaxation",
+                "geometry_relaxed",
+                "geometry_relaxation_verified",
+                "visual_preflight_ready",
+                "calculation_ready",
+                "normality_reason_codes",
+                "calculation_blocking_reasons",
+                "next_action",
+                "warning_count",
+                "warnings",
+            ],
+            oxide_interface_rows,
+        )
+
     gate_stack = semiconductor.get("gate_stack_summary") or {}
     if gate_stack:
         gate_stack_rows = _semiconductor_gate_stack_csv_rows(gate_stack)
@@ -2544,6 +2618,11 @@ def write_view_audit_bundle(
             "semiconductor_coordination_outlier_count",
             "semiconductor_interface_quality",
             "semiconductor_interface_period_sequence_complete",
+            "semiconductor_oxide_interface_status",
+            "semiconductor_oxide_interface_stoichiometry_status",
+            "semiconductor_oxide_interface_oxygen_deficit_count",
+            "semiconductor_oxide_interface_recorded_oxygen_vacancy_count",
+            "semiconductor_oxide_interface_calculation_ready",
             "semiconductor_gate_stack_quality",
             "semiconductor_gate_stack_sequence_matches_expected",
             "semiconductor_quantum_well_period_count",
@@ -2726,6 +2805,19 @@ def _modeling_health_summary_csv_row(
         ),
         "semiconductor_interface_quality": checks.get("semiconductor_interface_quality"),
         "semiconductor_interface_period_sequence_complete": checks.get("semiconductor_interface_period_sequence_complete"),
+        "semiconductor_oxide_interface_status": checks.get("semiconductor_oxide_interface_status"),
+        "semiconductor_oxide_interface_stoichiometry_status": checks.get(
+            "semiconductor_oxide_interface_stoichiometry_status"
+        ),
+        "semiconductor_oxide_interface_oxygen_deficit_count": checks.get(
+            "semiconductor_oxide_interface_oxygen_deficit_count"
+        ),
+        "semiconductor_oxide_interface_recorded_oxygen_vacancy_count": checks.get(
+            "semiconductor_oxide_interface_recorded_oxygen_vacancy_count"
+        ),
+        "semiconductor_oxide_interface_calculation_ready": checks.get(
+            "semiconductor_oxide_interface_calculation_ready"
+        ),
         "semiconductor_gate_stack_quality": checks.get("semiconductor_gate_stack_quality"),
         "semiconductor_gate_stack_sequence_matches_expected": checks.get("semiconductor_gate_stack_sequence_matches_expected"),
         "semiconductor_quantum_well_period_count": checks.get("semiconductor_quantum_well_period_count"),
@@ -4924,6 +5016,123 @@ def _semiconductor_interface_quality_csv_rows(summary: dict[str, Any]) -> list[d
     ]
 
 
+def _semiconductor_oxide_interface_health_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    boundary = summary.get("semiconductor_oxide_boundary") or {}
+    common = {
+        "interface": summary.get("interface"),
+        "axis": summary.get("axis"),
+        "semiconductor_material": summary.get("semiconductor_material"),
+        "oxide_material": summary.get("oxide_material"),
+        "metal_gate_present": summary.get("metal_gate_present"),
+        "material_sequence": _join_vector(summary.get("material_sequence")),
+        "sequence_matches_expected": summary.get("sequence_matches_expected"),
+        "status": summary.get("status"),
+        "quality": summary.get("quality"),
+        "layer_profile_complete": summary.get("layer_profile_complete"),
+        "oxide_layer_count": summary.get("oxide_layer_count"),
+        "oxide_cation_elements": _join_vector(summary.get("oxide_cation_elements")),
+        "expected_oxygen_per_cation_ratio": summary.get("expected_oxygen_per_cation_ratio"),
+        "oxygen_deficit_binding_status": summary.get("oxygen_deficit_binding_status"),
+        "oxygen_deficit_explained_by_recorded_vacancies": summary.get(
+            "oxygen_deficit_explained_by_recorded_vacancies"
+        ),
+        "recorded_oxygen_vacancy_count": summary.get("recorded_oxygen_vacancy_count"),
+        "recorded_oxygen_vacancy_site_ids": _join_vector(
+            summary.get("recorded_oxygen_vacancy_site_ids")
+        ),
+        "all_recorded_oxygen_vacancy_locations_verified": summary.get(
+            "all_recorded_oxygen_vacancy_locations_verified"
+        ),
+        "semiconductor_oxide_boundary_angstrom": boundary.get("axis_coordinate_angstrom"),
+        "pre_relaxation_scaffold": summary.get("pre_relaxation_scaffold"),
+        "requires_geometry_relaxation": summary.get("requires_geometry_relaxation"),
+        "geometry_relaxed": summary.get("geometry_relaxed"),
+        "geometry_relaxation_verified": summary.get("geometry_relaxation_verified"),
+        "visual_preflight_ready": summary.get("visual_preflight_ready"),
+        "calculation_ready": summary.get("calculation_ready"),
+        "normality_reason_codes": _join_vector(summary.get("normality_reason_codes")),
+        "calculation_blocking_reasons": _join_vector(summary.get("calculation_blocking_reasons")),
+        "next_action": summary.get("next_action"),
+        "warning_count": summary.get("warning_count"),
+        "warnings": ";".join(str(value) for value in summary.get("warnings", []) or []),
+    }
+    rows = [
+        {
+            **common,
+            "row_kind": "summary",
+            "layer_index": None,
+            "fractional_center": None,
+            "axis_coordinate_angstrom": None,
+            "material_group": None,
+            "atom_count": summary.get("oxide_atom_count"),
+            "element_counts": json.dumps(
+                summary.get("oxide_element_counts") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "atom_ids": None,
+            "cation_count": summary.get("oxide_cation_count"),
+            "oxygen_count": summary.get("oxygen_count"),
+            "oxygen_to_cation_ratio": summary.get("oxygen_to_cation_ratio"),
+            "expected_oxygen_count": summary.get("expected_oxygen_count"),
+            "oxygen_delta_count": summary.get("oxygen_delta_count"),
+            "oxygen_deficit_count": summary.get("oxygen_deficit_count"),
+            "oxygen_excess_count": summary.get("oxygen_excess_count"),
+            "stoichiometry_status": summary.get("stoichiometry_status"),
+        }
+    ]
+    for layer in summary.get("oxide_layers", []) or []:
+        rows.append(
+            {
+                **common,
+                "row_kind": "oxide_layer",
+                "layer_index": layer.get("layer_index"),
+                "fractional_center": layer.get("fractional_center"),
+                "axis_coordinate_angstrom": layer.get("axis_coordinate_angstrom"),
+                "material_group": layer.get("material_group"),
+                "atom_count": layer.get("atom_count"),
+                "element_counts": json.dumps(
+                    layer.get("element_counts") or {},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                "atom_ids": _join_vector(layer.get("atom_ids")),
+                "cation_count": layer.get("cation_count"),
+                "oxygen_count": layer.get("oxygen_count"),
+                "oxygen_to_cation_ratio": layer.get("oxygen_to_cation_ratio"),
+                "expected_oxygen_count": layer.get("expected_oxygen_count"),
+                "oxygen_delta_count": layer.get("oxygen_delta_count"),
+                "oxygen_deficit_count": layer.get("oxygen_deficit_count"),
+                "oxygen_excess_count": layer.get("oxygen_excess_count"),
+                "stoichiometry_status": layer.get("stoichiometry_status"),
+            }
+        )
+    for vacancy in summary.get("oxygen_vacancy_locations", []) or []:
+        fractional = vacancy.get("fractional") or [None, None, None]
+        rows.append(
+            {
+                **common,
+                "row_kind": "oxygen_vacancy",
+                "vacancy_site_id": vacancy.get("site_id"),
+                "vacancy_fractional_a": fractional[0] if len(fractional) > 0 else None,
+                "vacancy_fractional_b": fractional[1] if len(fractional) > 1 else None,
+                "vacancy_fractional_c": fractional[2] if len(fractional) > 2 else None,
+                "vacancy_axis_coordinate_angstrom": vacancy.get("axis_coordinate_angstrom"),
+                "vacancy_region": vacancy.get("region"),
+                "vacancy_nearest_layer_index": vacancy.get("nearest_layer_index"),
+                "vacancy_nearest_layer_material": vacancy.get("nearest_layer_material"),
+                "vacancy_nearest_layer_delta_angstrom": vacancy.get("nearest_layer_delta_angstrom"),
+                "vacancy_distance_to_boundary_angstrom": vacancy.get(
+                    "distance_to_semiconductor_oxide_boundary_angstrom"
+                ),
+                "vacancy_interface_proximal": vacancy.get("interface_proximal"),
+                "vacancy_position_verified": vacancy.get("position_verified"),
+                "vacancy_auto_selected_site": vacancy.get("auto_selected_site"),
+            }
+        )
+    return rows
+
+
 def _semiconductor_gate_stack_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     expected_sequence = _join_vector(summary.get("expected_stack_sequence"))
@@ -6616,6 +6825,18 @@ def _semiconductor_health_summary(
         heterostructure_summary,
         superlattice_period_summary,
     )
+    oxide_interface_health_summary = _semiconductor_oxide_interface_health_summary(
+        metadata,
+        layer_profile_summary,
+        interface_profile_summary,
+        interface_quality_summary,
+        defect_summary,
+    )
+    if oxide_interface_health_summary:
+        warnings.extend(
+            str(item)
+            for item in oxide_interface_health_summary.get("warnings", []) or []
+        )
     gate_stack_summary = _gate_stack_summary(
         metadata,
         layer_profile_summary,
@@ -6718,6 +6939,7 @@ def _semiconductor_health_summary(
         "polarization_2deg_summary": polarization_2deg_summary,
         "p_gan_gate_cap_summary": p_gan_gate_cap_summary,
         "interface_quality_summary": interface_quality_summary,
+        "oxide_interface_health_summary": oxide_interface_health_summary,
         "gate_stack_summary": gate_stack_summary,
         "metal_semiconductor_contact_summary": metal_semiconductor_contact_summary,
         "surface_model_summary": surface_model_summary,
@@ -10939,6 +11161,102 @@ def _metal_oxide_interface_quality_summary(
     }
 
 
+def _semiconductor_oxide_interface_applicable(metadata: dict[str, Any]) -> bool:
+    family = str(metadata.get("structure_family") or "").lower()
+    return bool(
+        not _is_metal_oxide_interface_metadata(metadata)
+        and (
+            metadata.get("semiconductor_oxide_interface")
+            or "semiconductor oxide interface" in family
+            or "mos capacitor" in family
+        )
+    )
+
+
+def _semiconductor_oxide_material(metadata: dict[str, Any]) -> str | None:
+    explicit = metadata.get("oxide_material") or metadata.get("gate_oxide_material")
+    if explicit:
+        return str(explicit)
+    raw_materials = metadata.get("materials") or []
+    materials = [raw_materials] if isinstance(raw_materials, str) else list(raw_materials)
+    for material in materials:
+        formula = _material_formula_amounts(str(material))
+        if formula and formula.get("O", 0.0) > 0 and any(
+            element != "O" and amount > 0
+            for element, amount in formula.items()
+        ):
+            return str(material)
+    return None
+
+
+def _semiconductor_oxide_interface_boundary(
+    interface_profile: dict[str, Any],
+    *,
+    semiconductor_material: str | None,
+    oxide_material: str | None,
+) -> dict[str, Any] | None:
+    if not oxide_material:
+        return None
+    layers_by_index = {
+        int(layer["layer_index"]): layer
+        for layer in interface_profile.get("layers", []) or []
+        if isinstance(layer, dict) and _optional_int(layer.get("layer_index")) is not None
+    }
+    for transition in interface_profile.get("transitions", []) or []:
+        if not isinstance(transition, dict):
+            continue
+        from_material = str(transition.get("from_material_group") or "")
+        to_material = str(transition.get("to_material_group") or "")
+        materials = {from_material, to_material}
+        if oxide_material not in materials:
+            continue
+        if semiconductor_material and semiconductor_material not in materials:
+            continue
+        from_index = _optional_int(transition.get("from_layer_index"))
+        to_index = _optional_int(transition.get("to_layer_index"))
+        from_layer = layers_by_index.get(from_index or -1, {})
+        to_layer = layers_by_index.get(to_index or -1, {})
+        from_coordinate = _optional_float(from_layer.get("axis_coordinate_angstrom"))
+        to_coordinate = _optional_float(to_layer.get("axis_coordinate_angstrom"))
+        boundary_coordinate = (
+            _round((from_coordinate + to_coordinate) / 2.0)
+            if from_coordinate is not None and to_coordinate is not None
+            else None
+        )
+        oxide_layer_index = to_index if to_material == oxide_material else from_index
+        semiconductor_layer_index = from_index if to_material == oxide_material else to_index
+        return {
+            "from_material": from_material or None,
+            "to_material": to_material or None,
+            "from_layer_index": from_index,
+            "to_layer_index": to_index,
+            "semiconductor_layer_index": semiconductor_layer_index,
+            "oxide_layer_index": oxide_layer_index,
+            "axis_coordinate_angstrom": boundary_coordinate,
+        }
+    return None
+
+
+def _oxide_stoichiometry_status(
+    oxygen_count: int,
+    cation_count: int,
+    expected_oxygen_per_cation: float | None,
+) -> tuple[str, float | None, float | None, float | None, float | None]:
+    if expected_oxygen_per_cation is None or cation_count <= 0:
+        return "not_evaluated", None, None, None, None
+    expected_oxygen = cation_count * expected_oxygen_per_cation
+    delta = oxygen_count - expected_oxygen
+    tolerance = 1e-6
+    status = "matched" if abs(delta) <= tolerance else "oxygen_deficient" if delta < 0 else "oxygen_excess"
+    return (
+        status,
+        _round(expected_oxygen),
+        _round(delta),
+        _round(max(-delta, 0.0)),
+        _round(max(delta, 0.0)),
+    )
+
+
 def _sum_layer_element_counts(layers: list[dict[str, Any]]) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for layer in layers:
@@ -10948,6 +11266,415 @@ def _sum_layer_element_counts(layers: list[dict[str, Any]]) -> dict[str, int]:
             except (TypeError, ValueError):
                 continue
     return dict(sorted((element, count) for element, count in counts.items() if count > 0))
+
+
+def _semiconductor_oxide_interface_health_summary(
+    metadata: dict[str, Any],
+    layer_profile: dict[str, Any] | None,
+    interface_profile: dict[str, Any] | None,
+    interface_quality: dict[str, Any] | None,
+    defect_summary: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not _semiconductor_oxide_interface_applicable(metadata):
+        return None
+
+    oxide_material = _semiconductor_oxide_material(metadata)
+    semiconductor_material = str(
+        metadata.get("semiconductor_channel_material") or metadata.get("substrate") or ""
+    ) or None
+    profile = interface_profile or {}
+    layer_summary = layer_profile or {}
+    all_layers = [
+        dict(layer)
+        for layer in profile.get("layers", []) or []
+        if isinstance(layer, dict)
+    ]
+    oxide_layers = [
+        layer
+        for layer in all_layers
+        if str(layer.get("material_group") or "") == str(oxide_material or "")
+    ]
+    if not oxide_layers:
+        oxide_layers = [
+            layer
+            for layer in all_layers
+            if int((layer.get("element_counts") or {}).get("O") or 0) > 0
+            and str(layer.get("material_group") or "") != str(semiconductor_material or "")
+        ]
+
+    formula = _material_formula_amounts(oxide_material)
+    cation_elements = sorted(
+        element
+        for element, amount in (formula or {}).items()
+        if element != "O" and amount > 0
+    )
+    oxide_element_counts = _sum_layer_element_counts(oxide_layers)
+    if not cation_elements:
+        cation_elements = sorted(
+            element
+            for element, count in oxide_element_counts.items()
+            if element != "O" and count > 0
+        )
+    formula_cation_amount = sum(
+        amount
+        for element, amount in (formula or {}).items()
+        if element != "O" and amount > 0
+    )
+    expected_oxygen_per_cation = (
+        float((formula or {}).get("O", 0.0)) / formula_cation_amount
+        if formula_cation_amount > 0 and float((formula or {}).get("O", 0.0)) > 0
+        else None
+    )
+    oxide_cation_count = sum(int(oxide_element_counts.get(element) or 0) for element in cation_elements)
+    oxygen_count = int(oxide_element_counts.get("O") or 0)
+    profile_complete = bool(
+        all_layers
+        and int(profile.get("layer_count") or len(all_layers)) == len(all_layers)
+        and int(layer_summary.get("layer_count") or len(all_layers)) == len(all_layers)
+    )
+    stoichiometry_status, expected_oxygen_count, oxygen_delta, oxygen_deficit, oxygen_excess = (
+        _oxide_stoichiometry_status(
+            oxygen_count,
+            oxide_cation_count,
+            expected_oxygen_per_cation if profile_complete and oxide_layers else None,
+        )
+    )
+    oxygen_to_cation_ratio = (
+        _round(oxygen_count / oxide_cation_count)
+        if oxide_cation_count > 0
+        else None
+    )
+
+    oxide_layer_rows: list[dict[str, Any]] = []
+    for layer in oxide_layers:
+        counts = {
+            str(element): int(count)
+            for element, count in (layer.get("element_counts") or {}).items()
+        }
+        layer_cation_count = sum(int(counts.get(element) or 0) for element in cation_elements)
+        layer_oxygen_count = int(counts.get("O") or 0)
+        layer_status, layer_expected, layer_delta, layer_deficit, layer_excess = (
+            _oxide_stoichiometry_status(
+                layer_oxygen_count,
+                layer_cation_count,
+                expected_oxygen_per_cation if profile_complete else None,
+            )
+        )
+        oxide_layer_rows.append(
+            {
+                "layer_index": layer.get("layer_index"),
+                "fractional_center": layer.get("fractional_center"),
+                "axis_coordinate_angstrom": layer.get("axis_coordinate_angstrom"),
+                "material_group": layer.get("material_group"),
+                "atom_count": layer.get("atom_count"),
+                "element_counts": dict(sorted(counts.items())),
+                "cation_count": layer_cation_count,
+                "oxygen_count": layer_oxygen_count,
+                "oxygen_to_cation_ratio": (
+                    _round(layer_oxygen_count / layer_cation_count)
+                    if layer_cation_count > 0
+                    else None
+                ),
+                "expected_oxygen_count": layer_expected,
+                "oxygen_delta_count": layer_delta,
+                "oxygen_deficit_count": layer_deficit,
+                "oxygen_excess_count": layer_excess,
+                "stoichiometry_status": layer_status,
+                "atom_ids": layer.get("atom_ids") or [],
+            }
+        )
+
+    boundary = _semiconductor_oxide_interface_boundary(
+        profile,
+        semiconductor_material=semiconductor_material,
+        oxide_material=oxide_material,
+    )
+    axis = str(profile.get("axis") or layer_summary.get("axis") or metadata.get("interface_axis") or "")
+    axis_index = {"a": 0, "b": 1, "c": 2}.get(axis)
+    axis_length = _optional_float(layer_summary.get("axis_length_angstrom"))
+    fractional_tolerance = _optional_float(layer_summary.get("tolerance_fractional")) or 1e-4
+    coordinate_tolerance = max((axis_length or 0.0) * fractional_tolerance * 2.0, 0.05)
+    interface_proximity_threshold = max(
+        _optional_float(
+            metadata.get("semiconductor_oxide_interface_gap_angstrom")
+            or metadata.get("interface_gap_angstrom")
+        )
+        or 0.0,
+        2.0,
+    )
+    oxygen_vacancies = [
+        dict(defect)
+        for defect in (defect_summary or {}).get("defects", []) or []
+        if isinstance(defect, dict)
+        and str(defect.get("type") or "").lower() == "vacancy"
+        and str(defect.get("site_element") or "") == "O"
+    ]
+    vacancy_locations: list[dict[str, Any]] = []
+    for vacancy in oxygen_vacancies:
+        fractional = _coerce_fractional(vacancy.get("fractional"))
+        axis_fractional = fractional[axis_index] if fractional is not None and axis_index is not None else None
+        axis_coordinate = (
+            _round(axis_fractional * axis_length)
+            if axis_fractional is not None and axis_length is not None
+            else None
+        )
+        nearest_layer = None
+        nearest_delta = None
+        if axis_fractional is not None:
+            candidates = [
+                (abs(axis_fractional - float(layer.get("fractional_center"))), layer)
+                for layer in all_layers
+                if _optional_float(layer.get("fractional_center")) is not None
+            ]
+            if candidates:
+                fractional_delta, nearest_layer = min(
+                    candidates,
+                    key=lambda item: (item[0], int(item[1].get("layer_index") or 0)),
+                )
+                nearest_delta = (
+                    _round(fractional_delta * axis_length)
+                    if axis_length is not None
+                    else None
+                )
+        nearest_material = str((nearest_layer or {}).get("material_group") or "") or None
+        exact_layer_match = nearest_delta is not None and nearest_delta <= coordinate_tolerance
+        boundary_coordinate = _optional_float((boundary or {}).get("axis_coordinate_angstrom"))
+        boundary_distance = (
+            _round(abs(axis_coordinate - boundary_coordinate))
+            if axis_coordinate is not None and boundary_coordinate is not None
+            else None
+        )
+        if exact_layer_match and nearest_material == oxide_material:
+            region = "oxide"
+        elif exact_layer_match and nearest_material == semiconductor_material:
+            region = "semiconductor"
+        elif exact_layer_match and nearest_material:
+            region = "other_stack_material"
+        elif boundary_distance is not None and boundary_distance <= interface_proximity_threshold:
+            region = "interface_boundary"
+        else:
+            region = "unknown"
+        vacancy_locations.append(
+            {
+                "site_id": vacancy.get("site_id"),
+                "site_element": vacancy.get("site_element"),
+                "fractional": list(fractional) if fractional is not None else None,
+                "axis_fractional": _round(axis_fractional) if axis_fractional is not None else None,
+                "axis_coordinate_angstrom": axis_coordinate,
+                "region": region,
+                "nearest_layer_index": (nearest_layer or {}).get("layer_index"),
+                "nearest_layer_material": nearest_material,
+                "nearest_layer_delta_angstrom": nearest_delta,
+                "distance_to_semiconductor_oxide_boundary_angstrom": boundary_distance,
+                "interface_proximal": (
+                    boundary_distance <= interface_proximity_threshold
+                    if boundary_distance is not None
+                    else None
+                ),
+                "position_verified": bool(exact_layer_match and region != "unknown"),
+                "auto_selected_site": bool(vacancy.get("auto_selected_site")),
+                "source": vacancy.get("source"),
+            }
+        )
+
+    recorded_vacancy_count = len(oxygen_vacancies)
+    all_vacancy_locations_verified = all(
+        bool(location.get("position_verified"))
+        for location in vacancy_locations
+    )
+    if stoichiometry_status == "not_evaluated":
+        deficit_binding_status = "not_evaluated"
+        deficit_explained = None
+    elif oxygen_deficit and oxygen_deficit > 0:
+        deficit_explained = abs(float(oxygen_deficit) - recorded_vacancy_count) <= 1e-6
+        deficit_binding_status = (
+            "matched_recorded_oxygen_vacancies"
+            if deficit_explained
+            else "unexplained_oxygen_deficit"
+            if recorded_vacancy_count == 0
+            else "oxygen_deficit_vacancy_count_mismatch"
+        )
+    elif recorded_vacancy_count:
+        deficit_explained = False
+        deficit_binding_status = "recorded_oxygen_vacancy_without_matching_deficit"
+    else:
+        deficit_explained = True
+        deficit_binding_status = "none_detected"
+
+    sequence_matches = (interface_quality or {}).get("period_sequence_complete")
+    declared_materials_present = (interface_quality or {}).get("declared_materials_present")
+    sequence_ok = sequence_matches is not False and declared_materials_present is not False
+    unrelaxed_scaffold = bool(
+        metadata.get("interface_scaffold")
+        or metadata.get("pre_relaxation_scaffold")
+        or metadata.get("unrelaxed_interface")
+        or metadata.get("requires_geometry_relaxation")
+    )
+    geometry_relaxed = metadata.get("geometry_relaxed")
+    geometry_relaxation_verified = geometry_relaxed is True and not unrelaxed_scaffold
+    unexplained_stoichiometry = bool(
+        stoichiometry_status in {"oxygen_excess", "not_evaluated"}
+        or deficit_binding_status
+        in {
+            "unexplained_oxygen_deficit",
+            "oxygen_deficit_vacancy_count_mismatch",
+            "recorded_oxygen_vacancy_without_matching_deficit",
+        }
+    )
+    normality_reason_codes: list[str] = []
+    if unexplained_stoichiometry or not sequence_ok:
+        normality_reason_codes.append("oxide_interface_stoichiometry_review")
+    if recorded_vacancy_count and not all_vacancy_locations_verified:
+        normality_reason_codes.append("oxide_interface_defect_location_unverified")
+    if recorded_vacancy_count:
+        normality_reason_codes.append("oxide_interface_recorded_oxygen_vacancy")
+    if unrelaxed_scaffold:
+        normality_reason_codes.append("oxide_interface_unrelaxed_scaffold")
+    elif not geometry_relaxation_verified:
+        normality_reason_codes.append("oxide_interface_geometry_relaxation_unverified")
+
+    if unexplained_stoichiometry or not sequence_ok:
+        status = "stoichiometry_review"
+        quality = "review_required"
+        next_action = "reconcile_oxide_layer_stoichiometry_and_defect_metadata_before_relaxation"
+    elif recorded_vacancy_count and not all_vacancy_locations_verified:
+        status = "oxygen_vacancy_location_unverified"
+        quality = "review_required"
+        next_action = "verify_oxygen_vacancy_layer_and_interface_distance_before_relaxation"
+    elif recorded_vacancy_count:
+        status = "recorded_oxygen_vacancy_review"
+        quality = "complete_with_recorded_defect"
+        next_action = "review_oxygen_vacancy_site_and_supercell_before_relaxation"
+    elif unrelaxed_scaffold:
+        status = "pre_relaxation_review"
+        quality = "complete"
+        next_action = "review_or_relax_semiconductor_oxide_interface_before_quantitative_use"
+    elif not geometry_relaxation_verified:
+        status = "geometry_relaxation_unverified"
+        quality = "complete"
+        next_action = "verify_geometry_relaxation_before_quantitative_interface_use"
+    else:
+        status = "ready_for_available_preflight"
+        quality = "complete"
+        next_action = "continue_with_reviewed_semiconductor_oxide_interface_workflow"
+
+    warnings: list[str] = []
+    if not profile_complete:
+        warnings.append("Layer-profile rows are incomplete; oxide stoichiometry was not accepted as complete.")
+    if not oxide_layers:
+        warnings.append("No oxide layers were identified from the current interface material markers.")
+    if expected_oxygen_per_cation is None:
+        warnings.append("Oxide formula could not be parsed for an oxygen-to-cation stoichiometry check.")
+    if not sequence_ok:
+        warnings.append("Semiconductor/oxide material sequence is incomplete or differs from metadata.")
+    if deficit_binding_status in {
+        "unexplained_oxygen_deficit",
+        "oxygen_deficit_vacancy_count_mismatch",
+        "recorded_oxygen_vacancy_without_matching_deficit",
+    }:
+        warnings.append("Oxide oxygen deficit does not match the recorded oxygen-vacancy metadata.")
+    if stoichiometry_status == "oxygen_excess":
+        warnings.append("Oxide layer profile contains oxygen in excess of the parsed material formula.")
+    if recorded_vacancy_count:
+        warnings.append(
+            "Recorded oxygen-vacancy metadata requires site, finite-size, charge-state, and relaxation review."
+        )
+    if recorded_vacancy_count and not all_vacancy_locations_verified:
+        warnings.append("At least one recorded oxygen vacancy could not be bound to a current stack layer.")
+    if unrelaxed_scaffold:
+        warnings.append(
+            "Semiconductor/oxide interface is a pre-relaxation scaffold, not a verified relaxed or amorphous interface."
+        )
+    elif not geometry_relaxation_verified:
+        warnings.append("Geometry-relaxation evidence is not recorded for this semiconductor/oxide interface.")
+
+    calculation_blocking_reasons = [
+        f"semiconductor:{reason}"
+        for reason in normality_reason_codes
+    ]
+    visual_preflight_ready = bool(
+        profile_complete
+        and oxide_layers
+        and sequence_ok
+        and not unexplained_stoichiometry
+        and all_vacancy_locations_verified
+    )
+    calculation_ready = bool(
+        visual_preflight_ready
+        and geometry_relaxation_verified
+        and not recorded_vacancy_count
+        and stoichiometry_status == "matched"
+    )
+    region_counts = Counter(str(location.get("region") or "unknown") for location in vacancy_locations)
+    return {
+        "available": True,
+        "schema_version": 1,
+        "model": "semiconductor_oxide_interface_health_preflight",
+        "status": status,
+        "quality": quality,
+        "interface": profile.get("interface") or metadata.get("interface"),
+        "axis": axis or None,
+        "axis_source": profile.get("axis_source") or layer_summary.get("axis_source"),
+        "axis_length_angstrom": axis_length,
+        "semiconductor_material": semiconductor_material,
+        "oxide_material": oxide_material,
+        "metal_gate_present": bool(metadata.get("metal_gate_stack") or metadata.get("gate_material")),
+        "material_sequence": (interface_quality or {}).get("material_sequence") or [],
+        "expected_material_sequence": (interface_quality or {}).get("expected_material_sequence") or [],
+        "sequence_matches_expected": sequence_matches,
+        "declared_materials_present": declared_materials_present,
+        "layer_profile_complete": profile_complete,
+        "oxide_layer_count": len(oxide_layer_rows),
+        "oxide_layer_indices": [row.get("layer_index") for row in oxide_layer_rows],
+        "oxide_atom_count": sum(oxide_element_counts.values()),
+        "oxide_element_counts": dict(sorted(oxide_element_counts.items())),
+        "oxide_cation_elements": cation_elements,
+        "oxide_cation_count": oxide_cation_count,
+        "oxygen_count": oxygen_count,
+        "oxygen_to_cation_ratio": oxygen_to_cation_ratio,
+        "expected_oxygen_per_cation_ratio": (
+            _round(expected_oxygen_per_cation)
+            if expected_oxygen_per_cation is not None
+            else None
+        ),
+        "expected_oxygen_count": expected_oxygen_count,
+        "oxygen_delta_count": oxygen_delta,
+        "oxygen_deficit_count": oxygen_deficit,
+        "oxygen_excess_count": oxygen_excess,
+        "stoichiometry_status": stoichiometry_status,
+        "oxygen_deficit_binding_status": deficit_binding_status,
+        "oxygen_deficit_explained_by_recorded_vacancies": deficit_explained,
+        "recorded_oxygen_vacancy_count": recorded_vacancy_count,
+        "recorded_oxygen_vacancy_site_ids": [
+            str(vacancy.get("site_id"))
+            for vacancy in oxygen_vacancies
+            if vacancy.get("site_id")
+        ],
+        "all_recorded_oxygen_vacancy_locations_verified": all_vacancy_locations_verified,
+        "oxygen_vacancy_region_counts": dict(sorted(region_counts.items())),
+        "oxygen_vacancy_interface_proximal_count": sum(
+            1 for location in vacancy_locations if location.get("interface_proximal") is True
+        ),
+        "interface_proximity_threshold_angstrom": _round(interface_proximity_threshold),
+        "semiconductor_oxide_boundary": boundary,
+        "pre_relaxation_scaffold": unrelaxed_scaffold,
+        "requires_geometry_relaxation": bool(metadata.get("requires_geometry_relaxation") or unrelaxed_scaffold),
+        "geometry_relaxed": geometry_relaxed,
+        "geometry_relaxation_verified": geometry_relaxation_verified,
+        "visual_preflight_ready": visual_preflight_ready,
+        "calculation_ready": calculation_ready,
+        "normality_reason_codes": normality_reason_codes,
+        "calculation_blocking_reasons": calculation_blocking_reasons,
+        "next_action": next_action,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+        "notes": [
+            "Stoichiometry is derived from deterministic layer markers and the parsed oxide formula.",
+            "This preflight does not prove amorphous topology, relaxed interface chemistry, defect charge state, or calculation readiness.",
+        ],
+        "oxide_layers": oxide_layer_rows[:MAX_HEALTH_DETAIL_ROWS],
+        "oxygen_vacancy_locations": vacancy_locations[:MAX_HEALTH_DETAIL_ROWS],
+    }
 
 
 def _segment_cation_fractions_by_material(segments: list[dict[str, Any]]) -> dict[str, dict[str, float]]:

@@ -2260,6 +2260,167 @@ def test_model_view_audit_does_not_treat_gate_stack_interfaces_as_surface_slabs(
         assert "semiconductor_surface_polarity_csv" not in bundle["files"]
 
 
+def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
+    tmp_path: Path,
+) -> None:
+    spec = load_example("silicon_silicon_dioxide_100_interface_spec.json")
+    audit = model_view_audit(spec)
+    summary = audit["health"]["semiconductor_health"]["oxide_interface_health_summary"]
+
+    assert summary["model"] == "semiconductor_oxide_interface_health_preflight"
+    assert summary["status"] == "geometry_relaxation_unverified"
+    assert summary["quality"] == "complete"
+    assert summary["semiconductor_material"] == "Si"
+    assert summary["oxide_material"] == "SiO2"
+    assert summary["metal_gate_present"] is False
+    assert summary["material_sequence"] == ["Si", "SiO2"]
+    assert summary["oxide_layer_count"] == 2
+    assert summary["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert summary["oxide_cation_elements"] == ["Si"]
+    assert summary["oxide_cation_count"] == 4
+    assert summary["oxygen_count"] == 8
+    assert summary["oxygen_to_cation_ratio"] == 2.0
+    assert summary["expected_oxygen_per_cation_ratio"] == 2.0
+    assert summary["expected_oxygen_count"] == 8.0
+    assert summary["oxygen_deficit_count"] == 0.0
+    assert summary["stoichiometry_status"] == "matched"
+    assert summary["oxygen_deficit_binding_status"] == "none_detected"
+    assert summary["visual_preflight_ready"] is True
+    assert summary["calculation_ready"] is False
+    assert summary["semiconductor_oxide_boundary"]["axis_coordinate_angstrom"] == 8.58
+    assert summary["normality_reason_codes"] == [
+        "oxide_interface_geometry_relaxation_unverified"
+    ]
+
+    modeling_health = build_modeling_health(
+        {"ok": True, "view_audit": audit},
+        execution_mode="preview",
+    )
+    assert modeling_health["checks"]["semiconductor_oxide_interface_stoichiometry_status"] == "matched"
+    assert modeling_health["checks"]["semiconductor_oxide_interface_calculation_ready"] is False
+    bundle = write_view_audit_bundle(
+        tmp_path,
+        spec,
+        audit,
+        modeling_health=modeling_health,
+    )
+    csv_path = Path(bundle["files"]["semiconductor_oxide_interface_health_csv"])
+    rows = list(csv.DictReader(csv_path.open(encoding="utf-8", newline="")))
+    assert bundle["row_counts"]["semiconductor_oxide_interface_health"] == 3
+    assert [row["row_kind"] for row in rows] == ["summary", "oxide_layer", "oxide_layer"]
+    assert rows[0]["oxygen_count"] == "8"
+    assert rows[0]["stoichiometry_status"] == "matched"
+    assert rows[1]["element_counts"] == '{"O": 4, "Si": 2}'
+
+    metal_oxide = load_example("copper_silicon_dioxide_100_interface_spec.json")
+    metal_health = model_view_audit(metal_oxide)["health"]["semiconductor_health"]
+    assert metal_health["oxide_interface_health_summary"] is None
+
+
+def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
+    tmp_path: Path,
+) -> None:
+    base = load_example("silicon_silicon_dioxide_100_interface_spec.json")
+    oxygen = next(atom for atom in base.model.basis_atoms if atom.id == "O1")
+    payload = base.model_dump(mode="json")
+    payload["model"]["basis_atoms"] = [
+        atom for atom in payload["model"]["basis_atoms"] if atom["id"] != "O1"
+    ]
+    payload["metadata"]["defects"] = [
+        {
+            "type": "vacancy",
+            "site_id": "O1",
+            "site_element": "O",
+            "fractional": list(oxygen.fractional.as_tuple()),
+            "source": "test_recorded_oxygen_vacancy",
+        }
+    ]
+    vacancy_spec = ModelSpec.model_validate(payload)
+    summary = model_view_audit(vacancy_spec)["health"]["semiconductor_health"][
+        "oxide_interface_health_summary"
+    ]
+
+    assert any(atom.id == "O1" for atom in base.model.basis_atoms)
+    assert summary["status"] == "recorded_oxygen_vacancy_review"
+    assert summary["quality"] == "complete_with_recorded_defect"
+    assert summary["oxide_element_counts"] == {"O": 7, "Si": 4}
+    assert summary["oxygen_to_cation_ratio"] == 1.75
+    assert summary["oxygen_deficit_count"] == 1.0
+    assert summary["stoichiometry_status"] == "oxygen_deficient"
+    assert summary["oxygen_deficit_binding_status"] == "matched_recorded_oxygen_vacancies"
+    assert summary["oxygen_deficit_explained_by_recorded_vacancies"] is True
+    assert summary["recorded_oxygen_vacancy_site_ids"] == ["O1"]
+    assert summary["all_recorded_oxygen_vacancy_locations_verified"] is True
+    location = summary["oxygen_vacancy_locations"][0]
+    assert location["region"] == "oxide"
+    assert location["nearest_layer_index"] == 5
+    assert location["nearest_layer_material"] == "SiO2"
+    assert location["distance_to_semiconductor_oxide_boundary_angstrom"] == 0.88
+    assert location["interface_proximal"] is True
+    assert summary["normality_reason_codes"] == [
+        "oxide_interface_recorded_oxygen_vacancy",
+        "oxide_interface_geometry_relaxation_unverified",
+    ]
+
+    vacancy_audit = model_view_audit(vacancy_spec)
+    bundle = write_view_audit_bundle(tmp_path / "recorded", vacancy_spec, vacancy_audit)
+    assert bundle["row_counts"]["semiconductor_oxide_interface_health"] == 4
+    rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["semiconductor_oxide_interface_health_csv"]).open(
+                encoding="utf-8",
+                newline="",
+            )
+        )
+    )
+    assert rows[-1]["row_kind"] == "oxygen_vacancy"
+    assert rows[-1]["vacancy_site_id"] == "O1"
+    assert rows[-1]["vacancy_region"] == "oxide"
+
+    unrecorded_payload = base.model_dump(mode="json")
+    unrecorded_payload["model"]["basis_atoms"] = [
+        atom for atom in unrecorded_payload["model"]["basis_atoms"] if atom["id"] != "O1"
+    ]
+    unrecorded = ModelSpec.model_validate(unrecorded_payload)
+    unrecorded_summary = model_view_audit(unrecorded)["health"]["semiconductor_health"][
+        "oxide_interface_health_summary"
+    ]
+    assert unrecorded_summary["quality"] == "review_required"
+    assert unrecorded_summary["oxygen_deficit_binding_status"] == "unexplained_oxygen_deficit"
+    assert unrecorded_summary["oxygen_deficit_explained_by_recorded_vacancies"] is False
+    assert "oxide_interface_stoichiometry_review" in unrecorded_summary["normality_reason_codes"]
+
+    invalid_formula = base.model_copy(
+        update={
+            "metadata": {
+                **base.metadata,
+                "oxide_material": "reviewed-oxide-marker",
+            }
+        }
+    )
+    invalid_summary = model_view_audit(invalid_formula)["health"]["semiconductor_health"][
+        "oxide_interface_health_summary"
+    ]
+    assert invalid_summary["stoichiometry_status"] == "not_evaluated"
+    assert invalid_summary["quality"] == "review_required"
+    assert invalid_summary["visual_preflight_ready"] is False
+
+
+def test_mos_gate_stack_reports_semiconductor_oxide_interface_health() -> None:
+    spec = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
+    semiconductor = model_view_audit(spec)["health"]["semiconductor_health"]
+    summary = semiconductor["oxide_interface_health_summary"]
+
+    assert semiconductor["gate_stack_summary"]["quality"] == "complete"
+    assert summary["metal_gate_present"] is True
+    assert summary["semiconductor_material"] == "Si"
+    assert summary["oxide_material"] == "HfO2"
+    assert summary["stoichiometry_status"] == "matched"
+    assert summary["oxygen_to_cation_ratio"] == 2.0
+    assert summary["visual_preflight_ready"] is True
+    assert summary["calculation_ready"] is False
+
+
 def test_model_view_audit_reports_group_iv_dopant_summary() -> None:
     base = load_example("silicon_diamond_spec.json")
     p_doped, _ = apply_semantic_patch(

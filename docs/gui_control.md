@@ -710,6 +710,17 @@ an amorphous oxide network, relaxed interface, band offsets, trap states, or
 device readiness. The bare interface has no metal gate, uses
 `semiconductor_oxide_interface` diagnostics, and can accept an O-vacancy patch
 before explicit same-window hot-loading.
+These semiconductor/oxide starts also emit
+`oxide_interface_health_summary` and
+`semiconductor_oxide_interface_health.csv`. The summary binds oxide formula,
+per-layer chemistry, O/cation ratio, oxygen deficit or excess, and any recorded
+O-vacancy position to the nearest oxide layer and interface boundary. It does
+not apply to Cu/SiO2 or other metal/oxide-only starts. The receipt is a
+deterministic construction preflight, not evidence of an amorphous oxide,
+relaxed geometry, defect charge state, or converged electronic structure.
+Accordingly, `modeling_report.normality_gate` uses the dedicated
+`oxide_interface` category and recommends a preview-only interface relaxation
+or O-vacancy review before quantitative use.
 Follow-up MOS/gate-stack or bare oxide-interface thickness edits such as
 `set HfO2 thickness to 6 angstrom`, `set SiO2 thickness to 10 angstrom`, or
 `make TiN gate thickness 2 angstrom` use a structured
@@ -748,7 +759,7 @@ CSV files: atom and bond counts, element counts, bond-angle and dihedral counts,
 close-contact count, view overlap count, bond/angle/dihedral statistics,
 crystal nearest-neighbor/coordination statistics, and `semiconductor_health`.
 For semiconductor templates, `inspection.semiconductor_health` reports the
-lattice summary, neighbor-distance summary, local-environment/tetrahedral-angle or TMD 6/3 coordination summary, interface-profile summary, interface-quality/material-sequence summary, MOS/gate-stack sequence and thickness summary, metal/semiconductor contact sequence and thickness summary, III-nitride polarization/2DEG preflight, composition summary, nominal charge-balance/valence-electron summary, calculation-preflight summary, sublattice balance summary, detected tetrahedral or TMD rule, expected coordination, per-element coordination
+lattice summary, neighbor-distance summary, local-environment/tetrahedral-angle or TMD 6/3 coordination summary, interface-profile summary, interface-quality/material-sequence summary, semiconductor/oxide chemistry and O-vacancy binding summary, MOS/gate-stack sequence and thickness summary, metal/semiconductor contact sequence and thickness summary, III-nitride polarization/2DEG preflight, composition summary, nominal charge-balance/valence-electron summary, calculation-preflight summary, sublattice balance summary, detected tetrahedral or TMD rule, expected coordination, per-element coordination
 statistics, neighbor pair counts, unexpected III-V, II-VI, or TMD near-neighbor pair types,
 layer profiles along the interface/surface axis, superlattice period summaries, and dopant/dopant-fraction/alloy summaries with host elements, dopant concentration, requested versus actual dopant fraction, alloy fraction, donor/acceptor
 role hints, and dopant coordination statistics. Vacancy, interstitial, and

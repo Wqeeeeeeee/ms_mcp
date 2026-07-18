@@ -6072,7 +6072,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert sic_6h_mos["surface_orientation"] == "6H-SiC(0001) Si-face"
     assert "mos_gate_stack" in sic_6h_mos["default_diagnostic_focuses"]
     assert "surface_slab_polarity" not in sic_6h_mos["default_diagnostic_focuses"]
+    assert "oxide_interface_health_summary" in sic_6h_mos["required_summary_keys"]
     assert "semiconductor_gate_stack_csv" in sic_6h_mos["required_csv_keys"]
+    assert "semiconductor_oxide_interface_health_csv" in sic_6h_mos["required_csv_keys"]
     sic_6h_oxide_interface = virtual_profiles["silicon_dioxide_silicon_carbide_6h_0001_interface"]
     assert sic_6h_oxide_interface["base_template_id"] == "silicon_carbide_6h_hexagonal"
     assert sic_6h_oxide_interface["variant_kind"] == "interface_scaffold"
@@ -6080,7 +6082,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert sic_6h_oxide_interface["interface"] == "SiO2/6H-SiC"
     assert "semiconductor_oxide_interface" in sic_6h_oxide_interface["default_diagnostic_focuses"]
     assert "mos_gate_stack" not in sic_6h_oxide_interface["default_diagnostic_focuses"]
+    assert "oxide_interface_health_summary" in sic_6h_oxide_interface["required_summary_keys"]
     assert "semiconductor_interface_quality_csv" in sic_6h_oxide_interface["required_csv_keys"]
+    assert "semiconductor_oxide_interface_health_csv" in sic_6h_oxide_interface["required_csv_keys"]
     inp_contact = virtual_profiles["metal_indium_phosphide_001_schottky_contact"]
     assert inp_contact["base_template_id"] == "indium_phosphide_zincblende"
     assert inp_contact["variant_kind"] == "interface_scaffold"
@@ -6625,7 +6629,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ]
     assert "SiO2/6H-SiC interface" in oxide_interface["request_terms"]
     assert "\u7845\u6c27\u754c\u9762" in oxide_interface["cjk_terms"]
+    assert "oxide_interface_health_summary" in oxide_interface["diagnostic_summaries"]
     assert "semiconductor_interface_quality_csv" in oxide_interface["diagnostic_csvs"]
+    assert "semiconductor_oxide_interface_health_csv" in oxide_interface["diagnostic_csvs"]
     dopant_preflight = use_cases["dopant_site_preflight"]
     assert "dope silicon with P" in dopant_preflight["request_terms"]
     assert "n-type GaAs" in dopant_preflight["request_terms"]
@@ -15262,6 +15268,11 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     assert semiconductor["interface_quality_summary"]["quality"] == "complete"
     assert semiconductor["interface_quality_summary"]["material_sequence"] == ["Si", "SiO2"]
     assert semiconductor["interface_quality_summary"]["mixed_layers_expected"] is True
+    oxide_interface = semiconductor["oxide_interface_health_summary"]
+    assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert oxide_interface["stoichiometry_status"] == "matched"
+    assert oxide_interface["oxygen_deficit_count"] == 0.0
+    assert oxide_interface["calculation_ready"] is False
     assert semiconductor["quantum_well_summary"] is None
     assert semiconductor["surface_termination_summary"] is None
     assert semiconductor["surface_polarity_summary"] is None
@@ -15272,6 +15283,9 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     assert review["structure_family"] == "semiconductor oxide interface"
     assert review["interface"]["quality"] == "complete"
     assert review["interface"]["mixed_layer_count"] == 2
+    assert review["oxide_interface"]["stoichiometry_status"] == "matched"
+    assert review["oxide_interface"]["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert "oxide_interface_geometry_relaxation_unverified" in review["risk_flags"]
     assert "mixed_interface_layers" not in review["risk_flags"]
     assert "quantum_well_review" not in review["risk_flags"]
     assert "surface_not_fully_passivated" not in review["risk_flags"]
@@ -15281,10 +15295,14 @@ def test_live_modeling_request_infers_si_sio2_mos_interface_template(tmp_path: P
     row_counts = result["view_bundle_row_counts"]
     assert row_counts["semiconductor_interface_profile"] == 6
     assert row_counts["semiconductor_interface_quality"] == 2
+    assert row_counts["semiconductor_oxide_interface_health"] == 3
     assert "semiconductor_quantum_well" not in row_counts
     assert "semiconductor_surface_termination" not in row_counts
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+    assert Path(
+        result["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_health_csv"]
+    ).exists()
 
     diagnostic_request = server.material_studio_live_modeling_request(
         "Build a Si/SiO2 MOS interface and export interface diagnostics.",
@@ -15364,6 +15382,10 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert semiconductor["gate_stack_summary"]["role_counts"] == {"channel": 1, "gate": 1, "oxide": 1}
     assert semiconductor["gate_stack_summary"]["gate_center_span_angstrom"] == 1.68
     assert semiconductor["gate_stack_summary"]["declared_gate_thickness_angstrom"] == 1.68
+    oxide_interface = semiconductor["oxide_interface_health_summary"]
+    assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert oxide_interface["stoichiometry_status"] == "matched"
+    assert oxide_interface["metal_gate_present"] is True
     assert semiconductor["quantum_well_summary"] is None
     assert semiconductor["surface_termination_summary"] is None
     assert semiconductor["surface_polarity_summary"] is None
@@ -15379,6 +15401,7 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert review["gate_stack"]["sequence_matches_expected"] is True
     assert review["gate_stack"]["gate_material"] == "Al"
     assert review["gate_stack"]["declared_gate_thickness_angstrom"] == 1.68
+    assert review["oxide_interface"]["stoichiometry_status"] == "matched"
     assert "mixed_interface_layers" not in review["risk_flags"]
     assert "gate_stack_review" not in review["risk_flags"]
     assert "quantum_well_review" not in review["risk_flags"]
@@ -15393,11 +15416,15 @@ def test_live_modeling_request_infers_al_sio2_si_mos_capacitor_template(tmp_path
     assert row_counts["semiconductor_interface_profile"] == 8
     assert row_counts["semiconductor_interface_quality"] == 3
     assert row_counts["semiconductor_gate_stack"] == 3
+    assert row_counts["semiconductor_oxide_interface_health"] == 3
     assert "semiconductor_quantum_well" not in row_counts
     assert "semiconductor_surface_termination" not in row_counts
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
+    assert Path(
+        result["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_health_csv"]
+    ).exists()
 
     alias = server.material_studio_live_modeling_request(
         "Build a MOS capacitor gate stack.",
@@ -15436,9 +15463,11 @@ def test_live_modeling_request_treats_4h_sic_mos_interface_diagnostics_as_gate_s
     assert "semiconductor_gate_stack_csv" in mos_focus["existing_csv_keys"]
     assert "semiconductor_interface_profile_csv" in mos_focus["existing_csv_keys"]
     assert "semiconductor_interface_quality_csv" in mos_focus["existing_csv_keys"]
+    assert "semiconductor_oxide_interface_health_csv" in mos_focus["existing_csv_keys"]
     assert Path(mos_focus["artifacts"]["semiconductor_gate_stack_csv"]).exists()
     assert Path(mos_focus["artifacts"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(mos_focus["artifacts"]["semiconductor_interface_quality_csv"]).exists()
+    assert Path(mos_focus["artifacts"]["semiconductor_oxide_interface_health_csv"]).exists()
     assert result["view_bundle_row_counts"]["requested_diagnostic_focus_status"] == 2
     assert Path(result["view_bundle_files"]["requested_diagnostic_focus_status_json"]).exists()
 
@@ -27616,12 +27645,18 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_mos_capacitor(
 
     semiconductor = preview["modeling_report"]["inspection"]["semiconductor_health"]
     gate_stack = semiconductor["gate_stack_summary"]
+    oxide_interface = semiconductor["oxide_interface_health_summary"]
     assert gate_stack["quality"] == "complete"
     assert gate_stack["material_sequence"] == ["6H-SiC", "SiO2", "Al"]
     assert gate_stack["sequence_matches_expected"] is True
     assert gate_stack["role_counts"] == {"channel": 1, "gate": 1, "oxide": 1}
     assert gate_stack["oxide_center_span_angstrom"] == pytest.approx(8.0, abs=1e-4)
     assert gate_stack["gate_center_span_angstrom"] == pytest.approx(2.56, abs=1e-4)
+    assert oxide_interface["oxide_material"] == "SiO2"
+    assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert oxide_interface["stoichiometry_status"] == "matched"
+    assert oxide_interface["metal_gate_present"] is True
+    assert oxide_interface["calculation_ready"] is False
     assert semiconductor["coordination_outlier_count"] == 0
     assert semiconductor["surface_model_summary"] is None
     assert semiconductor["surface_termination_summary"] is None
@@ -27630,6 +27665,9 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_mos_capacitor(
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+    assert Path(
+        preview["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_health_csv"]
+    ).exists()
 
     thickness = server.material_studio_live_modeling_request(
         "\u6784\u5efa6H-\u78b3\u5316\u7845 MOS \u7535\u5bb9\uff0cSiO2\u539a\u5ea610\u57c3\uff0c\u5bfc\u51fa\u6805\u5806\u8bca\u65ad\u3002",
@@ -27716,12 +27754,36 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
     assert "gate_material" not in metadata
 
     semiconductor = preview["modeling_report"]["inspection"]["semiconductor_health"]
+    oxide_interface = semiconductor["oxide_interface_health_summary"]
     assert semiconductor["interface_quality_summary"]["quality"] == "complete"
     assert semiconductor["interface_quality_summary"]["material_sequence"] == ["6H-SiC", "SiO2"]
     assert semiconductor["gate_stack_summary"] is None
     assert semiconductor["surface_model_summary"] is None
+    assert oxide_interface["status"] == "pre_relaxation_review"
+    assert oxide_interface["quality"] == "complete"
+    assert oxide_interface["oxide_element_counts"] == {"O": 8, "Si": 4}
+    assert oxide_interface["oxygen_to_cation_ratio"] == 2.0
+    assert oxide_interface["stoichiometry_status"] == "matched"
+    assert oxide_interface["oxygen_deficit_count"] == 0.0
+    assert oxide_interface["visual_preflight_ready"] is True
+    assert oxide_interface["calculation_ready"] is False
+    base_diagnosis = preview["modeling_report"]["semiconductor_normality_diagnosis"]
+    assert base_diagnosis["primary_domain_reason"] == (
+        "semiconductor:oxide_interface_unrelaxed_scaffold"
+    )
+    assert base_diagnosis["primary_domain_category"] == "oxide_interface"
+    assert base_diagnosis["summary"] == "semiconductor_oxide_interface_requires_review"
+    assert base_diagnosis["recommended_action"] == (
+        "review_or_relax_semiconductor_oxide_interface_before_quantitative_use"
+    )
+    assert base_diagnosis["preview_payload_hint"]["execution_mode"] == "preview"
+    assert base_diagnosis["preview_payload_hint"]["open_in_gui"] is False
+    assert preview["view_bundle_row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_profile_csv"]).exists()
     assert Path(preview["modeling_report"]["diagnostics"]["semiconductor_interface_quality_csv"]).exists()
+    assert Path(
+        preview["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_health_csv"]
+    ).exists()
 
     thickness = server.material_studio_live_modeling_request(
         "Set SiO2 thickness to 10 angstrom and export semiconductor-oxide interface diagnostics.",
@@ -27743,6 +27805,9 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
     assert thickness["modeling_report"]["inspection"]["semiconductor_health"]["interface_quality_summary"][
         "material_sequence"
     ] == ["6H-SiC", "SiO2"]
+    assert thickness["modeling_report"]["inspection"]["semiconductor_health"][
+        "oxide_interface_health_summary"
+    ]["stoichiometry_status"] == "matched"
     assert thickness["requested_diagnostic_focus_ok"] is True
     assert not backend.opened
 
@@ -27774,6 +27839,37 @@ def test_live_modeling_request_builds_edits_and_hotloads_sic_6h_oxide_interface(
     assert vacancy_semiconductor["defect_summary"]["vacancy_count"] == 1
     assert vacancy_semiconductor["defect_summary"]["defects"][0]["site_element"] == "O"
     assert vacancy_semiconductor["interface_quality_summary"]["material_sequence"] == ["6H-SiC", "SiO2"]
+    vacancy_oxide = vacancy_semiconductor["oxide_interface_health_summary"]
+    assert vacancy_oxide["status"] == "recorded_oxygen_vacancy_review"
+    assert vacancy_oxide["quality"] == "complete_with_recorded_defect"
+    assert vacancy_oxide["oxide_element_counts"] == {"O": 7, "Si": 4}
+    assert vacancy_oxide["oxygen_to_cation_ratio"] == 1.75
+    assert vacancy_oxide["oxygen_deficit_count"] == 1.0
+    assert vacancy_oxide["oxygen_deficit_binding_status"] == (
+        "matched_recorded_oxygen_vacancies"
+    )
+    assert vacancy_oxide["recorded_oxygen_vacancy_site_ids"] == ["O1"]
+    assert vacancy_oxide["all_recorded_oxygen_vacancy_locations_verified"] is True
+    assert vacancy_oxide["oxygen_vacancy_locations"][0]["region"] == "oxide"
+    assert vacancy_oxide["oxygen_vacancy_locations"][0][
+        "distance_to_semiconductor_oxide_boundary_angstrom"
+    ] == pytest.approx(1.1, abs=1e-6)
+    vacancy_diagnosis = vacancy["modeling_report"]["semiconductor_normality_diagnosis"]
+    assert vacancy_diagnosis["primary_domain_reason"] == (
+        "semiconductor:oxide_interface_recorded_oxygen_vacancy"
+    )
+    assert vacancy_diagnosis["primary_domain_category"] == "oxide_interface"
+    assert vacancy_diagnosis["recommended_action"] == (
+        "review_oxygen_vacancy_site_and_supercell_before_relaxation"
+    )
+    assert vacancy_diagnosis["preview_payload_hint"]["execution_mode"] == "preview"
+    assert "review_recorded_oxygen_vacancy_location" in vacancy_diagnosis[
+        "preview_payload_hint"
+    ]["remediation_operations"]
+    assert vacancy["view_bundle_row_counts"]["semiconductor_oxide_interface_health"] == 4
+    assert Path(
+        vacancy["modeling_report"]["diagnostics"]["semiconductor_oxide_interface_health_csv"]
+    ).exists()
     assert vacancy["result"]["execution_backend"] == "crystal_cif_materialize"
     assert vacancy["structure_artifact_validation"]["status"] == "matched"
     assert vacancy["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True

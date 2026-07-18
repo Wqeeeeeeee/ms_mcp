@@ -19,6 +19,36 @@ SCENARIO_REQUESTS = {
             "export current view parameters and check whether the model is normal."
         ),
     },
+    "sic_4h_c_face_mos": {
+        "preview": (
+            "Build an Al/SiO2/4H-SiC(000-1) C-face MOS capacitor and export gate-stack, "
+            "interface, and view diagnostics."
+        ),
+        "hotload": (
+            "Build an Al/SiO2/4H-SiC(000-1) C-face MOS capacitor and hot-load it in Materials Studio, "
+            "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_4h_oxide_interface": {
+        "preview": (
+            "Build a SiO2/4H-SiC(0001) Si-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/4H-SiC(0001) Si-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_4h_c_face_oxide_interface": {
+        "preview": (
+            "Build a SiO2/4H-SiC(000-1) C-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/4H-SiC(000-1) C-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
     "sic_6h_mos": {
         "preview": (
             "Build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor and export gate-stack, "
@@ -167,6 +197,20 @@ SCENARIO_REQUESTS = {
             "export contact and all-view diagnostics and check whether the model is normal."
         ),
     },
+    "sic_4h_slab": {
+        "preview": "Build a 4H-SiC(0001) Si-face slab and export surface and all-view diagnostics.",
+        "hotload": (
+            "Build a 4H-SiC(0001) Si-face slab and hot-load it in Materials Studio, "
+            "export surface and all-view diagnostics and check whether the model is normal."
+        ),
+    },
+    "sic_4h_c_face_slab": {
+        "preview": "Build a 4H-SiC(000-1) C-face slab and export surface and all-view diagnostics.",
+        "hotload": (
+            "Build a 4H-SiC(000-1) C-face slab and hot-load it in Materials Studio, "
+            "export surface and all-view diagnostics and check whether the model is normal."
+        ),
+    },
     "sic_6h_slab": {
         "preview": "Build a 6H-SiC(0001) Si-face slab and export surface and all-view diagnostics.",
         "hotload": (
@@ -209,7 +253,13 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
     "gan_sapphire_interface_cjk": "gallium_nitride_on_sapphire_interface_scaffold",
     "p_gan_hemt": "aluminum_gallium_nitride_gallium_nitride_0001_heterostructure_p_gan_gate",
     "beta_ga2o3_contact": "metal_beta_gallium_oxide_010_schottky_contact",
+    "sic_mos": "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor",
     "sic_4h_contact": "metal_silicon_carbide_4h_0001_schottky_contact",
+    "sic_4h_slab": "silicon_carbide_4h_0001_si_face_slab",
+    "sic_4h_c_face_slab": "silicon_carbide_4h_000m1_c_face_slab",
+    "sic_4h_oxide_interface": "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface",
+    "sic_4h_c_face_oxide_interface": "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface",
+    "sic_4h_c_face_mos": "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor",
     "sic_6h_slab": "silicon_carbide_6h_0001_si_face_slab",
     "sic_6h_c_face_slab": "silicon_carbide_6h_000m1_c_face_slab",
     "sic_6h_contact": "metal_silicon_carbide_6h_0001_schottky_contact",
@@ -622,17 +672,23 @@ SCENARIO_EXPECTATIONS = {
     },
 }
 
-for _c_face_scenario, _si_face_scenario in (
+for _target_scenario, _source_scenario in (
+    ("sic_4h_slab", "sic_6h_slab"),
+    ("sic_4h_c_face_slab", "sic_6h_slab"),
+    ("sic_4h_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_4h_c_face_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_mos", "sic_6h_mos"),
+    ("sic_4h_c_face_mos", "sic_6h_mos"),
     ("sic_6h_c_face_slab", "sic_6h_slab"),
     ("sic_6h_c_face_oxide_interface", "sic_6h_oxide_interface"),
     ("sic_6h_c_face_mos", "sic_6h_mos"),
 ):
-    _source_expectation = SCENARIO_EXPECTATIONS[_si_face_scenario]
-    SCENARIO_EXPECTATIONS[_c_face_scenario] = {
+    _source_expectation = SCENARIO_EXPECTATIONS[_source_scenario]
+    SCENARIO_EXPECTATIONS[_target_scenario] = {
         "row_counts": dict(_source_expectation["row_counts"]),
         "files": list(_source_expectation["files"]),
     }
-del _c_face_scenario, _si_face_scenario, _source_expectation
+del _target_scenario, _source_scenario, _source_expectation
 
 
 FOLLOW_UP_REQUESTS = {
@@ -749,6 +805,15 @@ FOLLOW_UP_REQUESTS = {
         ),
     },
 }
+
+for _target_scenario, _source_scenario in (
+    ("sic_mos", "sic_6h_mos"),
+    ("sic_4h_c_face_mos", "sic_6h_mos"),
+    ("sic_4h_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_4h_c_face_oxide_interface", "sic_6h_oxide_interface"),
+):
+    FOLLOW_UP_REQUESTS[_target_scenario] = dict(FOLLOW_UP_REQUESTS[_source_scenario])
+del _target_scenario, _source_scenario
 
 
 FOLLOW_UP_EXPECTATIONS = {
@@ -1002,18 +1067,22 @@ FOLLOW_UP_EXPECTATIONS = {
     },
 }
 
-for _c_face_scenario, _si_face_scenario in (
+for _target_scenario, _source_scenario in (
+    ("sic_mos", "sic_6h_mos"),
+    ("sic_4h_c_face_mos", "sic_6h_mos"),
+    ("sic_4h_oxide_interface", "sic_6h_oxide_interface"),
+    ("sic_4h_c_face_oxide_interface", "sic_6h_oxide_interface"),
     ("sic_6h_c_face_oxide_interface", "sic_6h_oxide_interface"),
     ("sic_6h_c_face_mos", "sic_6h_mos"),
 ):
-    FOLLOW_UP_EXPECTATIONS[_c_face_scenario] = {
+    FOLLOW_UP_EXPECTATIONS[_target_scenario] = {
         preset: {
             "row_counts": dict(expectation["row_counts"]),
             "files": list(expectation["files"]),
         }
-        for preset, expectation in FOLLOW_UP_EXPECTATIONS[_si_face_scenario].items()
+        for preset, expectation in FOLLOW_UP_EXPECTATIONS[_source_scenario].items()
     }
-del _c_face_scenario, _si_face_scenario
+del _target_scenario, _source_scenario
 
 
 def default_request_for_scenario(scenario: str, *, hotload: bool = False) -> str:

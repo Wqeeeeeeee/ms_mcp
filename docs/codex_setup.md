@@ -596,6 +596,16 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
+For preview-only 4H-SiC polar-surface acceptance without touching the GUI, use
+`sic_4h_slab`, `sic_4h_c_face_slab`, `sic_4h_oxide_interface`,
+`sic_4h_c_face_oxide_interface`, `sic_mos`, or `sic_4h_c_face_mos` with
+`--execution-mode preview --no-include-gui-status --no-take-snapshot` and a
+scenario-specific `--working-dir`. For example:
+`ms-mcp-live-smoke --scenario sic_4h_c_face_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_4h_c_face_mos`.
+Use `--follow-up-preset interface_gaps_2p0_2p5` for either 4H MOS scenario or
+`--follow-up-preset o_vacancy` for either 4H oxide-interface scenario. These
+continuations remain preview-only under the same flags.
+
 For preview-only 6H-SiC surface, contact, oxide-interface, and MOS gate-stack acceptance, run
 `ms-mcp-live-smoke --scenario sic_6h_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_slab`
 or
@@ -615,7 +625,7 @@ To verify both MOS boundary-spacing edits in one preview-only continuation, run
 the `sic_6h_mos` or `sic_6h_c_face_mos` scenario with
 `--follow-up-preset interface_gaps_2p0_2p5`,
 `--execution-mode preview`, and the same two `--no-*` GUI flags.
-The Si-face and C-face 6H-SiC oxide-interface scenarios each require
+The Si-face and C-face 4H-SiC and 6H-SiC oxide-interface scenarios each require
 `semiconductor_oxide_interface_geometry.csv` with at least 38 rows (one
 summary, one interface-spacing row, 24 boundary candidates, and 12 oxide-atom
 coverage rows). Each MOS scenario requires at least 39 rows because it reports

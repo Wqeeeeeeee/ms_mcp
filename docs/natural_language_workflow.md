@@ -189,8 +189,8 @@ InP zinc blende, InAs zinc blende, InSb zinc blende, 3C-SiC zinc blende,
 ZnO wurtzite, AlN wurtzite, InN wurtzite, CdTe zinc blende, ZnS zinc blende, ZnSe zinc blende, ZnTe zinc blende, CdS zinc blende, CdSe zinc
 blende, 2D MoS2 monolayer, GaN wurtzite, a deterministic Si p-n junction start,
 and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
-Si/SiO2(100) and SiO2/6H-SiC(0001) Si-face semiconductor-oxide interfaces,
-Al/SiO2/Si MOS capacitor gate-stack, Al/SiO2/6H-SiC(0001) Si-face MOS capacitor scaffold,
+Si/SiO2(100), SiO2/4H-SiC, and SiO2/6H-SiC semiconductor-oxide interfaces on explicit Si or C faces,
+Al/SiO2/Si MOS capacitor gate-stack plus Al/SiO2/4H-SiC and Al/SiO2/6H-SiC MOS capacitor scaffolds on explicit Si or C faces,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
 Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/4H-SiC(0001), and
 metal/6H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
@@ -199,14 +199,16 @@ In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
-InN(0001), ZnO(0001), and a hydrogen-backed 6H-SiC(0001) Si-face slab. Requests such as
+InN(0001), ZnO(0001), hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as
 "build silicon crystal", "build a silicon p-n junction", "build GaAs zinc blende", "build AlAs zinc blende", "build AlP zinc blende", "build AlSb zinc blende", "build GaP zinc blende", "build GaSb zinc blende", "build InP zinc blende", "build InAs zinc blende", "build InSb zinc blende", "build GaN wurtzite",
 "build AlN wurtzite", "build InN wurtzite", "build 3C-SiC zinc blende",
 "build 6H-SiC crystal", "build cubic BN zinc blende", "build silicon carbide", "build ZnO wurtzite", "build CdTe zinc blende",
 "build ZnS zinc blende", "build ZnSe zinc blende", "build ZnTe zinc blende", "build CdS zinc blende", "build CdSe zinc blende", "build MoS2 monolayer",
 "build Si/Ge heterostructure", "build Si/Ge MQW",
 "build a Si/SiO2 MOS interface",
+"build a SiO2/4H-SiC(000-1) C-face interface",
 "build a SiO2/6H-SiC(0001) Si-face interface",
+"build an Al/SiO2/4H-SiC(0001) Si-face MOS capacitor",
 "build a 6H-SiC MOS interface",
 "build an Al/SiO2/Si MOS capacitor",
 "build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor",
@@ -229,9 +231,36 @@ InN(0001), ZnO(0001), and a hydrogen-backed 6H-SiC(0001) Si-face slab. Requests 
 "build AlN(0001) surface slab",
 "build InN(0001) surface slab",
 "build GaAs(001) surface", or
+"build a 4H-SiC(000-1) C-face slab",
 "build a 6H-SiC(0001) Si-face slab", or
 "build ZnO(0001) surface slab" can be routed
 directly through `material_studio_live_modeling_request`.
+
+The 4H-SiC polar workflow is programmatic and preview-first. It starts from the
+P63mc hP8 bulk example and generates centered `2x2` four-bilayer slabs for
+`4H-SiC(0001) Si-face` and `4H-SiC(000-1) C-face`. The exposed face remains
+unreconstructed; four H atoms saturate the opposite face. The corresponding
+bare SiO2 interfaces contain 48 atoms, and the Al/SiO2 MOS-capacitor starts
+contain 56 atoms. Their two mixed Si/O planes are deterministic material and
+thickness markers. The complete marker network is translated rigidly so its
+first Si site follows the actual top-surface registry; this preserves oxide
+internal geometry while providing a reproducible boundary-neighbor preflight.
+It is not an amorphous oxide, a relaxed structure, or a literature-exact atomic
+interface.
+
+The 4H bulk metadata cites the room-temperature structure refinement by Peng
+et al. ([DOI 10.1154/1.3257905](https://doi.org/10.1154/1.3257905)). Surface
+metadata uses the polarity and reconstruction analysis of Kaneko et al.
+([DOI 10.1016/j.susc.2015.11.019](https://doi.org/10.1016/j.susc.2015.11.019)),
+and oxide/MOS metadata uses the face-dependent SiO2 interface study by
+Chattopadhyay et al.
+([DOI 10.1016/j.apsusc.2014.12.116](https://doi.org/10.1016/j.apsusc.2014.12.116)).
+Those sources constrain crystal identity, face polarity, and interface risk;
+they do not validate the generated marker-plane coordinates. An unqualified
+`SiC MOS capacitor` request remains a backward-compatible 4H `(0001)` Si-face
+route. Requests that name both faces, a C-face metal contact, a full MOSFET or
+MOS device, an ambiguous surface, or another 4H-SiC heterostructure fail closed
+instead of selecting the old static MOS fixture or another SiC polytype.
 
 The `silicon_carbide_6h_hexagonal` template is a 12-atom P63mc bulk cell with
 the ABCACB stacking sequence. Its lattice and special-position coordinates come
@@ -281,7 +310,7 @@ maps that parent-bulk normal to the positive current-cell `c` axis for view and
 vacuum diagnostics. All three variants remain unreconstructed, unrelaxed
 preflight scaffolds.
 
-All 6H-SiC oxide/MOS starts and the Si/SiO2 and HfO2 gate-stack starts emit an
+All 4H-SiC and 6H-SiC oxide/MOS starts and the Si/SiO2 and HfO2 gate-stack starts emit an
 `oxide_interface_geometry_summary` plus
 `semiconductor_oxide_interface_geometry.csv`. The geometry preflight binds the
 declared semiconductor and oxide boundary layers to atom IDs, enumerates every
@@ -296,8 +325,8 @@ establish an amorphous oxide, relaxation, charge state, convergence, or
 calculation readiness. Metal/oxide-only starts such as Cu/SiO2 remain outside
 this semiconductor/oxide geometry contract.
 Ambiguous unoriented surfaces, C-face metal contacts, complete MOS
-device/transistor geometries, and other 6H-SiC heterostructures remain
-unsupported and never fall back to 3C-SiC, 4H-SiC, or silicon. A request that
+device/transistor geometries, and other 4H-SiC or 6H-SiC heterostructures remain
+unsupported and never fall back to another SiC polytype or silicon. A request that
 names both Si-face and C-face is also rejected rather than choosing one.
 
 The metal/beta-Ga2O3(010) scaffold is centered in a vacuum cell and remains an

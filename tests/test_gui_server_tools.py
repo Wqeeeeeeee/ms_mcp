@@ -6050,6 +6050,36 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_semiconductor_contact" in sic_4h_contact["default_diagnostic_focuses"]
     assert "surface_slab_polarity" in sic_4h_contact["default_diagnostic_focuses"]
     assert "semiconductor_surface_polarity_csv" in sic_4h_contact["required_csv_keys"]
+    sic_4h_si_face_slab = virtual_profiles["silicon_carbide_4h_0001_si_face_slab"]
+    assert sic_4h_si_face_slab["base_template_id"] == "silicon_carbide_4h_hexagonal"
+    assert sic_4h_si_face_slab["variant_kind"] == "surface_scaffold"
+    assert sic_4h_si_face_slab["surface_orientation"] == "4H-SiC(0001) Si-face"
+    assert "surface_slab_polarity" in sic_4h_si_face_slab["default_diagnostic_focuses"]
+    sic_4h_c_face_slab = virtual_profiles["silicon_carbide_4h_000m1_c_face_slab"]
+    assert sic_4h_c_face_slab["variant_kind"] == "surface_scaffold"
+    assert sic_4h_c_face_slab["surface_orientation"] == "4H-SiC(000-1) C-face"
+    assert "10.1016/j.susc.2015.11.019" in sic_4h_c_face_slab["source_references"]
+    sic_4h_si_face_oxide = virtual_profiles["silicon_dioxide_silicon_carbide_4h_0001_si_face_interface"]
+    assert sic_4h_si_face_oxide["variant_kind"] == "interface_scaffold"
+    assert sic_4h_si_face_oxide["interface"] == "SiO2/4H-SiC"
+    assert "semiconductor_oxide_interface" in sic_4h_si_face_oxide["default_diagnostic_focuses"]
+    sic_4h_c_face_oxide = virtual_profiles[
+        "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface"
+    ]
+    assert sic_4h_c_face_oxide["surface_orientation"] == "4H-SiC(000-1) C-face"
+    assert "semiconductor_oxide_interface_health_csv" in sic_4h_c_face_oxide["required_csv_keys"]
+    sic_4h_si_face_mos = virtual_profiles[
+        "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
+    ]
+    assert sic_4h_si_face_mos["variant_kind"] == "gate_stack_scaffold"
+    assert sic_4h_si_face_mos["surface_orientation"] == "4H-SiC(0001) Si-face"
+    assert "mos_gate_stack" in sic_4h_si_face_mos["default_diagnostic_focuses"]
+    sic_4h_c_face_mos = virtual_profiles[
+        "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor"
+    ]
+    assert sic_4h_c_face_mos["variant_kind"] == "gate_stack_scaffold"
+    assert sic_4h_c_face_mos["surface_orientation"] == "4H-SiC(000-1) C-face"
+    assert "semiconductor_gate_stack_csv" in sic_4h_c_face_mos["required_csv_keys"]
     sic_6h_slab = virtual_profiles["silicon_carbide_6h_0001_si_face_slab"]
     assert sic_6h_slab["base_template_id"] == "silicon_carbide_6h_hexagonal"
     assert sic_6h_slab["variant_kind"] == "surface_scaffold"
@@ -6455,6 +6485,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "alloy short-range order" in alloy_preflight["request_terms"]
     assert "mos_gate_stack" in use_cases
     metal_contact = use_cases["metal_semiconductor_contact"]
+    assert metal_contact["unsupported_variants"] == [
+        {
+            "material": "4H-SiC",
+            "surface_orientation": "4H-SiC(000-1) C-face",
+            "request_kind": "metal_semiconductor_contact",
+            "reason": "No reviewed C-face metal registry; the Si-face Schottky scaffold is never substituted.",
+        }
+    ]
     assert "Al/Si Schottky contact" in metal_contact["request_terms"]
     assert "Au/Si Schottky contact" in metal_contact["request_terms"]
     assert "Pt/Si Schottky contact" in metal_contact["request_terms"]
@@ -6637,6 +6675,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor" in mos_gate_stack["templates"]
+    assert "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor" in mos_gate_stack["templates"]
+    assert (
+        "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor"
+        in mos_gate_stack["templates"]
+    )
     assert (
         "aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor"
         in mos_gate_stack["templates"]
@@ -6650,6 +6693,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     oxide_interface = use_cases["semiconductor_oxide_interface"]
     assert oxide_interface["templates"] == [
         "silicon_silicon_dioxide_100_interface",
+        "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface",
+        "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface",
         "silicon_dioxide_silicon_carbide_6h_0001_interface",
         "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface",
     ]
@@ -6711,6 +6756,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "beta_gallium_oxide_010_slab" in surface["templates"]
     assert "silicon_carbide_6h_0001_si_face_slab" in surface["virtual_templates"]
     assert "silicon_carbide_6h_000m1_c_face_slab" in surface["virtual_templates"]
+    assert "silicon_carbide_4h_0001_si_face_slab" in surface["virtual_templates"]
+    assert "silicon_carbide_4h_000m1_c_face_slab" in surface["virtual_templates"]
+    assert "metal_silicon_carbide_4h_0001_schottky_contact" in surface["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in surface["virtual_templates"]
     assert "surface_termination_summary" in surface["diagnostic_summaries"]
     assert "surface_model_summary" in surface["diagnostic_summaries"]
@@ -15656,12 +15704,20 @@ def test_live_modeling_request_hotloads_chinese_4h_sic_mos_capacitor_without_si_
     assert result["requested_diagnostic_focuses"] == ["mos_gate_stack", "view_quality"]
     assert result["nl_plan"]["template_id"] == "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
     assert result["view_audit"]["model"]["name"] == "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
-    assert result["view_audit"]["model"]["elements"] == {"Al": 4, "C": 4, "O": 8, "Si": 8}
+    assert result["view_audit"]["model"]["atom_count"] == 56
+    assert result["view_audit"]["model"]["elements"] == {"Al": 8, "C": 16, "H": 4, "O": 8, "Si": 20}
     assert backend.opened and backend.opened[-1].suffix == ".cif"
 
     metadata = result["view_audit"]["metadata"]
     assert metadata["interface"] == "Al/SiO2/4H-SiC"
     assert metadata["stack_sequence"] == ["4H-SiC", "SiO2", "Al"]
+    assert metadata["polytype"] == "4H"
+    assert metadata["sic_bilayer_count"] == 4
+    assert metadata["surface_orientation"] == "4H-SiC(0001) Si-face"
+    assert metadata["oxide_scaffold_model"]["interface_registry"] == (
+        "whole_oxide_marker_registry_translated_to_first_surface_site"
+    )
+    assert metadata["oxide_scaffold_model"]["amorphous_structure"] is False
     assert metadata["oxide_thickness_angstrom"] == 10.0
     assert metadata["nl_composite_operations"] == ["set_gate_stack_thickness oxide SiO2 10A"]
 
@@ -15672,6 +15728,7 @@ def test_live_modeling_request_hotloads_chinese_4h_sic_mos_capacitor_without_si_
     assert semiconductor["gate_stack_summary"]["semiconductor_channel_material"] == "4H-SiC"
     assert semiconductor["gate_stack_summary"]["declared_oxide_thickness_angstrom"] == 10.0
     assert semiconductor["gate_stack_summary"]["oxide_center_span_angstrom"] == 10.0
+    assert semiconductor["oxide_interface_geometry_summary"]["status"] == "connected_pre_relaxation_scaffold"
     assert result["modeling_health"]["checks"]["semiconductor_gate_stack_sequence_matches_expected"] is True
     assert Path(result["modeling_report"]["diagnostics"]["semiconductor_gate_stack_csv"]).exists()
 
@@ -27819,6 +27876,217 @@ def test_live_modeling_request_builds_and_hotloads_sic_6h_c_face_models(
     assert gate_stack["quality"] == "complete"
     assert gate_stack["material_sequence"] == ["6H-SiC", "SiO2", "Al"]
     assert hotload["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+    assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotload["structure_artifact_validation"]["status"] == "matched"
+    assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert hotload["single_window_policy_ok"] is True
+    assert hotload["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[0].suffix == ".stp"
+
+
+def test_4h_sic_polar_surface_oxide_and_mos_routing_is_exact_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            "Build a 4H-SiC(0001) Si-face slab.",
+            "silicon_carbide_4h_0001_si_face_slab",
+            36,
+            "Si-face",
+        ),
+        (
+            "Build a 4H-SiC(000-1) C-face slab.",
+            "silicon_carbide_4h_000m1_c_face_slab",
+            36,
+            "C-face",
+        ),
+        (
+            "Build a SiO2/4H-SiC(0001) Si-face interface.",
+            "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface",
+            48,
+            "Si-face",
+        ),
+        (
+            "Build a SiO2/4H-SiC(000-1) C-face interface.",
+            "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface",
+            48,
+            "C-face",
+        ),
+        (
+            "Build an Al/SiO2/4H-SiC(0001) Si-face MOS capacitor.",
+            "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor",
+            56,
+            "Si-face",
+        ),
+        (
+            "Build an Al/SiO2/4H-SiC(000-1) C-face MOS capacitor.",
+            "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor",
+            56,
+            "C-face",
+        ),
+    )
+    for request, template_id, atom_count, surface_face in cases:
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "spec"
+        assert plan.template_id == template_id
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == atom_count
+        metadata = plan.payload["metadata"]
+        assert metadata["polytype"] == "4H"
+        assert metadata["sic_bilayer_count"] == 4
+        assert metadata["surface_face"] == surface_face
+        assert metadata["bulk_structure_reference"]["doi"] == "10.1154/1.3257905"
+        assert metadata["surface_scaffold_reference"]["doi"] == "10.1016/j.susc.2015.11.019"
+        if "SiO2" in request:
+            assert metadata["oxide_interface_reference"]["doi"] == "10.1016/j.apsusc.2014.12.116"
+            assert metadata["oxide_scaffold_model"]["amorphous_structure"] is False
+            assert metadata["oxide_scaffold_model"]["geometry_relaxed"] is False
+            assert metadata["oxide_scaffold_model"]["literature_exact_interface"] is False
+
+    generic_mos = infer_modeling_plan("Build a SiC MOS capacitor.")
+    assert generic_mos.template_id == "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
+    assert generic_mos.payload is not None
+    assert generic_mos.payload["metadata"]["surface_orientation"] == "4H-SiC(0001) Si-face"
+    assert len(generic_mos.payload["model"]["basis_atoms"]) == 56
+
+    for request in (
+        "Build a 4H-SiC surface.",
+        "Build a 4H-SiC(0001) Si-face and (000-1) C-face slab.",
+        "Build an Au/4H-SiC(000-1) C-face Schottky contact.",
+        "Build a 4H-SiC MOSFET.",
+        "Build a GaN/4H-SiC heterostructure.",
+    ):
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "unsupported"
+        assert plan.template_id is None
+        assert any("4H-SiC" in note for note in plan.notes)
+
+    rejected_live = server.material_studio_live_modeling_request(
+        "Build a 4H-SiC MOSFET and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    assert rejected_live["ok"] is False
+    assert rejected_live["nl_plan"]["kind"] == "unsupported"
+    assert not list(tmp_path.rglob("current.json"))
+
+    bulk = infer_modeling_plan("Build 4H-SiC bulk crystal.")
+    assert bulk.kind == "spec"
+    assert bulk.template_id == "silicon_carbide_4h_hexagonal"
+    assert bulk.payload is not None
+    assert len(bulk.payload["model"]["basis_atoms"]) == 8
+
+
+def test_live_modeling_request_builds_and_single_window_hotloads_4h_sic_polar_models(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    for surface_face, orientation, template_id, bottom, top, plane in (
+        (
+            "Si-face",
+            "4H-SiC(0001) Si-face",
+            "silicon_carbide_4h_0001_si_face_slab",
+            "C",
+            "Si",
+            [0, 0, 0, 1],
+        ),
+        (
+            "C-face",
+            "4H-SiC(000-1) C-face",
+            "silicon_carbide_4h_000m1_c_face_slab",
+            "Si",
+            "C",
+            [0, 0, 0, -1],
+        ),
+    ):
+        slab = server.material_studio_live_modeling_request(
+            f"Build a {orientation} slab and export all view and surface diagnostics.",
+            execution_mode="preview",
+            open_in_gui=False,
+            take_snapshot=False,
+            working_dir=str(tmp_path / f"slab_{surface_face}"),
+        )
+        assert slab["ok"] is True
+        assert slab["nl_plan"]["template_id"] == template_id
+        assert slab["semiconductor_virtual_template_id"] == template_id
+        assert slab["view_audit"]["model"]["elements"] == {"C": 16, "H": 4, "Si": 16}
+        assert slab["view_audit"]["metadata"]["sic_bilayer_count"] == 4
+        health = slab["modeling_report"]["inspection"]["semiconductor_health"]
+        termination = health["surface_termination_summary"]
+        assert termination["surfaces"]["bottom"]["element_counts"] == {bottom: 4}
+        assert termination["surfaces"]["bottom"]["passivant_bond_count"] == 4
+        assert termination["surfaces"]["top"]["element_counts"] == {top: 4}
+        assert health["surface_orientation_summary"]["surface_plane_indices"] == plane
+        assert health["surface_polarity_summary"]["surface_polarity_status"] == "asymmetric_expected"
+        assert slab["view_bundle_row_counts"]["atoms"] == 36
+        assert slab["view_bundle_row_counts"]["view_summary"] == 7
+        assert slab["view_bundle_row_counts"]["view_projections"] == 252
+        assert not backend.opened
+
+    oxide = server.material_studio_live_modeling_request(
+        "Build a SiO2/4H-SiC(000-1) C-face interface and export interface and view diagnostics.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "oxide_c_face"),
+    )
+    assert oxide["ok"] is True
+    assert oxide["nl_plan"]["template_id"] == (
+        "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface"
+    )
+    assert oxide["view_audit"]["model"]["elements"] == {"C": 16, "H": 4, "O": 8, "Si": 20}
+    oxide_health = oxide["modeling_report"]["inspection"]["semiconductor_health"]
+    assert oxide_health["interface_quality_summary"]["material_sequence"] == ["4H-SiC", "SiO2"]
+    assert oxide_health["oxide_interface_geometry_summary"]["status"] == "connected_pre_relaxation_scaffold"
+    assert oxide_health["oxide_interface_geometry_summary"]["interface_spacings"][0][
+        "actual_gap_angstrom"
+    ] == pytest.approx(2.2)
+    assert oxide["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 38
+    assert oxide["view_bundle_row_counts"]["view_projections"] == 288
+    assert not backend.opened
+
+    hotload = server.material_studio_live_modeling_request(
+        (
+            "Build an Al/SiO2/4H-SiC(000-1) C-face MOS capacitor, set the semiconductor-oxide "
+            "interface gap to 2.0 angstrom and the oxide-gate interface gap to 2.5 angstrom, "
+            "hot-load it in the current Materials Studio window, export all view parameters, "
+            "and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path / "mos_c_face"),
+        take_snapshot=False,
+    )
+    assert hotload["ok"] is True
+    assert hotload["execution_mode"] == "execute"
+    assert hotload["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor"
+    )
+    assert hotload["view_audit"]["model"]["elements"] == {
+        "Al": 8,
+        "C": 16,
+        "H": 4,
+        "O": 8,
+        "Si": 20,
+    }
+    metadata = hotload["view_audit"]["metadata"]
+    assert metadata["nl_composite_operations"] == [
+        "set_gate_stack_interface_gap semiconductor_oxide 4H-SiC/SiO2 2A",
+        "set_gate_stack_interface_gap oxide_gate SiO2/Al 2.5A",
+    ]
+    assert metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.0
+    assert metadata["oxide_gate_interface_gap_angstrom"] == 2.5
+    gate_stack = hotload["modeling_report"]["inspection"]["semiconductor_health"]["gate_stack_summary"]
+    assert gate_stack["quality"] == "complete"
+    assert gate_stack["material_sequence"] == ["4H-SiC", "SiO2", "Al"]
+    assert hotload["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+    assert hotload["view_bundle_row_counts"]["view_projections"] == 392
     assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
     assert hotload["structure_artifact_validation"]["status"] == "matched"
     assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True

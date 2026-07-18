@@ -355,6 +355,102 @@ def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
     )
 
 
+def test_default_sic_4h_polar_scenarios_are_discoverable() -> None:
+    si_slab = live_smoke.default_request_for_scenario("sic_4h_slab")
+    c_slab = live_smoke.default_request_for_scenario("sic_4h_c_face_slab")
+    si_oxide = live_smoke.default_request_for_scenario("sic_4h_oxide_interface")
+    c_oxide = live_smoke.default_request_for_scenario("sic_4h_c_face_oxide_interface")
+    si_mos = live_smoke.default_request_for_scenario("sic_mos")
+    c_mos = live_smoke.default_request_for_scenario("sic_4h_c_face_mos", hotload=True)
+    gaps = live_smoke.default_follow_up_request_for_scenario(
+        "sic_4h_c_face_mos",
+        "interface_gaps_2p0_2p5",
+    )
+
+    assert "4H-SiC(0001) Si-face slab" in si_slab
+    assert "4H-SiC(000-1) C-face slab" in c_slab
+    assert "SiO2/4H-SiC(0001) Si-face interface" in si_oxide
+    assert "SiO2/4H-SiC(000-1) C-face interface" in c_oxide
+    assert "4H-SiC MOS capacitor" in si_mos
+    assert "Al/SiO2/4H-SiC(000-1) C-face MOS capacitor" in c_mos
+    assert "hot-load" in c_mos
+    assert "semiconductor-oxide interface gap to 2.0 angstrom" in gaps
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_slab"] == (
+        "silicon_carbide_4h_0001_si_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_c_face_slab"] == (
+        "silicon_carbide_4h_000m1_c_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_c_face_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_mos"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_c_face_mos"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor"
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_slab"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_c_face_oxide_interface"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_oxide_interface"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_c_face_mos"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_mos"]
+    )
+
+
+def test_live_smoke_previews_sic_4h_c_face_mos_gap_follow_up(tmp_path: Path) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="sic_4h_c_face_mos",
+        follow_up_preset="interface_gaps_2p0_2p5",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is True
+    assert result["base_live"]["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor"
+    )
+    assert result["followup_live"]["workflow"] == "patch"
+    assert result["followup_live"]["base_revision"] == 0
+    assert result["followup_live"]["new_revision"] == 1
+    metadata = result["followup_live"]["view_audit"]["metadata"]
+    assert metadata["surface_orientation"] == "4H-SiC(000-1) C-face"
+    assert metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.0
+    assert metadata["oxide_gate_interface_gap_angstrom"] == 2.5
+    assert result["summary"]["follow_up_expected_diagnostics_ok"] is True
+    assert result["bundle"]["row_counts"]["semiconductor_gate_stack"] == 3
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_geometry"] == 39
+
+
+def test_live_smoke_previews_sic_4h_c_face_oxide_vacancy_follow_up(tmp_path: Path) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="sic_4h_c_face_oxide_interface",
+        follow_up_preset="o_vacancy",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is True
+    assert result["followup_live"]["workflow"] == "patch"
+    assert result["followup_live"]["view_audit"]["metadata"]["surface_orientation"] == (
+        "4H-SiC(000-1) C-face"
+    )
+    assert result["summary"]["follow_up_expected_diagnostics_ok"] is True
+    assert result["bundle"]["row_counts"]["semiconductor_defects"] == 1
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_geometry"] == 33
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_health"] == 4
+
+
 def test_live_smoke_previews_sic_6h_c_face_mos_gap_follow_up(tmp_path: Path) -> None:
     result = live_smoke.run_live_smoke(
         scenario="sic_6h_c_face_mos",

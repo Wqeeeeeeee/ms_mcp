@@ -6580,6 +6580,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "strain-controlled exact integer coincidence" in patch_commands[
         "commensurate_tmd_heterobilayer"
     ]["pattern"]
+    assert patch_commands["crystal_divacancy"]["operations"] == ["delete_atom", "set_metadata"]
+    assert "nearest-neighbor divacancy" in patch_commands["crystal_divacancy"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
     assert "gate stack diagnostics" in mos_gate_stack["request_terms"]
@@ -6615,15 +6617,19 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     defects = use_cases["defects"]
     assert "vacancy" in defects["request_terms"]
     assert "antisite" in defects["request_terms"]
+    assert "nearest-neighbor divacancy" in defects["request_terms"]
     assert "defect formation energy" in defects["request_terms"]
     assert "\u7f3a\u9677\u5f62\u6210\u80fd" in defects["cjk_terms"]
+    assert "\u53cc\u7a7a\u4f4d" in defects["cjk_terms"]
     assert "silicon_diamond" in defects["templates"]
     assert "gallium_arsenide_zincblende" in defects["templates"]
     assert "hexagonal_boron_nitride_2d_hbn_monolayer" in defects["templates"]
     assert "Create an N vacancy in h-BN and export defect diagnostics." in defects["examples"]
+    assert "Create a nearest-neighbor Ga-As divacancy and export defect diagnostics." in defects["examples"]
     assert "defect_summary" in defects["diagnostic_summaries"]
     assert "finite_size_summary" in defects["diagnostic_summaries"]
     assert "semiconductor_defects_csv" in defects["diagnostic_csvs"]
+    assert "semiconductor_defect_complexes_csv" in defects["diagnostic_csvs"]
     assert "semiconductor_finite_size_csv" in defects["diagnostic_csvs"]
     surface = use_cases["surface_slab_polarity"]
     assert "GaN(0001) slab" in surface["request_terms"]
@@ -18402,6 +18408,54 @@ def test_live_modeling_request_marks_defect_diagnostic_focus(
     assert antisite["ok"] is True
     assert antisite["requested_diagnostic_focuses"] == ["defects", "view_quality"]
     assert antisite["requested_diagnostic_focus_ok"] is True
+
+
+def test_live_modeling_request_previews_nearest_neighbor_divacancy_with_bound_diagnostics(
+    tmp_path: Path,
+    isolated_fake_gui: FakeGuiBackend,
+) -> None:
+    created = server.material_studio_live_modeling_request(
+        "Build GaAs zinc blende crystal.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    result = server.material_studio_live_modeling_request(
+        "Create nearest-neighbor Ga-As divacancy and export defect diagnostics.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "patch"
+    assert result["execution_mode"] == "preview"
+    assert result["nl_plan"]["template_id"] == "crystal_divacancy"
+    assert result["base_revision"] == 0
+    assert result["new_revision"] == 1
+    assert isolated_fake_gui.opened == []
+    defect_summary = result["modeling_report"]["inspection"]["semiconductor_health"]["defect_summary"]
+    assert defect_summary["vacancy_count"] == 2
+    assert defect_summary["complex_count"] == 1
+    assert defect_summary["divacancy_count"] == 1
+    assert defect_summary["defect_complex_integrity_ok"] is True
+    complex_row = defect_summary["complexes"][0]
+    assert complex_row["member_site_ids"] == ["Ga1", "As1"]
+    assert complex_row["nearest_neighbor_verified"] is True
+    assert result["modeling_health"]["checks"]["semiconductor_divacancy_count"] == 1
+    assert result["change_verification"]["ok"] is True
+    assert "atom_removal" in result["change_verification"]["domain_tags"]
+    assert "defect_complex_model" in result["modeling_report"]["semiconductor_review"]["risk_flags"]
+    assert result["modeling_report"]["semiconductor_review"]["defects"]["divacancy_count"] == 1
+    assert "defect_complex" in result["semiconductor_intent"]["domain_tags"]
+    assert "divacancy" in result["semiconductor_intent"]["domain_tags"]
+    assert result["semiconductor_intent"]["evidence"]["defect_complex_integrity_ok"] is True
+    assert result["requested_diagnostic_focuses"] == ["defects", "view_quality"]
+    assert result["requested_diagnostic_focus_ok"] is True
+    complex_csv = Path(result["view_bundle_files"]["semiconductor_defect_complexes_csv"])
+    assert complex_csv.exists()
+    assert result["view_bundle_row_counts"]["semiconductor_defect_complexes"] == 1
+    assert result["modeling_report"]["change_receipt"]["artifacts"][
+        "semiconductor_defect_complexes_csv"
+    ] == str(complex_csv)
 
 
 def test_live_modeling_request_hotloads_semiconductor_vacancy_followup_current_revision(

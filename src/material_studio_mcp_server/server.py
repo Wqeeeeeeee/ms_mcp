@@ -2513,6 +2513,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "formation energy preflight",
                 "finite-size defect diagnostics",
                 "create Si vacancy",
+                "nearest-neighbor divacancy",
                 "Create As antisite at Ga1",
             ],
             "cjk_terms": [
@@ -2525,12 +2526,14 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u7f3a\u9677\u5f62\u6210\u80fd",
                 "\u5f62\u6210\u80fd\u9884\u68c0",
                 "\u6709\u9650\u5c3a\u5bf8\u8bca\u65ad",
+                "\u53cc\u7a7a\u4f4d",
             ],
             "examples": [
                 "Build silicon as a 2x1x1 supercell and create a Si vacancy.",
                 "Create As antisite at Ga1 and export defect diagnostics.",
                 "Add Si interstitial at fractional 0.5 0.5 0.5 and check finite-size diagnostics.",
                 "Create an N vacancy in h-BN and export defect diagnostics.",
+                "Create a nearest-neighbor Ga-As divacancy and export defect diagnostics.",
             ],
             "diagnostic_summaries": [
                 "defect_summary",
@@ -2540,6 +2543,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "diagnostic_csvs": [
                 "semiconductor_defects_csv",
+                "semiconductor_defect_complexes_csv",
                 "semiconductor_finite_size_csv",
                 "crystal_coordination_csv",
                 "view_quality_csv",
@@ -5705,6 +5709,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_dopant_sites_csv",
                 "semiconductor_junctions_csv",
                 "semiconductor_defects_csv",
+                "semiconductor_defect_complexes_csv",
                 "semiconductor_layer_profile_csv",
                 "semiconductor_layer_translation_csv",
                 "semiconductor_layer_rotation_csv",
@@ -5752,6 +5757,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_dopant_fraction",
                 "semiconductor_alloy",
                 "semiconductor_defects",
+                "semiconductor_defect_complexes",
                 "semiconductor_finite_size",
                 "semiconductor_layer_profile",
                 "semiconductor_layer_translation",
@@ -19831,6 +19837,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_dopant_fraction_csv", "semiconductor_dopant_fraction"),
         ("semiconductor_alloy_csv", "semiconductor_alloy"),
         ("semiconductor_defects_csv", "semiconductor_defects"),
+        ("semiconductor_defect_complexes_csv", "semiconductor_defect_complexes"),
         ("semiconductor_finite_size_csv", "semiconductor_finite_size"),
     ),
     "semiconductor_devices_surfaces": (
@@ -20848,6 +20855,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_contact_csv": bundle_files.get("semiconductor_contact_csv"),
             "semiconductor_quantum_well_csv": bundle_files.get("semiconductor_quantum_well_csv"),
             "semiconductor_defects_csv": bundle_files.get("semiconductor_defects_csv"),
+            "semiconductor_defect_complexes_csv": bundle_files.get(
+                "semiconductor_defect_complexes_csv"
+            ),
             "semiconductor_finite_size_csv": bundle_files.get("semiconductor_finite_size_csv"),
             "semiconductor_heterostructure_csv": bundle_files.get("semiconductor_heterostructure_csv"),
             "semiconductor_substrate_epitaxy_preflight_csv": bundle_files.get(
@@ -24701,6 +24711,7 @@ def _live_contract_patch_command_catalog() -> dict[str, Any]:
             "crystal_supercell",
             "crystal_superlattice_period",
             "crystal_vacancy",
+            "crystal_divacancy",
             "crystal_antisite",
             "crystal_dopant",
             "crystal_sublattice_dopant",
@@ -24828,6 +24839,7 @@ def _live_contract_followup_edit_capabilities(
             for item in [
                 "crystal_supercell",
                 "crystal_vacancy",
+                "crystal_divacancy",
                 "crystal_dopant",
                 "crystal_sublattice_dopant",
                 "crystal_dopant_fraction",
@@ -24855,6 +24867,7 @@ def _live_contract_followup_edit_capabilities(
         recommended_examples = [
             "make 2x2x1 supercell",
             "create vacancy at <atom_id>",
+            "create nearest-neighbor Ga-As divacancy",
             "dope <atom_id> with P",
             "dilute the P dopant into a 2x2x2 supercell and keep one P dopant",
             "add 10 angstrom vacuum along z",
@@ -29626,6 +29639,9 @@ def _change_receipt_artifacts(
             "semiconductor_dopant_sites_csv": diagnostics.get("semiconductor_dopant_sites_csv"),
             "semiconductor_junctions_csv": diagnostics.get("semiconductor_junctions_csv"),
             "semiconductor_defects_csv": diagnostics.get("semiconductor_defects_csv"),
+            "semiconductor_defect_complexes_csv": diagnostics.get(
+                "semiconductor_defect_complexes_csv"
+            ),
             "semiconductor_layer_profile_csv": diagnostics.get("semiconductor_layer_profile_csv"),
             "semiconductor_layer_translation_csv": diagnostics.get("semiconductor_layer_translation_csv"),
             "semiconductor_layer_rotation_csv": diagnostics.get("semiconductor_layer_rotation_csv"),
@@ -29691,6 +29707,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_dopant_fraction",
         "semiconductor_alloy",
         "semiconductor_defects",
+        "semiconductor_defect_complexes",
         "semiconductor_finite_size",
         "semiconductor_layer_profile",
         "semiconductor_layer_translation",
@@ -31286,6 +31303,9 @@ def _semiconductor_defect_review(defect: dict[str, Any], finite_size: dict[str, 
         "vacancy_count": defect.get("vacancy_count"),
         "interstitial_count": defect.get("interstitial_count"),
         "antisite_count": defect.get("antisite_count"),
+        "defect_complex_count": defect.get("complex_count"),
+        "divacancy_count": defect.get("divacancy_count"),
+        "defect_complex_integrity_ok": defect.get("defect_complex_integrity_ok"),
         "max_isolated_fraction": finite_size.get("max_isolated_fraction"),
         "max_isolated_kind": finite_size.get("max_isolated_kind"),
         "finite_size_warning": finite_size.get("finite_size_warning"),
@@ -31558,6 +31578,10 @@ def _semiconductor_review_risk_flags(
         flags.append("alloy_same_sublattice_neighbors")
     if defect.get("defect_count"):
         flags.append("defect_model")
+    if defect.get("complex_count"):
+        flags.append("defect_complex_model")
+    if defect.get("defect_complex_integrity_ok") is False:
+        flags.append("defect_complex_metadata_inconsistent")
     if finite_size.get("finite_size_warning"):
         flags.append("finite_size_or_dilution_warning")
     if interface_quality.get("quality") not in {None, "complete"}:
@@ -32136,6 +32160,9 @@ def _semiconductor_intent_summary(response: dict[str, Any], report: dict[str, An
             "vacancy_count": defects.get("vacancy_count"),
             "interstitial_count": defects.get("interstitial_count"),
             "antisite_count": defects.get("antisite_count"),
+            "defect_complex_count": defects.get("defect_complex_count"),
+            "divacancy_count": defects.get("divacancy_count"),
+            "defect_complex_integrity_ok": defects.get("defect_complex_integrity_ok"),
             "pn_junction_count": junction.get("pn_junction_count"),
             "junction_count": junction.get("junction_count"),
             "alloy_count": alloy.get("alloy_count") or alloy.get("entry_count"),
@@ -32208,6 +32235,10 @@ def _semiconductor_intent_domain_tags(
         tags.append("interstitial")
     if defects.get("antisite_count"):
         tags.append("antisite")
+    if defects.get("defect_complex_count"):
+        tags.append("defect_complex")
+    if defects.get("divacancy_count"):
+        tags.append("divacancy")
     if junction.get("junction_count"):
         tags.append("junction")
     if junction.get("pn_junction_count"):

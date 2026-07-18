@@ -3110,6 +3110,16 @@ def supported_patch_commands() -> list[dict[str, Any]]:
             "pattern": "Create a vacancy by explicit crystal atom id or deterministic auto-site selection, e.g. 'create vacancy at Si1' or 'create a Si vacancy'.",
         },
         {
+            "template_id": "crystal_divacancy",
+            "operations": ["delete_atom", "set_metadata"],
+            "requires_existing_project": True,
+            "pattern": (
+                "Create a deterministic nearest-neighbor divacancy from two explicit crystal atom ids or two "
+                "site elements, e.g. 'create divacancy at Ga1 and As1' or "
+                "'create nearest-neighbor Ga-As divacancy'."
+            ),
+        },
+        {
             "template_id": "crystal_antisite",
             "operations": ["substitute_atom", "set_metadata"],
             "requires_existing_project": True,
@@ -4381,6 +4391,7 @@ def _looks_like_new_structure_request(text: str) -> bool:
             _match_commensurate_tmd_heterobilayer,
             _match_commensurate_tmd_twisted_bilayer,
             _match_crystal_strain,
+            _match_crystal_divacancy,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
             _match_crystal_antisite,
@@ -4417,6 +4428,7 @@ def _looks_like_current_crystal_modifier_request(text: str) -> bool:
     return any(
         matcher(text) is not None
         for matcher in (
+            _match_crystal_divacancy,
             _match_crystal_vacancy,
             _match_crystal_auto_vacancy,
             _match_crystal_antisite,
@@ -10787,21 +10799,26 @@ def _apply_new_crystal_composite_operations(
             axes, percent, mode = strain_match
             apply_operations(_crystal_strain_operations(working, axes, percent, mode))
 
-        vacancy_match = _match_crystal_vacancy(text)
-        if vacancy_match is not None:
-            apply_operations(_crystal_vacancy_operations(working, vacancy_match))
+        divacancy_match = _match_crystal_divacancy(text)
+        if divacancy_match is not None:
+            apply_operations(_crystal_divacancy_operations(working, divacancy_match))
             vacancy_applied = True
         else:
-            auto_vacancy_match = _match_crystal_auto_vacancy(text)
-            if auto_vacancy_match is not None:
-                requested_element = auto_vacancy_match[0]
-                atom = _auto_select_crystal_site(
-                    working,
-                    requested_site_element=requested_element,
-                    operation="vacancy",
-                )
-                apply_operations(_crystal_vacancy_operations(working, atom.id, auto_selected=True))
+            vacancy_match = _match_crystal_vacancy(text)
+            if vacancy_match is not None:
+                apply_operations(_crystal_vacancy_operations(working, vacancy_match))
                 vacancy_applied = True
+            else:
+                auto_vacancy_match = _match_crystal_auto_vacancy(text)
+                if auto_vacancy_match is not None:
+                    requested_element = auto_vacancy_match[0]
+                    atom = _auto_select_crystal_site(
+                        working,
+                        requested_site_element=requested_element,
+                        operation="vacancy",
+                    )
+                    apply_operations(_crystal_vacancy_operations(working, atom.id, auto_selected=True))
+                    vacancy_applied = True
 
         antisite_match = _match_crystal_antisite(text)
         if antisite_match is not None:
@@ -11050,24 +11067,37 @@ def _infer_crystal_surface_preparation_patch(text: str, current_spec: ModelSpec)
                 ),
             )
 
-        vacancy_match = _match_crystal_vacancy(text)
-        if vacancy_match is not None:
-            apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
+        divacancy_match = _match_crystal_divacancy(text)
+        if divacancy_match is not None:
+            divacancy_operations = _crystal_divacancy_operations(working, divacancy_match)
+            divacancy_record = divacancy_operations[-1]["metadata_updates"]["last_defect_complex"]
+            apply_group(
+                divacancy_operations,
+                (
+                    "create nearest-neighbor divacancy at "
+                    + " and ".join(str(item) for item in divacancy_record["member_site_ids"])
+                ),
+            )
             vacancy_applied = True
         else:
-            auto_vacancy_match = _match_crystal_auto_vacancy(text)
-            if auto_vacancy_match is not None:
-                requested_element = auto_vacancy_match[0]
-                atom = _auto_select_crystal_site(
-                    working,
-                    requested_site_element=requested_element,
-                    operation="vacancy",
-                )
-                apply_group(
-                    _crystal_vacancy_operations(working, atom.id, auto_selected=True),
-                    f"create vacancy at auto-selected {atom.id}",
-                )
+            vacancy_match = _match_crystal_vacancy(text)
+            if vacancy_match is not None:
+                apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
                 vacancy_applied = True
+            else:
+                auto_vacancy_match = _match_crystal_auto_vacancy(text)
+                if auto_vacancy_match is not None:
+                    requested_element = auto_vacancy_match[0]
+                    atom = _auto_select_crystal_site(
+                        working,
+                        requested_site_element=requested_element,
+                        operation="vacancy",
+                    )
+                    apply_group(
+                        _crystal_vacancy_operations(working, atom.id, auto_selected=True),
+                        f"create vacancy at auto-selected {atom.id}",
+                    )
+                    vacancy_applied = True
 
         metadata = dict(current_spec.metadata or {})
         passivation_metadata = metadata.get("passivation") if isinstance(metadata.get("passivation"), dict) else {}
@@ -11586,24 +11616,37 @@ def _infer_current_crystal_composite_patch(text: str, current_spec: ModelSpec) -
                 ),
             )
 
-        vacancy_match = _match_crystal_vacancy(text)
-        if vacancy_match is not None:
-            apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
+        divacancy_match = _match_crystal_divacancy(text)
+        if divacancy_match is not None:
+            divacancy_operations = _crystal_divacancy_operations(working, divacancy_match)
+            divacancy_record = divacancy_operations[-1]["metadata_updates"]["last_defect_complex"]
+            apply_group(
+                divacancy_operations,
+                (
+                    "create nearest-neighbor divacancy at "
+                    + " and ".join(str(item) for item in divacancy_record["member_site_ids"])
+                ),
+            )
             vacancy_applied = True
         else:
-            auto_vacancy_match = _match_crystal_auto_vacancy(text)
-            if auto_vacancy_match is not None:
-                requested_element = auto_vacancy_match[0]
-                atom = _auto_select_crystal_site(
-                    working,
-                    requested_site_element=requested_element,
-                    operation="vacancy",
-                )
-                apply_group(
-                    _crystal_vacancy_operations(working, atom.id, auto_selected=True),
-                    f"create vacancy at auto-selected {atom.id}",
-                )
+            vacancy_match = _match_crystal_vacancy(text)
+            if vacancy_match is not None:
+                apply_group(_crystal_vacancy_operations(working, vacancy_match), f"create vacancy at {vacancy_match}")
                 vacancy_applied = True
+            else:
+                auto_vacancy_match = _match_crystal_auto_vacancy(text)
+                if auto_vacancy_match is not None:
+                    requested_element = auto_vacancy_match[0]
+                    atom = _auto_select_crystal_site(
+                        working,
+                        requested_site_element=requested_element,
+                        operation="vacancy",
+                    )
+                    apply_group(
+                        _crystal_vacancy_operations(working, atom.id, auto_selected=True),
+                        f"create vacancy at auto-selected {atom.id}",
+                    )
+                    vacancy_applied = True
 
         antisite_match = _match_crystal_antisite(text)
         if antisite_match is not None:
@@ -11739,6 +11782,32 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
         composite_patch = _infer_current_crystal_composite_patch(text, current_spec)
         if composite_patch is not None:
             return composite_patch
+
+        divacancy_match = _match_crystal_divacancy(text)
+        if divacancy_match is not None:
+            try:
+                operations = _crystal_divacancy_operations(current_spec, divacancy_match)
+            except ValueError as exc:
+                return NaturalLanguagePlan(
+                    kind="unsupported",
+                    payload=None,
+                    confidence=0.0,
+                    template_id="crystal_divacancy",
+                    notes=[
+                        "A divacancy request matched but a verified nearest-neighbor pair could not be created.",
+                        str(exc),
+                    ],
+                )
+            record = operations[-1]["metadata_updates"]["last_defect_complex"]
+            return _patch_plan(
+                operations,
+                "crystal_divacancy",
+                (
+                    "Create nearest-neighbor divacancy at "
+                    + " and ".join(str(item) for item in record["member_site_ids"])
+                    + f" ({float(record['pair_distance_angstrom']):g} Angstrom)."
+                ),
+            )
 
         quantum_well_thickness = _quantum_well_thickness_operation(text, current_spec)
         if quantum_well_thickness is not None:
@@ -14848,6 +14917,233 @@ def _crystal_strain_operations(current_spec: ModelSpec, axes: list[str], percent
 
 def _normalize_lattice_axis(axis: str) -> str:
     return {"x": "a", "y": "b", "z": "c"}.get(axis.lower(), axis.lower())
+
+
+def _match_crystal_divacancy(text: str) -> dict[str, Any] | None:
+    keyword = r"(?:di[- ]?vacanc(?:y|ies)|vacancy\s+pair|\u53cc\u7a7a\u4f4d)"
+    if re.search(keyword, text, flags=re.IGNORECASE) is None:
+        return None
+
+    atom_id = r"[A-Za-z]{1,3}\d[A-Za-z0-9_]*"
+    explicit_patterns = [
+        rf"\b(?:create|make|introduce)\s+(?:a\s+)?(?:nearest[- ]neighbor\s+)?{keyword}\s+(?:at|on)\s+(?P<atom_id1>{atom_id})\s+(?:and|with|,)\s+(?P<atom_id2>{atom_id})\b",
+        rf"\b(?P<atom_id1>{atom_id})\s+(?:and|with|,)\s+(?P<atom_id2>{atom_id})\s+(?:nearest[- ]neighbor\s+)?{keyword}\b",
+        rf"(?:\u5728\s*)?(?P<atom_id1>{atom_id})\s*(?:\u548c|\u4e0e|\u3001|,)\s*(?P<atom_id2>{atom_id})\s*(?:\u4f4d\u70b9)?\s*(?:\u521b\u5efa|\u751f\u6210|\u5f15\u5165|\u5f62\u6210)?\s*(?:\u6700\u8fd1\u90bb)?\s*\u53cc\u7a7a\u4f4d",
+        rf"(?:\u521b\u5efa|\u751f\u6210|\u5f15\u5165|\u5f62\u6210)\s*(?:\u6700\u8fd1\u90bb)?\s*\u53cc\u7a7a\u4f4d\s*(?:\u4e8e|\u5728)?\s*(?P<atom_id1>{atom_id})\s*(?:\u548c|\u4e0e|\u3001|,)\s*(?P<atom_id2>{atom_id})",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is not None:
+            return {
+                "atom_ids": [match.group("atom_id1"), match.group("atom_id2")],
+                "selection": "explicit_atom_ids",
+            }
+
+    separator = r"(?:\s*[-/+&]\s*|\s+(?:and|with)\s+|\s*(?:\u548c|\u4e0e|\u3001)\s*|\s+)"
+    notation = re.search(
+        rf"V\s*[_-]\s*(?P<element1>{ELEMENT_TERM_PATTERN}){separator}V\s*[_-]\s*(?P<element2>{ELEMENT_TERM_PATTERN})(?![A-Za-z0-9])",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if notation is not None:
+        element1 = _normalize_element(notation.group("element1"))
+        element2 = _normalize_element(notation.group("element2"))
+        if element1 is not None and element2 is not None:
+            return {
+                "site_elements": [element1, element2],
+                "selection": "deterministic_nearest_neighbor",
+            }
+
+    element_patterns = [
+        rf"(?:nearest[- ]neighbor\s+|\u6700\u8fd1\u90bb\s*)?(?P<element1>{ELEMENT_TERM_PATTERN}){separator}(?P<element2>{ELEMENT_TERM_PATTERN})\s*(?:nearest[- ]neighbor\s+|\u6700\u8fd1\u90bb\s*)?{keyword}",
+        rf"{keyword}\s*(?:from|of|\u4e8e|\u7531)?\s*(?:nearest[- ]neighbor\s+|\u6700\u8fd1\u90bb\s*)?(?P<element1>{ELEMENT_TERM_PATTERN}){separator}(?P<element2>{ELEMENT_TERM_PATTERN})(?![A-Za-z0-9])",
+    ]
+    for pattern in element_patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        element1 = _normalize_element(match.group("element1"))
+        element2 = _normalize_element(match.group("element2"))
+        if element1 is not None and element2 is not None:
+            return {
+                "site_elements": [element1, element2],
+                "selection": "deterministic_nearest_neighbor",
+            }
+    return None
+
+
+def _crystal_divacancy_operations(current_spec: ModelSpec, request: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(current_spec.model, CrystalSpec):
+        raise ValueError("Divacancy construction requires a crystal model.")
+    crystal = current_spec.model
+    atoms_by_id = {atom.id: atom for atom in crystal.basis_atoms}
+    atoms_by_lower_id = {atom.id.lower(): atom for atom in crystal.basis_atoms}
+    selection = str(request.get("selection") or "")
+    auto_selected = selection == "deterministic_nearest_neighbor"
+
+    requested_ids = [str(item) for item in request.get("atom_ids", []) or []]
+    if requested_ids:
+        if len(requested_ids) != 2:
+            raise ValueError("A divacancy requires exactly two explicit crystal atom ids.")
+        selected_atoms = [
+            atoms_by_id.get(atom_id) or atoms_by_lower_id.get(atom_id.lower())
+            for atom_id in requested_ids
+        ]
+        missing_ids = [requested_ids[index] for index, atom in enumerate(selected_atoms) if atom is None]
+        if missing_ids:
+            raise ValueError("Divacancy atom ids are not present in the current crystal: " + ", ".join(missing_ids) + ".")
+        atom1, atom2 = selected_atoms
+    else:
+        requested_elements = [str(item) for item in request.get("site_elements", []) or []]
+        if len(requested_elements) != 2:
+            raise ValueError("A divacancy requires exactly two site elements or two explicit atom ids.")
+        candidates1 = sorted(
+            (atom for atom in crystal.basis_atoms if atom.element == requested_elements[0]),
+            key=lambda atom: _crystal_atom_sort_key(atom.id),
+        )
+        candidates2 = sorted(
+            (atom for atom in crystal.basis_atoms if atom.element == requested_elements[1]),
+            key=lambda atom: _crystal_atom_sort_key(atom.id),
+        )
+        if not candidates1 or not candidates2:
+            missing_elements = [
+                element
+                for element, candidates in zip(requested_elements, (candidates1, candidates2), strict=True)
+                if not candidates
+            ]
+            raise ValueError(
+                "No crystal sites are available for divacancy element(s): " + ", ".join(missing_elements) + "."
+            )
+        pair_candidates: list[tuple[float, Any, Any]] = []
+        for left in candidates1:
+            for right in candidates2:
+                if left.id == right.id:
+                    continue
+                if requested_elements[0] == requested_elements[1] and _crystal_atom_sort_key(left.id) >= _crystal_atom_sort_key(right.id):
+                    continue
+                left_fractional = (left.fractional.x, left.fractional.y, left.fractional.z)
+                right_fractional = (right.fractional.x, right.fractional.y, right.fractional.z)
+                pair_candidates.append(
+                    (_minimum_image_fractional_distance(crystal, left_fractional, right_fractional), left, right)
+                )
+        if not pair_candidates:
+            raise ValueError("No two distinct crystal sites are available for the requested divacancy.")
+        pair_candidates.sort(
+            key=lambda item: (
+                round(float(item[0]), 9),
+                _crystal_atom_sort_key(item[1].id),
+                _crystal_atom_sort_key(item[2].id),
+            )
+        )
+        _, atom1, atom2 = pair_candidates[0]
+
+    if atom1 is None or atom2 is None or atom1.id == atom2.id:
+        raise ValueError("A divacancy requires two distinct crystal sites.")
+    fractional1 = (atom1.fractional.x, atom1.fractional.y, atom1.fractional.z)
+    fractional2 = (atom2.fractional.x, atom2.fractional.y, atom2.fractional.z)
+    pair_distance = _minimum_image_fractional_distance(crystal, fractional1, fractional2)
+    neighbor_threshold = _crystal_neighbor_threshold(atom1.element, atom2.element)
+    if pair_distance > neighbor_threshold + 1e-6:
+        raise ValueError(
+            f"Selected divacancy sites {atom1.id} and {atom2.id} are {pair_distance:.6f} Angstrom apart, "
+            f"outside the verified nearest-neighbor threshold {neighbor_threshold:.6f} Angstrom."
+        )
+
+    metadata = dict(current_spec.metadata or {})
+    defects = [dict(item) for item in metadata.get("defects", []) or [] if isinstance(item, dict)]
+    complexes = [dict(item) for item in metadata.get("defect_complexes", []) or [] if isinstance(item, dict)]
+    used_complex_ids = {
+        str(item.get("complex_id") or item.get("id"))
+        for item in complexes
+        if item.get("complex_id") or item.get("id")
+    }
+    complex_index = 1
+    while f"divacancy_{complex_index:03d}" in used_complex_ids:
+        complex_index += 1
+    complex_id = f"divacancy_{complex_index:03d}"
+    rounded_distance = round(float(pair_distance), 6)
+    rounded_threshold = round(float(neighbor_threshold), 6)
+    member_atoms = (atom1, atom2)
+    member_ids = [atom.id for atom in member_atoms]
+    member_elements = [atom.element for atom in member_atoms]
+    member_fractionals = [
+        [
+            _round_fractional(atom.fractional.x),
+            _round_fractional(atom.fractional.y),
+            _round_fractional(atom.fractional.z),
+        ]
+        for atom in member_atoms
+    ]
+    selection_rule = (
+        "minimum_periodic_pair_distance_then_atom_id"
+        if auto_selected
+        else "explicit_atom_ids_verified_nearest_neighbor"
+    )
+    for index, atom in enumerate(member_atoms):
+        defects.append(
+            {
+                "type": "vacancy",
+                "site_id": atom.id,
+                "site_element": atom.element,
+                "fractional": member_fractionals[index],
+                "source": "natural_language_crystal_divacancy",
+                "complex_id": complex_id,
+                "complex_type": "divacancy",
+                "pair_site_id": member_ids[1 - index],
+                "pair_distance_angstrom": rounded_distance,
+                "nearest_neighbor_verified": True,
+                **({"auto_selected_site": True} if auto_selected else {}),
+            }
+        )
+    complex_record = {
+        "complex_id": complex_id,
+        "type": "divacancy",
+        "member_site_ids": member_ids,
+        "member_site_elements": member_elements,
+        "member_fractionals": member_fractionals,
+        "pair_distance_angstrom": rounded_distance,
+        "nearest_neighbor_threshold_angstrom": rounded_threshold,
+        "nearest_neighbor_verified": True,
+        "periodic_minimum_image": True,
+        "selection": selection,
+        "selection_rule": selection_rule,
+        "source": "natural_language_crystal_divacancy",
+    }
+    complexes.append(complex_record)
+    defect_types = sorted({str(item.get("type")) for item in defects if item.get("type")})
+    metadata_updates: dict[str, Any] = {
+        "defects": defects,
+        "defect_count": len(defects),
+        "defect_types": defect_types,
+        "defect_complexes": complexes,
+        "defect_complex_count": len(complexes),
+        "divacancy_count": sum(1 for item in complexes if str(item.get("type") or "").lower() == "divacancy"),
+        "last_defect_complex": complex_record,
+    }
+    if auto_selected:
+        auto_sites = [
+            dict(item)
+            for item in metadata.get("nl_auto_selected_sites", []) or []
+            if isinstance(item, dict)
+        ]
+        for atom in member_atoms:
+            auto_sites.append(
+                {
+                    "operation": "divacancy",
+                    "atom_id": atom.id,
+                    "site_element": atom.element,
+                    "auto_selected_site": True,
+                    "selection_rule": selection_rule,
+                    "complex_id": complex_id,
+                    "source": "natural_language_auto_site",
+                }
+            )
+        metadata_updates["nl_auto_selected_sites"] = auto_sites
+    return [
+        {"type": "delete_atom", "atom_id": atom1.id},
+        {"type": "delete_atom", "atom_id": atom2.id},
+        {"type": "set_metadata", "metadata_updates": metadata_updates},
+    ]
 
 
 def _match_crystal_vacancy(text: str) -> str | None:

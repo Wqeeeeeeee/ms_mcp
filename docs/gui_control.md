@@ -57,7 +57,7 @@ and mismatch reasons.
 - `material_studio_live_project_status`: summarizes the current revision, saved script, planned outputs, latest change, persisted `view_audit.json`/`report.json` receipt, computed audit, `modeling_health`, optional GUI status, and next action. If the audit JSON is missing a GUI-open artifact but `report.json` still has `gui_open`, status uses that fallback to preserve current-revision GUI checks.
   It also returns `gui_view_replay` with the current revision's replay manifest/event paths, replay status, preflight, confirmed-view counts, last event, and next action so resumed sessions and watchdog checks can continue without scanning the workspace.
 - `material_studio_model_export_view_audit`: exports `modeling_health`, model-health checks, semiconductor health checks, stable spec fingerprints, rounded atom coordinates, and per-view projection parameters for front/back/right/left/top/bottom/isometric-style inspection.
-- `material_studio_model_export_view_bundle`: writes `view_audit.json` plus CSV tables for atoms, bonds, bond angles, dihedrals, connectivity, close contacts, crystal nearest neighbors, crystal coordination, semiconductor lattice volume/density, semiconductor neighbor-pair distances, semiconductor local environments, semiconductor interface profiles, semiconductor interface quality, MOS/gate-stack diagnostics, metal/semiconductor contact diagnostics, semiconductor composition, nominal charge-balance/valence-electron summaries, semiconductor calculation-preflight summaries, reciprocal-lattice/k-point summaries, band-path preflight summaries, band-alignment metadata preflight summaries, semiconductor sublattice balance, semiconductor layer profiles, semiconductor dopants, p-n junctions, dopant fractions, alloy fractions, finite-size/dilution preflight, vacancy/defect summaries, heterostructure strain, surface termination, surface polarity/asymmetry, view summaries, per-view atom projections, projection overlaps, a health summary, and a compact modeling-report summary.
+- `material_studio_model_export_view_bundle`: writes `view_audit.json` plus CSV tables for atoms, bonds, bond angles, dihedrals, connectivity, close contacts, crystal nearest neighbors, crystal coordination, semiconductor lattice volume/density, semiconductor neighbor-pair distances, semiconductor local environments, semiconductor interface profiles, semiconductor interface quality, MOS/gate-stack diagnostics, metal/semiconductor contact diagnostics, semiconductor composition, nominal charge-balance/valence-electron summaries, semiconductor calculation-preflight summaries, reciprocal-lattice/k-point summaries, band-path preflight summaries, band-alignment metadata preflight summaries, semiconductor sublattice balance, semiconductor layer profiles, semiconductor dopants, p-n junctions, dopant fractions, alloy fractions, finite-size/dilution preflight, vacancy/defect and defect-complex summaries, heterostructure strain, surface termination, surface polarity/asymmetry, view summaries, per-view atom projections, projection overlaps, a health summary, and a compact modeling-report summary.
 
 ## Operating Model
 
@@ -743,7 +743,18 @@ role hints, and dopant coordination statistics. Vacancy, interstitial, and
 antisite patches add defect summaries with the removed, added, or substituted
 site, estimated concentration, nearest neighbor IDs, under-coordinated neighbor
 counts, interstitial coordination outliers, and antisite same-sublattice
-neighbors. For heterostructure templates,
+neighbors.
+Nearest-neighbor divacancy patches additionally bind two vacancy records to one
+`defect_complexes` entry. The audit independently recomputes the periodic
+minimum-image pair distance and exports
+`semiconductor_defect_complexes.csv` with member IDs/elements, recorded and
+recomputed distances, neighbor threshold, image offset, selection rule, and
+integrity status. A failed member or distance binding is a health error. This
+receipt verifies the deterministic structural edit only; it does not establish
+a relaxed geometry, charge state, or formation energy. Preview remains the
+default, while explicit execute/hot-load continues through the existing
+single-window GUI path.
+For heterostructure templates,
 it also reports interface metadata, in-plane lattice, cell volume, density, per-material reference
 lattice values, epitaxial strain percentages, and lattice mismatch relative to
 the substrate. For slab templates, it reports surface termination diagnostics:

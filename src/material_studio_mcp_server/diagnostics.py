@@ -1924,10 +1924,46 @@ def write_view_audit_bundle(
                 "role_hint",
                 "carrier_type_hint",
                 "auto_selected_site",
+                "complex_id",
+                "complex_type",
+                "pair_site_id",
+                "pair_distance_angstrom",
+                "nearest_neighbor_verified",
                 "source",
             ],
             defect_rows,
         )
+        complex_rows = _semiconductor_defect_complex_csv_rows(defect_summary)
+        if complex_rows:
+            files["semiconductor_defect_complexes_csv"] = str(
+                bundle_dir / "semiconductor_defect_complexes.csv"
+            )
+            row_counts["semiconductor_defect_complexes"] = _write_csv(
+                bundle_dir / "semiconductor_defect_complexes.csv",
+                [
+                    "complex_id",
+                    "complex_type",
+                    "member_site_ids",
+                    "member_site_elements",
+                    "member_count",
+                    "member_vacancy_record_count",
+                    "pair_distance_angstrom_recorded",
+                    "pair_distance_angstrom_recomputed",
+                    "distance_delta_angstrom",
+                    "nearest_neighbor_threshold_angstrom",
+                    "nearest_neighbor_metadata_claim",
+                    "nearest_neighbor_recomputed",
+                    "nearest_neighbor_verified",
+                    "periodic_minimum_image",
+                    "image_offset",
+                    "selection",
+                    "selection_rule",
+                    "metadata_consistent",
+                    "integrity_errors",
+                    "source",
+                ],
+                complex_rows,
+            )
 
     finite_size = semiconductor.get("finite_size_summary") or {}
     if finite_size:
@@ -2327,6 +2363,9 @@ def write_view_audit_bundle(
             "semiconductor_surface_dangling_bond_estimate",
             "semiconductor_surface_fully_passivated",
             "semiconductor_finite_size_warning",
+            "semiconductor_defect_complex_count",
+            "semiconductor_divacancy_count",
+            "semiconductor_defect_complex_integrity_ok",
             "semiconductor_total_dopant_density_cm3",
             "semiconductor_net_nominal_carrier_density_cm3_abs",
             "semiconductor_dopant_concentration_warning_level",
@@ -2415,6 +2454,7 @@ def _modeling_health_summary_csv_row(
     semiconductor = health.get("semiconductor_health") or {}
     composition = semiconductor.get("composition_summary") or {}
     surface = semiconductor.get("surface_termination_summary") or {}
+    defects = semiconductor.get("defect_summary") or {}
     calculation = semiconductor.get("calculation_preflight_summary") or {}
     castep_electronic_assessment = (
         semiconductor.get("castep_electronic_result_assessment") or {}
@@ -2508,6 +2548,18 @@ def _modeling_health_summary_csv_row(
         ),
         "semiconductor_surface_fully_passivated": checks.get("semiconductor_surface_fully_passivated", surface.get("fully_passivated")),
         "semiconductor_finite_size_warning": checks.get("semiconductor_finite_size_warning"),
+        "semiconductor_defect_complex_count": checks.get(
+            "semiconductor_defect_complex_count",
+            defects.get("complex_count"),
+        ),
+        "semiconductor_divacancy_count": checks.get(
+            "semiconductor_divacancy_count",
+            defects.get("divacancy_count"),
+        ),
+        "semiconductor_defect_complex_integrity_ok": checks.get(
+            "semiconductor_defect_complex_integrity_ok",
+            defects.get("defect_complex_integrity_ok"),
+        ),
         "semiconductor_total_dopant_density_cm3": checks.get("semiconductor_total_dopant_density_cm3"),
         "semiconductor_net_nominal_carrier_density_cm3_abs": checks.get(
             "semiconductor_net_nominal_carrier_density_cm3_abs"
@@ -4541,7 +4593,42 @@ def _semiconductor_defect_csv_rows(summary: dict[str, Any]) -> list[dict[str, An
                 "role_hint": defect.get("role_hint"),
                 "carrier_type_hint": defect.get("carrier_type_hint"),
                 "auto_selected_site": defect.get("auto_selected_site"),
+                "complex_id": defect.get("complex_id"),
+                "complex_type": defect.get("complex_type"),
+                "pair_site_id": defect.get("pair_site_id"),
+                "pair_distance_angstrom": defect.get("pair_distance_angstrom"),
+                "nearest_neighbor_verified": defect.get("nearest_neighbor_verified"),
                 "source": defect.get("source"),
+            }
+        )
+    return rows
+
+
+def _semiconductor_defect_complex_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for complex_row in summary.get("complexes", []) or []:
+        rows.append(
+            {
+                "complex_id": complex_row.get("complex_id"),
+                "complex_type": complex_row.get("type"),
+                "member_site_ids": _join_vector(complex_row.get("member_site_ids")),
+                "member_site_elements": _join_vector(complex_row.get("member_site_elements")),
+                "member_count": complex_row.get("member_count"),
+                "member_vacancy_record_count": complex_row.get("member_vacancy_record_count"),
+                "pair_distance_angstrom_recorded": complex_row.get("pair_distance_angstrom_recorded"),
+                "pair_distance_angstrom_recomputed": complex_row.get("pair_distance_angstrom_recomputed"),
+                "distance_delta_angstrom": complex_row.get("distance_delta_angstrom"),
+                "nearest_neighbor_threshold_angstrom": complex_row.get("nearest_neighbor_threshold_angstrom"),
+                "nearest_neighbor_metadata_claim": complex_row.get("nearest_neighbor_metadata_claim"),
+                "nearest_neighbor_recomputed": complex_row.get("nearest_neighbor_recomputed"),
+                "nearest_neighbor_verified": complex_row.get("nearest_neighbor_verified"),
+                "periodic_minimum_image": complex_row.get("periodic_minimum_image"),
+                "image_offset": _join_vector(complex_row.get("image_offset")),
+                "selection": complex_row.get("selection"),
+                "selection_rule": complex_row.get("selection_rule"),
+                "metadata_consistent": complex_row.get("metadata_consistent"),
+                "integrity_errors": _join_vector(complex_row.get("integrity_errors")),
+                "source": complex_row.get("source"),
             }
         )
     return rows
@@ -5734,6 +5821,11 @@ def _semiconductor_health_summary(
     )
     errors = []
     warnings = []
+    if defect_summary and not defect_summary.get("defect_complex_integrity_ok", True):
+        errors.extend(
+            str(item)
+            for item in defect_summary.get("defect_complex_integrity_errors", []) or []
+        )
     if unexpected_pairs:
         unexpected_counts = Counter(str(row.get("pair_type")) for row in unexpected_pairs)
         message = (
@@ -12965,7 +13057,12 @@ def _defect_summary(
     vacancy_inputs = [item for item in defects if str(item.get("type") or "").lower() == "vacancy"]
     interstitial_inputs = [item for item in defects if str(item.get("type") or "").lower() == "interstitial"]
     antisite_inputs = [item for item in defects if str(item.get("type") or "").lower() == "antisite"]
-    if not vacancy_inputs and not interstitial_inputs and not antisite_inputs:
+    complex_inputs = [
+        dict(item)
+        for item in metadata.get("defect_complexes", []) or []
+        if isinstance(item, dict)
+    ]
+    if not vacancy_inputs and not interstitial_inputs and not antisite_inputs and not complex_inputs:
         return None
 
     vectors = _lattice_vectors(spec.model.lattice) if isinstance(spec.model, CrystalSpec) else None
@@ -13043,6 +13140,11 @@ def _defect_summary(
                 "role_hint": role_hint,
                 "carrier_type_hint": carrier_hint,
                 "auto_selected_site": bool(vacancy.get("auto_selected_site")),
+                "complex_id": vacancy.get("complex_id"),
+                "complex_type": vacancy.get("complex_type"),
+                "pair_site_id": vacancy.get("pair_site_id"),
+                "pair_distance_angstrom": _optional_float(vacancy.get("pair_distance_angstrom")),
+                "nearest_neighbor_verified": bool(vacancy.get("nearest_neighbor_verified")),
                 "concentration_fraction": _round(1.0 / total_sites) if total_sites else None,
                 "concentration_percent": _round(100.0 / total_sites) if total_sites else None,
             }
@@ -13196,6 +13298,12 @@ def _defect_summary(
         )
 
     defect_rows = vacancy_rows + interstitial_rows + antisite_rows
+    complex_rows = _defect_complex_rows(spec, complex_inputs, vacancy_inputs)
+    complex_integrity_errors = [
+        str(error)
+        for complex_row in complex_rows
+        for error in complex_row.get("integrity_errors", []) or []
+    ]
     context = {
         "tmd_context": tmd_context,
         "oxide_context": oxide_context,
@@ -13216,6 +13324,10 @@ def _defect_summary(
         "vacancy_count": len(vacancy_rows),
         "interstitial_count": len(interstitial_rows),
         "antisite_count": len(antisite_rows),
+        "complex_count": len(complex_rows),
+        "divacancy_count": sum(1 for item in complex_rows if str(item.get("type") or "").lower() == "divacancy"),
+        "defect_complex_integrity_ok": not complex_integrity_errors,
+        "defect_complex_integrity_errors": complex_integrity_errors,
         "total_lattice_site_count_estimate": total_sites,
         "total_defect_fraction": _round(len(defect_rows) / total_sites) if total_sites else None,
         "total_defect_percent": _round(100.0 * len(defect_rows) / total_sites) if total_sites else None,
@@ -13235,7 +13347,170 @@ def _defect_summary(
         "unknown_count": carrier_counts.get("unknown_site_dependent", 0),
         "context": context,
         "defects": defect_rows,
+        "complexes": complex_rows,
     }
+
+
+def _defect_complex_rows(
+    spec: ModelSpec,
+    complex_inputs: list[dict[str, Any]],
+    vacancy_inputs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    vectors = _lattice_vectors(spec.model.lattice) if isinstance(spec.model, CrystalSpec) else None
+    complex_id_counts = Counter(
+        str(item.get("complex_id") or item.get("id") or "")
+        for item in complex_inputs
+    )
+    rows: list[dict[str, Any]] = []
+    for index, complex_input in enumerate(complex_inputs, start=1):
+        complex_id = str(complex_input.get("complex_id") or complex_input.get("id") or "")
+        complex_type = str(complex_input.get("type") or "").lower()
+        member_site_ids = [str(item) for item in complex_input.get("member_site_ids", []) or []]
+        member_site_elements = [str(item) for item in complex_input.get("member_site_elements", []) or []]
+        raw_fractionals = list(complex_input.get("member_fractionals", []) or [])
+        member_fractionals = []
+        for item in raw_fractionals:
+            fractional = _coerce_fractional(item)
+            member_fractionals.append(
+                fractional
+                if fractional is not None and all(math.isfinite(value) for value in fractional)
+                else None
+            )
+        errors: list[str] = []
+        label = complex_id or f"defect_complex[{index}]"
+
+        if not complex_id:
+            errors.append(f"{label} is missing complex_id.")
+        elif complex_id_counts[complex_id] != 1:
+            errors.append(f"Defect complex id {complex_id} is duplicated in metadata.")
+        if complex_type != "divacancy":
+            errors.append(f"{label} has unsupported complex type {complex_type or 'missing'}.")
+        if len(member_site_ids) != 2 or len(set(member_site_ids)) != 2:
+            errors.append(f"{label} must reference exactly two distinct vacancy site ids.")
+        if len(member_site_elements) != 2:
+            errors.append(f"{label} must record exactly two member site elements.")
+        if len(member_fractionals) != 2 or any(item is None for item in member_fractionals):
+            errors.append(f"{label} must record two valid fractional-coordinate triples.")
+
+        member_vacancies = [
+            item
+            for item in vacancy_inputs
+            if str(item.get("complex_id") or "") == complex_id
+        ]
+        if len(member_vacancies) != 2:
+            errors.append(
+                f"{label} must bind exactly two vacancy records; found {len(member_vacancies)}."
+            )
+        for member_index, member_site_id in enumerate(member_site_ids[:2]):
+            matching = [
+                item
+                for item in member_vacancies
+                if str(item.get("site_id") or item.get("atom_id") or "") == member_site_id
+            ]
+            if len(matching) != 1:
+                errors.append(
+                    f"{label} member {member_site_id} does not bind exactly one vacancy record."
+                )
+                continue
+            vacancy = matching[0]
+            if member_index < len(member_site_elements):
+                vacancy_element = str(vacancy.get("site_element") or vacancy.get("element") or "")
+                if vacancy_element != member_site_elements[member_index]:
+                    errors.append(
+                        f"{label} member {member_site_id} element differs from its vacancy record."
+                    )
+            vacancy_fractional = _coerce_fractional(vacancy.get("fractional"))
+            expected_fractional = member_fractionals[member_index] if member_index < len(member_fractionals) else None
+            if vacancy_fractional is None or expected_fractional is None or any(
+                abs(vacancy_fractional[axis] - expected_fractional[axis]) > 1e-6
+                for axis in range(3)
+            ):
+                errors.append(
+                    f"{label} member {member_site_id} fractional coordinates differ from its vacancy record."
+                )
+            expected_pair_id = member_site_ids[1 - member_index] if len(member_site_ids) == 2 else None
+            if expected_pair_id and str(vacancy.get("pair_site_id") or "") != expected_pair_id:
+                errors.append(
+                    f"{label} member {member_site_id} has an inconsistent pair_site_id."
+                )
+
+        recorded_distance = _optional_float(complex_input.get("pair_distance_angstrom"))
+        if recorded_distance is not None and not math.isfinite(recorded_distance):
+            errors.append(f"{label} pair_distance_angstrom must be finite.")
+            recorded_distance = None
+        recomputed_distance = None
+        image_offset = None
+        threshold = None
+        nearest_neighbor_recomputed = False
+        if (
+            vectors is not None
+            and len(member_fractionals) == 2
+            and member_fractionals[0] is not None
+            and member_fractionals[1] is not None
+            and len(member_site_elements) == 2
+        ):
+            recomputed_distance, image_offset = _minimum_image_distance(
+                member_fractionals[0],
+                member_fractionals[1],
+                vectors,
+            )
+            threshold = _crystal_neighbor_threshold(member_site_elements[0], member_site_elements[1])
+            nearest_neighbor_recomputed = recomputed_distance <= threshold + 1e-6
+        if recorded_distance is None:
+            errors.append(f"{label} is missing pair_distance_angstrom.")
+        if recomputed_distance is None:
+            errors.append(f"{label} pair distance could not be recomputed from current lattice metadata.")
+        distance_delta = (
+            abs(recorded_distance - recomputed_distance)
+            if recorded_distance is not None and recomputed_distance is not None
+            else None
+        )
+        if distance_delta is not None and distance_delta > 1e-5:
+            errors.append(f"{label} recorded pair distance does not match the current lattice.")
+        threshold_claim = _optional_float(complex_input.get("nearest_neighbor_threshold_angstrom"))
+        if threshold_claim is not None and not math.isfinite(threshold_claim):
+            errors.append(f"{label} nearest-neighbor threshold must be finite.")
+            threshold_claim = None
+        if threshold is not None and (
+            threshold_claim is None or abs(threshold_claim - threshold) > 1e-5
+        ):
+            errors.append(f"{label} nearest-neighbor threshold metadata is inconsistent.")
+        if not nearest_neighbor_recomputed:
+            errors.append(f"{label} members are not a nearest-neighbor pair under the current distance rule.")
+        nearest_neighbor_metadata_claim = complex_input.get("nearest_neighbor_verified") is True
+        if not nearest_neighbor_metadata_claim:
+            errors.append(f"{label} does not carry a positive nearest-neighbor verification claim.")
+        periodic_minimum_image = complex_input.get("periodic_minimum_image") is True
+        if not periodic_minimum_image:
+            errors.append(f"{label} is not bound to periodic minimum-image distance semantics.")
+
+        metadata_consistent = not errors
+        rows.append(
+            {
+                "complex_id": complex_id or None,
+                "type": complex_type or None,
+                "member_site_ids": member_site_ids,
+                "member_site_elements": member_site_elements,
+                "member_fractionals": [list(item) if item is not None else None for item in member_fractionals],
+                "member_count": len(member_site_ids),
+                "member_vacancy_record_count": len(member_vacancies),
+                "pair_distance_angstrom_recorded": _round(recorded_distance) if recorded_distance is not None else None,
+                "pair_distance_angstrom_recomputed": _round(recomputed_distance) if recomputed_distance is not None else None,
+                "distance_delta_angstrom": _round(distance_delta) if distance_delta is not None else None,
+                "nearest_neighbor_threshold_angstrom": _round(threshold) if threshold is not None else None,
+                "nearest_neighbor_metadata_claim": nearest_neighbor_metadata_claim,
+                "nearest_neighbor_recomputed": nearest_neighbor_recomputed,
+                "nearest_neighbor_verified": bool(metadata_consistent and nearest_neighbor_recomputed),
+                "periodic_minimum_image": periodic_minimum_image,
+                "image_offset": list(image_offset) if image_offset is not None else None,
+                "selection": complex_input.get("selection"),
+                "selection_rule": complex_input.get("selection_rule"),
+                "metadata_consistent": metadata_consistent,
+                "integrity_errors": errors,
+                "source": complex_input.get("source"),
+            }
+        )
+    return rows
 
 
 def _finite_size_summary(

@@ -3296,6 +3296,179 @@ def test_model_view_audit_reports_semiconductor_vacancy_defect_summary() -> None
     assert finite_size["finite_size_warning"] is True
 
 
+def test_model_view_audit_reports_verified_nearest_neighbor_divacancy_complex(tmp_path: Path) -> None:
+    base = load_example("gallium_arsenide_zincblende_spec.json")
+    plan = infer_modeling_plan(
+        "Create nearest-neighbor Ga-As divacancy.",
+        current_spec=base,
+    )
+    divacancy, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=plan.payload["operations"],
+        ),
+    )
+
+    audit = model_view_audit(divacancy)
+    defect_summary = audit["health"]["semiconductor_health"]["defect_summary"]
+    complex_row = defect_summary["complexes"][0]
+    health = build_modeling_health(
+        {"validation": {"valid": True, "errors": [], "warnings": []}, "view_audit": audit},
+        execution_mode="preview",
+    )
+
+    assert plan.kind == "patch"
+    assert plan.template_id == "crystal_divacancy"
+    assert [operation["atom_id"] for operation in plan.payload["operations"][:2]] == ["Ga1", "As1"]
+    assert len(divacancy.model.basis_atoms) == 6
+    assert divacancy.metadata["defect_count"] == 2
+    assert divacancy.metadata["defect_complex_count"] == 1
+    assert divacancy.metadata["last_defect_complex"]["selection_rule"] == (
+        "minimum_periodic_pair_distance_then_atom_id"
+    )
+    assert defect_summary["vacancy_count"] == 2
+    assert defect_summary["complex_count"] == 1
+    assert defect_summary["divacancy_count"] == 1
+    assert defect_summary["defect_complex_integrity_ok"] is True
+    assert defect_summary["defect_complex_integrity_errors"] == []
+    assert complex_row["member_site_ids"] == ["Ga1", "As1"]
+    assert complex_row["member_site_elements"] == ["Ga", "As"]
+    assert complex_row["member_vacancy_record_count"] == 2
+    assert complex_row["pair_distance_angstrom_recomputed"] == pytest.approx(2.447951)
+    assert complex_row["distance_delta_angstrom"] == 0.0
+    assert complex_row["nearest_neighbor_recomputed"] is True
+    assert complex_row["nearest_neighbor_verified"] is True
+    assert complex_row["metadata_consistent"] is True
+    assert health["checks"]["semiconductor_defect_complex_count"] == 1
+    assert health["checks"]["semiconductor_divacancy_count"] == 1
+    assert health["checks"]["semiconductor_defect_complex_integrity_ok"] is True
+    assert any("unrelaxed structural starting point" in warning for warning in health["warnings"])
+
+    bundle = write_view_audit_bundle(tmp_path, divacancy, audit)
+    complex_csv = Path(bundle["files"]["semiconductor_defect_complexes_csv"])
+    assert complex_csv.exists()
+    assert bundle["row_counts"]["semiconductor_defect_complexes"] == 1
+    rows = list(csv.DictReader(complex_csv.open(encoding="utf-8")))
+    assert rows[0]["complex_id"] == "divacancy_001"
+    assert rows[0]["member_site_ids"] == "Ga1;As1"
+    assert rows[0]["nearest_neighbor_verified"] == "True"
+    assert rows[0]["metadata_consistent"] == "True"
+
+
+def test_divacancy_rejects_explicit_non_neighbor_pair() -> None:
+    base = load_example("gallium_arsenide_zincblende_spec.json")
+    plan = infer_modeling_plan(
+        "Create divacancy at Ga1 and Ga2.",
+        current_spec=base,
+    )
+
+    assert plan.kind == "unsupported"
+    assert plan.template_id == "crystal_divacancy"
+    assert plan.payload is None
+    assert any("outside the verified nearest-neighbor threshold" in note for note in plan.notes)
+
+
+def test_new_semiconductor_template_applies_supercell_before_divacancy_selection() -> None:
+    plan = infer_modeling_plan(
+        "Build GaAs zinc blende crystal as a 2x1x1 supercell with nearest-neighbor Ga-As divacancy."
+    )
+    spec = ModelSpec.model_validate(plan.payload)
+
+    assert plan.kind == "spec"
+    assert plan.template_id == "gallium_arsenide_zincblende"
+    assert len(spec.model.basis_atoms) == 14
+    assert spec.metadata["last_defect_complex"]["member_site_ids"] == ["Ga1_000", "As1_000"]
+    assert spec.metadata["last_defect_complex"]["selection_rule"] == (
+        "minimum_periodic_pair_distance_then_atom_id"
+    )
+    assert model_view_audit(spec)["health"]["semiconductor_health"]["defect_summary"][
+        "defect_complex_integrity_ok"
+    ] is True
+
+
+def test_current_crystal_composite_patch_applies_supercell_before_divacancy_selection() -> None:
+    base = load_example("gallium_arsenide_zincblende_spec.json")
+    plan = infer_modeling_plan(
+        "Make 2x1x1 supercell and create nearest-neighbor Ga-As divacancy.",
+        current_spec=base,
+    )
+    patched, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=plan.payload["operations"],
+        ),
+    )
+
+    assert plan.kind == "patch"
+    assert plan.template_id == "crystal_composite_edit"
+    assert [operation["type"] for operation in plan.payload["operations"]] == [
+        "make_supercell",
+        "delete_atom",
+        "delete_atom",
+        "set_metadata",
+    ]
+    assert len(patched.model.basis_atoms) == 14
+    assert patched.metadata["last_defect_complex"]["member_site_ids"] == ["Ga1_000", "As1_000"]
+    assert model_view_audit(patched)["health"]["semiconductor_health"]["defect_summary"][
+        "defect_complex_integrity_ok"
+    ] is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "创建最近邻 Ga-As 双空位",
+        "在 Ga1 和 As1 位点创建最近邻双空位",
+    ],
+)
+def test_divacancy_parser_supports_chinese_element_and_explicit_site_requests(prompt: str) -> None:
+    base = load_example("gallium_arsenide_zincblende_spec.json")
+    plan = infer_modeling_plan(prompt, current_spec=base)
+
+    assert plan.kind == "patch"
+    assert plan.template_id == "crystal_divacancy"
+    assert [operation["atom_id"] for operation in plan.payload["operations"][:2]] == ["Ga1", "As1"]
+
+
+@pytest.mark.parametrize("tampered_distance", [9.0, float("nan")], ids=["mismatch", "non_finite"])
+def test_divacancy_metadata_distance_tampering_fails_closed(tampered_distance: float) -> None:
+    base = load_example("gallium_arsenide_zincblende_spec.json")
+    plan = infer_modeling_plan(
+        "Create divacancy at Ga1 and As1.",
+        current_spec=base,
+    )
+    divacancy, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=base.project_id,
+            base_revision=base.revision,
+            operations=plan.payload["operations"],
+        ),
+    )
+    payload = divacancy.model_dump(mode="json")
+    payload["metadata"]["defect_complexes"][0]["pair_distance_angstrom"] = tampered_distance
+    tampered = ModelSpec.model_validate(payload)
+
+    audit = model_view_audit(tampered)
+    defect_summary = audit["health"]["semiconductor_health"]["defect_summary"]
+
+    assert audit["health"]["ok"] is False
+    assert defect_summary["defect_complex_integrity_ok"] is False
+    assert defect_summary["complexes"][0]["metadata_consistent"] is False
+    assert any(
+        "recorded pair distance" in error or "pair_distance_angstrom must be finite" in error
+        for error in defect_summary["defect_complex_integrity_errors"]
+    )
+    assert any(
+        "recorded pair distance" in error or "pair_distance_angstrom must be finite" in error
+        for error in audit["health"]["errors"]
+    )
+
+
 def test_model_view_audit_reports_semiconductor_interstitial_defect_summary() -> None:
     base = load_example("silicon_diamond_spec.json")
     plan = infer_modeling_plan("Add Si interstitial at fractional 0.5 0.5 0.5.", current_spec=base)

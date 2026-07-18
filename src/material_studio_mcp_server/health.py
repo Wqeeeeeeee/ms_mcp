@@ -574,6 +574,12 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_total_interstitial_fraction"] = defect_summary.get("total_interstitial_fraction")
         checks["semiconductor_antisite_count"] = defect_summary.get("antisite_count", 0)
         checks["semiconductor_total_antisite_fraction"] = defect_summary.get("total_antisite_fraction")
+        checks["semiconductor_defect_complex_count"] = defect_summary.get("complex_count", 0)
+        checks["semiconductor_divacancy_count"] = defect_summary.get("divacancy_count", 0)
+        checks["semiconductor_defect_complex_integrity_ok"] = defect_summary.get(
+            "defect_complex_integrity_ok",
+            True,
+        )
         checks["semiconductor_defect_carrier_type_hint"] = defect_summary.get("carrier_type_hint")
         checks["semiconductor_defect_donor_like_count"] = defect_summary.get("donor_like_count", 0)
         checks["semiconductor_defect_acceptor_like_count"] = defect_summary.get("acceptor_like_count", 0)
@@ -608,6 +614,14 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append("Semiconductor interstitial coordination differs from the expected local rule; inspect defect_summary before calculation.")
         if antisite_same_sublattice_neighbors:
             warnings.append("Semiconductor antisite creates same-sublattice nearest neighbors; inspect defect_summary before calculation.")
+        if int(defect_summary.get("complex_count") or 0):
+            warnings.append(
+                "Semiconductor defect complex is an unrelaxed structural starting point; review pair geometry, charge state, and finite-size effects before calculation."
+            )
+        if not defect_summary.get("defect_complex_integrity_ok", True):
+            warnings.append(
+                "Semiconductor defect-complex metadata failed structural consistency checks; inspect defect_summary before continuing."
+            )
 
     dopant_summary = semiconductor.get("dopant_summary") or {}
     if dopant_summary:

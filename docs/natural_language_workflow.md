@@ -548,7 +548,7 @@ patches: `make 2x2x1 supercell`, `make a 3-period superlattice`, `build a 3-peri
 `add 10 angstrom vacuum along z`, `hydrogen passivate the top surface`,
 `hydrogen passivate both surfaces`, `fully hydrogen passivate both surfaces`,
 `add Si interstitial at fractional 0.5 0.5 0.5`,
-`create As antisite at Ga1`,
+`create As antisite at Ga1`, `create nearest-neighbor Ga-As divacancy`,
 `add Htop1 H at fractional 0.5 0.5 0.24`, and `move Htop1 to fractional 0.5 0.5 0.28`.
 Chinese supercell follow-ups accept common matrix separators, for example
 `做 2x2x1 超胞并热加载到 Materials Studio` and
@@ -678,6 +678,18 @@ nearest neighbors, and coordination outliers. Antisite patches record the
 original site element and substituted element so intentional same-sublattice
 neighbors are reported as review warnings instead of accidental structure
 failures.
+Nearest-neighbor divacancy requests are first-class crystal patches. Examples
+include `create divacancy at Ga1 and As1`, `create nearest-neighbor Ga-As
+divacancy`, `V_Ga-V_As divacancy`, and `创建最近邻 Ga-As 双空位`. Element-based
+requests select the shortest periodic minimum-image pair and break equal-distance
+ties by stable atom ID; explicit IDs are accepted only when the pair is inside
+the same element-pair neighbor threshold. A non-neighbor pair is rejected rather
+than silently approximated. The immutable revision records two vacancy members
+plus `metadata.defect_complexes`, and diagnostics recompute the pair distance,
+member bindings, threshold, and minimum-image status. The view bundle exports
+`semiconductor_defect_complexes.csv`. This is an unrelaxed structural starting
+point, not a defect charge-state or formation-energy result; relaxation,
+finite-size, and charge-state review remain required before quantitative use.
 When a vacancy or dopant request omits the exact crystal atom ID, the planner
 can choose the first deterministic matching semiconductor site and records that
 choice in `metadata.nl_auto_selected_sites`. If the user supplies a site-like

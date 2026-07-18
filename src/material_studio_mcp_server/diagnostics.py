@@ -148,6 +148,7 @@ ORIENTED_FRAME_VIEW_SPECS: dict[str, tuple[str, str]] = {
 }
 MAX_PROJECTED_ATOMS = 500
 MAX_HEALTH_DETAIL_ROWS = 1000
+OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION = 0.55
 ANGSTROM3_TO_CM3 = 1.0e-24
 VIEW_DEFINITIONS: dict[str, dict[str, tuple[float, float, float]]] = {
     "front": {"direction": (0.0, 0.0, 1.0), "up": (0.0, 1.0, 0.0)},
@@ -1945,6 +1946,88 @@ def write_view_audit_bundle(
             interface_quality_rows,
         )
 
+    oxide_interface_geometry = semiconductor.get("oxide_interface_geometry_summary") or {}
+    if oxide_interface_geometry:
+        oxide_interface_geometry_rows = _semiconductor_oxide_interface_geometry_csv_rows(
+            oxide_interface_geometry
+        )
+        files["semiconductor_oxide_interface_geometry_csv"] = str(
+            bundle_dir / "semiconductor_oxide_interface_geometry.csv"
+        )
+        row_counts["semiconductor_oxide_interface_geometry"] = _write_csv(
+            bundle_dir / "semiconductor_oxide_interface_geometry.csv",
+            [
+                "row_kind",
+                "interface",
+                "axis",
+                "semiconductor_material",
+                "oxide_material",
+                "status",
+                "quality",
+                "atom_binding_complete",
+                "semiconductor_boundary_layer_index",
+                "oxide_boundary_layer_index",
+                "semiconductor_boundary_atom_count",
+                "oxide_boundary_atom_count",
+                "oxide_atom_count",
+                "boundary_candidate_pair_count",
+                "boundary_neighbor_pair_count",
+                "boundary_connected_within_neighbor_cutoff",
+                "boundary_pair_distance_min_angstrom",
+                "boundary_pair_distance_mean_angstrom",
+                "boundary_pair_distance_max_angstrom",
+                "boundary_neighbor_distance_min_angstrom",
+                "boundary_neighbor_distance_mean_angstrom",
+                "boundary_neighbor_distance_max_angstrom",
+                "pair_scope",
+                "atom1_id",
+                "element1",
+                "atom2_id",
+                "element2",
+                "semiconductor_atom_id",
+                "semiconductor_element",
+                "oxide_atom_id",
+                "oxide_element",
+                "pair_type",
+                "distance_angstrom",
+                "neighbor_threshold_angstrom",
+                "distance_to_threshold_fraction",
+                "within_neighbor_cutoff",
+                "short_contact_review",
+                "image_offset_a",
+                "image_offset_b",
+                "image_offset_c",
+                "oxide_atom_layer_index",
+                "global_neighbor_count",
+                "oxide_internal_neighbor_count",
+                "oxide_internal_unique_neighbor_count",
+                "oxide_internal_neighbor_ids",
+                "oxide_internal_neighbor_elements",
+                "semiconductor_boundary_neighbor_count",
+                "semiconductor_boundary_neighbor_ids",
+                "oxygen_cation_neighbor_count",
+                "cation_oxygen_neighbor_count",
+                "nearest_relevant_neighbor_distance_angstrom",
+                "isolated_from_oxide_and_semiconductor_boundary",
+                "oxide_internal_neighbor_pair_count",
+                "oxide_atom_neighbor_coverage_count",
+                "oxide_oxygen_atom_count",
+                "oxide_oxygen_with_cation_neighbor_count",
+                "oxide_cation_atom_count",
+                "oxide_cations_with_oxygen_neighbor_count",
+                "short_contact_review_threshold_fraction",
+                "short_contact_count",
+                "isolated_oxide_atom_count",
+                "geometry_preflight_ready",
+                "calculation_geometry_ready",
+                "normality_reason_codes",
+                "next_action",
+                "warning_count",
+                "warnings",
+            ],
+            oxide_interface_geometry_rows,
+        )
+
     oxide_interface_health = semiconductor.get("oxide_interface_health_summary") or {}
     if oxide_interface_health:
         oxide_interface_rows = _semiconductor_oxide_interface_health_csv_rows(
@@ -2004,6 +2087,13 @@ def write_view_audit_bundle(
                 "vacancy_position_verified",
                 "vacancy_auto_selected_site",
                 "semiconductor_oxide_boundary_angstrom",
+                "geometry_preflight_status",
+                "geometry_preflight_quality",
+                "geometry_preflight_ready",
+                "geometry_visualization_ready",
+                "geometry_boundary_neighbor_pair_count",
+                "geometry_short_contact_count",
+                "geometry_isolated_oxide_atom_count",
                 "pre_relaxation_scaffold",
                 "requires_geometry_relaxation",
                 "geometry_relaxed",
@@ -2618,6 +2708,15 @@ def write_view_audit_bundle(
             "semiconductor_coordination_outlier_count",
             "semiconductor_interface_quality",
             "semiconductor_interface_period_sequence_complete",
+            "semiconductor_oxide_interface_geometry_status",
+            "semiconductor_oxide_interface_geometry_quality",
+            "semiconductor_oxide_interface_geometry_atom_binding_complete",
+            "semiconductor_oxide_interface_boundary_neighbor_pair_count",
+            "semiconductor_oxide_interface_boundary_connected",
+            "semiconductor_oxide_interface_short_contact_count",
+            "semiconductor_oxide_interface_isolated_oxide_atom_count",
+            "semiconductor_oxide_interface_geometry_preflight_ready",
+            "semiconductor_oxide_interface_calculation_geometry_ready",
             "semiconductor_oxide_interface_status",
             "semiconductor_oxide_interface_stoichiometry_status",
             "semiconductor_oxide_interface_oxygen_deficit_count",
@@ -2805,6 +2904,33 @@ def _modeling_health_summary_csv_row(
         ),
         "semiconductor_interface_quality": checks.get("semiconductor_interface_quality"),
         "semiconductor_interface_period_sequence_complete": checks.get("semiconductor_interface_period_sequence_complete"),
+        "semiconductor_oxide_interface_geometry_status": checks.get(
+            "semiconductor_oxide_interface_geometry_status"
+        ),
+        "semiconductor_oxide_interface_geometry_quality": checks.get(
+            "semiconductor_oxide_interface_geometry_quality"
+        ),
+        "semiconductor_oxide_interface_geometry_atom_binding_complete": checks.get(
+            "semiconductor_oxide_interface_geometry_atom_binding_complete"
+        ),
+        "semiconductor_oxide_interface_boundary_neighbor_pair_count": checks.get(
+            "semiconductor_oxide_interface_boundary_neighbor_pair_count"
+        ),
+        "semiconductor_oxide_interface_boundary_connected": checks.get(
+            "semiconductor_oxide_interface_boundary_connected"
+        ),
+        "semiconductor_oxide_interface_short_contact_count": checks.get(
+            "semiconductor_oxide_interface_short_contact_count"
+        ),
+        "semiconductor_oxide_interface_isolated_oxide_atom_count": checks.get(
+            "semiconductor_oxide_interface_isolated_oxide_atom_count"
+        ),
+        "semiconductor_oxide_interface_geometry_preflight_ready": checks.get(
+            "semiconductor_oxide_interface_geometry_preflight_ready"
+        ),
+        "semiconductor_oxide_interface_calculation_geometry_ready": checks.get(
+            "semiconductor_oxide_interface_calculation_geometry_ready"
+        ),
         "semiconductor_oxide_interface_status": checks.get("semiconductor_oxide_interface_status"),
         "semiconductor_oxide_interface_stoichiometry_status": checks.get(
             "semiconductor_oxide_interface_stoichiometry_status"
@@ -5016,6 +5142,171 @@ def _semiconductor_interface_quality_csv_rows(summary: dict[str, Any]) -> list[d
     ]
 
 
+def _semiconductor_oxide_interface_geometry_csv_rows(
+    summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    common = {
+        "interface": summary.get("interface"),
+        "axis": summary.get("axis"),
+        "semiconductor_material": summary.get("semiconductor_material"),
+        "oxide_material": summary.get("oxide_material"),
+        "status": summary.get("status"),
+        "quality": summary.get("quality"),
+        "atom_binding_complete": summary.get("atom_binding_complete"),
+        "boundary_candidate_pair_count": summary.get("boundary_candidate_pair_count"),
+        "boundary_neighbor_pair_count": summary.get("boundary_neighbor_pair_count"),
+        "boundary_connected_within_neighbor_cutoff": summary.get(
+            "boundary_connected_within_neighbor_cutoff"
+        ),
+        "oxide_internal_neighbor_pair_count": summary.get(
+            "oxide_internal_neighbor_pair_count"
+        ),
+        "short_contact_review_threshold_fraction": summary.get(
+            "short_contact_review_threshold_fraction"
+        ),
+        "short_contact_count": summary.get("short_contact_count"),
+        "isolated_oxide_atom_count": summary.get("isolated_oxide_atom_count"),
+        "geometry_preflight_ready": summary.get("geometry_preflight_ready"),
+        "calculation_geometry_ready": summary.get("calculation_geometry_ready"),
+        "normality_reason_codes": _join_vector(summary.get("normality_reason_codes")),
+        "next_action": summary.get("next_action"),
+        "warning_count": summary.get("warning_count"),
+        "warnings": ";".join(str(value) for value in summary.get("warnings", []) or []),
+    }
+    pair_stats = summary.get("boundary_pair_distance_stats_angstrom") or {}
+    neighbor_stats = summary.get("boundary_neighbor_distance_stats_angstrom") or {}
+    rows: list[dict[str, Any]] = [
+        {
+            **common,
+            "row_kind": "summary",
+            "semiconductor_boundary_layer_index": summary.get(
+                "semiconductor_boundary_layer_index"
+            ),
+            "oxide_boundary_layer_index": summary.get("oxide_boundary_layer_index"),
+            "semiconductor_boundary_atom_count": summary.get(
+                "semiconductor_boundary_atom_count"
+            ),
+            "oxide_boundary_atom_count": summary.get("oxide_boundary_atom_count"),
+            "oxide_atom_count": summary.get("oxide_atom_count"),
+            "oxide_atom_neighbor_coverage_count": summary.get(
+                "oxide_atom_neighbor_coverage_count"
+            ),
+            "oxide_oxygen_atom_count": summary.get("oxide_oxygen_atom_count"),
+            "oxide_oxygen_with_cation_neighbor_count": summary.get(
+                "oxide_oxygen_with_cation_neighbor_count"
+            ),
+            "oxide_cation_atom_count": summary.get("oxide_cation_atom_count"),
+            "oxide_cations_with_oxygen_neighbor_count": summary.get(
+                "oxide_cations_with_oxygen_neighbor_count"
+            ),
+            "boundary_pair_distance_min_angstrom": pair_stats.get("min"),
+            "boundary_pair_distance_mean_angstrom": pair_stats.get("mean"),
+            "boundary_pair_distance_max_angstrom": pair_stats.get("max"),
+            "boundary_neighbor_distance_min_angstrom": neighbor_stats.get("min"),
+            "boundary_neighbor_distance_mean_angstrom": neighbor_stats.get("mean"),
+            "boundary_neighbor_distance_max_angstrom": neighbor_stats.get("max"),
+        }
+    ]
+    for pair in summary.get("boundary_pairs", []) or []:
+        offset = pair.get("image_offset_oxide_atom") or [None, None, None]
+        rows.append(
+            {
+                **common,
+                "row_kind": "boundary_pair",
+                "pair_scope": pair.get("pair_scope"),
+                "atom1_id": pair.get("semiconductor_atom_id"),
+                "element1": pair.get("semiconductor_element"),
+                "atom2_id": pair.get("oxide_atom_id"),
+                "element2": pair.get("oxide_element"),
+                "semiconductor_atom_id": pair.get("semiconductor_atom_id"),
+                "semiconductor_element": pair.get("semiconductor_element"),
+                "oxide_atom_id": pair.get("oxide_atom_id"),
+                "oxide_element": pair.get("oxide_element"),
+                "pair_type": pair.get("pair_type"),
+                "distance_angstrom": pair.get("distance_angstrom"),
+                "neighbor_threshold_angstrom": pair.get("neighbor_threshold_angstrom"),
+                "distance_to_threshold_fraction": pair.get(
+                    "distance_to_threshold_fraction"
+                ),
+                "within_neighbor_cutoff": pair.get("within_neighbor_cutoff"),
+                "short_contact_review": pair.get("short_contact_review"),
+                "image_offset_a": offset[0] if len(offset) > 0 else None,
+                "image_offset_b": offset[1] if len(offset) > 1 else None,
+                "image_offset_c": offset[2] if len(offset) > 2 else None,
+            }
+        )
+    for atom in summary.get("oxide_atoms", []) or []:
+        rows.append(
+            {
+                **common,
+                "row_kind": "oxide_atom",
+                "oxide_atom_id": atom.get("atom_id"),
+                "oxide_element": atom.get("element"),
+                "oxide_atom_layer_index": atom.get("layer_index"),
+                "global_neighbor_count": atom.get("global_neighbor_count"),
+                "oxide_internal_neighbor_count": atom.get(
+                    "oxide_internal_neighbor_count"
+                ),
+                "oxide_internal_unique_neighbor_count": atom.get(
+                    "oxide_internal_unique_neighbor_count"
+                ),
+                "oxide_internal_neighbor_ids": _join_vector(
+                    atom.get("oxide_internal_neighbor_ids")
+                ),
+                "oxide_internal_neighbor_elements": _join_vector(
+                    atom.get("oxide_internal_neighbor_elements")
+                ),
+                "semiconductor_boundary_neighbor_count": atom.get(
+                    "semiconductor_boundary_neighbor_count"
+                ),
+                "semiconductor_boundary_neighbor_ids": _join_vector(
+                    atom.get("semiconductor_boundary_neighbor_ids")
+                ),
+                "oxygen_cation_neighbor_count": atom.get(
+                    "oxygen_cation_neighbor_count"
+                ),
+                "cation_oxygen_neighbor_count": atom.get(
+                    "cation_oxygen_neighbor_count"
+                ),
+                "nearest_relevant_neighbor_distance_angstrom": atom.get(
+                    "nearest_relevant_neighbor_distance_angstrom"
+                ),
+                "isolated_from_oxide_and_semiconductor_boundary": atom.get(
+                    "isolated_from_oxide_and_semiconductor_boundary"
+                ),
+            }
+        )
+    for contact in summary.get("short_contacts", []) or []:
+        if contact.get("pair_scope") != "oxide_internal":
+            continue
+        offset = contact.get("image_offset_atom2") or [None, None, None]
+        rows.append(
+            {
+                **common,
+                "row_kind": "oxide_internal_short_contact",
+                "pair_scope": contact.get("pair_scope"),
+                "atom1_id": contact.get("atom1"),
+                "element1": contact.get("element1"),
+                "atom2_id": contact.get("atom2"),
+                "element2": contact.get("element2"),
+                "pair_type": contact.get("pair_type"),
+                "distance_angstrom": contact.get("distance_angstrom"),
+                "neighbor_threshold_angstrom": contact.get(
+                    "neighbor_threshold_angstrom"
+                ),
+                "distance_to_threshold_fraction": contact.get(
+                    "distance_to_threshold_fraction"
+                ),
+                "within_neighbor_cutoff": contact.get("within_neighbor_cutoff"),
+                "short_contact_review": contact.get("short_contact_review"),
+                "image_offset_a": offset[0] if len(offset) > 0 else None,
+                "image_offset_b": offset[1] if len(offset) > 1 else None,
+                "image_offset_c": offset[2] if len(offset) > 2 else None,
+            }
+        )
+    return rows
+
+
 def _semiconductor_oxide_interface_health_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     boundary = summary.get("semiconductor_oxide_boundary") or {}
     common = {
@@ -5044,6 +5335,17 @@ def _semiconductor_oxide_interface_health_csv_rows(summary: dict[str, Any]) -> l
             "all_recorded_oxygen_vacancy_locations_verified"
         ),
         "semiconductor_oxide_boundary_angstrom": boundary.get("axis_coordinate_angstrom"),
+        "geometry_preflight_status": summary.get("geometry_preflight_status"),
+        "geometry_preflight_quality": summary.get("geometry_preflight_quality"),
+        "geometry_preflight_ready": summary.get("geometry_preflight_ready"),
+        "geometry_visualization_ready": summary.get("geometry_visualization_ready"),
+        "geometry_boundary_neighbor_pair_count": summary.get(
+            "geometry_boundary_neighbor_pair_count"
+        ),
+        "geometry_short_contact_count": summary.get("geometry_short_contact_count"),
+        "geometry_isolated_oxide_atom_count": summary.get(
+            "geometry_isolated_oxide_atom_count"
+        ),
         "pre_relaxation_scaffold": summary.get("pre_relaxation_scaffold"),
         "requires_geometry_relaxation": summary.get("requires_geometry_relaxation"),
         "geometry_relaxed": summary.get("geometry_relaxed"),
@@ -6825,12 +7127,22 @@ def _semiconductor_health_summary(
         heterostructure_summary,
         superlattice_period_summary,
     )
+    oxide_interface_geometry_summary = _semiconductor_oxide_interface_geometry_summary(
+        spec,
+        metadata,
+        atom_rows,
+        neighbor_pair_rows,
+        coordination_rows,
+        layer_profile_summary,
+        interface_profile_summary,
+    )
     oxide_interface_health_summary = _semiconductor_oxide_interface_health_summary(
         metadata,
         layer_profile_summary,
         interface_profile_summary,
         interface_quality_summary,
         defect_summary,
+        oxide_interface_geometry_summary,
     )
     if oxide_interface_health_summary:
         warnings.extend(
@@ -6939,6 +7251,7 @@ def _semiconductor_health_summary(
         "polarization_2deg_summary": polarization_2deg_summary,
         "p_gan_gate_cap_summary": p_gan_gate_cap_summary,
         "interface_quality_summary": interface_quality_summary,
+        "oxide_interface_geometry_summary": oxide_interface_geometry_summary,
         "oxide_interface_health_summary": oxide_interface_health_summary,
         "gate_stack_summary": gate_stack_summary,
         "metal_semiconductor_contact_summary": metal_semiconductor_contact_summary,
@@ -11268,12 +11581,505 @@ def _sum_layer_element_counts(layers: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted((element, count) for element, count in counts.items() if count > 0))
 
 
+def _semiconductor_oxide_interface_geometry_summary(
+    spec: ModelSpec,
+    metadata: dict[str, Any],
+    atom_rows: list[dict[str, Any]],
+    neighbor_pair_rows: list[dict[str, Any]],
+    coordination_rows: list[dict[str, Any]],
+    layer_profile: dict[str, Any] | None,
+    interface_profile: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not _semiconductor_oxide_interface_applicable(metadata):
+        return None
+
+    oxide_material = _semiconductor_oxide_material(metadata)
+    semiconductor_material = str(
+        metadata.get("semiconductor_channel_material") or metadata.get("substrate") or ""
+    ) or None
+    profile = interface_profile or {}
+    layers = [
+        dict(layer)
+        for layer in profile.get("layers", []) or []
+        if isinstance(layer, dict)
+    ]
+    layer_by_index = {
+        int(layer["layer_index"]): layer
+        for layer in layers
+        if _optional_int(layer.get("layer_index")) is not None
+    }
+    oxide_layers = [
+        layer
+        for layer in layers
+        if str(layer.get("material_group") or "") == str(oxide_material or "")
+    ]
+    if not oxide_layers:
+        oxide_layers = [
+            layer
+            for layer in layers
+            if int((layer.get("element_counts") or {}).get("O") or 0) > 0
+            and str(layer.get("material_group") or "") != str(semiconductor_material or "")
+        ]
+
+    boundary = _semiconductor_oxide_interface_boundary(
+        profile,
+        semiconductor_material=semiconductor_material,
+        oxide_material=oxide_material,
+    )
+    semiconductor_boundary_layer_index = _optional_int(
+        (boundary or {}).get("semiconductor_layer_index")
+    )
+    oxide_boundary_layer_index = _optional_int(
+        (boundary or {}).get("oxide_layer_index")
+    )
+    semiconductor_layer = layer_by_index.get(semiconductor_boundary_layer_index)
+    oxide_boundary_layer = layer_by_index.get(oxide_boundary_layer_index)
+    semiconductor_boundary_atom_ids = sorted(
+        str(atom_id)
+        for atom_id in (semiconductor_layer or {}).get("atom_ids", []) or []
+        if atom_id
+    )
+    oxide_boundary_atom_ids = sorted(
+        str(atom_id)
+        for atom_id in (oxide_boundary_layer or {}).get("atom_ids", []) or []
+        if atom_id
+    )
+    oxide_atom_ids = sorted(
+        {
+            str(atom_id)
+            for layer in oxide_layers
+            for atom_id in layer.get("atom_ids", []) or []
+            if atom_id
+        }
+    )
+    atom_by_id = {
+        str(row.get("id")): row
+        for row in atom_rows
+        if row.get("id")
+    }
+    coordination_by_id = {
+        str(row.get("atom_id")): row
+        for row in coordination_rows
+        if row.get("atom_id")
+    }
+    missing_atom_ids = sorted(
+        atom_id
+        for atom_id in set(
+            semiconductor_boundary_atom_ids
+            + oxide_boundary_atom_ids
+            + oxide_atom_ids
+        )
+        if atom_id not in atom_by_id
+    )
+    atom_binding_complete = bool(
+        boundary
+        and semiconductor_boundary_atom_ids
+        and oxide_boundary_atom_ids
+        and oxide_atom_ids
+        and not missing_atom_ids
+    )
+
+    formula = _material_formula_amounts(oxide_material)
+    oxide_cation_elements = sorted(
+        element
+        for element, amount in (formula or {}).items()
+        if element != "O" and amount > 0
+    )
+    if not oxide_cation_elements:
+        oxide_cation_elements = sorted(
+            {
+                str(atom_by_id[atom_id].get("element"))
+                for atom_id in oxide_atom_ids
+                if atom_id in atom_by_id
+                and str(atom_by_id[atom_id].get("element") or "") not in {"", "O"}
+            }
+        )
+
+    boundary_pairs: list[dict[str, Any]] = []
+    if atom_binding_complete and isinstance(spec.model, CrystalSpec):
+        vectors = _lattice_vectors(spec.model.lattice)
+        for semiconductor_atom_id in semiconductor_boundary_atom_ids:
+            semiconductor_atom = atom_by_id[semiconductor_atom_id]
+            semiconductor_fractional = _coerce_fractional(
+                semiconductor_atom.get("fractional")
+            )
+            if semiconductor_fractional is None:
+                continue
+            for oxide_atom_id in oxide_boundary_atom_ids:
+                oxide_atom = atom_by_id[oxide_atom_id]
+                oxide_fractional = _coerce_fractional(oxide_atom.get("fractional"))
+                if oxide_fractional is None:
+                    continue
+                distance, offset = _minimum_image_distance(
+                    semiconductor_fractional,
+                    oxide_fractional,
+                    vectors,
+                )
+                semiconductor_element = str(semiconductor_atom.get("element") or "")
+                oxide_element = str(oxide_atom.get("element") or "")
+                threshold = _crystal_neighbor_threshold(
+                    semiconductor_element,
+                    oxide_element,
+                )
+                threshold_fraction = distance / threshold if threshold > 0 else None
+                boundary_pairs.append(
+                    {
+                        "pair_scope": "semiconductor_oxide_boundary",
+                        "semiconductor_atom_id": semiconductor_atom_id,
+                        "semiconductor_element": semiconductor_element,
+                        "oxide_atom_id": oxide_atom_id,
+                        "oxide_element": oxide_element,
+                        "pair_type": _element_pair_label(
+                            semiconductor_element,
+                            oxide_element,
+                        ),
+                        "distance_angstrom": _round(distance),
+                        "neighbor_threshold_angstrom": _round(threshold),
+                        "distance_to_threshold_fraction": (
+                            _round(threshold_fraction)
+                            if threshold_fraction is not None
+                            else None
+                        ),
+                        "within_neighbor_cutoff": bool(distance <= threshold),
+                        "short_contact_review": bool(
+                            threshold_fraction is not None
+                            and threshold_fraction
+                            < OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION
+                        ),
+                        "image_offset_oxide_atom": list(offset),
+                    }
+                )
+    boundary_pairs.sort(
+        key=lambda row: (
+            float(row.get("distance_angstrom") or 0.0),
+            str(row.get("semiconductor_atom_id") or ""),
+            str(row.get("oxide_atom_id") or ""),
+        )
+    )
+    boundary_neighbor_pairs = [
+        row for row in boundary_pairs if row.get("within_neighbor_cutoff") is True
+    ]
+
+    oxide_atom_id_set = set(oxide_atom_ids)
+    oxide_internal_pairs = [
+        dict(row)
+        for row in neighbor_pair_rows
+        if str(row.get("atom1") or "") in oxide_atom_id_set
+        and str(row.get("atom2") or "") in oxide_atom_id_set
+    ]
+    internal_neighbors: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in oxide_internal_pairs:
+        atom1 = str(row.get("atom1") or "")
+        atom2 = str(row.get("atom2") or "")
+        internal_neighbors[atom1].append({**row, "neighbor_id": atom2})
+        internal_neighbors[atom2].append({**row, "neighbor_id": atom1})
+    boundary_neighbors: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in boundary_neighbor_pairs:
+        boundary_neighbors[str(row.get("semiconductor_atom_id") or "")].append(
+            {**row, "neighbor_id": row.get("oxide_atom_id")}
+        )
+        boundary_neighbors[str(row.get("oxide_atom_id") or "")].append(
+            {**row, "neighbor_id": row.get("semiconductor_atom_id")}
+        )
+
+    oxide_layer_index_by_atom = {
+        str(atom_id): layer.get("layer_index")
+        for layer in oxide_layers
+        for atom_id in layer.get("atom_ids", []) or []
+    }
+    oxide_atom_rows: list[dict[str, Any]] = []
+    for atom_id in oxide_atom_ids:
+        atom = atom_by_id.get(atom_id, {})
+        element = str(atom.get("element") or "") or None
+        internal = internal_neighbors.get(atom_id, [])
+        cross_boundary = boundary_neighbors.get(atom_id, [])
+        internal_neighbor_ids = [
+            str(row.get("neighbor_id"))
+            for row in internal
+            if row.get("neighbor_id")
+        ]
+        internal_neighbor_elements = [
+            str((atom_by_id.get(neighbor_id) or {}).get("element") or "")
+            for neighbor_id in internal_neighbor_ids
+        ]
+        relevant_distances = [
+            float(row.get("distance_angstrom"))
+            for row in [*internal, *cross_boundary]
+            if _optional_float(row.get("distance_angstrom")) is not None
+        ]
+        global_coordination = coordination_by_id.get(atom_id) or {}
+        oxide_atom_rows.append(
+            {
+                "atom_id": atom_id,
+                "element": element,
+                "layer_index": oxide_layer_index_by_atom.get(atom_id),
+                "global_neighbor_count": global_coordination.get("neighbor_count"),
+                "oxide_internal_neighbor_count": len(internal),
+                "oxide_internal_unique_neighbor_count": len(set(internal_neighbor_ids)),
+                "oxide_internal_neighbor_ids": sorted(set(internal_neighbor_ids)),
+                "oxide_internal_neighbor_elements": sorted(
+                    value for value in internal_neighbor_elements if value
+                ),
+                "semiconductor_boundary_neighbor_count": len(cross_boundary),
+                "semiconductor_boundary_neighbor_ids": sorted(
+                    {
+                        str(row.get("neighbor_id"))
+                        for row in cross_boundary
+                        if row.get("neighbor_id")
+                    }
+                ),
+                "oxygen_cation_neighbor_count": (
+                    sum(
+                        1
+                        for value in internal_neighbor_elements
+                        if value in oxide_cation_elements
+                    )
+                    if element == "O"
+                    else None
+                ),
+                "cation_oxygen_neighbor_count": (
+                    sum(1 for value in internal_neighbor_elements if value == "O")
+                    if element in oxide_cation_elements
+                    else None
+                ),
+                "nearest_relevant_neighbor_distance_angstrom": (
+                    _round(min(relevant_distances)) if relevant_distances else None
+                ),
+                "isolated_from_oxide_and_semiconductor_boundary": not bool(
+                    internal or cross_boundary
+                ),
+            }
+        )
+
+    short_contacts: list[dict[str, Any]] = [
+        dict(row) for row in boundary_pairs if row.get("short_contact_review") is True
+    ]
+    for row in oxide_internal_pairs:
+        distance = _optional_float(row.get("distance_angstrom"))
+        threshold = _optional_float(row.get("neighbor_threshold_angstrom"))
+        threshold_fraction = (
+            distance / threshold
+            if distance is not None and threshold is not None and threshold > 0
+            else None
+        )
+        if (
+            threshold_fraction is None
+            or threshold_fraction >= OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION
+        ):
+            continue
+        short_contacts.append(
+            {
+                "pair_scope": "oxide_internal",
+                "atom1": row.get("atom1"),
+                "element1": row.get("element1"),
+                "atom2": row.get("atom2"),
+                "element2": row.get("element2"),
+                "pair_type": row.get("pair_type"),
+                "distance_angstrom": distance,
+                "neighbor_threshold_angstrom": threshold,
+                "distance_to_threshold_fraction": _round(threshold_fraction),
+                "within_neighbor_cutoff": True,
+                "short_contact_review": True,
+                "image_offset_atom2": row.get("image_offset_atom2") or [0, 0, 0],
+            }
+        )
+
+    isolated_oxide_atom_ids = [
+        str(row.get("atom_id"))
+        for row in oxide_atom_rows
+        if row.get("isolated_from_oxide_and_semiconductor_boundary") is True
+    ]
+    oxygen_rows = [row for row in oxide_atom_rows if row.get("element") == "O"]
+    cation_rows = [
+        row for row in oxide_atom_rows if row.get("element") in oxide_cation_elements
+    ]
+    oxygen_with_cation_neighbor_count = sum(
+        1 for row in oxygen_rows if int(row.get("oxygen_cation_neighbor_count") or 0) > 0
+    )
+    cations_with_oxygen_neighbor_count = sum(
+        1 for row in cation_rows if int(row.get("cation_oxygen_neighbor_count") or 0) > 0
+    )
+    normality_reason_codes: list[str] = []
+    if not atom_binding_complete:
+        normality_reason_codes.append("oxide_interface_geometry_binding_review")
+    elif not boundary_pairs:
+        normality_reason_codes.append("oxide_interface_boundary_pair_evidence_missing")
+    elif not boundary_neighbor_pairs:
+        normality_reason_codes.append("oxide_interface_boundary_disconnected")
+    if short_contacts:
+        normality_reason_codes.append("oxide_interface_short_contact_review")
+    if isolated_oxide_atom_ids:
+        normality_reason_codes.append("oxide_interface_isolated_oxide_atoms")
+
+    if "oxide_interface_geometry_binding_review" in normality_reason_codes:
+        status = "geometry_binding_review"
+        next_action = "repair_interface_layer_and_atom_binding_before_geometry_review"
+    elif "oxide_interface_boundary_pair_evidence_missing" in normality_reason_codes:
+        status = "boundary_pair_evidence_missing"
+        next_action = "regenerate_boundary_pair_evidence_before_geometry_review"
+    elif "oxide_interface_boundary_disconnected" in normality_reason_codes:
+        status = "boundary_disconnected_review"
+        next_action = "review_semiconductor_oxide_boundary_gap_before_relaxation"
+    elif "oxide_interface_short_contact_review" in normality_reason_codes:
+        status = "short_contact_review"
+        next_action = "review_short_oxide_interface_contacts_before_relaxation"
+    elif "oxide_interface_isolated_oxide_atoms" in normality_reason_codes:
+        status = "oxide_connectivity_review"
+        next_action = "review_isolated_oxide_atoms_before_relaxation"
+    elif metadata.get("requires_geometry_relaxation") or metadata.get("unrelaxed_interface"):
+        status = "connected_pre_relaxation_scaffold"
+        next_action = "review_connected_interface_geometry_then_plan_relaxation"
+    else:
+        status = "connected_geometry_preflight"
+        next_action = "continue_with_reviewed_interface_geometry_workflow"
+
+    warnings: list[str] = []
+    if not atom_binding_complete:
+        warnings.append(
+            "Semiconductor/oxide boundary layers or atom IDs could not be bound to the current structure."
+        )
+    if atom_binding_complete and not boundary_pairs:
+        warnings.append("No semiconductor/oxide boundary pair distances could be computed.")
+    elif boundary_pairs and not boundary_neighbor_pairs:
+        warnings.append(
+            "No semiconductor/oxide boundary atom pair falls within the covalent-radius neighbor cutoff."
+        )
+    if short_contacts:
+        warnings.append(
+            "At least one oxide or semiconductor/oxide pair is below the conservative normalized short-contact review threshold."
+        )
+    if isolated_oxide_atom_ids:
+        warnings.append(
+            "At least one oxide atom has no oxide-internal or semiconductor-boundary neighbor within the current cutoff."
+        )
+
+    geometry_preflight_ready = not normality_reason_codes
+    geometry_relaxed = metadata.get("geometry_relaxed") is True and not bool(
+        metadata.get("requires_geometry_relaxation") or metadata.get("unrelaxed_interface")
+    )
+    boundary_pair_distances = [
+        float(row["distance_angstrom"])
+        for row in boundary_pairs
+        if row.get("distance_angstrom") is not None
+    ]
+    boundary_neighbor_distances = [
+        float(row["distance_angstrom"])
+        for row in boundary_neighbor_pairs
+        if row.get("distance_angstrom") is not None
+    ]
+    threshold_fractions = [
+        float(row["distance_to_threshold_fraction"])
+        for row in boundary_pairs
+        if row.get("distance_to_threshold_fraction") is not None
+    ]
+    short_contact_scopes = Counter(
+        str(row.get("pair_scope") or "unknown") for row in short_contacts
+    )
+    return {
+        "available": True,
+        "schema_version": 1,
+        "model": "semiconductor_oxide_interface_geometry_preflight",
+        "status": status,
+        "quality": "complete" if geometry_preflight_ready else "review_required",
+        "interface": profile.get("interface") or metadata.get("interface"),
+        "axis": profile.get("axis") or (layer_profile or {}).get("axis"),
+        "semiconductor_material": semiconductor_material,
+        "oxide_material": oxide_material,
+        "semiconductor_oxide_boundary": boundary,
+        "semiconductor_boundary_layer_index": (boundary or {}).get(
+            "semiconductor_layer_index"
+        ),
+        "oxide_boundary_layer_index": (boundary or {}).get("oxide_layer_index"),
+        "semiconductor_boundary_atom_count": len(semiconductor_boundary_atom_ids),
+        "semiconductor_boundary_atom_ids": semiconductor_boundary_atom_ids,
+        "oxide_boundary_atom_count": len(oxide_boundary_atom_ids),
+        "oxide_boundary_atom_ids": oxide_boundary_atom_ids,
+        "oxide_atom_count": len(oxide_atom_ids),
+        "oxide_atom_ids": oxide_atom_ids,
+        "oxide_cation_elements": oxide_cation_elements,
+        "atom_binding_complete": atom_binding_complete,
+        "missing_bound_atom_ids": missing_atom_ids,
+        "boundary_candidate_pair_count": len(boundary_pairs),
+        "boundary_neighbor_pair_count": len(boundary_neighbor_pairs),
+        "boundary_connected_within_neighbor_cutoff": bool(boundary_neighbor_pairs),
+        "boundary_pair_type_counts": dict(
+            sorted(Counter(str(row.get("pair_type")) for row in boundary_pairs).items())
+        ),
+        "boundary_neighbor_pair_type_counts": dict(
+            sorted(
+                Counter(
+                    str(row.get("pair_type")) for row in boundary_neighbor_pairs
+                ).items()
+            )
+        ),
+        "boundary_pair_distance_stats_angstrom": _stats_with_count(
+            boundary_pair_distances
+        ),
+        "boundary_neighbor_distance_stats_angstrom": _stats_with_count(
+            boundary_neighbor_distances
+        ),
+        "boundary_distance_to_threshold_fraction_stats": _stats_with_count(
+            threshold_fractions
+        ),
+        "neighbor_cutoff_rule": "distance <= 1.25 * covalent_radius_sum",
+        "short_contact_review_threshold_fraction": (
+            OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION
+        ),
+        "short_contact_count": len(short_contacts),
+        "short_contact_scope_counts": dict(sorted(short_contact_scopes.items())),
+        "oxide_internal_neighbor_pair_count": len(oxide_internal_pairs),
+        "oxide_internal_pair_type_counts": dict(
+            sorted(
+                Counter(
+                    str(row.get("pair_type")) for row in oxide_internal_pairs
+                ).items()
+            )
+        ),
+        "oxide_atom_neighbor_coverage_count": (
+            len(oxide_atom_rows) - len(isolated_oxide_atom_ids)
+        ),
+        "isolated_oxide_atom_count": len(isolated_oxide_atom_ids),
+        "isolated_oxide_atom_ids": isolated_oxide_atom_ids,
+        "oxide_oxygen_atom_count": len(oxygen_rows),
+        "oxide_oxygen_with_cation_neighbor_count": oxygen_with_cation_neighbor_count,
+        "oxide_cation_atom_count": len(cation_rows),
+        "oxide_cations_with_oxygen_neighbor_count": cations_with_oxygen_neighbor_count,
+        "pre_relaxation_scaffold": bool(
+            metadata.get("requires_geometry_relaxation")
+            or metadata.get("unrelaxed_interface")
+            or metadata.get("pre_relaxation_scaffold")
+        ),
+        "geometry_relaxed": metadata.get("geometry_relaxed"),
+        "geometry_relaxation_verified": geometry_relaxed,
+        "visualization_ready": bool(atom_binding_complete and boundary_pairs),
+        "geometry_preflight_ready": geometry_preflight_ready,
+        "calculation_geometry_ready": bool(
+            geometry_preflight_ready and geometry_relaxed
+        ),
+        "normality_reason_codes": normality_reason_codes,
+        "calculation_blocking_reasons": [
+            f"semiconductor:{reason}" for reason in normality_reason_codes
+        ],
+        "next_action": next_action,
+        "warning_count": len(warnings),
+        "warnings": warnings,
+        "notes": [
+            "Boundary distances use periodic minimum-image geometry and the current covalent-radius neighbor cutoff.",
+            "Coordination and short-contact fields are conservative structural preflight evidence, not proof of oxide phase, bonding order, relaxation, or electronic quality.",
+        ],
+        "boundary_pairs": boundary_pairs[:MAX_HEALTH_DETAIL_ROWS],
+        "short_contacts": short_contacts[:MAX_HEALTH_DETAIL_ROWS],
+        "oxide_atoms": oxide_atom_rows[:MAX_HEALTH_DETAIL_ROWS],
+    }
+
+
 def _semiconductor_oxide_interface_health_summary(
     metadata: dict[str, Any],
     layer_profile: dict[str, Any] | None,
     interface_profile: dict[str, Any] | None,
     interface_quality: dict[str, Any] | None,
     defect_summary: dict[str, Any] | None,
+    geometry_summary: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     if not _semiconductor_oxide_interface_applicable(metadata):
         return None
@@ -11512,6 +12318,12 @@ def _semiconductor_oxide_interface_health_summary(
     )
     geometry_relaxed = metadata.get("geometry_relaxed")
     geometry_relaxation_verified = geometry_relaxed is True and not unrelaxed_scaffold
+    geometry = geometry_summary or {}
+    geometry_reason_codes = [
+        str(reason)
+        for reason in geometry.get("normality_reason_codes", []) or []
+        if reason
+    ]
     unexplained_stoichiometry = bool(
         stoichiometry_status in {"oxygen_excess", "not_evaluated"}
         or deficit_binding_status
@@ -11521,7 +12333,7 @@ def _semiconductor_oxide_interface_health_summary(
             "recorded_oxygen_vacancy_without_matching_deficit",
         }
     )
-    normality_reason_codes: list[str] = []
+    normality_reason_codes: list[str] = list(geometry_reason_codes)
     if unexplained_stoichiometry or not sequence_ok:
         normality_reason_codes.append("oxide_interface_stoichiometry_review")
     if recorded_vacancy_count and not all_vacancy_locations_verified:
@@ -11533,7 +12345,11 @@ def _semiconductor_oxide_interface_health_summary(
     elif not geometry_relaxation_verified:
         normality_reason_codes.append("oxide_interface_geometry_relaxation_unverified")
 
-    if unexplained_stoichiometry or not sequence_ok:
+    if geometry.get("quality") == "review_required":
+        status = "geometry_review"
+        quality = "review_required"
+        next_action = geometry.get("next_action") or "review_semiconductor_oxide_interface_geometry"
+    elif unexplained_stoichiometry or not sequence_ok:
         status = "stoichiometry_review"
         quality = "review_required"
         next_action = "reconcile_oxide_layer_stoichiometry_and_defect_metadata_before_relaxation"
@@ -11559,6 +12375,7 @@ def _semiconductor_oxide_interface_health_summary(
         next_action = "continue_with_reviewed_semiconductor_oxide_interface_workflow"
 
     warnings: list[str] = []
+    warnings.extend(str(item) for item in geometry.get("warnings", []) or [])
     if not profile_complete:
         warnings.append("Layer-profile rows are incomplete; oxide stoichiometry was not accepted as complete.")
     if not oxide_layers:
@@ -11598,17 +12415,19 @@ def _semiconductor_oxide_interface_health_summary(
         and sequence_ok
         and not unexplained_stoichiometry
         and all_vacancy_locations_verified
+        and geometry.get("geometry_preflight_ready") is not False
     )
     calculation_ready = bool(
         visual_preflight_ready
         and geometry_relaxation_verified
+        and geometry.get("calculation_geometry_ready") is not False
         and not recorded_vacancy_count
         and stoichiometry_status == "matched"
     )
     region_counts = Counter(str(location.get("region") or "unknown") for location in vacancy_locations)
     return {
         "available": True,
-        "schema_version": 1,
+        "schema_version": 2,
         "model": "semiconductor_oxide_interface_health_preflight",
         "status": status,
         "quality": quality,
@@ -11657,6 +12476,17 @@ def _semiconductor_oxide_interface_health_summary(
         ),
         "interface_proximity_threshold_angstrom": _round(interface_proximity_threshold),
         "semiconductor_oxide_boundary": boundary,
+        "geometry_preflight_status": geometry.get("status"),
+        "geometry_preflight_quality": geometry.get("quality"),
+        "geometry_preflight_ready": geometry.get("geometry_preflight_ready"),
+        "geometry_visualization_ready": geometry.get("visualization_ready"),
+        "geometry_boundary_neighbor_pair_count": geometry.get(
+            "boundary_neighbor_pair_count"
+        ),
+        "geometry_short_contact_count": geometry.get("short_contact_count"),
+        "geometry_isolated_oxide_atom_count": geometry.get(
+            "isolated_oxide_atom_count"
+        ),
         "pre_relaxation_scaffold": unrelaxed_scaffold,
         "requires_geometry_relaxation": bool(metadata.get("requires_geometry_relaxation") or unrelaxed_scaffold),
         "geometry_relaxed": geometry_relaxed,

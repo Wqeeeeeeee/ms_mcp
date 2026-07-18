@@ -711,6 +711,8 @@ device readiness. The bare interface has no metal gate, uses
 `semiconductor_oxide_interface` diagnostics, and can accept an O-vacancy patch
 before explicit same-window hot-loading.
 These semiconductor/oxide starts also emit
+`oxide_interface_geometry_summary`,
+`semiconductor_oxide_interface_geometry.csv`,
 `oxide_interface_health_summary` and
 `semiconductor_oxide_interface_health.csv`. The summary binds oxide formula,
 per-layer chemistry, O/cation ratio, oxygen deficit or excess, and any recorded
@@ -718,6 +720,17 @@ O-vacancy position to the nearest oxide layer and interface boundary. It does
 not apply to Cu/SiO2 or other metal/oxide-only starts. The receipt is a
 deterministic construction preflight, not evidence of an amorphous oxide,
 relaxed geometry, defect charge state, or converged electronic structure.
+The geometry table binds the boundary layers to atom IDs and lists periodic
+minimum-image semiconductor/oxide candidate pairs, neighbor pairs under
+`distance <= 1.25 * covalent_radius_sum`, oxide-internal connectivity, and
+per-oxide-atom neighbor coverage. Distances below `0.55` of that neighbor
+threshold are short-contact review signals. Missing binding, a disconnected
+boundary, short contacts, or isolated oxide atoms supersede stoichiometry-only
+normality reasons. They produce preview-only review or relaxation operations;
+the GUI workflow must not silently repair atom coordinates. The deterministic
+HfO2 marker scaffold currently exercises the short-contact review path, while
+the 6H-SiC marker scaffold can pass geometry preflight but remains explicitly
+unrelaxed.
 Accordingly, `modeling_report.normality_gate` uses the dedicated
 `oxide_interface` category and recommends a preview-only interface relaxation
 or O-vacancy review before quantitative use.

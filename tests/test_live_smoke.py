@@ -270,10 +270,12 @@ def test_default_sic_6h_mos_scenario_requires_gate_stack_interface_and_view_diag
     )
     assert expectation["row_counts"]["semiconductor_gate_stack"] == 1
     assert expectation["row_counts"]["semiconductor_interface_quality"] == 1
+    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 37
     assert expectation["row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert expectation["row_counts"]["view_quality"] == 1
     assert "semiconductor_gate_stack_csv" in expectation["files"]
     assert "semiconductor_interface_quality_csv" in expectation["files"]
+    assert "semiconductor_oxide_interface_geometry_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_health_csv" in expectation["files"]
 
 
@@ -293,14 +295,18 @@ def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None
         "silicon_dioxide_silicon_carbide_6h_0001_interface"
     )
     assert expectation["row_counts"]["semiconductor_interface_quality"] == 1
+    assert expectation["row_counts"]["semiconductor_oxide_interface_geometry"] == 37
     assert expectation["row_counts"]["semiconductor_oxide_interface_health"] == 3
     assert expectation["row_counts"]["semiconductor_calculation_preflight"] == 1
     assert "semiconductor_interface_quality_csv" in expectation["files"]
+    assert "semiconductor_oxide_interface_geometry_csv" in expectation["files"]
     assert "semiconductor_oxide_interface_health_csv" in expectation["files"]
     assert follow_up["row_counts"]["semiconductor_defects"] == 1
+    assert follow_up["row_counts"]["semiconductor_oxide_interface_geometry"] == 32
     assert follow_up["row_counts"]["semiconductor_oxide_interface_health"] == 4
     assert follow_up["row_counts"]["requested_diagnostic_focus_status"] == 3
     assert "semiconductor_defects_csv" in follow_up["files"]
+    assert "semiconductor_oxide_interface_geometry_csv" in follow_up["files"]
     assert "semiconductor_oxide_interface_health_csv" in follow_up["files"]
 
 

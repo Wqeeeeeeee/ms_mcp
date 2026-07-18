@@ -10,6 +10,7 @@ import pytest
 from material_studio_mcp_server.castep_relaxation import build_relaxed_revision_spec
 from material_studio_mcp_server.diagnostics import (
     SEMICONDUCTOR_REFERENCE_ELECTRONIC_PROPERTIES,
+    _semiconductor_oxide_interface_geometry_summary,
     model_view_audit,
     write_view_audit_bundle,
     write_view_audit_report,
@@ -2265,9 +2266,12 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
 ) -> None:
     spec = load_example("silicon_silicon_dioxide_100_interface_spec.json")
     audit = model_view_audit(spec)
-    summary = audit["health"]["semiconductor_health"]["oxide_interface_health_summary"]
+    semiconductor = audit["health"]["semiconductor_health"]
+    summary = semiconductor["oxide_interface_health_summary"]
+    geometry = semiconductor["oxide_interface_geometry_summary"]
 
     assert summary["model"] == "semiconductor_oxide_interface_health_preflight"
+    assert summary["schema_version"] == 2
     assert summary["status"] == "geometry_relaxation_unverified"
     assert summary["quality"] == "complete"
     assert summary["semiconductor_material"] == "Si"
@@ -2288,9 +2292,32 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
     assert summary["visual_preflight_ready"] is True
     assert summary["calculation_ready"] is False
     assert summary["semiconductor_oxide_boundary"]["axis_coordinate_angstrom"] == 8.58
+    assert summary["geometry_preflight_status"] == "connected_geometry_preflight"
+    assert summary["geometry_preflight_ready"] is True
+    assert summary["geometry_boundary_neighbor_pair_count"] == 4
+    assert summary["geometry_short_contact_count"] == 0
     assert summary["normality_reason_codes"] == [
         "oxide_interface_geometry_relaxation_unverified"
     ]
+    assert geometry["model"] == "semiconductor_oxide_interface_geometry_preflight"
+    assert geometry["status"] == "connected_geometry_preflight"
+    assert geometry["quality"] == "complete"
+    assert geometry["atom_binding_complete"] is True
+    assert geometry["boundary_candidate_pair_count"] == 12
+    assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["boundary_neighbor_pair_type_counts"] == {"Si-Si": 4}
+    assert geometry["boundary_neighbor_distance_stats_angstrom"] == {
+        "min": 2.604721,
+        "max": 2.604721,
+        "mean": 2.604721,
+        "count": 4,
+    }
+    assert geometry["short_contact_count"] == 0
+    assert geometry["isolated_oxide_atom_count"] == 0
+    assert geometry["oxide_oxygen_with_cation_neighbor_count"] == 8
+    assert geometry["oxide_cations_with_oxygen_neighbor_count"] == 4
+    assert geometry["geometry_preflight_ready"] is True
+    assert geometry["calculation_geometry_ready"] is False
 
     modeling_health = build_modeling_health(
         {"ok": True, "view_audit": audit},
@@ -2311,10 +2338,73 @@ def test_semiconductor_oxide_interface_health_exports_layer_stoichiometry(
     assert rows[0]["oxygen_count"] == "8"
     assert rows[0]["stoichiometry_status"] == "matched"
     assert rows[1]["element_counts"] == '{"O": 4, "Si": 2}'
+    geometry_path = Path(bundle["files"]["semiconductor_oxide_interface_geometry_csv"])
+    geometry_rows = list(
+        csv.DictReader(geometry_path.open(encoding="utf-8", newline=""))
+    )
+    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 25
+    assert geometry_rows[0]["row_kind"] == "summary"
+    assert geometry_rows[0]["boundary_neighbor_pair_count"] == "4"
+    assert sum(row["row_kind"] == "boundary_pair" for row in geometry_rows) == 12
+    assert sum(row["row_kind"] == "oxide_atom" for row in geometry_rows) == 12
 
     metal_oxide = load_example("copper_silicon_dioxide_100_interface_spec.json")
     metal_health = model_view_audit(metal_oxide)["health"]["semiconductor_health"]
     assert metal_health["oxide_interface_health_summary"] is None
+    assert metal_health["oxide_interface_geometry_summary"] is None
+
+
+def test_semiconductor_oxide_geometry_binds_zero_index_boundary_layer() -> None:
+    spec = load_example("silicon_silicon_dioxide_100_interface_spec.json")
+    summary = _semiconductor_oxide_interface_geometry_summary(
+        spec,
+        {
+            "structure_family": "semiconductor oxide interface",
+            "semiconductor_oxide_interface": True,
+            "semiconductor_channel_material": "Si",
+            "oxide_material": "SiO2",
+        },
+        [
+            {"id": "SiBoundary", "element": "Si", "fractional": [0.0, 0.0, 0.0]},
+            {"id": "OBoundary", "element": "O", "fractional": [0.0, 0.0, 0.1]},
+        ],
+        [],
+        [],
+        {"axis": "c"},
+        {
+            "axis": "c",
+            "interface": "Si/SiO2",
+            "layers": [
+                {
+                    "layer_index": 0,
+                    "material_group": "Si",
+                    "atom_ids": ["SiBoundary"],
+                    "element_counts": {"Si": 1},
+                },
+                {
+                    "layer_index": 1,
+                    "material_group": "SiO2",
+                    "atom_ids": ["OBoundary"],
+                    "element_counts": {"O": 1},
+                },
+            ],
+            "transitions": [
+                {
+                    "from_layer_index": 0,
+                    "to_layer_index": 1,
+                    "from_material_group": "Si",
+                    "to_material_group": "SiO2",
+                    "boundary_coordinate_angstrom": 1.0,
+                }
+            ],
+        },
+    )
+
+    assert summary is not None
+    assert summary["atom_binding_complete"] is True
+    assert summary["semiconductor_boundary_layer_index"] == 0
+    assert summary["oxide_boundary_layer_index"] == 1
+    assert summary["boundary_candidate_pair_count"] == 1
 
 
 def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
@@ -2336,9 +2426,11 @@ def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
         }
     ]
     vacancy_spec = ModelSpec.model_validate(payload)
-    summary = model_view_audit(vacancy_spec)["health"]["semiconductor_health"][
-        "oxide_interface_health_summary"
+    vacancy_semiconductor = model_view_audit(vacancy_spec)["health"][
+        "semiconductor_health"
     ]
+    summary = vacancy_semiconductor["oxide_interface_health_summary"]
+    geometry = vacancy_semiconductor["oxide_interface_geometry_summary"]
 
     assert any(atom.id == "O1" for atom in base.model.basis_atoms)
     assert summary["status"] == "recorded_oxygen_vacancy_review"
@@ -2361,6 +2453,12 @@ def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
         "oxide_interface_recorded_oxygen_vacancy",
         "oxide_interface_geometry_relaxation_unverified",
     ]
+    assert geometry["boundary_candidate_pair_count"] == 10
+    assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["oxide_atom_count"] == 11
+    assert geometry["oxide_oxygen_atom_count"] == 7
+    assert geometry["isolated_oxide_atom_count"] == 0
+    assert geometry["geometry_preflight_ready"] is True
 
     vacancy_audit = model_view_audit(vacancy_spec)
     bundle = write_view_audit_bundle(tmp_path / "recorded", vacancy_spec, vacancy_audit)
@@ -2376,6 +2474,7 @@ def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
     assert rows[-1]["row_kind"] == "oxygen_vacancy"
     assert rows[-1]["vacancy_site_id"] == "O1"
     assert rows[-1]["vacancy_region"] == "oxide"
+    assert bundle["row_counts"]["semiconductor_oxide_interface_geometry"] == 22
 
     unrecorded_payload = base.model_dump(mode="json")
     unrecorded_payload["model"]["basis_atoms"] = [
@@ -2406,10 +2505,11 @@ def test_semiconductor_oxide_interface_health_binds_recorded_oxygen_vacancy(
     assert invalid_summary["visual_preflight_ready"] is False
 
 
-def test_mos_gate_stack_reports_semiconductor_oxide_interface_health() -> None:
+def test_mos_gate_stack_reports_semiconductor_oxide_interface_health(tmp_path: Path) -> None:
     spec = load_example("titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor_spec.json")
     semiconductor = model_view_audit(spec)["health"]["semiconductor_health"]
     summary = semiconductor["oxide_interface_health_summary"]
+    geometry = semiconductor["oxide_interface_geometry_summary"]
 
     assert semiconductor["gate_stack_summary"]["quality"] == "complete"
     assert summary["metal_gate_present"] is True
@@ -2417,8 +2517,34 @@ def test_mos_gate_stack_reports_semiconductor_oxide_interface_health() -> None:
     assert summary["oxide_material"] == "HfO2"
     assert summary["stoichiometry_status"] == "matched"
     assert summary["oxygen_to_cation_ratio"] == 2.0
-    assert summary["visual_preflight_ready"] is True
+    assert summary["visual_preflight_ready"] is False
     assert summary["calculation_ready"] is False
+    assert geometry["status"] == "short_contact_review"
+    assert geometry["quality"] == "review_required"
+    assert geometry["boundary_candidate_pair_count"] == 12
+    assert geometry["boundary_neighbor_pair_count"] == 4
+    assert geometry["short_contact_count"] == 8
+    assert geometry["short_contact_scope_counts"] == {"oxide_internal": 8}
+    assert geometry["geometry_preflight_ready"] is False
+    assert "oxide_interface_short_contact_review" in summary["normality_reason_codes"]
+
+    audit = model_view_audit(spec)
+    bundle = write_view_audit_bundle(tmp_path, spec, audit)
+    rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["semiconductor_oxide_interface_geometry_csv"]).open(
+                encoding="utf-8",
+                newline="",
+            )
+        )
+    )
+    internal_short_contacts = [
+        row for row in rows if row["row_kind"] == "oxide_internal_short_contact"
+    ]
+    assert len(internal_short_contacts) == 8
+    assert all(row["pair_scope"] == "oxide_internal" for row in internal_short_contacts)
+    assert all(row["atom1_id"] and row["atom2_id"] for row in internal_short_contacts)
+    assert all(not row["semiconductor_atom_id"] for row in internal_short_contacts)
 
 
 def test_model_view_audit_reports_group_iv_dopant_summary() -> None:

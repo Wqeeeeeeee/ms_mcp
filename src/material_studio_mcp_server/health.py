@@ -1414,6 +1414,43 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
             warnings.append("Semiconductor interface quality preflight has warnings; inspect interface_quality_summary.")
         warnings.extend(str(item) for item in interface_quality.get("warnings", []) or [])
 
+    oxide_interface_geometry = semiconductor.get("oxide_interface_geometry_summary") or {}
+    if oxide_interface_geometry:
+        checks["semiconductor_oxide_interface_geometry_status"] = oxide_interface_geometry.get(
+            "status"
+        )
+        checks["semiconductor_oxide_interface_geometry_quality"] = oxide_interface_geometry.get(
+            "quality"
+        )
+        checks["semiconductor_oxide_interface_geometry_atom_binding_complete"] = (
+            oxide_interface_geometry.get("atom_binding_complete")
+        )
+        checks["semiconductor_oxide_interface_boundary_candidate_pair_count"] = (
+            oxide_interface_geometry.get("boundary_candidate_pair_count")
+        )
+        checks["semiconductor_oxide_interface_boundary_neighbor_pair_count"] = (
+            oxide_interface_geometry.get("boundary_neighbor_pair_count")
+        )
+        checks["semiconductor_oxide_interface_boundary_connected"] = (
+            oxide_interface_geometry.get("boundary_connected_within_neighbor_cutoff")
+        )
+        checks["semiconductor_oxide_interface_short_contact_count"] = (
+            oxide_interface_geometry.get("short_contact_count")
+        )
+        checks["semiconductor_oxide_interface_isolated_oxide_atom_count"] = (
+            oxide_interface_geometry.get("isolated_oxide_atom_count")
+        )
+        checks["semiconductor_oxide_interface_geometry_preflight_ready"] = (
+            oxide_interface_geometry.get("geometry_preflight_ready")
+        )
+        checks["semiconductor_oxide_interface_calculation_geometry_ready"] = (
+            oxide_interface_geometry.get("calculation_geometry_ready")
+        )
+        if oxide_interface_geometry.get("quality") == "review_required":
+            warnings.append(
+                "Semiconductor oxide-interface geometry requires review; inspect oxide_interface_geometry_summary."
+            )
+
     oxide_interface = semiconductor.get("oxide_interface_health_summary") or {}
     if oxide_interface:
         checks["semiconductor_oxide_interface_status"] = oxide_interface.get("status")

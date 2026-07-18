@@ -2094,6 +2094,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "diagnostic_summaries": [
                 "interface_profile_summary",
                 "interface_quality_summary",
+                "oxide_interface_geometry_summary",
                 "oxide_interface_health_summary",
                 "calculation_preflight_summary",
                 "view_review",
@@ -2101,6 +2102,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "diagnostic_csvs": [
                 "semiconductor_interface_profile_csv",
                 "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
                 "semiconductor_oxide_interface_health_csv",
                 "semiconductor_calculation_preflight_csv",
                 "view_quality_csv",
@@ -2122,7 +2124,6 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Al/SiO2/Si MOS capacitor",
                 "gate dielectric diagnostics",
                 "high-k gate dielectric",
-                "high dielectric constant gate stack",
             ],
             "cjk_terms": [
                 "\u6805\u5806",
@@ -2136,12 +2137,12 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "examples": [
                 "Build a TiN/HfO2/Si high-k MOS capacitor and export diagnostics.",
-                "Build an Al/SiO2/Si MOS capacitor with 6 angstrom oxide.",
             ],
             "diagnostic_summaries": [
                 "gate_stack_summary",
                 "interface_profile_summary",
                 "interface_quality_summary",
+                "oxide_interface_geometry_summary",
                 "oxide_interface_health_summary",
                 "band_path_summary",
                 "view_review",
@@ -2150,6 +2151,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "semiconductor_gate_stack_csv",
                 "semiconductor_interface_profile_csv",
                 "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
                 "semiconductor_oxide_interface_health_csv",
                 "semiconductor_band_path_csv",
                 "view_quality_csv",
@@ -2879,6 +2881,7 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "semiconductor_2d_electrostatics_csv",
     "semiconductor_interface_profile_csv",
     "semiconductor_interface_quality_csv",
+    "semiconductor_oxide_interface_geometry_csv",
     "semiconductor_oxide_interface_health_csv",
     "semiconductor_gate_stack_csv",
     "semiconductor_contact_csv",
@@ -5789,6 +5792,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_electrostatics_csv",
                 "semiconductor_quantum_well_csv",
                 "semiconductor_interface_quality_csv",
+                "semiconductor_oxide_interface_geometry_csv",
                 "semiconductor_oxide_interface_health_csv",
                 "semiconductor_gate_stack_csv",
                 "semiconductor_contact_csv",
@@ -5839,6 +5843,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "semiconductor_2d_electrostatics",
                 "semiconductor_interface_profile",
                 "semiconductor_interface_quality",
+                "semiconductor_oxide_interface_geometry",
                 "semiconductor_oxide_interface_health",
                 "semiconductor_gate_stack",
                 "semiconductor_contact",
@@ -14268,8 +14273,10 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
         "summary_keys": [
             "inspection.semiconductor_health.interface_profile_summary",
             "inspection.semiconductor_health.interface_quality_summary",
+            "inspection.semiconductor_health.oxide_interface_geometry_summary",
             "inspection.semiconductor_health.oxide_interface_health_summary",
             "semiconductor_review.interface",
+            "semiconductor_review.oxide_interface_geometry",
             "semiconductor_review.oxide_interface",
             "semiconductor_review.calculation",
             "view_review",
@@ -14277,6 +14284,7 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
         "csv_keys": [
             "semiconductor_interface_profile_csv",
             "semiconductor_interface_quality_csv",
+            "semiconductor_oxide_interface_geometry_csv",
             "semiconductor_oxide_interface_health_csv",
             "semiconductor_calculation_preflight_csv",
             "view_quality_csv",
@@ -14286,6 +14294,7 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
         "summary_keys": [
             "semiconductor_review.gate_stack",
             "semiconductor_review.interface",
+            "semiconductor_review.oxide_interface_geometry",
             "semiconductor_review.oxide_interface",
             "view_review",
         ],
@@ -14293,6 +14302,7 @@ _REQUESTED_DIAGNOSTIC_FOCUS_REQUIREMENTS: dict[str, dict[str, list[str]]] = {
             "semiconductor_gate_stack_csv",
             "semiconductor_interface_profile_csv",
             "semiconductor_interface_quality_csv",
+            "semiconductor_oxide_interface_geometry_csv",
             "semiconductor_oxide_interface_health_csv",
             "view_quality_csv",
         ],
@@ -20013,6 +20023,7 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("semiconductor_interface_profile_csv", "semiconductor_interface_profile"),
         ("semiconductor_interface_scaffold_csv", "semiconductor_interface_scaffold"),
         ("semiconductor_interface_quality_csv", "semiconductor_interface_quality"),
+        ("semiconductor_oxide_interface_geometry_csv", "semiconductor_oxide_interface_geometry"),
         ("semiconductor_oxide_interface_health_csv", "semiconductor_oxide_interface_health"),
         ("semiconductor_quantum_well_csv", "semiconductor_quantum_well"),
     ),
@@ -21047,6 +21058,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "semiconductor_interface_profile_csv": bundle_files.get("semiconductor_interface_profile_csv"),
             "semiconductor_interface_scaffold_csv": bundle_files.get("semiconductor_interface_scaffold_csv"),
             "semiconductor_interface_quality_csv": bundle_files.get("semiconductor_interface_quality_csv"),
+            "semiconductor_oxide_interface_geometry_csv": bundle_files.get(
+                "semiconductor_oxide_interface_geometry_csv"
+            ),
             "semiconductor_oxide_interface_health_csv": bundle_files.get(
                 "semiconductor_oxide_interface_health_csv"
             ),
@@ -22941,6 +22955,11 @@ def _semiconductor_calculation_action_hint(
 _SEMICONDUCTOR_NORMALITY_REASON_PRIORITY = (
     "semiconductor:dopant_site_metadata_inconsistent",
     "semiconductor:semiconductor_health_failed",
+    "semiconductor:oxide_interface_geometry_binding_review",
+    "semiconductor:oxide_interface_boundary_pair_evidence_missing",
+    "semiconductor:oxide_interface_boundary_disconnected",
+    "semiconductor:oxide_interface_short_contact_review",
+    "semiconductor:oxide_interface_isolated_oxide_atoms",
     "semiconductor:oxide_interface_stoichiometry_review",
     "semiconductor:oxide_interface_defect_location_unverified",
     "semiconductor:oxide_interface_recorded_oxygen_vacancy",
@@ -23147,11 +23166,30 @@ def _semiconductor_remediation_plan(
 def _semiconductor_oxide_interface_action_hint(
     report: dict[str, Any],
     oxide_interface: dict[str, Any],
+    oxide_interface_geometry: dict[str, Any],
 ) -> dict[str, Any]:
     if not oxide_interface:
         return {}
     recorded_vacancies = oxide_interface.get("recorded_oxygen_vacancy_site_ids") or []
-    if recorded_vacancies:
+    if oxide_interface_geometry.get("quality") == "review_required":
+        request = (
+            "Inspect the current semiconductor-oxide boundary atom binding, periodic pair distances, "
+            "normalized short contacts, oxide-atom neighbor coverage, and relaxation requirements; "
+            "keep execution in preview and export semiconductor-oxide geometry, chemistry, electronic, "
+            "and view diagnostics."
+        )
+        operations = [
+            "review_semiconductor_oxide_boundary_pairs",
+            "review_normalized_short_contacts",
+            "review_oxide_atom_neighbor_coverage",
+            "plan_geometry_relaxation",
+        ]
+        focuses = [
+            "semiconductor_oxide_interface",
+            "electronic_structure_preflight",
+            "view_quality",
+        ]
+    elif recorded_vacancies:
         site_text = ", ".join(str(value) for value in recorded_vacancies)
         request = (
             f"Inspect the current recorded oxygen vacancy site(s) {site_text}, oxide-layer stoichiometry, "
@@ -23237,6 +23275,11 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
         if isinstance(semiconductor.get("oxide_interface"), dict)
         else {}
     )
+    oxide_interface_geometry = (
+        semiconductor.get("oxide_interface_geometry")
+        if isinstance(semiconductor.get("oxide_interface_geometry"), dict)
+        else {}
+    )
     calculation = (
         semiconductor.get("calculation")
         if isinstance(semiconductor.get("calculation"), dict)
@@ -23314,6 +23357,7 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
         oxide_action_hint = _semiconductor_oxide_interface_action_hint(
             report,
             oxide_interface,
+            oxide_interface_geometry,
         )
         if oxide_action_hint:
             action_id = oxide_action_hint.get("action_id") or action_id
@@ -23396,6 +23440,26 @@ def _semiconductor_normality_diagnosis(report: dict[str, Any]) -> dict[str, Any]
             ),
             "surface_model_blocking_reasons": surface_model.get("blocking_reasons") or [],
             "surface_model_next_action": surface_model.get("next_action"),
+            "oxide_interface_geometry_status": oxide_interface_geometry.get("status"),
+            "oxide_interface_geometry_quality": oxide_interface_geometry.get("quality"),
+            "oxide_interface_geometry_atom_binding_complete": oxide_interface_geometry.get(
+                "atom_binding_complete"
+            ),
+            "oxide_interface_boundary_neighbor_pair_count": oxide_interface_geometry.get(
+                "boundary_neighbor_pair_count"
+            ),
+            "oxide_interface_boundary_connected": oxide_interface_geometry.get(
+                "boundary_connected_within_neighbor_cutoff"
+            ),
+            "oxide_interface_short_contact_count": oxide_interface_geometry.get(
+                "short_contact_count"
+            ),
+            "oxide_interface_isolated_oxide_atom_count": oxide_interface_geometry.get(
+                "isolated_oxide_atom_count"
+            ),
+            "oxide_interface_geometry_preflight_ready": oxide_interface_geometry.get(
+                "geometry_preflight_ready"
+            ),
             "oxide_interface_status": oxide_interface.get("status"),
             "oxide_interface_quality": oxide_interface.get("quality"),
             "oxide_interface_stoichiometry_status": oxide_interface.get("stoichiometry_status"),
@@ -29961,6 +30025,9 @@ def _change_receipt_artifacts(
             ),
             "semiconductor_quantum_well_csv": diagnostics.get("semiconductor_quantum_well_csv"),
             "semiconductor_interface_quality_csv": diagnostics.get("semiconductor_interface_quality_csv"),
+            "semiconductor_oxide_interface_geometry_csv": diagnostics.get(
+                "semiconductor_oxide_interface_geometry_csv"
+            ),
             "semiconductor_oxide_interface_health_csv": diagnostics.get(
                 "semiconductor_oxide_interface_health_csv"
             ),
@@ -30026,6 +30093,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "semiconductor_interface_profile",
         "semiconductor_interface_scaffold",
         "semiconductor_interface_quality",
+        "semiconductor_oxide_interface_geometry",
         "semiconductor_oxide_interface_health",
         "semiconductor_gate_stack",
         "semiconductor_contact",
@@ -30666,6 +30734,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
     defect = semiconductor.get("defect_summary") or {}
     finite_size = semiconductor.get("finite_size_summary") or {}
     interface_quality = semiconductor.get("interface_quality_summary") or {}
+    oxide_interface_geometry = semiconductor.get("oxide_interface_geometry_summary") or {}
     oxide_interface = semiconductor.get("oxide_interface_health_summary") or {}
     gate_stack = semiconductor.get("gate_stack_summary") or {}
     contact = semiconductor.get("metal_semiconductor_contact_summary") or {}
@@ -30716,6 +30785,7 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         defect=defect,
         finite_size=finite_size,
         interface_quality=interface_quality,
+        oxide_interface_geometry=oxide_interface_geometry,
         oxide_interface=oxide_interface,
         gate_stack=gate_stack,
         contact=contact,
@@ -30895,6 +30965,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
         "alloy": _semiconductor_alloy_review(alloy),
         "defects": _semiconductor_defect_review(defect, finite_size),
         "interface": _semiconductor_interface_review(interface_quality, quantum_well),
+        "oxide_interface_geometry": _semiconductor_oxide_interface_geometry_review(
+            oxide_interface_geometry
+        ),
         "oxide_interface": _semiconductor_oxide_interface_review(oxide_interface),
         "gate_stack": _semiconductor_gate_stack_review(gate_stack),
         "contact": _semiconductor_contact_review(contact),
@@ -31721,6 +31794,64 @@ def _semiconductor_interface_review(interface_quality: dict[str, Any], quantum_w
     }
 
 
+def _semiconductor_oxide_interface_geometry_review(
+    summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not summary:
+        return None
+    return _select_keys(
+        summary,
+        [
+            "status",
+            "quality",
+            "interface",
+            "axis",
+            "semiconductor_material",
+            "oxide_material",
+            "semiconductor_oxide_boundary",
+            "semiconductor_boundary_layer_index",
+            "oxide_boundary_layer_index",
+            "semiconductor_boundary_atom_count",
+            "oxide_boundary_atom_count",
+            "oxide_atom_count",
+            "oxide_cation_elements",
+            "atom_binding_complete",
+            "missing_bound_atom_ids",
+            "boundary_candidate_pair_count",
+            "boundary_neighbor_pair_count",
+            "boundary_connected_within_neighbor_cutoff",
+            "boundary_pair_type_counts",
+            "boundary_neighbor_pair_type_counts",
+            "boundary_pair_distance_stats_angstrom",
+            "boundary_neighbor_distance_stats_angstrom",
+            "boundary_distance_to_threshold_fraction_stats",
+            "neighbor_cutoff_rule",
+            "short_contact_review_threshold_fraction",
+            "short_contact_count",
+            "short_contact_scope_counts",
+            "oxide_internal_neighbor_pair_count",
+            "oxide_internal_pair_type_counts",
+            "oxide_atom_neighbor_coverage_count",
+            "isolated_oxide_atom_count",
+            "isolated_oxide_atom_ids",
+            "oxide_oxygen_atom_count",
+            "oxide_oxygen_with_cation_neighbor_count",
+            "oxide_cation_atom_count",
+            "oxide_cations_with_oxygen_neighbor_count",
+            "pre_relaxation_scaffold",
+            "geometry_relaxation_verified",
+            "visualization_ready",
+            "geometry_preflight_ready",
+            "calculation_geometry_ready",
+            "normality_reason_codes",
+            "calculation_blocking_reasons",
+            "next_action",
+            "warning_count",
+            "warnings",
+        ],
+    )
+
+
 def _semiconductor_oxide_interface_review(summary: dict[str, Any]) -> dict[str, Any] | None:
     if not summary:
         return None
@@ -31899,6 +32030,7 @@ def _semiconductor_review_risk_flags(
     defect: dict[str, Any],
     finite_size: dict[str, Any],
     interface_quality: dict[str, Any],
+    oxide_interface_geometry: dict[str, Any],
     oxide_interface: dict[str, Any],
     gate_stack: dict[str, Any],
     contact: dict[str, Any],
@@ -32061,6 +32193,9 @@ def _semiconductor_review_risk_flags(
         flags.append("interface_period_sequence_incomplete")
     if int(interface_quality.get("mixed_layer_count") or 0) > 0 and not interface_quality.get("mixed_layers_expected"):
         flags.append("mixed_interface_layers")
+    for reason in oxide_interface_geometry.get("normality_reason_codes", []) or []:
+        if reason:
+            flags.append(str(reason))
     for reason in oxide_interface.get("normality_reason_codes", []) or []:
         if reason:
             flags.append(str(reason))
@@ -32111,6 +32246,16 @@ def _semiconductor_review_next_action(
 ) -> str:
     if "dopant_site_metadata_inconsistent" in risk_flags:
         return "reconcile_dopant_metadata_with_current_structure_then_reaudit"
+    if "oxide_interface_geometry_binding_review" in risk_flags:
+        return "repair_interface_layer_and_atom_binding_before_geometry_review"
+    if "oxide_interface_boundary_pair_evidence_missing" in risk_flags:
+        return "regenerate_boundary_pair_evidence_before_geometry_review"
+    if "oxide_interface_boundary_disconnected" in risk_flags:
+        return "review_semiconductor_oxide_boundary_gap_before_relaxation"
+    if "oxide_interface_short_contact_review" in risk_flags:
+        return "review_short_oxide_interface_contacts_before_relaxation"
+    if "oxide_interface_isolated_oxide_atoms" in risk_flags:
+        return "review_isolated_oxide_atoms_before_relaxation"
     if "oxide_interface_stoichiometry_review" in risk_flags:
         return "reconcile_oxide_layer_stoichiometry_and_defect_metadata_before_relaxation"
     if "oxide_interface_defect_location_unverified" in risk_flags:

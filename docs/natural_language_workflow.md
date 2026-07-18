@@ -266,6 +266,20 @@ inputs reported by
 they are metadata-only screening values, not CASTEP or surface-reconstruction
 results. The bare oxide start supports deterministic oxide-thickness and O-vacancy
 follow-ups, but it is not amorphous, relaxed, literature-exact, or device-ready.
+Both 6H-SiC starts and the Si/SiO2 and HfO2 gate-stack starts emit an
+`oxide_interface_geometry_summary` plus
+`semiconductor_oxide_interface_geometry.csv`. The geometry preflight binds the
+declared semiconductor and oxide boundary layers to atom IDs, enumerates every
+periodic minimum-image boundary pair, applies the deterministic
+`distance <= 1.25 * covalent_radius_sum` neighbor cutoff, and reports oxide
+neighbor coverage. A normalized distance below `0.55` is a short-contact review
+signal. Missing binding, no boundary neighbor, short contacts, or isolated
+oxide atoms take priority in the normality diagnosis and return preview-only
+review/relaxation operations; the server does not move coordinates
+automatically. A clean result remains construction evidence only and does not
+establish an amorphous oxide, relaxation, charge state, convergence, or
+calculation readiness. Metal/oxide-only starts such as Cu/SiO2 remain outside
+this semiconductor/oxide geometry contract.
 Explicit C-face `(000-1)`, ambiguous unoriented surfaces, complete MOS
 device/transistor geometries, and other
 6H-SiC heterostructures remain unsupported and never fall back to 3C-SiC,

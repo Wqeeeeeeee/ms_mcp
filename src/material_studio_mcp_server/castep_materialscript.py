@@ -36,6 +36,14 @@ _PROPERTY_SETTING_BY_TASK: dict[CastepTask, tuple[str, str]] = {
     CastepTask.PHONON: ("CalculatePhononDispersion", "Dispersion"),
 }
 
+_STRUCTURED_EXECUTION_TOOL_BY_TASK: dict[CastepTask, str] = {
+    CastepTask.ENERGY: "material_studio_castep_run_current",
+    CastepTask.GEOMETRY_OPTIMIZATION: "material_studio_castep_relax_current",
+    CastepTask.BAND_STRUCTURE: "material_studio_castep_run_current",
+    CastepTask.DENSITY_OF_STATES: "material_studio_castep_run_current",
+    CastepTask.PROJECTED_DENSITY_OF_STATES: "material_studio_castep_run_current",
+}
+
 _PERL_SCALAR = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -67,6 +75,12 @@ class CastepMaterialScriptPlan:
             ),
             "materials_studio_api_contract": CASTEP_MATERIALSCRIPT_CONTRACT,
         }
+
+
+def castep_structured_execution_tool(task: CastepTask | str) -> str | None:
+    """Return the dedicated preview-first execution tool for one CASTEP task."""
+
+    return _STRUCTURED_EXECUTION_TOOL_BY_TASK.get(normalize_castep_task(task))
 
 
 def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialScriptPlan:

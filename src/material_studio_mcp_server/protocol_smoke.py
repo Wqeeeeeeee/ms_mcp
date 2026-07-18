@@ -534,6 +534,7 @@ async def _run_preview_calls(
             "material_studio_castep_relax_current",
             {
                 "project_id": project_id,
+                "expected_revision": created.get("revision"),
                 "execution_mode": "preview",
                 "open_in_gui": False,
                 "take_snapshot": False,
@@ -548,6 +549,7 @@ async def _run_preview_calls(
             "material_studio_castep_run_current",
             {
                 "project_id": project_id,
+                "expected_revision": created.get("revision"),
                 "execution_mode": "preview",
                 "task": "Energy",
                 "open_in_gui": False,
@@ -658,6 +660,52 @@ async def _run_preview_calls(
         if "castep_convergence_series" not in diagnostic_focus_ids:
             validation_errors.append(
                 "capabilities_castep_convergence_diagnostic_focus_missing"
+            )
+        calculation_preview_handoff = capabilities.get(
+            "castep_calculation_preview_handoff"
+        )
+        if not isinstance(calculation_preview_handoff, dict):
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_missing"
+            )
+            calculation_preview_handoff = {}
+        handoff_task_tools = calculation_preview_handoff.get(
+            "task_execution_tools"
+        )
+        if not isinstance(handoff_task_tools, dict):
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_tools_missing"
+            )
+            handoff_task_tools = {}
+        if calculation_preview_handoff.get(
+            "preview_actions_are_workspace_bound"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_workspace_unbound"
+            )
+        if calculation_preview_handoff.get(
+            "preview_actions_are_revision_bound"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_revision_unbound"
+            )
+        if calculation_preview_handoff.get(
+            "execute_requires_explicit_confirmation"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_execute_gate_missing"
+            )
+        if handoff_task_tools.get("Energy") != (
+            "material_studio_castep_run_current"
+        ):
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_energy_tool_mismatch"
+            )
+        if handoff_task_tools.get("GeometryOptimization") != (
+            "material_studio_castep_relax_current"
+        ):
+            validation_errors.append(
+                "capabilities_castep_calculation_handoff_relax_tool_mismatch"
             )
         castep_relaxation_capability = capabilities.get(
             "castep_geometry_optimization"
@@ -969,6 +1017,8 @@ async def _run_preview_calls(
             validation_errors.append("castep_relaxation_preview_mode_changed")
         if relaxation_preview.get("execution_started") is not False:
             validation_errors.append("castep_relaxation_preview_started_execution")
+        if relaxation_preview.get("expected_revision") != created.get("revision"):
+            validation_errors.append("castep_relaxation_preview_revision_unbound")
         if relaxation_preview.get("revision_created") is not False:
             validation_errors.append("castep_relaxation_preview_created_revision")
         if relaxation_structure is None:
@@ -996,6 +1046,8 @@ async def _run_preview_calls(
             validation_errors.append("castep_electronic_preview_mode_changed")
         if electronic_preview.get("execution_started") is not False:
             validation_errors.append("castep_electronic_preview_started_execution")
+        if electronic_preview.get("expected_revision") != created.get("revision"):
+            validation_errors.append("castep_electronic_preview_revision_unbound")
         if electronic_preview.get("revision_created") is not False:
             validation_errors.append("castep_electronic_preview_created_revision")
         if electronic_preview.get("task") != "Energy":
@@ -1265,6 +1317,27 @@ async def _run_preview_calls(
                 ),
                 "capabilities_castep_relaxation_tool": (
                     castep_relaxation_capability.get("tool")
+                ),
+                "capabilities_castep_handoff_workspace_bound": (
+                    calculation_preview_handoff.get(
+                        "preview_actions_are_workspace_bound"
+                    )
+                ),
+                "capabilities_castep_handoff_revision_bound": (
+                    calculation_preview_handoff.get(
+                        "preview_actions_are_revision_bound"
+                    )
+                ),
+                "capabilities_castep_handoff_execute_confirmation": (
+                    calculation_preview_handoff.get(
+                        "execute_requires_explicit_confirmation"
+                    )
+                ),
+                "capabilities_castep_handoff_energy_tool": (
+                    handoff_task_tools.get("Energy")
+                ),
+                "capabilities_castep_handoff_relax_tool": (
+                    handoff_task_tools.get("GeometryOptimization")
                 ),
                 "capabilities_castep_electronic_tool": (
                     castep_electronic_capability.get("tool")

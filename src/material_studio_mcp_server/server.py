@@ -19,7 +19,10 @@ from typing import Annotated, Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .castep_materialscript import build_castep_materialscript_plan
+from .castep_materialscript import (
+    build_castep_materialscript_plan,
+    castep_structured_execution_tool,
+)
 from .castep_convergence import (
     CASTEP_CONVERGENCE_AUDIT_SCHEMA,
     DEFAULT_BAND_GAP_TOLERANCE_EV,
@@ -150,6 +153,59 @@ LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
 COMPACT_RESPONSE_TARGET_BYTES = 45_000
+
+_WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
+    {
+        "material_studio_castep_relax_current",
+        "material_studio_castep_run_current",
+        "material_studio_gui_activate",
+        "material_studio_gui_apply_current_revision",
+        "material_studio_gui_launch",
+        "material_studio_gui_open_structure",
+        "material_studio_gui_snapshot",
+        "material_studio_gui_status",
+        "material_studio_live_modeling_request",
+        "material_studio_live_project_status",
+        "material_studio_live_session_preflight",
+        "material_studio_live_update_with_patch",
+        "material_studio_model_export_view_audit",
+        "material_studio_model_export_view_bundle",
+        "material_studio_model_preview_script",
+        "material_studio_project_reconcile_dopant_metadata",
+    }
+)
+
+
+def _workspace_bound_payload_hint(
+    recommended_tool: Any,
+    payload_hint: Any,
+    working_dir: str | Path | None,
+) -> dict[str, Any]:
+    """Bind a directly callable action to the workspace that produced it."""
+
+    payload = dict(payload_hint) if isinstance(payload_hint, dict) else {}
+    if recommended_tool in _WORKSPACE_AWARE_ACTION_TOOLS and working_dir is not None:
+        payload.setdefault("working_dir", str(working_dir))
+    return payload
+
+
+def _workspace_bound_action_plan(
+    action_plan: Any,
+    working_dir: str | Path | None,
+) -> dict[str, Any]:
+    """Copy one action plan and retain its current workspace identity."""
+
+    if not isinstance(action_plan, dict):
+        return {}
+    bound = dict(action_plan)
+    bound["payload_hint"] = _workspace_bound_payload_hint(
+        bound.get("recommended_tool"),
+        bound.get("payload_hint"),
+        working_dir,
+    )
+    return bound
+
+
 LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
     "next_action_plan",
     "normality_gate",
@@ -3823,6 +3879,28 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD
         ),
         "recommended_calculation_settings_requires_explicit_confirmation": True,
+        "castep_calculation_preview_handoff": {
+            "receipt_field": "calculation_preview.execution_handoff",
+            "preview_actions_are_workspace_bound": True,
+            "preview_actions_are_revision_bound": True,
+            "revision_binding_parameter": "expected_revision",
+            "preview_safe_to_call_without_confirmation": True,
+            "execute_requires_explicit_confirmation": True,
+            "structure_materialization_never_executes_companion": True,
+            "task_execution_tools": {
+                "Energy": "material_studio_castep_run_current",
+                "GeometryOptimization": "material_studio_castep_relax_current",
+                "BandStructure": "material_studio_castep_run_current",
+                "DensityOfStates": "material_studio_castep_run_current",
+                "ProjectedDensityOfStates": "material_studio_castep_run_current",
+                "Optics": None,
+                "Phonon": None,
+                "ElasticConstants": None,
+            },
+            "unsupported_execution_status": (
+                "preview_only_no_dedicated_execution_tool"
+            ),
+        },
         "castep_geometry_optimization": {
             "tool": "material_studio_castep_relax_current",
             "natural_language_entry_tool": "material_studio_live_modeling_request",
@@ -8558,6 +8636,12 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         visible_followup_recommended_action = next_action.get("recommended_action") or payload.get("recommended_action")
         visible_followup_payload_hint = next_action.get("payload_hint") or {}
 
+    visible_followup_payload_hint = _workspace_bound_payload_hint(
+        visible_followup_recommended_tool,
+        visible_followup_payload_hint,
+        payload.get("working_dir"),
+    )
+
     if can_hotload_without_new_window:
         status = "ready_for_live_modeling"
     elif preview_ready:
@@ -8977,6 +9061,12 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_recommended_action = next_action.get("recommended_action") or readiness.get("recommended_action")
         visible_followup_payload_hint = next_action.get("payload_hint") or {"project_id": project_id}
 
+    visible_followup_payload_hint = _workspace_bound_payload_hint(
+        visible_followup_recommended_tool,
+        visible_followup_payload_hint,
+        report.get("working_dir"),
+    )
+
     same_window_hotload_payload_hint = (
         hotload.get("payload_hint")
         if isinstance(hotload.get("payload_hint"), dict)
@@ -8991,6 +9081,11 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_recommended_tool,
         next_action.get("recommended_tool"),
         readiness.get("recommended_tool"),
+    )
+    same_window_hotload_payload_hint = _workspace_bound_payload_hint(
+        same_window_hotload_tool,
+        same_window_hotload_payload_hint,
+        report.get("working_dir"),
     )
     same_window_hotload_action = _first_not_none(
         hotload.get("recommended_action"),
@@ -9234,6 +9329,12 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
             "reuse_existing_window_only": True,
         }
         needs_user_confirmation = True
+
+    payload_hint = _workspace_bound_payload_hint(
+        recommended_tool,
+        payload_hint,
+        payload.get("working_dir"),
+    )
 
     return {
         "action_id": action_id,
@@ -9805,16 +9906,22 @@ def _latest_project_modeling_preflight_summary(
 def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> None:
     """Coordinate session, visual-diagnostics, and modeling continuation actions."""
 
-    session_plan = _session_preflight_action_plan_summary(
-        payload.get("session_next_action_plan") or payload.get("next_action_plan")
+    working_dir = payload.get("working_dir")
+    session_plan = _workspace_bound_action_plan(
+        _session_preflight_action_plan_summary(
+            payload.get("session_next_action_plan")
+            or payload.get("next_action_plan")
+        ),
+        working_dir,
     )
     modeling = (
         payload.get("latest_project_modeling")
         if isinstance(payload.get("latest_project_modeling"), dict)
         else {}
     )
-    modeling_plan = _session_preflight_action_plan_summary(
-        modeling.get("next_action_plan")
+    modeling_plan = _workspace_bound_action_plan(
+        _session_preflight_action_plan_summary(modeling.get("next_action_plan")),
+        working_dir,
     )
     modeling_action_available = bool(
         modeling.get("action_available") is True
@@ -9825,8 +9932,11 @@ def _attach_session_preflight_action_coordination(payload: dict[str, Any]) -> No
         if isinstance(payload.get("latest_project_visual_diagnostics"), dict)
         else {}
     )
-    visual_diagnostics_plan = _session_preflight_action_plan_summary(
-        visual_diagnostics.get("next_action_plan")
+    visual_diagnostics_plan = _workspace_bound_action_plan(
+        _session_preflight_action_plan_summary(
+            visual_diagnostics.get("next_action_plan")
+        ),
+        working_dir,
     )
     visual_diagnostics_action_available = bool(
         visual_diagnostics.get("action_available") is True
@@ -10073,7 +10183,11 @@ def _latest_project_preflight_summary(store: ProjectStore) -> dict[str, Any]:
         planned_structure = generated.get("planned_outputs", {}).get("structure")
         script_valid = generated.get("script_validation", {}).get("valid")
         calculation_preview = _compact_calculation_preview(
-            _calculation_preview_receipt(generated, include_script=False)
+            _calculation_preview_receipt(
+                generated,
+                include_script=False,
+                working_dir=store.workspace_root,
+            )
         )
     except Exception as exc:
         planned_structure = None
@@ -14856,6 +14970,8 @@ def _attach_modeling_health(
     """Attach a consolidated modeling-health verdict and persist it when possible."""
 
     mode_value = execution_mode.value if isinstance(execution_mode, ExecutionMode) else str(execution_mode)
+    if store is not None:
+        response.setdefault("working_dir", str(store.workspace_root))
     if spec is not None:
         response.setdefault("acceptance", spec.acceptance.model_dump(mode="json"))
         _attach_structure_artifact_validation(response, spec=spec, execution_mode=mode_value)
@@ -20950,6 +21066,7 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "ok": report_ok,
         "workflow": response.get("workflow"),
         "user_request": response.get("user_request"),
+        "working_dir": response.get("working_dir"),
         "nl_plan": response.get("nl_plan") if isinstance(response.get("nl_plan"), dict) else None,
         "project_id": response.get("project_id"),
         "project_resolution": response.get("project_resolution"),
@@ -22530,6 +22647,10 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
         surface_model=surface_model,
         semiconductor_blocking_reasons=semiconductor_blocking_reasons,
     )
+    action_hint = _workspace_bound_action_plan(
+        action_hint,
+        report.get("working_dir"),
+    )
 
     return _drop_none_values(
         {
@@ -22946,25 +23067,72 @@ def _semiconductor_calculation_action_hint(
         }
 
     if status == "ready":
+        task_value = task.value if isinstance(task, CastepTask) else task
+        try:
+            execution_tool = (
+                castep_structured_execution_tool(task) if task else None
+            )
+        except ValueError:
+            execution_tool = None
+        if execution_tool is not None:
+            payload_hint = {
+                "project_id": project_id,
+                "expected_revision": revision,
+                "execution_mode": ExecutionMode.PREVIEW.value,
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": True,
+                "response_mode": McpResponseMode.COMPACT.value,
+            }
+            if execution_tool == "material_studio_castep_run_current":
+                payload_hint["task"] = task_value
+            action_id = (
+                "preview_current_castep_geometry_optimization"
+                if execution_tool == "material_studio_castep_relax_current"
+                else "preview_current_castep_electronic_calculation"
+            )
+            return {
+                "action_id": action_id,
+                "recommended_tool": execution_tool,
+                "recommended_action": "preview_revision_bound_castep_task_before_explicit_execute",
+                "payload_hint": _drop_none_values(payload_hint),
+                "needs_user_confirmation": False,
+                "safe_to_call_without_confirmation": True,
+                "action_reason": "semiconductor_calculation_preflight_passed",
+                "action_context": _drop_none_values(
+                    {
+                        "task": task_value,
+                        "task_intent": task_intent,
+                        "execution_tool": execution_tool,
+                        "execution_preview_safe_without_confirmation": True,
+                        "execution_requires_explicit_confirmation": True,
+                        "execution_risk": calculation.get("execution_risk"),
+                        "cutoff_status": calculation.get("cutoff_status"),
+                        "kpoint_mode": calculation.get("kpoint_mode"),
+                        "kpoint_separation": calculation.get(
+                            "kpoint_separation"
+                        ),
+                        "kpoints": calculation.get("kpoints"),
+                    }
+                ),
+            }
         payload_hint = {
             "project_id": project_id,
-            "revision": revision,
-            "execution_mode": ExecutionMode.PREVIEW.value,
-            "export_view_audit": True,
-            "requires_explicit_execute_confirmation": True,
         }
         return {
-            "action_id": "ready_for_semiconductor_calculation_preflight",
-            "recommended_tool": "material_studio_live_project_status",
-            "recommended_action": next_action,
+            "action_id": "review_castep_task_without_dedicated_execution_tool",
+            "recommended_tool": "material_studio_model_preview_script",
+            "recommended_action": "review_revision_bound_castep_companion_script",
             "payload_hint": _drop_none_values(payload_hint),
-            "needs_user_confirmation": True,
-            "safe_to_call_without_confirmation": False,
-            "action_reason": "semiconductor_calculation_preflight_passed",
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+            "action_reason": "dedicated_structured_execution_tool_unavailable_for_task",
             "action_context": _drop_none_values(
                 {
-                    "task": task,
+                    "task": task_value,
                     "task_intent": task_intent,
+                    "source_revision": revision,
+                    "execution_supported": False,
                     "execution_risk": calculation.get("execution_risk"),
                     "cutoff_status": calculation.get("cutoff_status"),
                     "kpoint_mode": calculation.get("kpoint_mode"),
@@ -26412,6 +26580,11 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
             "revision": report.get("revision"),
         }
 
+    payload_hint = _workspace_bound_payload_hint(
+        recommended_tool,
+        payload_hint,
+        report.get("working_dir"),
+    )
     artifacts = _drop_none_values(
         {
             "structure_path": structure.get("path"),
@@ -26641,6 +26814,12 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             "project_id": project_id
         }
         needs_user_confirmation = bool(next_action.get("needs_user_confirmation"))
+
+    payload_hint = _workspace_bound_payload_hint(
+        recommended_tool,
+        payload_hint,
+        report.get("working_dir"),
+    )
 
     safe_to_attempt_hotload = bool(
         not blocking_reasons
@@ -28248,6 +28427,18 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "calculation_preview_trusted": calculation_preview.get("persisted_artifact_trusted"),
             "calculation_preview_ready": calculation_preview.get("preview_ready"),
             "calculation_preview_execution_policy": calculation_preview.get("execution_policy"),
+            "calculation_preview_separate_execution_policy": calculation_preview.get(
+                "separate_execution_policy"
+            ),
+            "calculation_preview_execution_tool": calculation_preview.get(
+                "execution_tool"
+            ),
+            "calculation_preview_handoff_status": (
+                calculation_preview.get("execution_handoff") or {}
+            ).get("status"),
+            "calculation_preview_workspace_bound": (
+                calculation_preview.get("execution_handoff") or {}
+            ).get("workspace_bound"),
             "structure_materialization_executes_calculation": calculation_preview.get(
                 "structure_materialization_executes_calculation"
             ),
@@ -29544,6 +29735,12 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
             "revision": report.get("revision"),
             "label": "current_revision_visual_review" if needs_visual_review else "current_revision",
         }
+
+    payload_hint = _workspace_bound_payload_hint(
+        recommended_tool,
+        payload_hint,
+        report.get("working_dir"),
+    )
 
     return {
         "available": True,
@@ -36634,6 +36831,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
             "recommended_calculation_settings_requires_explicit_confirmation",
+            "castep_calculation_preview_handoff",
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
             "castep_geometry_optimization",
@@ -36739,6 +36937,42 @@ def _compact_revision_delta(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_calculation_execution_handoff(value: Any) -> dict[str, Any]:
+    """Return bounded, directly callable CASTEP preview/execute actions."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "task",
+            "project_id",
+            "source_revision",
+            "execution_supported",
+            "execution_tool",
+            "workspace_bound",
+            "working_dir",
+            "unsupported_reason",
+        ),
+    )
+    for key in ("preview_action", "execute_action"):
+        action = value.get(key)
+        if isinstance(action, dict):
+            compact[key] = _mapping_subset(
+                action,
+                (
+                    "recommended_tool",
+                    "recommended_action",
+                    "payload_hint",
+                    "payload_hint_is_directly_callable",
+                    "needs_user_confirmation",
+                    "safe_to_call_without_confirmation",
+                ),
+            )
+    return compact
+
+
 def _compact_calculation_preview(value: Any) -> dict[str, Any]:
     """Return a bounded CASTEP preview receipt without source text."""
 
@@ -36751,6 +36985,8 @@ def _compact_calculation_preview(value: Any) -> dict[str, Any]:
             "kind",
             "module",
             "task",
+            "project_id",
+            "source_revision",
             "script_path",
             "script_exists",
             "script_matches_generated",
@@ -36758,7 +36994,11 @@ def _compact_calculation_preview(value: Any) -> dict[str, Any]:
             "persisted_artifact_trusted",
             "preview_ready",
             "execution_policy",
+            "separate_execution_policy",
             "execution_supported_by_structured_workflow",
+            "execution_supported_by_separate_tool",
+            "execution_tool",
+            "execute_requires_user_confirmation",
             "structure_materialization_executes_calculation",
             "requires_explicit_separate_execution",
             "calculation_executed",
@@ -36779,6 +37019,11 @@ def _compact_calculation_preview(value: Any) -> dict[str, Any]:
     validation = value.get("validation")
     if isinstance(validation, dict):
         compact["validation"] = _mapping_subset(validation, ("valid",))
+    handoff = _compact_calculation_execution_handoff(
+        value.get("execution_handoff")
+    )
+    if handoff:
+        compact["execution_handoff"] = handoff
     return compact
 
 
@@ -36837,6 +37082,7 @@ def _compact_live_response(
             "accepted_payloads",
             "workflow",
             "user_request",
+            "working_dir",
             "project_id",
             "project_resolution",
             "current_pointer_recovery",
@@ -37164,6 +37410,10 @@ def _compact_live_response(
             "structure_exists",
             "calculation_preview_task",
             "calculation_preview_trusted",
+            "calculation_preview_separate_execution_policy",
+            "calculation_preview_execution_tool",
+            "calculation_preview_handoff_status",
+            "calculation_preview_workspace_bound",
             "calculation_executed",
             "gui_hot_loaded",
             "gui_loaded_current_revision",
@@ -37569,6 +37819,7 @@ def _compact_capabilities_response(
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
             "recommended_calculation_settings_requires_explicit_confirmation",
+            "castep_calculation_preview_handoff",
             "recommended_calculation_settings_receipt_recovery_field",
             "recommended_calculation_settings_receipt_recovery_policy",
             "castep_geometry_optimization",
@@ -37657,6 +37908,7 @@ def _calculation_preview_receipt(
     generated: dict[str, Any],
     *,
     include_script: bool,
+    working_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """Refresh the persisted binding for one generated calculation preview."""
 
@@ -37665,6 +37917,25 @@ def _calculation_preview_receipt(
     if not isinstance(preview, dict) or not isinstance(script, str):
         return None
     receipt = dict(preview)
+    handoff = receipt.get("execution_handoff")
+    if isinstance(handoff, dict):
+        bound_handoff = dict(handoff)
+        bound_handoff["workspace_bound"] = working_dir is not None
+        bound_handoff["working_dir"] = (
+            str(working_dir) if working_dir is not None else None
+        )
+        for action_key in ("preview_action", "execute_action"):
+            action = bound_handoff.get(action_key)
+            if not isinstance(action, dict):
+                continue
+            bound_action = dict(action)
+            bound_action["payload_hint"] = _workspace_bound_payload_hint(
+                bound_action.get("recommended_tool"),
+                bound_action.get("payload_hint"),
+                working_dir,
+            )
+            bound_handoff[action_key] = bound_action
+        receipt["execution_handoff"] = bound_handoff
     script_path_value = receipt.get("script_path")
     script_path = Path(str(script_path_value)).expanduser() if script_path_value else None
     script_exists = bool(script_path and script_path.is_file())
@@ -38365,6 +38636,7 @@ def material_studio_model_create_from_spec(
             "calculation_preview": _calculation_preview_receipt(
                 generated,
                 include_script=True,
+                working_dir=store.workspace_root,
             ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
@@ -38480,6 +38752,7 @@ def material_studio_model_modify_with_patch(
             "calculation_preview": _calculation_preview_receipt(
                 generated,
                 include_script=True,
+                working_dir=store.workspace_root,
             ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
@@ -38595,6 +38868,7 @@ def material_studio_live_project_status(
         calculation_preview = _calculation_preview_receipt(
             generated,
             include_script=False,
+            working_dir=store.workspace_root,
         )
         planned_structure = generated["planned_outputs"].get("structure")
         planned_structure_path = Path(str(planned_structure)).expanduser() if planned_structure else None
@@ -38778,6 +39052,7 @@ def material_studio_live_project_status(
             "ok": True,
             "workflow": workflow,
             "user_request": user_request,
+            "working_dir": str(store.workspace_root),
             "project_id": project_id,
             "project_resolution": project_resolution,
             "revision": revision,
@@ -39502,6 +39777,7 @@ def material_studio_project_rollback(
                 "calculation_preview": _calculation_preview_receipt(
                     generated,
                     include_script=True,
+                    working_dir=store.workspace_root,
                 ),
                 "state": info.to_dict(),
                 "state_write_transaction": info.state_write_transaction,
@@ -39554,6 +39830,7 @@ def material_studio_model_validate(
                 "calculation_preview": _calculation_preview_receipt(
                     generated,
                     include_script=False,
+                    working_dir=store.workspace_root,
                 ),
             }
         )
@@ -39599,6 +39876,7 @@ def material_studio_model_preview_script(
                 "calculation_preview": _calculation_preview_receipt(
                     generated,
                     include_script=True,
+                    working_dir=store.workspace_root,
                 ),
             }
         )
@@ -41246,6 +41524,7 @@ def material_studio_live_update_with_patch(
             "calculation_preview": _calculation_preview_receipt(
                 generated,
                 include_script=True,
+                working_dir=store.workspace_root,
             ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
@@ -41749,6 +42028,59 @@ def _next_castep_electronic_run_dir(task_root: Path) -> Path:
     return task_root / f"run_{sequence:04d}"
 
 
+def _castep_revision_binding_block(
+    *,
+    workflow: str,
+    project_id: str,
+    project_resolution: dict[str, Any],
+    expected_revision: int,
+    current_revision: int,
+    execution_mode: ExecutionMode,
+    working_dir: str | Path,
+) -> dict[str, Any]:
+    """Reject a stale CASTEP handoff before script or run-directory creation."""
+
+    status = f"{workflow}_revision_binding_mismatch"
+    payload_hint = {
+        "project_id": project_id,
+        "include_gui_status": True,
+        "response_mode": McpResponseMode.COMPACT.value,
+        "working_dir": str(working_dir),
+    }
+    return {
+        "ok": False,
+        "status": status,
+        "workflow": workflow,
+        "project_id": project_id,
+        "project_resolution": project_resolution,
+        "working_dir": str(working_dir),
+        "expected_revision": expected_revision,
+        "current_revision": current_revision,
+        "revision": current_revision,
+        "revision_created": False,
+        "execution_mode": execution_mode.value,
+        "execution_started": False,
+        "write_attempted": False,
+        "error": (
+            "The CASTEP handoff was prepared for revision "
+            f"{expected_revision}, but the current revision is {current_revision}."
+        ),
+        "required_next_step": (
+            "Refresh live project status and preview the current revision before any execute request."
+        ),
+        "recommended_tool": "material_studio_live_project_status",
+        "recommended_action": "refresh_current_revision_before_castep_preview",
+        "next_action_plan": {
+            "action_id": "refresh_current_revision_before_castep_preview",
+            "recommended_tool": "material_studio_live_project_status",
+            "recommended_action": "refresh_current_revision_before_castep_preview",
+            "payload_hint": payload_hint,
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+        },
+    }
+
+
 def _castep_electronic_preflight(
     spec: ModelSpec,
     simulation: CastepEnergySpec,
@@ -42168,6 +42500,16 @@ def material_studio_castep_run_current(
         int | None,
         Field(description="CASTEP execution timeout in seconds.", ge=1, le=7 * 24 * 3600),
     ] = None,
+    expected_revision: Annotated[
+        int | None,
+        Field(
+            description=(
+                "Optional revision binding from a prior preview handoff; a stale "
+                "binding is rejected before any calculation artifact is created."
+            ),
+            ge=0,
+        ),
+    ] = None,
     response_mode: Annotated[
         McpResponseMode,
         Field(description="full result or compact MCP receipt."),
@@ -42196,6 +42538,22 @@ def material_studio_castep_run_current(
             project_resolution = _explicit_project_resolution(
                 base_spec,
                 current_pointer,
+            )
+        if (
+            expected_revision is not None
+            and base_spec.revision != expected_revision
+        ):
+            return _compact_live_response(
+                _castep_revision_binding_block(
+                    workflow="castep_electronic_calculation",
+                    project_id=base_spec.project_id,
+                    project_resolution=project_resolution,
+                    expected_revision=expected_revision,
+                    current_revision=base_spec.revision,
+                    execution_mode=mode,
+                    working_dir=store.workspace_root,
+                ),
+                response_mode,
             )
         if not isinstance(base_spec.model, CrystalSpec):
             raise ValueError("CASTEP electronic calculation requires a crystal project")
@@ -42259,6 +42617,7 @@ def material_studio_castep_run_current(
             "project_resolution": project_resolution,
             "base_revision": base_spec.revision,
             "revision": base_spec.revision,
+            "expected_revision": expected_revision,
             "revision_created": False,
             "execution_mode": mode.value,
             "execution_started": False,
@@ -42967,6 +43326,7 @@ def material_studio_castep_relax_current(
     views: Annotated[list[str] | None, Field(description="Optional diagnostic view names.")] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="CASTEP execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
+    expected_revision: Annotated[int | None, Field(description="Optional revision binding from a prior preview handoff; stale bindings are rejected before execution.", ge=0)] = None,
     response_mode: Annotated[McpResponseMode, Field(description="full result or compact MCP receipt.")] = McpResponseMode.FULL,
 ) -> dict[str, Any]:
     """Run the verified CASTEP relaxation-to-revision workflow."""
@@ -42989,6 +43349,22 @@ def material_studio_castep_relax_current(
             project_resolution = _explicit_project_resolution(
                 base_spec,
                 current_pointer,
+            )
+        if (
+            expected_revision is not None
+            and base_spec.revision != expected_revision
+        ):
+            return _compact_live_response(
+                _castep_revision_binding_block(
+                    workflow="castep_geometry_optimization",
+                    project_id=base_spec.project_id,
+                    project_resolution=project_resolution,
+                    expected_revision=expected_revision,
+                    current_revision=base_spec.revision,
+                    execution_mode=mode,
+                    working_dir=store.workspace_root,
+                ),
+                response_mode,
             )
         if not isinstance(base_spec.model, CrystalSpec):
             raise ValueError("CASTEP geometry relaxation requires a crystal project")
@@ -43038,6 +43414,7 @@ def material_studio_castep_relax_current(
             "project_resolution": project_resolution,
             "base_revision": base_spec.revision,
             "revision": base_spec.revision,
+            "expected_revision": expected_revision,
             "revision_created": False,
             "execution_mode": mode.value,
             "execution_started": False,
@@ -43905,6 +44282,7 @@ def material_studio_live_modeling_request(
                     result = material_studio_castep_run_current(
                         project_id=project_id,
                         execution_mode=mode,
+                        expected_revision=current_spec.revision,
                         task=electronic_payload.get("task"),
                         quality=electronic_payload.get("quality"),
                         functional=electronic_payload.get("functional"),
@@ -43992,6 +44370,7 @@ def material_studio_live_modeling_request(
                 result = material_studio_castep_relax_current(
                     project_id=project_id,
                     execution_mode=mode,
+                    expected_revision=current_spec.revision,
                     quality=relaxation_payload.get("quality"),
                     functional=relaxation_payload.get("functional"),
                     cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
@@ -44230,22 +44609,26 @@ def material_studio_live_modeling_request(
                 result["diagnostic_export_requested"] = True
                 result["remediation_intent"] = effective_remediation_intent
                 if not confirm_recommended_calculation_settings:
-                    high_level_confirmation_payload = {
-                        "user_request": user_request,
-                        "project_id": project_id,
-                        "base_revision": current_spec.revision,
-                        "execution_mode": recommended_mode.value,
-                        "open_in_gui": effective_open_in_gui,
-                        "take_snapshot": effective_take_snapshot,
-                        "export_view_audit": True,
-                        "remediation_intent": effective_remediation_intent,
-                        "remediation_operations": ["set_castep_energy"],
-                        "required_diagnostic_focuses": [
-                            "electronic_structure_preflight"
-                        ],
-                        "expected_result": "reciprocal_status=ok",
-                        RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD: True,
-                    }
+                    high_level_confirmation_payload = _workspace_bound_payload_hint(
+                        "material_studio_live_modeling_request",
+                        {
+                            "user_request": user_request,
+                            "project_id": project_id,
+                            "base_revision": current_spec.revision,
+                            "execution_mode": recommended_mode.value,
+                            "open_in_gui": effective_open_in_gui,
+                            "take_snapshot": effective_take_snapshot,
+                            "export_view_audit": True,
+                            "remediation_intent": effective_remediation_intent,
+                            "remediation_operations": ["set_castep_energy"],
+                            "required_diagnostic_focuses": [
+                                "electronic_structure_preflight"
+                            ],
+                            "expected_result": "reciprocal_status=ok",
+                            RECOMMENDED_CALCULATION_SETTINGS_CONFIRMATION_FIELD: True,
+                        },
+                        store.workspace_root,
+                    )
                     result["high_level_confirmation_payload_hint"] = (
                         high_level_confirmation_payload
                     )
@@ -44818,6 +45201,7 @@ def material_studio_live_modeling_request(
             "calculation_preview": _calculation_preview_receipt(
                 generated,
                 include_script=True,
+                working_dir=store.workspace_root,
             ),
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
@@ -47076,6 +47460,7 @@ def material_studio_gui_apply_current_revision(
             "calculation_preview": _calculation_preview_receipt(
                 generated,
                 include_script=False,
+                working_dir=store.workspace_root,
             ),
             "gui_status": gui.status(project_id=project_id, revision=spec.revision),
         })

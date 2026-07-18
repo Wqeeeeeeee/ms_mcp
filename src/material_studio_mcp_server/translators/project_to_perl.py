@@ -100,6 +100,8 @@ def render_model_to_perl(spec: ModelSpec, output_dir: str | Path | None = None) 
             calculation_preview = castep_calculation_preview_metadata(
                 spec.simulation,
                 output_file,
+                project_id=spec.project_id,
+                revision=spec.revision,
             )
     elif isinstance(spec.model, ImportedStructureSpec):
         script = _render_imported_structure(spec, output_file)

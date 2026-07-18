@@ -60,10 +60,68 @@ def test_crystal_translator_is_preview_only(tmp_path: Path) -> None:
     )
     assert generated.calculation_preview["task"] == "Energy"
     assert generated.calculation_preview["execution_policy"] == "preview_only"
+    assert generated.calculation_preview["separate_execution_policy"] == (
+        "explicit_execute_only"
+    )
+    assert generated.calculation_preview["execution_supported_by_structured_workflow"] is True
+    assert generated.calculation_preview["execution_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    handoff = generated.calculation_preview["execution_handoff"]
+    assert handoff["status"] == "explicit_execution_available"
+    assert handoff["source_revision"] == spec.revision
+    assert handoff["preview_action"]["payload_hint"] == {
+        "project_id": spec.project_id,
+        "expected_revision": spec.revision,
+        "execution_mode": "preview",
+        "task": "Energy",
+        "open_in_gui": False,
+        "take_snapshot": False,
+        "export_view_audit": True,
+        "response_mode": "compact",
+    }
+    assert handoff["preview_action"]["safe_to_call_without_confirmation"] is True
+    assert handoff["execute_action"]["needs_user_confirmation"] is True
     assert generated.calculation_preview["calculation_executed"] is False
     assert (
         generated.calculation_preview["structure_materialization_executes_calculation"]
         is False
+    )
+
+
+def test_crystal_castep_handoff_maps_geometry_and_keeps_optics_preview_only(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/silicon_diamond_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload["project_id"] = "castep_handoff_task_map"
+    payload["simulation"]["task"] = "GeometryOptimization"
+    geometry = render_model_to_perl(ModelSpec.model_validate(payload), tmp_path)
+    assert geometry.calculation_preview is not None
+    assert geometry.calculation_preview["execution_tool"] == (
+        "material_studio_castep_relax_current"
+    )
+    geometry_payload = geometry.calculation_preview["execution_handoff"][
+        "preview_action"
+    ]["payload_hint"]
+    assert geometry_payload["expected_revision"] == 0
+    assert "task" not in geometry_payload
+
+    payload["simulation"]["task"] = "Optics"
+    optics = render_model_to_perl(ModelSpec.model_validate(payload), tmp_path)
+    assert optics.calculation_preview is not None
+    assert optics.calculation_preview["execution_policy"] == "preview_only"
+    assert optics.calculation_preview["separate_execution_policy"] == "unavailable"
+    assert optics.calculation_preview["execution_supported_by_structured_workflow"] is False
+    assert optics.calculation_preview["execution_tool"] is None
+    optics_handoff = optics.calculation_preview["execution_handoff"]
+    assert optics_handoff["status"] == "preview_only_no_dedicated_execution_tool"
+    assert optics_handoff["execute_action"] is None
+    assert optics_handoff["preview_action"]["recommended_tool"] == (
+        "material_studio_model_preview_script"
     )
 
 

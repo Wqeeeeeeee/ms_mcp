@@ -190,6 +190,7 @@ def test_castep_relax_current_preview_never_runs_or_creates_revision(
     preview = server.material_studio_castep_relax_current(
         project_id=project_id,
         execution_mode="preview",
+        expected_revision=0,
         open_in_gui=False,
         take_snapshot=False,
         export_view_audit=False,
@@ -199,6 +200,7 @@ def test_castep_relax_current_preview_never_runs_or_creates_revision(
     assert preview["ok"] is True
     assert preview["status"] == "ready_for_explicit_execute"
     assert preview["execution_started"] is False
+    assert preview["expected_revision"] == 0
     assert preview["revision_created"] is False
     assert preview["preflight"]["execution_ready"] is True
     assert "Modules->CASTEP->GeometryOptimization->Run" in preview["script"]
@@ -206,6 +208,51 @@ def test_castep_relax_current_preview_never_runs_or_creates_revision(
     assert not Path(preview["planned_outputs"]["structure"]).exists()
     current = ProjectStore(tmp_path).load_current(project_id)
     assert current.revision == 0
+
+
+def test_castep_relaxation_stale_handoff_stops_before_runner_or_run_directory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "castep_relax_stale_handoff"
+    created = server.material_studio_model_create_from_spec(
+        _silicon_spec(project_id),
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("stale handoff must stop before runner invocation")
+
+    monkeypatch.setattr(server.runner, "run_script", unexpected_run)
+    result = server.material_studio_castep_relax_current(
+        project_id=project_id,
+        execution_mode="execute",
+        expected_revision=1,
+        open_in_gui=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == (
+        "castep_geometry_optimization_revision_binding_mismatch"
+    )
+    assert result["expected_revision"] == 1
+    assert result["current_revision"] == 0
+    assert result["execution_started"] is False
+    assert result["revision_created"] is False
+    assert result["next_action_plan"]["payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
+    assert not (
+        tmp_path
+        / project_id
+        / "outputs"
+        / "r000"
+        / "castep_geometry_optimization"
+    ).exists()
 
 
 def test_castep_relax_current_promotes_only_verified_converged_result(

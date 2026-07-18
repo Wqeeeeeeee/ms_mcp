@@ -48,6 +48,18 @@ def test_crystal_create_persists_bound_castep_preview_and_exposes_read_receipts(
     assert calculation["calculation_executed"] is False
     assert calculation["calculation_result_available"] is False
     assert calculation["structure_materialization_executes_calculation"] is False
+    assert calculation["execution_policy"] == "preview_only"
+    assert calculation["separate_execution_policy"] == "explicit_execute_only"
+    assert calculation["execution_supported_by_separate_tool"] is True
+    assert calculation["execution_tool"] == "material_studio_castep_run_current"
+    handoff = calculation["execution_handoff"]
+    assert handoff["workspace_bound"] is True
+    assert Path(handoff["working_dir"]) == tmp_path.resolve()
+    assert handoff["preview_action"]["payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
+    assert handoff["preview_action"]["payload_hint"]["expected_revision"] == 0
+    assert handoff["execute_action"]["needs_user_confirmation"] is True
     assert "Modules->CASTEP->Energy->Run" in calculation["script"]
     calculation_path = Path(calculation["script_path"])
     assert calculation_path.name == "r000_castep_task.pl"
@@ -91,6 +103,16 @@ def test_crystal_create_persists_bound_castep_preview_and_exposes_read_receipts(
     ] == str(calculation_path)
     assert status["live_summary"]["calculation_preview_task"] == "Energy"
     assert status["live_summary"]["calculation_preview_trusted"] is True
+    assert status["live_summary"]["calculation_preview_separate_execution_policy"] == (
+        "explicit_execute_only"
+    )
+    assert status["live_summary"]["calculation_preview_execution_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert status["live_summary"]["calculation_preview_handoff_status"] == (
+        "explicit_execution_available"
+    )
+    assert status["live_summary"]["calculation_preview_workspace_bound"] is True
     assert status["live_summary"]["calculation_executed"] is False
 
     compact = material_studio_live_project_status(
@@ -100,6 +122,11 @@ def test_crystal_create_persists_bound_castep_preview_and_exposes_read_receipts(
         response_mode=server.McpResponseMode.COMPACT,
     )
     assert compact["calculation_preview"]["artifact_status"] == "matched"
+    compact_handoff = compact["calculation_preview"]["execution_handoff"]
+    assert compact_handoff["workspace_bound"] is True
+    assert compact_handoff["preview_action"]["payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
     assert "script" not in compact["calculation_preview"]
     assert compact["artifacts"]["calculation_preview_script_path"] == str(
         calculation_path
@@ -166,7 +193,9 @@ def test_crystal_execute_materializes_only_cif_and_never_runs_castep_companion(
     calculation = result["calculation_preview"]
     assert calculation["artifact_status"] == "matched"
     assert calculation["execution_policy"] == "preview_only"
-    assert calculation["execution_supported_by_structured_workflow"] is False
+    assert calculation["separate_execution_policy"] == "explicit_execute_only"
+    assert calculation["execution_supported_by_structured_workflow"] is True
+    assert calculation["execution_tool"] == "material_studio_castep_run_current"
     assert calculation["structure_materialization_executes_calculation"] is False
     assert calculation["calculation_executed"] is False
     assert calculation["calculation_result_available"] is False

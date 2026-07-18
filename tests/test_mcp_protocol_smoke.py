@@ -57,6 +57,15 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["capabilities_transactional_miller_implemented"] is True
     assert calls["capabilities_exact_collinear_direction_implemented"] is True
     assert calls["capabilities_non_collinear_direction_implemented"] is False
+    assert calls["capabilities_castep_handoff_workspace_bound"] is True
+    assert calls["capabilities_castep_handoff_revision_bound"] is True
+    assert calls["capabilities_castep_handoff_execute_confirmation"] is True
+    assert calls["capabilities_castep_handoff_energy_tool"] == (
+        "material_studio_castep_run_current"
+    )
+    assert calls["capabilities_castep_handoff_relax_tool"] == (
+        "material_studio_castep_relax_current"
+    )
     assert calls["capabilities_castep_electronic_tool"] == (
         "material_studio_castep_run_current"
     )

@@ -8,6 +8,7 @@ from typing import Any
 
 from material_studio_mcp_server.castep_materialscript import (
     build_castep_materialscript_plan,
+    castep_structured_execution_tool,
     render_castep_run_snippet,
 )
 from material_studio_mcp_server.runner import perl_string
@@ -253,29 +254,99 @@ sub optional_document_name_json {
 def castep_calculation_preview_metadata(
     spec: CastepEnergySpec,
     input_file: str | Path,
+    *,
+    project_id: str | None = None,
+    revision: int | None = None,
 ) -> dict[str, Any]:
     """Return an explicit non-execution receipt for a crystal CASTEP preview."""
 
     plan = build_castep_materialscript_plan(spec)
-    geometry_execution_supported = plan.task is CastepTask.GEOMETRY_OPTIMIZATION
+    execution_tool = castep_structured_execution_tool(plan.task)
+    execution_supported = execution_tool is not None
+    preview_payload: dict[str, Any] = {
+        "project_id": project_id,
+        "expected_revision": revision,
+        "execution_mode": "preview",
+    }
+    if execution_tool == "material_studio_castep_run_current":
+        preview_payload["task"] = plan.task.value
+    if execution_supported:
+        preview_payload.update(
+            {
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": True,
+                "response_mode": "compact",
+            }
+        )
+        preview_action = {
+            "recommended_tool": execution_tool,
+            "recommended_action": "preview_current_revision_castep_task",
+            "payload_hint": {
+                key: value for key, value in preview_payload.items() if value is not None
+            },
+            "payload_hint_is_directly_callable": True,
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+        }
+        execute_payload = dict(preview_action["payload_hint"])
+        execute_payload["execution_mode"] = "execute"
+        execute_action: dict[str, Any] | None = {
+            "recommended_tool": execution_tool,
+            "recommended_action": "execute_current_revision_castep_task_after_explicit_confirmation",
+            "payload_hint": execute_payload,
+            "payload_hint_is_directly_callable": True,
+            "needs_user_confirmation": True,
+            "safe_to_call_without_confirmation": False,
+        }
+        handoff_status = "explicit_execution_available"
+        unsupported_reason = None
+    else:
+        preview_action = {
+            "recommended_tool": "material_studio_model_preview_script",
+            "recommended_action": "review_revision_bound_castep_companion_script",
+            "payload_hint": {
+                key: value
+                for key, value in {
+                    "project_id": project_id,
+                }.items()
+                if value is not None
+            },
+            "payload_hint_is_directly_callable": project_id is not None,
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+        }
+        execute_action = None
+        handoff_status = "preview_only_no_dedicated_execution_tool"
+        unsupported_reason = "dedicated_structured_execution_tool_unavailable_for_task"
     return {
         "available": True,
         "kind": "castep_task",
         "module": "CASTEP",
         "task": plan.task.value,
+        "project_id": project_id,
+        "source_revision": revision,
         "input_structure": str(input_file),
         "dispatch": plan.summary(),
-        "execution_policy": (
-            "explicit_execute_only"
-            if geometry_execution_supported
-            else "preview_only"
+        "execution_policy": "preview_only",
+        "separate_execution_policy": (
+            "explicit_execute_only" if execution_supported else "unavailable"
         ),
-        "execution_supported_by_structured_workflow": geometry_execution_supported,
-        "execution_tool": (
-            "material_studio_castep_relax_current"
-            if geometry_execution_supported
-            else None
-        ),
+        "execution_supported_by_structured_workflow": execution_supported,
+        "execution_supported_by_separate_tool": execution_supported,
+        "execution_tool": execution_tool,
+        "execute_requires_user_confirmation": execution_supported,
+        "execution_handoff": {
+            "status": handoff_status,
+            "task": plan.task.value,
+            "project_id": project_id,
+            "source_revision": revision,
+            "execution_supported": execution_supported,
+            "execution_tool": execution_tool,
+            "preview_action": preview_action,
+            "execute_action": execute_action,
+            "unsupported_reason": unsupported_reason,
+        },
         "structure_materialization_executes_calculation": False,
         "requires_explicit_separate_execution": True,
         "calculation_executed": False,

@@ -1172,6 +1172,17 @@ crystal workflow still only materializes and optionally hot-loads the CIF;
 `structure_materialization_executes_calculation=false` and
 `calculation_executed=false` remain authoritative.
 
+For a calculation-ready current revision, the status workflow now returns a
+task-specific `execution_handoff` instead of sending the client back to the
+same status tool. The preview action uses `material_studio_castep_run_current`
+for Energy/BandStructure/DOS/PDOS and
+`material_studio_castep_relax_current` for GeometryOptimization. Preserve its
+workspace and expected-revision fields exactly. Preview is safe without user
+confirmation; execute remains a separate confirmed call. Stale handoffs stop
+without creating calculation artifacts. Tasks without a dedicated result
+workflow remain preview-only and never inherit an electronic or relaxation
+executor by substitution.
+
 The CASTEP renderer follows the locally installed Materials Studio 20.1
 MaterialsScript reference. Canonical tasks are `Energy`,
 `GeometryOptimization`, `BandStructure`, `DensityOfStates`,

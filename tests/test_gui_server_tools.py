@@ -1113,6 +1113,73 @@ def test_live_preflight_blocks_implicit_followup_across_workspace_contexts(
     assert explicit["new_revision"] == 1
 
 
+def test_live_preflight_aligned_workspace_binds_all_callable_action_payloads(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "aligned_external_workspace"
+    backend = FakeGuiBackend()
+    controller = MaterialsStudioGuiController(workspace, backend=backend)
+    spec = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/silicon_diamond_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    spec["project_id"] = "aligned_visible_project"
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        execution_mode="execute",
+        working_dir=str(workspace),
+    )
+    assert created["ok"] is True
+    structure = Path(created["planned_outputs"]["structure"])
+    wrapper = controller._create_project_wrapper(
+        structure,
+        project_id=spec["project_id"],
+        revision=0,
+    )
+    backend.window = WindowInfo(
+        handle=409,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    preflight = server.material_studio_live_session_preflight(
+        working_dir=str(workspace),
+        include_latest_project=True,
+        include_gui_status=True,
+    )
+
+    expected_workspace = str(workspace.resolve())
+    assert preflight["ok"] is True
+    assert preflight["state"] == "ready_for_live_edit_gui_activation"
+    assert preflight["workspace_context_mismatch"] is False
+    assert preflight["working_dir"] == expected_workspace
+    assert preflight["next_action_plan"]["payload_hint"]["working_dir"] == (
+        expected_workspace
+    )
+    assert preflight["session_next_action_plan"]["payload_hint"][
+        "working_dir"
+    ] == expected_workspace
+    assert preflight["coordinated_next_action_plan"]["payload_hint"][
+        "working_dir"
+    ] == expected_workspace
+    assert preflight["mcp_client_readiness"]["payload_hint"][
+        "working_dir"
+    ] == expected_workspace
+    assert preflight["mcp_client_readiness"]["visible_followup_payload_hint"][
+        "working_dir"
+    ] == expected_workspace
+    modeling_plan = preflight["modeling_next_action_plan"]
+    if modeling_plan.get("recommended_tool"):
+        assert modeling_plan["payload_hint"]["working_dir"] == expected_workspace
+
+
 def test_gui_status_without_project_resolves_latest_current_window(monkeypatch, tmp_path: Path) -> None:
     backend = MultiWindowFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
@@ -5293,6 +5360,7 @@ def test_live_status_promotes_stale_dopant_metadata_as_specific_semiconductor_bl
         "take_snapshot": False,
         "reason": "current_structure_and_dopant_metadata_are_out_of_sync",
         "recovery_hint": "run_metadata_reconcile_without_rebuilding_the_structure",
+        "working_dir": str(tmp_path.resolve()),
     }
     assert status["live_summary"]["next_action_tool"] == "material_studio_project_reconcile_dopant_metadata"
     assert (
@@ -5765,6 +5833,19 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         ]
         is True
     )
+    handoff = capabilities["castep_calculation_preview_handoff"]
+    assert handoff["receipt_field"] == "calculation_preview.execution_handoff"
+    assert handoff["preview_actions_are_workspace_bound"] is True
+    assert handoff["preview_actions_are_revision_bound"] is True
+    assert handoff["revision_binding_parameter"] == "expected_revision"
+    assert handoff["task_execution_tools"]["Energy"] == (
+        "material_studio_castep_run_current"
+    )
+    assert handoff["task_execution_tools"]["GeometryOptimization"] == (
+        "material_studio_castep_relax_current"
+    )
+    assert handoff["task_execution_tools"]["Optics"] is None
+    assert handoff["execute_requires_explicit_confirmation"] is True
     assert capabilities[
         "recommended_calculation_settings_receipt_recovery_field"
     ] == "recommended_calculation_settings_receipt_recovery"
@@ -9028,7 +9109,9 @@ def test_live_session_preflight_reports_ready_new_session(monkeypatch, tmp_path:
     assert client["visible_followup_blocking_reasons"] == ["no_current_project"]
     assert client["visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
     assert client["visible_followup_recommended_action"] == "create_new_live_model_from_template_or_model_spec"
-    assert client["visible_followup_payload_hint"] == {}
+    assert client["visible_followup_payload_hint"] == {
+        "working_dir": str(tmp_path.resolve())
+    }
     assert result["visible_followup_contract"]["visible_followup_ready"] is False
     assert result["visible_followup_contract"]["visible_followup_status"] == "no_current_project"
     assert result["visible_followup_contract"]["visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
@@ -9036,7 +9119,9 @@ def test_live_session_preflight_reports_ready_new_session(monkeypatch, tmp_path:
     assert result["visible_followup_status"] == "no_current_project"
     assert result["mcp_visible_followup_ready"] is False
     assert result["mcp_visible_followup_status"] == "no_current_project"
-    assert result["mcp_visible_followup_payload_hint"] == {}
+    assert result["mcp_visible_followup_payload_hint"] == {
+        "working_dir": str(tmp_path.resolve())
+    }
     assert client["must_reuse_existing_gui_window"] is True
     assert client["auto_launch_during_hotload_allowed"] is False
     assert client["single_window_policy_ok"] is True
@@ -9115,6 +9200,7 @@ def test_live_session_preflight_refuses_gui_launch_when_process_has_no_window(
     assert result["next_action_plan"]["payload_hint"] == {
         "gui_process_count": 1,
         "do_not_launch_new_instance": True,
+        "working_dir": str(tmp_path.resolve()),
     }
     client = result["mcp_client_readiness"]
     assert client["status"] == "preview_only_until_gui_ready"
@@ -9144,6 +9230,7 @@ def test_live_session_preflight_refuses_gui_launch_when_process_has_no_window(
     assert client["payload_hint"] == {
         "gui_process_count": 1,
         "do_not_launch_new_instance": True,
+        "working_dir": str(tmp_path.resolve()),
     }
     assert "matstudio_process_without_usable_window" in client["hotload_blocking_reasons"]
     assert backend.launch_count == 0
@@ -9204,6 +9291,9 @@ def test_live_session_preflight_summarizes_latest_semiconductor_project(monkeypa
     assert result["recommended_action"] == "send_next_modeling_request_or_execute_current_revision_when_confirmed"
     assert result["next_action_plan"]["action_id"] == "send_follow_up_live_modeling_request"
     assert result["next_action_plan"]["payload_hint"]["project_id"] == created["project_id"]
+    assert result["next_action_plan"]["payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
     client = result["mcp_client_readiness"]
     assert client["current_revision_loaded_in_gui"] is False
     assert client["visible_followup_ready"] is False
@@ -9219,6 +9309,9 @@ def test_live_session_preflight_summarizes_latest_semiconductor_project(monkeypa
     assert client["visible_followup_payload_hint"]["open_in_gui"] is True
     assert client["visible_followup_payload_hint"]["take_snapshot"] is True
     assert client["visible_followup_payload_hint"]["export_view_audit"] is True
+    assert client["visible_followup_payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
     assert result["visible_followup_contract"]["visible_followup_status"] == "current_revision_not_materialized"
     assert result["visible_followup_contract"]["project_id"] == created["project_id"]
     assert result["visible_followup_contract"]["revision"] == created["revision"]
@@ -9240,6 +9333,9 @@ def test_live_session_preflight_summarizes_latest_semiconductor_project(monkeypa
     assert rechecked_client["visible_followup_payload_hint"]["project_id"] == created["project_id"]
     assert rechecked_client["visible_followup_payload_hint"]["revision"] == created["revision"]
     assert rechecked_client["visible_followup_payload_hint"]["reuse_existing_window_only"] is True
+    assert rechecked_client["visible_followup_payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
     assert rechecked["visible_followup_contract"]["visible_followup_status"] == "needs_current_revision_reload"
     assert rechecked["visible_followup_contract"]["visible_followup_payload_hint"] == rechecked_client["visible_followup_payload_hint"]
     assert rechecked["visible_followup_status"] == "needs_current_revision_reload"
@@ -9248,7 +9344,6 @@ def test_live_session_preflight_summarizes_latest_semiconductor_project(monkeypa
 
     reloaded = server.material_studio_gui_open_structure(
         **rechecked_client["visible_followup_payload_hint"],
-        working_dir=str(tmp_path),
     )
     assert reloaded["ok"] is True
     assert reloaded["reuse_existing_window_only"] is True
@@ -9309,15 +9404,22 @@ def test_live_session_preflight_reports_latest_project_loaded_in_gui(monkeypatch
     assert client["visible_followup_blocking_reasons"] == []
     assert client["visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
     assert client["visible_followup_recommended_action"] == "continue_next_visible_model_edit"
-    assert client["visible_followup_payload_hint"] == {"project_id": created["project_id"]}
+    expected_followup_payload = {
+        "project_id": created["project_id"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert client["visible_followup_payload_hint"] == expected_followup_payload
     assert result["visible_followup_contract"]["visible_followup_ready"] is True
     assert result["visible_followup_contract"]["visible_followup_status"] == "ready"
     assert result["visible_followup_contract"]["current_revision_loaded_in_gui"] is True
-    assert result["visible_followup_contract"]["visible_followup_payload_hint"] == {"project_id": created["project_id"]}
+    assert (
+        result["visible_followup_contract"]["visible_followup_payload_hint"]
+        == expected_followup_payload
+    )
     assert result["visible_followup_ready"] is True
     assert result["visible_followup_status"] == "ready"
     assert result["mcp_visible_followup_ready"] is True
-    assert result["mcp_visible_followup_payload_hint"] == {"project_id": created["project_id"]}
+    assert result["mcp_visible_followup_payload_hint"] == expected_followup_payload
 
     status = server.material_studio_live_project_status(
         created["project_id"],
@@ -9404,6 +9506,7 @@ def test_live_session_preflight_requires_single_window_before_activating_target_
     assert result["next_action_plan"]["safe_to_call_without_confirmation"] is False
     assert result["next_action_plan"]["payload_hint"] == {
         "single_window_violation_reasons": ["multiple_matstudio_windows_detected"],
+        "working_dir": str(tmp_path.resolve()),
     }
     client = result["mcp_client_readiness"]
     assert client["can_accept_hotload_request_without_new_window"] is False
@@ -10107,7 +10210,9 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["gui_current_revision"]["status"] == "single_window_policy_review"
     assert activated["gui_current_revision"]["needs_single_window_resolution"] is True
     assert activated["gui_current_revision"]["recommended_tool"] == "material_studio_gui_status"
-    assert activated["gui_current_revision"]["payload_hint"] == {}
+    assert activated["gui_current_revision"]["payload_hint"] == {
+        "working_dir": str(tmp_path.resolve())
+    }
 
 
 def test_minimized_current_window_routes_preflight_through_activate_then_snapshot(
@@ -10678,6 +10783,7 @@ def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(mo
         "take_snapshot": True,
         "export_view_audit": True,
         "reuse_existing_window_only": True,
+        "working_dir": str(tmp_path.resolve()),
     }
     assert result["visible_followup_contract"]["visible_followup_ready"] is False
     assert result["visible_followup_contract"]["visible_followup_status"] == "needs_current_revision_reload"
@@ -10708,6 +10814,7 @@ def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(mo
         "take_snapshot": True,
         "export_view_audit": True,
         "reuse_existing_window_only": True,
+        "working_dir": str(tmp_path.resolve()),
     }
     assert "selected_window_revision_does_not_match_current_revision" in stale_status["gui_current_revision"]["stale_reasons"]
     assert stale_status["live_summary"]["gui_current_revision_status"] == "not_hot_loaded"
@@ -10733,8 +10840,7 @@ def test_live_session_preflight_warns_when_latest_project_gui_window_is_stale(mo
     assert stale_receipt_gui["payload_hint"] == stale_status["gui_current_revision"]["payload_hint"]
 
     reopened = server.material_studio_gui_open_structure(
-        **result["next_action_plan"]["payload_hint"],
-        working_dir=str(tmp_path),
+        **result["next_action_plan"]["payload_hint"]
     )
 
     assert reopened["ok"] is True
@@ -10817,6 +10923,7 @@ def test_live_project_status_marks_persisted_hotload_stale_when_gui_window_missi
         "take_snapshot": True,
         "export_view_audit": True,
         "reuse_existing_window_only": True,
+        "working_dir": str(tmp_path.resolve()),
     }
     assert status["live_summary"]["gui_current_revision_status"] == "stale_or_not_current"
     assert status["live_summary"]["gui_current_revision_needs_reload"] is True
@@ -11007,7 +11114,11 @@ def test_live_project_status_summarizes_current_revision_without_report(tmp_path
     assert status["mcp_current_model_element_counts"] == {"C": 6, "H": 6}
     assert status["mcp_current_model_formula"] == "C6H6"
     assert status["mcp_current_model_reduced_formula"] == "CH"
-    preflight_payload = {"project_id": "live_status_no_report_proj", "revision": 0}
+    preflight_payload = {
+        "project_id": "live_status_no_report_proj",
+        "revision": 0,
+        "working_dir": str(tmp_path.resolve()),
+    }
     preflight_reasons = ["gui_status_not_probed", "single_window_policy_not_verified"]
     preflight_blockers = ["gui_preflight_not_verified", *preflight_reasons]
     assert status["next_action_plan"] == status["modeling_report"]["next_action_plan"]
@@ -22801,6 +22912,15 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert result["modeling_report"]["diagnostic_export_requested"] is True
     assert result["modeling_report"]["normality_check_requested"] is True
     assert result["modeling_report"]["gui"]["hot_loaded"] is True
+    expected_followup_payload = {
+        "project_id": result["project_id"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    expected_snapshot_payload = {
+        "project_id": result["project_id"],
+        "revision": result["revision"],
+        "working_dir": str(tmp_path.resolve()),
+    }
     live_summary = result["live_summary"]
     assert live_summary == result["modeling_report"]["live_summary"]
     assert live_summary["project_id"] == result["project_id"]
@@ -22832,12 +22952,12 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert live_action["needs_user_confirmation"] is False
     assert live_action["safe_to_call_without_confirmation"] is True
     assert live_action["reason"] == "acceptance_criteria_failed"
-    assert live_action["payload_hint"] == {"project_id": result["project_id"]}
+    assert live_action["payload_hint"] == expected_followup_payload
     assert live_summary["mcp_next_action_id"] == "continue_live_modeling"
     assert live_summary["mcp_next_tool"] == "material_studio_live_modeling_request"
     assert live_summary["mcp_next_needs_user_confirmation"] is False
     assert live_summary["mcp_next_safe_to_call_without_confirmation"] is True
-    assert live_summary["mcp_next_payload_hint"] == {"project_id": result["project_id"]}
+    assert live_summary["mcp_next_payload_hint"] == expected_followup_payload
     assert live_action["ready"]["next_edit"] is True
     assert live_action["ready"]["calculation"] is False
     assert live_action["artifacts"]["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
@@ -22847,10 +22967,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert hotload_preflight["current_revision_loaded"] is True
     assert hotload_preflight["safe_to_attempt_hotload"] is False
     assert hotload_preflight["recommended_tool"] == "material_studio_gui_snapshot"
-    assert hotload_preflight["payload_hint"] == {
-        "project_id": result["project_id"],
-        "revision": result["revision"],
-    }
+    assert hotload_preflight["payload_hint"] == expected_snapshot_payload
     live_gui_acceptance = result["live_gui_acceptance"]
     assert live_gui_acceptance == result["modeling_report"]["live_gui_acceptance"]
     assert live_gui_acceptance["available"] is True
@@ -22906,7 +23023,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert gui_binding["visible_followup_blocking_reasons"] == []
     assert gui_binding["visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
     assert gui_binding["visible_followup_recommended_action"] == "continue_next_visible_model_edit"
-    assert gui_binding["visible_followup_payload_hint"] == {"project_id": result["project_id"]}
+    assert gui_binding["visible_followup_payload_hint"] == expected_followup_payload
     assert gui_binding["recommended_tool"] == "material_studio_gui_snapshot"
     assert live_summary["live_gui_window_binding_status"] == gui_binding["status"]
     assert live_summary["live_gui_window_binding_current_revision_loaded"] is True
@@ -22919,9 +23036,10 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert live_summary["live_gui_window_binding_visible_followup_blocking_reasons"] == []
     assert live_summary["live_gui_window_binding_visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
     assert live_summary["live_gui_window_binding_visible_followup_recommended_action"] == "continue_next_visible_model_edit"
-    assert live_summary["live_gui_window_binding_visible_followup_payload_hint"] == {
-        "project_id": result["project_id"]
-    }
+    assert (
+        live_summary["live_gui_window_binding_visible_followup_payload_hint"]
+        == expected_followup_payload
+    )
     assert live_summary["live_gui_window_binding_recommended_tool"] == "material_studio_gui_snapshot"
     assert result["live_gui_window_binding"] == gui_binding
     assert result["live_gui_window_binding_status"] == gui_binding["status"]
@@ -22936,17 +23054,23 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert result["live_gui_window_binding_ready_for_next_live_edit"] is True
     assert result["live_gui_window_binding_visible_followup_ready"] is True
     assert result["live_gui_window_binding_visible_followup_status"] == "ready"
-    assert result["live_gui_window_binding_visible_followup_payload_hint"] == {"project_id": result["project_id"]}
+    assert (
+        result["live_gui_window_binding_visible_followup_payload_hint"]
+        == expected_followup_payload
+    )
     assert result["visible_followup_ready"] is True
     assert result["visible_followup_status"] == "ready"
     assert result["visible_followup_blocking_reasons"] == []
     assert result["visible_followup_recommended_tool"] == "material_studio_live_modeling_request"
-    assert result["visible_followup_payload_hint"] == {"project_id": result["project_id"]}
+    assert result["visible_followup_payload_hint"] == expected_followup_payload
     assert result["visible_followup_contract"]["project_id"] == result["project_id"]
     assert result["visible_followup_contract"]["revision"] == result["revision"]
     assert result["visible_followup_contract"]["current_revision_loaded_in_gui"] is True
     assert result["visible_followup_contract"]["visible_followup_status"] == "ready"
-    assert result["visible_followup_contract"]["visible_followup_payload_hint"] == {"project_id": result["project_id"]}
+    assert (
+        result["visible_followup_contract"]["visible_followup_payload_hint"]
+        == expected_followup_payload
+    )
     assert result["visible_followup_contract"]["must_reuse_existing_gui_window"] is True
     assert result["visible_followup_contract"]["single_window_policy_ok"] is True
     session = result["mcp_modeling_session_contract"]
@@ -22964,15 +23088,12 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert session["single_window"]["target_window_title"] == gui_binding["target_window_title"]
     assert session["followup"]["visible_followup_ready"] is True
     assert session["followup"]["visible_followup_status"] == "ready"
-    assert session["followup"]["payload_hint"] == {"project_id": result["project_id"]}
+    assert session["followup"]["payload_hint"] == expected_followup_payload
     assert session["hotload"]["same_window_ready"] is True
     assert session["hotload"]["status"] == "current_revision_loaded"
     assert session["hotload"]["recommended_tool"] == "material_studio_gui_snapshot"
     assert session["hotload"]["recommended_action"] == "capture_gui_snapshot_for_current_revision"
-    assert session["hotload"]["payload_hint"] == {
-        "project_id": result["project_id"],
-        "revision": result["revision"],
-    }
+    assert session["hotload"]["payload_hint"] == expected_snapshot_payload
     assert session["hotload"]["needs_user_confirmation"] is False
     assert session["hotload"]["safe_to_call_without_confirmation"] is True
     assert session["hotload"]["blocking_reasons"] == []
@@ -22998,10 +23119,9 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert result["mcp_modeling_session_hotload_status"] == "current_revision_loaded"
     assert result["mcp_modeling_session_hotload_tool"] == "material_studio_gui_snapshot"
     assert result["mcp_modeling_session_hotload_action"] == "capture_gui_snapshot_for_current_revision"
-    assert result["mcp_modeling_session_hotload_payload_hint"] == {
-        "project_id": result["project_id"],
-        "revision": result["revision"],
-    }
+    assert result["mcp_modeling_session_hotload_payload_hint"] == (
+        expected_snapshot_payload
+    )
     assert result["mcp_modeling_session_hotload_needs_user_confirmation"] is False
     assert result["mcp_modeling_session_hotload_safe_to_call_without_confirmation"] is True
     assert result["mcp_modeling_session_hotload_blocking_reasons"] == []
@@ -23023,20 +23143,16 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert result["mcp_same_window_hotload_status"] == "current_revision_loaded"
     assert result["mcp_same_window_hotload_tool"] == "material_studio_gui_snapshot"
     assert result["mcp_same_window_hotload_action"] == "capture_gui_snapshot_for_current_revision"
-    assert result["mcp_same_window_hotload_payload_hint"] == {
-        "project_id": result["project_id"],
-        "revision": result["revision"],
-    }
+    assert result["mcp_same_window_hotload_payload_hint"] == expected_snapshot_payload
     assert result["mcp_same_window_hotload_needs_user_confirmation"] is False
     assert result["mcp_same_window_hotload_safe_to_call_without_confirmation"] is True
     assert result["mcp_same_window_hotload_blocking_reasons"] == []
     assert live_summary["mcp_same_window_hotload_ready"] is True
     assert live_summary["mcp_same_window_hotload_status"] == "current_revision_loaded"
     assert live_summary["mcp_same_window_hotload_tool"] == "material_studio_gui_snapshot"
-    assert live_summary["mcp_same_window_hotload_payload_hint"] == {
-        "project_id": result["project_id"],
-        "revision": result["revision"],
-    }
+    assert live_summary["mcp_same_window_hotload_payload_hint"] == (
+        expected_snapshot_payload
+    )
     live_request = result["live_request_summary"]
     assert live_request == result["modeling_report"]["live_request_summary"]
     assert live_request["state"] == "current_revision_loaded"
@@ -23355,10 +23471,12 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert "acceptance_criteria_failed" in live_contract["normality"]["must_not_claim_normal_reasons"]
     assert live_contract["next_action"]["recommended_tool"] == "material_studio_live_modeling_request"
     assert live_contract["next_action"]["safe_to_call_without_confirmation"] is True
-    assert live_contract["next_action"]["payload_hint"] == {"project_id": result["project_id"]}
+    assert live_contract["next_action"]["payload_hint"] == expected_followup_payload
     assert live_summary["live_modeling_contract_status"] == "hot_loaded_review_required"
     assert live_summary["live_modeling_contract_next_tool"] == "material_studio_live_modeling_request"
-    assert live_summary["live_modeling_contract_payload_hint"] == {"project_id": result["project_id"]}
+    assert live_summary["live_modeling_contract_payload_hint"] == (
+        expected_followup_payload
+    )
     assert live_summary["followup_edit_capabilities"] == followups
     assert live_summary["followup_edit_available"] is True
     assert live_summary["followup_edit_status"] == "ready_for_followup_patch"
@@ -23543,7 +23661,7 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert live_summary["next_action_tool"] == "material_studio_live_modeling_request"
     assert live_summary["next_action_needs_user_confirmation"] is False
     assert live_summary["next_action_safe_to_call_without_confirmation"] is True
-    assert live_summary["next_action_payload_hint"] == {"project_id": result["project_id"]}
+    assert live_summary["next_action_payload_hint"] == expected_followup_payload
     assert live_summary["report_json_path"] == result["report_json_path"]
     assert live_summary["view_audit_report_path"] == result["view_audit_report_path"]
     assert live_summary["view_bundle_manifest_path"] == result["view_bundle_manifest_path"]
@@ -23651,7 +23769,9 @@ def test_live_modeling_request_create_hotloads_and_marks_requested_diagnostic_ex
     assert summary_rows[0]["live_delivery_status"] == "delivered_with_review"
     assert summary_rows[0]["live_modeling_contract_status"] == "hot_loaded_review_required"
     assert summary_rows[0]["live_modeling_contract_next_tool"] == "material_studio_live_modeling_request"
-    assert json.loads(summary_rows[0]["live_modeling_contract_payload_hint"]) == {"project_id": result["project_id"]}
+    assert json.loads(summary_rows[0]["live_modeling_contract_payload_hint"]) == (
+        expected_followup_payload
+    )
     assert summary_rows[0]["followup_edit_available"] == "True"
     assert summary_rows[0]["followup_edit_status"] == "ready_for_followup_patch"
     assert summary_rows[0]["followup_edit_base_revision"] == str(result["revision"])
@@ -27527,10 +27647,8 @@ def test_live_modeling_request_fully_hydrogen_passivates_semiconductor_slab(monk
     assert Path(result["planned_outputs"]["structure"]).exists()
 
     preview_payload = dict(diagnosis["payload_hint"])
-    preview_fix = server.material_studio_live_modeling_request(
-        working_dir=str(tmp_path),
-        **preview_payload,
-    )
+    assert preview_payload["working_dir"] == str(tmp_path.resolve())
+    preview_fix = server.material_studio_live_modeling_request(**preview_payload)
     assert preview_fix["ok"] is True
     assert preview_fix["workflow"] == "patch"
     assert preview_fix["execution_mode"] == "preview"
@@ -32892,6 +33010,7 @@ def test_modeling_report_marks_clean_semiconductor_projection_overlap_as_visual_
 
     response = {
         "ok": True,
+        "working_dir": str(tmp_path.resolve()),
         "project_id": spec.project_id,
         "revision": 0,
         "execution_mode": "execute",
@@ -32970,13 +33089,16 @@ def test_modeling_report_marks_clean_semiconductor_projection_overlap_as_visual_
     assert calculation_readiness["status"] == "ready"
     assert calculation_readiness["ready_for_calculation"] is True
     assert calculation_readiness.get("primary_blocking_reason") is None
-    assert calculation_readiness["action_id"] == "ready_for_semiconductor_calculation_preflight"
-    assert calculation_readiness["recommended_tool"] == "material_studio_live_project_status"
-    assert calculation_readiness["needs_user_confirmation"] is True
-    assert calculation_readiness["safe_to_call_without_confirmation"] is False
-    assert calculation_readiness["payload_hint"]["requires_explicit_execute_confirmation"] is True
+    assert calculation_readiness["action_id"] == "preview_current_castep_electronic_calculation"
+    assert calculation_readiness["recommended_tool"] == "material_studio_castep_run_current"
+    assert calculation_readiness["needs_user_confirmation"] is False
+    assert calculation_readiness["safe_to_call_without_confirmation"] is True
+    assert calculation_readiness["payload_hint"]["expected_revision"] == 0
+    assert calculation_readiness["payload_hint"]["execution_mode"] == "preview"
+    assert calculation_readiness["payload_hint"]["task"] == "Energy"
+    assert calculation_readiness["payload_hint"]["working_dir"] == str(tmp_path.resolve())
     assert report["live_summary"]["semiconductor_calculation_readiness_action_id"] == (
-        "ready_for_semiconductor_calculation_preflight"
+        "preview_current_castep_electronic_calculation"
     )
 
 
@@ -33394,6 +33516,7 @@ def test_live_modeling_request_confirms_recommended_kpoint_grid_in_two_steps(
     assert high_level_payload["required_diagnostic_focuses"] == [
         "electronic_structure_preflight"
     ]
+    assert high_level_payload["working_dir"] == str(tmp_path.resolve())
     assert server.material_studio_model_get_current(
         project_id,
         working_dir=str(tmp_path),
@@ -33401,7 +33524,6 @@ def test_live_modeling_request_confirms_recommended_kpoint_grid_in_two_steps(
 
     updated = server.material_studio_live_modeling_request(
         **high_level_payload,
-        working_dir=str(tmp_path),
         response_mode="full",
     )
 
@@ -33563,14 +33685,16 @@ def test_live_status_restores_validated_kpoint_remediation_receipt(
     initial_report_path.write_text(initial_report_text, encoding="utf-8")
 
     action = created["modeling_report"]["semiconductor_calculation_readiness"]
+    assert action["payload_hint"]["working_dir"] == str(tmp_path.resolve())
     confirmation = server.material_studio_live_update_with_patch(
         **action["payload_hint"],
-        working_dir=str(tmp_path),
         response_mode="full",
+    )
+    assert confirmation["confirmation_payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
     )
     applied = server.material_studio_live_update_with_patch(
         **confirmation["confirmation_payload_hint"],
-        working_dir=str(tmp_path),
         response_mode="full",
     )
     report_path = Path(applied["report_json_path"])
@@ -33656,14 +33780,16 @@ def test_live_status_rejects_corrupt_kpoint_remediation_receipt(
         response_mode="full",
     )
     action = created["modeling_report"]["semiconductor_calculation_readiness"]
+    assert action["payload_hint"]["working_dir"] == str(tmp_path.resolve())
     confirmation = server.material_studio_live_update_with_patch(
         **action["payload_hint"],
-        working_dir=str(tmp_path),
         response_mode="full",
+    )
+    assert confirmation["confirmation_payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
     )
     applied = server.material_studio_live_update_with_patch(
         **confirmation["confirmation_payload_hint"],
-        working_dir=str(tmp_path),
         response_mode="full",
     )
     project_id = created["project_id"]

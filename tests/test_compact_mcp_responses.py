@@ -235,6 +235,14 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         compact["recommended_calculation_settings_requires_explicit_confirmation"]
         is True
     )
+    handoff = compact["castep_calculation_preview_handoff"]
+    assert handoff["preview_actions_are_workspace_bound"] is True
+    assert handoff["preview_actions_are_revision_bound"] is True
+    assert handoff["revision_binding_parameter"] == "expected_revision"
+    assert handoff["task_execution_tools"]["BandStructure"] == (
+        "material_studio_castep_run_current"
+    )
+    assert handoff["task_execution_tools"]["Phonon"] is None
     assert compact[
         "recommended_calculation_settings_receipt_recovery_field"
     ] == "recommended_calculation_settings_receipt_recovery"

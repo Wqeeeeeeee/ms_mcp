@@ -1154,6 +1154,16 @@ For structured crystal revisions, inspect the separate
 persisted SHA-256 values, and `persisted_artifact_trusted` bind that script to
 the current revision. Compact responses omit script source but retain this
 binding and the dispatch summary.
+`execution_policy="preview_only"` continues to describe the companion itself.
+For Energy, BandStructure, DOS, PDOS, and GeometryOptimization, read the nested
+`execution_handoff` for a separate dedicated-tool preview. That preview payload
+is directly callable without confirmation and includes the exact `working_dir`,
+`project_id`, and `expected_revision` that produced it. Do not remove those
+bindings when following the action. A changed current revision returns a
+revision-binding mismatch before runner invocation or run-directory creation.
+The nested execute payload is only a template for an explicitly confirmed
+second call; it is never authorized by the preview receipt alone. Optics,
+Phonon, and ElasticConstants continue to report no dedicated execution tool.
 For slab templates, read `modeling_report.inspection.surface` and
 `modeling_report.inspection.slab_vacuum` to verify the surface orientation,
 declared vacuum thickness, atom-center extent, inferred atom-center vacuum, and

@@ -523,6 +523,7 @@ def test_castep_electronic_preview_never_runs_or_materializes(
     result = server.material_studio_castep_run_current(
         project_id=source.project_id,
         execution_mode="preview",
+        expected_revision=source.revision,
         task="Energy",
         open_in_gui=False,
         take_snapshot=False,
@@ -533,11 +534,52 @@ def test_castep_electronic_preview_never_runs_or_materializes(
     assert result["ok"] is True
     assert result["status"] == "ready_for_explicit_execute"
     assert result["execution_started"] is False
+    assert result["expected_revision"] == source.revision
     assert result["revision_created"] is False
     assert result["preflight"]["execution_ready"] is True
     assert not Path(result["run_directory"]).exists()
     assert not Path(result["planned_outputs"]["structure"]).exists()
     assert ProjectStore(tmp_path).load_current(source.project_id).revision == 0
+
+
+def test_castep_electronic_stale_handoff_stops_before_runner_or_run_directory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_stale_handoff")
+
+    def unexpected_run(*args, **kwargs):
+        raise AssertionError("stale handoff must stop before runner invocation")
+
+    monkeypatch.setattr(server.runner, "run_script", unexpected_run)
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        expected_revision=source.revision + 1,
+        task="Energy",
+        open_in_gui=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == (
+        "castep_electronic_calculation_revision_binding_mismatch"
+    )
+    assert result["expected_revision"] == 1
+    assert result["current_revision"] == 0
+    assert result["execution_started"] is False
+    assert result["revision_created"] is False
+    assert result["next_action_plan"]["payload_hint"]["working_dir"] == str(
+        tmp_path.resolve()
+    )
+    assert not (
+        tmp_path
+        / source.project_id
+        / "outputs"
+        / "r000"
+        / "castep_electronic"
+    ).exists()
 
 
 def test_electronic_result_assessment_is_absent_before_a_result(

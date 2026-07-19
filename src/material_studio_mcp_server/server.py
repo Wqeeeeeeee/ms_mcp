@@ -4502,6 +4502,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "post_hotload_prepare_supported_tools": [
                 "material_studio_live_modeling_request",
                 "material_studio_live_update_with_patch",
+                "material_studio_castep_run_current",
+                "material_studio_castep_relax_current",
                 "material_studio_gui_apply_current_revision",
             ],
             "post_hotload_prepare_supported_workflows": [
@@ -4511,6 +4513,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "rollback",
                 "redo",
                 "restore",
+                "castep_electronic_calculation",
+                "castep_geometry_optimization",
                 "gui_apply_current_revision",
             ],
             "post_hotload_natural_language_requires_explicit_gui_open": True,
@@ -7939,6 +7943,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "post_hotload_prepare_supported_tools": [
                     "material_studio_live_modeling_request",
                     "material_studio_live_update_with_patch",
+                    "material_studio_castep_run_current",
+                    "material_studio_castep_relax_current",
                     "material_studio_gui_apply_current_revision",
                 ],
                 "post_hotload_prepare_supported_workflows": [
@@ -7948,6 +7954,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "rollback",
                     "redo",
                     "restore",
+                    "castep_electronic_calculation",
+                    "castep_geometry_optimization",
                     "gui_apply_current_revision",
                 ],
                 "post_hotload_natural_language_requires_explicit_gui_open": True,
@@ -12629,6 +12637,57 @@ def _post_hotload_view_replay_prepare_request_receipt(
             "required_next_step": required_next_step,
         }
     )
+
+
+def _attach_post_hotload_request_receipts(
+    response: dict[str, Any],
+    *,
+    fit_to_view_requested: bool,
+    fit_to_view_request_source: str,
+    prepare_view_replay_requested: bool,
+    view_replay_prepare_request_source: str,
+    execution_mode: ExecutionMode | str,
+    open_in_gui: bool,
+    take_snapshot: bool,
+    views: list[str] | None,
+) -> dict[str, Any]:
+    """Attach stable pre-action receipts for a high-level hot-load workflow."""
+
+    response.update(
+        {
+            "post_hotload_fit_to_view_requested": bool(
+                fit_to_view_requested
+            ),
+            "post_hotload_fit_to_view_request_source": (
+                fit_to_view_request_source
+            ),
+            "post_hotload_fit_to_view": (
+                _post_hotload_fit_to_view_request_receipt(
+                    requested=fit_to_view_requested,
+                    request_source=fit_to_view_request_source,
+                    execution_mode=execution_mode,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                )
+            ),
+            "post_hotload_view_replay_prepare_requested": bool(
+                prepare_view_replay_requested
+            ),
+            "post_hotload_view_replay_prepare_request_source": (
+                view_replay_prepare_request_source
+            ),
+            "post_hotload_view_replay_prepare": (
+                _post_hotload_view_replay_prepare_request_receipt(
+                    requested=prepare_view_replay_requested,
+                    request_source=view_replay_prepare_request_source,
+                    execution_mode=execution_mode,
+                    open_in_gui=open_in_gui,
+                    views=views,
+                )
+            ),
+        }
+    )
+    return response
 
 
 def _visible_model_change_requested(text: str, compact: str) -> bool:
@@ -21834,6 +21893,14 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         if isinstance(response.get("post_hotload_fit_to_view"), dict)
         else None
     )
+    post_hotload_view_replay_prepare = (
+        response.get("post_hotload_view_replay_prepare")
+        if isinstance(
+            response.get("post_hotload_view_replay_prepare"),
+            dict,
+        )
+        else None
+    )
     bundle_files = response.get("view_bundle_files") or response.get("files") or {}
     audit = response.get("view_audit") if isinstance(response.get("view_audit"), dict) else None
     view_selection = (
@@ -21922,6 +21989,15 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "post_hotload_fit_to_view_request_source"
         ),
         "post_hotload_fit_to_view": post_hotload_fit_to_view,
+        "post_hotload_view_replay_prepare_requested": bool(
+            response.get("post_hotload_view_replay_prepare_requested")
+        ),
+        "post_hotload_view_replay_prepare_request_source": response.get(
+            "post_hotload_view_replay_prepare_request_source"
+        ),
+        "post_hotload_view_replay_prepare": (
+            post_hotload_view_replay_prepare
+        ),
         "state_write_transaction": response.get("state_write_transaction"),
         "execution_transaction": response.get("execution_transaction"),
         "execution_attempt": response.get("execution_attempt"),
@@ -29248,6 +29324,14 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("post_hotload_fit_to_view"), dict)
         else {}
     )
+    post_hotload_view_replay_prepare = (
+        report.get("post_hotload_view_replay_prepare")
+        if isinstance(
+            report.get("post_hotload_view_replay_prepare"),
+            dict,
+        )
+        else {}
+    )
     gui_current = report.get("gui_current_revision") if isinstance(report.get("gui_current_revision"), dict) else {}
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
     view_review = report.get("view_review") if isinstance(report.get("view_review"), dict) else {}
@@ -29568,6 +29652,24 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             ),
             "post_hotload_fit_to_view_after_snapshot_path": post_hotload_fit_to_view.get(
                 "after_snapshot_path"
+            ),
+            "post_hotload_view_replay_prepare_requested": report.get(
+                "post_hotload_view_replay_prepare_requested"
+            ),
+            "post_hotload_view_replay_prepare_request_source": report.get(
+                "post_hotload_view_replay_prepare_request_source"
+            ),
+            "post_hotload_view_replay_prepare_status": (
+                post_hotload_view_replay_prepare.get("status")
+            ),
+            "post_hotload_view_replay_prepared": (
+                post_hotload_view_replay_prepare.get("prepared")
+            ),
+            "post_hotload_view_replay_prepare_gui_input_performed": (
+                post_hotload_view_replay_prepare.get("gui_input_performed")
+            ),
+            "post_hotload_view_replay_prepare_view_names": (
+                post_hotload_view_replay_prepare.get("view_names")
             ),
             "normality": report.get("normality"),
             "health_verdict": report.get("health_verdict"),
@@ -44318,6 +44420,24 @@ def material_studio_castep_run_current(
         list[str] | None,
         Field(description="Optional diagnostic view names."),
     ] = None,
+    fit_to_view_after_open: Annotated[
+        bool,
+        Field(
+            description=(
+                "After a successful same-window hot-load, execute the bounded "
+                "Fit-to-View action and bind a fresh snapshot."
+            )
+        ),
+    ] = False,
+    prepare_view_replay_after_open: Annotated[
+        bool,
+        Field(
+            description=(
+                "After a successful same-window hot-load, prepare a revision-bound "
+                "multi-view replay manifest without issuing view input."
+            )
+        ),
+    ] = False,
     working_dir: Annotated[
         str | None,
         Field(description="Optional structured workspace root."),
@@ -44478,6 +44598,51 @@ def material_studio_castep_run_current(
         }
         if orchestration_context:
             response.update(orchestration_context)
+        fit_to_view_requested_after_open = bool(
+            orchestration_context.get(
+                "post_hotload_fit_to_view_requested",
+                fit_to_view_after_open,
+            )
+        )
+        fit_to_view_request_source = str(
+            orchestration_context.get("post_hotload_fit_to_view_request_source")
+            or (
+                "explicit_parameter"
+                if fit_to_view_after_open
+                else "default_disabled"
+            )
+        )
+        prepare_view_replay_requested_after_open = bool(
+            orchestration_context.get(
+                "post_hotload_view_replay_prepare_requested",
+                prepare_view_replay_after_open,
+            )
+        )
+        view_replay_prepare_request_source = str(
+            orchestration_context.get(
+                "post_hotload_view_replay_prepare_request_source"
+            )
+            or (
+                "explicit_parameter"
+                if prepare_view_replay_after_open
+                else "default_disabled"
+            )
+        )
+        _attach_post_hotload_request_receipts(
+            response,
+            fit_to_view_requested=fit_to_view_requested_after_open,
+            fit_to_view_request_source=fit_to_view_request_source,
+            prepare_view_replay_requested=(
+                prepare_view_replay_requested_after_open
+            ),
+            view_replay_prepare_request_source=(
+                view_replay_prepare_request_source
+            ),
+            execution_mode=mode,
+            open_in_gui=open_in_gui,
+            take_snapshot=take_snapshot,
+            views=views,
+        )
         if mode is ExecutionMode.PREVIEW:
             response["status"] = (
                 "ready_for_explicit_execute"
@@ -45103,6 +45268,14 @@ def material_studio_castep_run_current(
                 workflow="castep_electronic_calculation",
                 record_gui_open_artifact=export_view_audit,
                 refresh_view_audit_report=export_view_audit,
+                fit_to_view_after_open=fit_to_view_requested_after_open,
+                prepare_view_replay_after_open=(
+                    prepare_view_replay_requested_after_open
+                ),
+                view_replay_prepare_request_source=(
+                    view_replay_prepare_request_source
+                ),
+                views=views,
             )
             return _compact_live_response(finalized, response_mode)
         return _compact_live_response(
@@ -45151,6 +45324,8 @@ def material_studio_castep_relax_current(
     take_snapshot: Annotated[bool, Field(description="Capture a GUI snapshot after hot-loading.")] = True,
     export_view_audit: Annotated[bool, Field(description="Export fresh structural and semiconductor diagnostics for the promoted revision.")] = True,
     views: Annotated[list[str] | None, Field(description="Optional diagnostic view names.")] = None,
+    fit_to_view_after_open: Annotated[bool, Field(description="After a successful same-window hot-load, execute the bounded Fit-to-View action and bind a fresh snapshot.")] = False,
+    prepare_view_replay_after_open: Annotated[bool, Field(description="After a successful same-window hot-load, prepare a revision-bound multi-view replay manifest without issuing view input.")] = False,
     working_dir: Annotated[str | None, Field(description="Optional structured workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="CASTEP execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
     expected_revision: Annotated[int | None, Field(description="Optional revision binding from a prior preview handoff; stale bindings are rejected before execution.", ge=0)] = None,
@@ -45159,6 +45334,9 @@ def material_studio_castep_relax_current(
     """Run the verified CASTEP relaxation-to-revision workflow."""
 
     try:
+        orchestration_context = dict(
+            _ACTIVE_LIVE_ORCHESTRATION_CONTEXT.get() or {}
+        )
         mode = ExecutionMode(execution_mode)
         store = _structured_store(working_dir)
         project_resolution: dict[str, Any]
@@ -45261,6 +45439,53 @@ def material_studio_castep_relax_current(
             "new_process_launch_allowed": False,
             "single_window_hotload_required": bool(open_in_gui),
         }
+        if orchestration_context:
+            response.update(orchestration_context)
+        fit_to_view_requested_after_open = bool(
+            orchestration_context.get(
+                "post_hotload_fit_to_view_requested",
+                fit_to_view_after_open,
+            )
+        )
+        fit_to_view_request_source = str(
+            orchestration_context.get("post_hotload_fit_to_view_request_source")
+            or (
+                "explicit_parameter"
+                if fit_to_view_after_open
+                else "default_disabled"
+            )
+        )
+        prepare_view_replay_requested_after_open = bool(
+            orchestration_context.get(
+                "post_hotload_view_replay_prepare_requested",
+                prepare_view_replay_after_open,
+            )
+        )
+        view_replay_prepare_request_source = str(
+            orchestration_context.get(
+                "post_hotload_view_replay_prepare_request_source"
+            )
+            or (
+                "explicit_parameter"
+                if prepare_view_replay_after_open
+                else "default_disabled"
+            )
+        )
+        _attach_post_hotload_request_receipts(
+            response,
+            fit_to_view_requested=fit_to_view_requested_after_open,
+            fit_to_view_request_source=fit_to_view_request_source,
+            prepare_view_replay_requested=(
+                prepare_view_replay_requested_after_open
+            ),
+            view_replay_prepare_request_source=(
+                view_replay_prepare_request_source
+            ),
+            execution_mode=mode,
+            open_in_gui=open_in_gui,
+            take_snapshot=take_snapshot,
+            views=views,
+        )
         if mode is ExecutionMode.PREVIEW:
             response["status"] = (
                 "ready_for_explicit_execute"
@@ -45645,6 +45870,14 @@ def material_studio_castep_relax_current(
                 workflow="castep_geometry_optimization",
                 record_gui_open_artifact=export_view_audit,
                 refresh_view_audit_report=export_view_audit,
+                fit_to_view_after_open=fit_to_view_requested_after_open,
+                prepare_view_replay_after_open=(
+                    prepare_view_replay_requested_after_open
+                ),
+                view_replay_prepare_request_source=(
+                    view_replay_prepare_request_source
+                ),
+                views=views,
             )
             return _compact_live_response(finalized, response_mode)
         return _compact_live_response(
@@ -46122,6 +46355,18 @@ def material_studio_live_modeling_request(
                         _normality_check_requested_from_text(user_request)
                     ),
                     "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                    "post_hotload_fit_to_view_requested": (
+                        fit_to_view_requested_after_open
+                    ),
+                    "post_hotload_fit_to_view_request_source": (
+                        fit_to_view_request_source
+                    ),
+                    "post_hotload_view_replay_prepare_requested": (
+                        prepare_view_replay_requested_after_open
+                    ),
+                    "post_hotload_view_replay_prepare_request_source": (
+                        view_replay_prepare_request_source
+                    ),
                 }
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_castep_run_current(
@@ -46162,6 +46407,12 @@ def material_studio_live_modeling_request(
                         take_snapshot=take_snapshot,
                         export_view_audit=export_view_audit,
                         views=views,
+                        fit_to_view_after_open=(
+                            fit_to_view_requested_after_open
+                        ),
+                        prepare_view_replay_after_open=(
+                            prepare_view_replay_requested_after_open
+                        ),
                         working_dir=working_dir,
                         timeout_seconds=timeout_seconds,
                         response_mode=McpResponseMode.FULL,
@@ -46212,38 +46463,72 @@ def material_studio_live_modeling_request(
                 ):
                     mode = ExecutionMode.EXECUTE
                     execution_mode_source = "explicit_castep_relaxation_intent"
-                result = material_studio_castep_relax_current(
-                    project_id=project_id,
-                    execution_mode=mode,
-                    expected_revision=current_spec.revision,
-                    quality=relaxation_payload.get("quality"),
-                    functional=relaxation_payload.get("functional"),
-                    cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
-                    kpoint_separation=relaxation_payload.get("kpoint_separation"),
-                    kpoints=relaxation_payload.get("kpoints"),
-                    dipole_correction=relaxation_payload.get("dipole_correction"),
-                    max_iterations=relaxation_payload.get("max_iterations"),
-                    displacement_convergence_angstrom=relaxation_payload.get(
-                        "displacement_convergence_angstrom"
+                orchestration_context = {
+                    "workflow": "castep_geometry_optimization",
+                    "user_request": user_request,
+                    "nl_plan": nl_plan,
+                    "execution_mode": mode.value,
+                    "execution_mode_source": execution_mode_source,
+                    "project_resolution": project_resolution,
+                    "diagnostic_export_requested": (
+                        _diagnostic_export_requested_from_text(user_request)
                     ),
-                    energy_convergence_ev_per_atom=relaxation_payload.get(
-                        "energy_convergence_ev_per_atom"
+                    "normality_check_requested": (
+                        _normality_check_requested_from_text(user_request)
                     ),
-                    force_convergence_ev_per_angstrom=relaxation_payload.get(
-                        "force_convergence_ev_per_angstrom"
+                    "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                    "post_hotload_fit_to_view_requested": (
+                        fit_to_view_requested_after_open
                     ),
-                    cell_optimization=relaxation_payload.get("cell_optimization"),
-                    optimization_algorithm=relaxation_payload.get(
-                        "optimization_algorithm"
+                    "post_hotload_fit_to_view_request_source": (
+                        fit_to_view_request_source
                     ),
-                    open_in_gui=open_in_gui,
-                    take_snapshot=take_snapshot,
-                    export_view_audit=export_view_audit,
-                    views=views,
-                    working_dir=working_dir,
-                    timeout_seconds=timeout_seconds,
-                    response_mode=McpResponseMode.FULL,
-                )
+                    "post_hotload_view_replay_prepare_requested": (
+                        prepare_view_replay_requested_after_open
+                    ),
+                    "post_hotload_view_replay_prepare_request_source": (
+                        view_replay_prepare_request_source
+                    ),
+                }
+                with _live_orchestration_context(orchestration_context):
+                    result = material_studio_castep_relax_current(
+                        project_id=project_id,
+                        execution_mode=mode,
+                        expected_revision=current_spec.revision,
+                        quality=relaxation_payload.get("quality"),
+                        functional=relaxation_payload.get("functional"),
+                        cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
+                        kpoint_separation=relaxation_payload.get("kpoint_separation"),
+                        kpoints=relaxation_payload.get("kpoints"),
+                        dipole_correction=relaxation_payload.get("dipole_correction"),
+                        max_iterations=relaxation_payload.get("max_iterations"),
+                        displacement_convergence_angstrom=relaxation_payload.get(
+                            "displacement_convergence_angstrom"
+                        ),
+                        energy_convergence_ev_per_atom=relaxation_payload.get(
+                            "energy_convergence_ev_per_atom"
+                        ),
+                        force_convergence_ev_per_angstrom=relaxation_payload.get(
+                            "force_convergence_ev_per_angstrom"
+                        ),
+                        cell_optimization=relaxation_payload.get("cell_optimization"),
+                        optimization_algorithm=relaxation_payload.get(
+                            "optimization_algorithm"
+                        ),
+                        open_in_gui=open_in_gui,
+                        take_snapshot=take_snapshot,
+                        export_view_audit=export_view_audit,
+                        views=views,
+                        fit_to_view_after_open=(
+                            fit_to_view_requested_after_open
+                        ),
+                        prepare_view_replay_after_open=(
+                            prepare_view_replay_requested_after_open
+                        ),
+                        working_dir=working_dir,
+                        timeout_seconds=timeout_seconds,
+                        response_mode=McpResponseMode.FULL,
+                    )
                 result.update(
                     {
                         "workflow": "castep_geometry_optimization",

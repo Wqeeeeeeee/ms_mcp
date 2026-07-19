@@ -306,9 +306,18 @@ class _ConvergedGeometryRunner:
 
 
 class _GuiSession:
-    def __init__(self, *, single_window_policy_ok: bool) -> None:
+    def __init__(
+        self,
+        *,
+        single_window_policy_ok: bool,
+        workspace: Path | None = None,
+    ) -> None:
         self.single_window_policy_ok = single_window_policy_ok
+        self.workspace = workspace
         self.open_calls: list[dict[str, Any]] = []
+        self.fit_calls: list[dict[str, Any]] = []
+        self.prepare_calls: list[dict[str, Any]] = []
+        self.prepare_transaction: dict[str, Any] | None = None
 
     def status(self, *, project_id: str, revision: int) -> dict[str, Any]:
         count = 1 if self.single_window_policy_ok else 2
@@ -338,6 +347,157 @@ class _GuiSession:
                 "target_window_title": (
                     f"{project_id}_r{revision:03d} - Materials Studio"
                 ),
+            },
+        }
+
+    def fit_to_view(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+        execution_mode: str,
+        take_snapshot: bool,
+    ) -> dict[str, Any]:
+        call = {
+            "project_id": project_id,
+            "revision": revision,
+            "execution_mode": execution_mode,
+            "take_snapshot": take_snapshot,
+        }
+        self.fit_calls.append(call)
+        return {
+            **call,
+            "status": "executed",
+            "execution_ready": True,
+            "gui_input_performed": True,
+            "gui_modified": True,
+            "structure_modified": False,
+            "structure_unchanged": True,
+        }
+
+    def snapshot(
+        self,
+        *,
+        label: str,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        assert self.workspace is not None
+        screenshot = (
+            self.workspace
+            / project_id
+            / "screenshots"
+            / f"r{revision:03d}_{label}.bmp"
+        )
+        screenshot.parent.mkdir(parents=True, exist_ok=True)
+        screenshot.write_bytes(b"BM")
+        return {
+            "ok": True,
+            "project_id": project_id,
+            "revision": revision,
+            "label": label,
+            "screenshot_path": str(screenshot),
+        }
+
+    def prepare_view_replay(
+        self,
+        audit: dict[str, Any],
+        *,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        assert self.workspace is not None
+        self.prepare_transaction = (
+            server._ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get()
+        )
+        view_names = [
+            str(view["name"])
+            for view in audit.get("views") or []
+            if isinstance(view, dict) and view.get("name")
+        ]
+        self.prepare_calls.append(
+            {
+                "project_id": project_id,
+                "revision": revision,
+                "view_names": view_names,
+            }
+        )
+        manifest_path = (
+            self.workspace
+            / project_id
+            / "outputs"
+            / f"r{revision:03d}"
+            / "gui_view_replay_manifest.json"
+        )
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "project_id": project_id,
+                    "revision": revision,
+                    "view_names": view_names,
+                }
+            ),
+            encoding="utf-8",
+        )
+        next_view = view_names[0] if view_names else None
+        continuation = {
+            "status": "automatic_recipe_ready",
+            "next_pending_view_name": next_view,
+            "next_actionable_pending_view_name": next_view,
+            "next_automation_ready_view_name": next_view,
+            "recommended_action": "preview_next_view_replay",
+            "recommended_mcp_tool": "material_studio_gui_execute_view_replay",
+            "automatic_replay_ready": bool(next_view),
+            "gui_input_required": True,
+            "needs_user_confirmation": True,
+            "safe_to_call_without_confirmation": False,
+            "payload_hint": {
+                "project_id": project_id,
+                "revision": revision,
+                "view_name": next_view,
+                "execution_mode": "preview",
+            },
+            "payload_hint_is_directly_callable": True,
+        }
+        return {
+            "project_id": project_id,
+            "revision": revision,
+            "manifest_path": str(manifest_path),
+            "gui_log_path": str(manifest_path.with_name("gui_operations.jsonl")),
+            "replay_status": "prepared",
+            "ready_for_external_replay": True,
+            "preflight_block_reasons": [],
+            "view_selection": audit.get("view_selection"),
+            "view_names": view_names,
+            "requested_view_count": len(view_names),
+            "supported_view_count": len(view_names),
+            "unsupported_view_count": 0,
+            "replay_continuation": continuation,
+            "recipe_contract": {
+                "status": "current",
+                "current": True,
+                "pending_recipe_upgrade_required": False,
+            },
+            "next_action": {
+                "continuation_status": continuation["status"],
+                "recommended_tool": continuation["recommended_mcp_tool"],
+                "recommended_action": continuation["recommended_action"],
+                "payload_hint": continuation["payload_hint"],
+                "payload_hint_is_directly_callable": True,
+                "needs_user_confirmation": True,
+                "safe_to_call_without_confirmation": False,
+            },
+            "next_action_resolution": {
+                "status": "resolved",
+                "resolved_tool": continuation["recommended_mcp_tool"],
+                "resolved_action": continuation["recommended_action"],
+                "safety_gate": {
+                    "automatic_replay_allowed": True,
+                    "structure_mutation_allowed": False,
+                    "revision_creation_allowed": False,
+                    "record_tool_call_ready": False,
+                },
             },
         }
 
@@ -1389,6 +1549,120 @@ def test_successful_energy_hotloads_only_the_existing_window(
     assert gui.open_calls[0]["revision"] == 1
     assert result["gui_open"]["same_window_open_used"] is True
     assert result["gui_open"]["new_process_launched"] is False
+
+
+def test_castep_electronic_preview_defers_hotload_view_actions_without_gui_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_view_preview")
+
+    def unexpected_gui(*args, **kwargs):
+        raise AssertionError("preview must not probe or modify the GUI")
+
+    monkeypatch.setattr(server, "_gui_controller", unexpected_gui)
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="preview",
+        task="Energy",
+        open_in_gui=True,
+        take_snapshot=True,
+        export_view_audit=True,
+        views=["front", "top", "isometric"],
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["execution_started"] is False
+    assert result["revision_created"] is False
+    assert result["post_hotload_fit_to_view_requested"] is True
+    assert result["post_hotload_fit_to_view"]["status"] == (
+        "deferred_until_execute"
+    )
+    assert result["post_hotload_fit_to_view"]["gui_input_performed"] is False
+    assert result["post_hotload_view_replay_prepare_requested"] is True
+    assert result["post_hotload_view_replay_prepare"]["status"] == (
+        "deferred_until_execute"
+    )
+    assert result["post_hotload_view_replay_prepare"]["view_names"] == [
+        "front",
+        "top",
+        "isometric",
+    ]
+    assert result["post_hotload_view_replay_prepare"][
+        "gui_input_performed"
+    ] is False
+    compact = server._compact_live_response(result, "compact")
+    assert compact["post_hotload_fit_to_view_requested"] is True
+    assert compact["post_hotload_view_replay_prepare_requested"] is True
+    assert compact["post_hotload_view_replay_prepare"]["status"] == (
+        "deferred_until_execute"
+    )
+    assert len(json.dumps(compact, ensure_ascii=False).encode("utf-8")) <= 48_000
+
+
+def test_castep_electronic_hotload_fits_and_prepares_result_revision_views(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_view_replay")
+    fake_runner = _ElectronicRunner(source, CastepTask.ENERGY)
+    gui = _GuiSession(single_window_policy_ok=True, workspace=tmp_path)
+    monkeypatch.setattr(server, "runner", fake_runner)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=True,
+        take_snapshot=True,
+        export_view_audit=True,
+        views=["front", "top", "isometric"],
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True, result
+    assert result["revision"] == 1
+    assert result["gui_open"]["same_window_open_used"] is True
+    assert result["gui_open"]["new_process_launched"] is False
+    assert gui.fit_calls == [
+        {
+            "project_id": source.project_id,
+            "revision": 1,
+            "execution_mode": "execute",
+            "take_snapshot": False,
+        }
+    ]
+    assert result["post_hotload_fit_to_view"]["completed"] is True
+    assert result["post_hotload_fit_to_view"]["final_snapshot_bound"] is True
+    assert gui.prepare_transaction is None
+    assert gui.prepare_calls == [
+        {
+            "project_id": source.project_id,
+            "revision": 1,
+            "view_names": ["front", "top", "isometric"],
+        }
+    ]
+    prepared = result["post_hotload_view_replay_prepare"]
+    assert prepared["status"] == "prepared"
+    assert prepared["prepared_revision"] == 1
+    assert prepared["current_revision_verified_after_prepare"] is True
+    assert prepared["report_rewritten_after_prepare"] is False
+    assert Path(prepared["manifest_path"]).is_file()
+    assert result["visual_diagnostics_next_action_plan"]["recommended_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
+    assert result["visual_diagnostics_next_action_plan"]["payload_hint"][
+        "working_dir"
+    ] == str(tmp_path.resolve())
+    assert result["coordinated_next_action_plan"]["next_action_plan_preserved"] is True
+    assert fake_runner.call_count == 1
+    assert ProjectStore(tmp_path).load_current(source.project_id).revision == 1
 
 
 def test_live_natural_language_electronic_execution_and_preview_override(

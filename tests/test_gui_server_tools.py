@@ -8567,6 +8567,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy["post_hotload_prepare_supported_tools"] == [
         "material_studio_live_modeling_request",
         "material_studio_live_update_with_patch",
+        "material_studio_castep_run_current",
+        "material_studio_castep_relax_current",
         "material_studio_gui_apply_current_revision",
     ]
     assert view_replay_policy["post_hotload_prepare_supported_workflows"] == [
@@ -8576,6 +8578,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "rollback",
         "redo",
         "restore",
+        "castep_electronic_calculation",
+        "castep_geometry_optimization",
         "gui_apply_current_revision",
     ]
     assert view_replay_policy[

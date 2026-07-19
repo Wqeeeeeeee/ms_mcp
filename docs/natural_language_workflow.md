@@ -1369,6 +1369,16 @@ angstrom vacuum. GUI loading is attempted only after promotion and only into
 one verified existing Materials Studio window. The workflow never launches a
 new GUI process.
 
+Both CASTEP current-revision tools accept `fit_to_view_after_open` and
+`prepare_view_replay_after_open`. In preview, these options produce explicit
+`deferred_until_execute` receipts and perform no GUI input. After a successful
+execute, the bounded Fit-to-View action runs only after the converged or
+recorded result revision is hot-loaded into the one existing window. Replay
+preparation then runs after the GUI artifact/report transaction is released and
+creates `gui_view_replay_manifest.json` for that result revision, not the source
+revision. A natural-language CASTEP request that asks to open the result and
+inspect named views or check model normality forwards the same contract.
+
 Fresh diagnostics expose
 `castep_geometry_optimization_summary.transition_verified`. Commensurate TMD
 slabs require `fixed_cell_transition_verified=true` before their independent
@@ -1408,6 +1418,10 @@ changed structures, path-escaping artifacts, or a project that advanced while
 CASTEP was running preserve the run evidence but do not advance `current.json`.
 When GUI loading is requested, preflight requires exactly one existing Materials
 Studio process/window before execution and reuses that same window afterward.
+The optional post-hotload Fit-to-View and replay-preparation flow is identical
+to geometry optimization: preview remains GUI-inert, while execute binds every
+snapshot, manifest, and continuation action to the newly recorded metadata-only
+result revision.
 
 Treat `backend_run_completed=true` only as backend completion. Materials Studio
 20.1 does not provide an independent SCF `Converged` result on the Energy API,

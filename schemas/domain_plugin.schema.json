@@ -176,7 +176,29 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "supports_create": {
+              "const": true
+            }
+          },
+          "required": [
+            "supports_create"
+          ]
+        },
+        {
+          "properties": {
+            "supports_patch": {
+              "const": true
+            }
+          },
+          "required": [
+            "supports_patch"
+          ]
+        }
+      ]
     },
     "routing": {
       "type": "object",
@@ -331,16 +353,90 @@
       ],
       "properties": {
         "match": {
-          "$ref": "#/$defs/stageContract"
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingIntent"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "MatchResult"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "plan": {
-          "$ref": "#/$defs/stageContract"
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingIntent",
+                    "ModelState"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "ModelingPlan"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "build": {
-          "$ref": "#/$defs/stageContract"
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingPlan"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "ModelSpec",
+                    "SemanticPatch"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "validate": {
-          "$ref": "#/$defs/stageContract"
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelSpec"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "DomainValidationReport"
+                  ]
+                }
+              }
+            }
+          ]
         }
       }
     },

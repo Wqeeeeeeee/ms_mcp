@@ -20,6 +20,10 @@
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
     },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "identifier": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
@@ -36,6 +40,7 @@
     },
     "role": {
       "enum": [
+        "runtime_orchestration_agent",
         "reference_data_agent",
         "canonicalization_and_comparator_agent",
         "bulk_and_alloy_agent",
@@ -100,6 +105,26 @@
             "type": "string",
             "pattern": "^[a-z][a-z0-9_]*$"
           }
+        }
+      }
+    },
+    "workOrderDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "work_order_id",
+        "merged_head_sha",
+        "integration_sha"
+      ],
+      "properties": {
+        "work_order_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "merged_head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "integration_sha": {
+          "$ref": "#/$defs/gitSha"
         }
       }
     },
@@ -223,6 +248,32 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "allowed_sources": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "allowed_sources": {
+                "minItems": 1
+              }
+            }
+          }
         }
       ]
     },
@@ -270,7 +321,74 @@
             "real_castep"
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_ms_20_1"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_ms"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_castep_small_cell"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_castep"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "not": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "real_castep_small_cell"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "ci",
+                  "local_mock"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "criterionValue": {
       "oneOf": [
@@ -315,7 +433,8 @@
         "expected",
         "severity",
         "evidence_required",
-        "real_environment_required"
+        "real_environment_required",
+        "required_real_environment"
       ],
       "properties": {
         "criterion_id": {
@@ -364,11 +483,53 @@
         "real_environment_required": {
           "type": "boolean"
         },
+        "required_real_environment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "materials_studio_20_1",
+            "castep",
+            null
+          ]
+        },
         "description": {
           "type": "string",
           "minLength": 1
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "real_environment_required": {
+                "const": true
+              }
+            },
+            "required": [
+              "real_environment_required"
+            ]
+          },
+          "then": {
+            "properties": {
+              "required_real_environment": {
+                "enum": [
+                  "materials_studio_20_1",
+                  "castep"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "required_real_environment": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "acceptanceContract": {
       "type": "object",
@@ -404,6 +565,8 @@
         "work_order_id",
         "role",
         "base_sha",
+        "expected_branch",
+        "dependencies",
         "scope",
         "allowed_paths",
         "forbidden_paths",
@@ -433,7 +596,14 @@
         },
         "expected_branch": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]+$"
+          "pattern": "^agent/[A-Za-z0-9][A-Za-z0-9._/-]+$"
+        },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/workOrderDependency"
+          }
         },
         "scope": {
           "$ref": "#/$defs/scope"
@@ -460,9 +630,84 @@
         "required_tests": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/testRequirement"
-          }
+          },
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "unit"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "contract"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "protocol_preview"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_blind"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_regression"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "no_reference_leak"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            }
+          ]
         },
         "acceptance": {
           "$ref": "#/$defs/acceptanceContract"
@@ -477,22 +722,134 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "runtime_orchestration_agent",
+                  "bulk_and_alloy_agent",
+                  "surface_and_2d_agent",
+                  "defect_and_dopant_agent",
+                  "interface_and_device_stack_agent",
+                  "calculation_agent",
+                  "gui_and_ms_adapter_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "reference_data_agent"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "reference_builder"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "canonicalization_and_comparator_agent",
+                  "benchmark_and_release_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only",
+                      "evaluation_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "testResult": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "test_id",
+        "category",
         "command",
         "required",
         "status",
+        "environment",
         "evidence_paths",
         "summary"
       ],
       "properties": {
         "test_id": {
           "$ref": "#/$defs/identifier"
+        },
+        "category": {
+          "enum": [
+            "unit",
+            "contract",
+            "protocol_preview",
+            "benchmark_blind",
+            "benchmark_regression",
+            "no_reference_leak",
+            "fake_gui",
+            "compileall",
+            "diff_check",
+            "real_ms_20_1",
+            "real_castep_small_cell"
+          ]
         },
         "command": {
           "type": "string",
@@ -504,6 +861,14 @@
         "status": {
           "$ref": "#/$defs/status"
         },
+        "environment": {
+          "enum": [
+            "ci",
+            "local_mock",
+            "real_ms",
+            "real_castep"
+          ]
+        },
         "evidence_paths": {
           "type": "array",
           "items": {
@@ -514,7 +879,100 @@
           "type": "string",
           "minLength": 1
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_ms_20_1"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_ms"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_castep_small_cell"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_castep"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "not": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "real_castep_small_cell"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "ci",
+                  "local_mock"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "benchmarkSummary": {
       "type": "object",
@@ -528,6 +986,7 @@
         "passed_with_warnings",
         "failed",
         "not_run",
+        "counts_reconciled",
         "report_paths",
         "notes"
       ],
@@ -565,6 +1024,9 @@
           "type": "integer",
           "minimum": 0
         },
+        "counts_reconciled": {
+          "const": true
+        },
         "report_paths": {
           "type": "array",
           "items": {
@@ -578,7 +1040,59 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_id": {
+                "type": "null"
+              },
+              "case_count": {
+                "const": 0
+              },
+              "passed": {
+                "const": 0
+              },
+              "passed_with_warnings": {
+                "const": 0
+              },
+              "failed": {
+                "const": 0
+              },
+              "not_run": {
+                "const": 0
+              },
+              "report_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "run_id": {
+                "type": "string"
+              },
+              "case_count": {
+                "minimum": 1
+              },
+              "report_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "acceptanceResult": {
       "type": "object",
@@ -619,7 +1133,35 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "referenceIsolationAttestation": {
       "type": "object",
@@ -650,10 +1192,10 @@
           "type": "boolean"
         },
         "reference_coordinates_disclosed_to_modeler": {
-          "const": false
+          "type": "boolean"
         },
         "candidate_modified_by_evaluator": {
-          "const": false
+          "type": "boolean"
         },
         "evidence_paths": {
           "type": "array",
@@ -668,7 +1210,84 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reference_coordinates_disclosed_to_modeler": {
+                "const": true
+              }
+            },
+            "required": [
+              "reference_coordinates_disclosed_to_modeler"
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "candidate_modified_by_evaluator": {
+                "const": true
+              }
+            },
+            "required": [
+              "candidate_modified_by_evaluator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "allOf": [
+              {
+                "properties": {
+                  "hidden_reference_read": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "hidden_reference_read"
+                ]
+              },
+              {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                },
+                "required": [
+                  "policy"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
     },
     "realEnvironmentResult": {
       "type": "object",
@@ -702,6 +1321,138 @@
             "type": "string",
             "minLength": 1
           }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "not_run"
+              },
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "real_ms_20_1",
+                  "real_castep"
+                ]
+              },
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "environment": {
+                "const": "not_run"
+              }
+            },
+            "required": [
+              "environment"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "workOrderBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_contract",
+        "work_order_sha256",
+        "goal_id_matches",
+        "contract_version_matches",
+        "work_order_id_matches",
+        "role_matches",
+        "base_sha_matches",
+        "branch_matches",
+        "dependencies_reconciled",
+        "dependencies",
+        "required_test_ids_complete",
+        "acceptance_criterion_ids_complete",
+        "changed_paths_within_allowed_paths",
+        "forbidden_paths_untouched",
+        "path_scopes_non_overlapping",
+        "reference_access_matches"
+      ],
+      "properties": {
+        "validator_contract": {
+          "const": "work_order_result_reconciliation_v1"
+        },
+        "work_order_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "goal_id_matches": {
+          "type": "boolean"
+        },
+        "contract_version_matches": {
+          "type": "boolean"
+        },
+        "work_order_id_matches": {
+          "type": "boolean"
+        },
+        "role_matches": {
+          "type": "boolean"
+        },
+        "base_sha_matches": {
+          "type": "boolean"
+        },
+        "branch_matches": {
+          "type": "boolean"
+        },
+        "dependencies_reconciled": {
+          "type": "boolean"
+        },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/workOrderDependency"
+          }
+        },
+        "required_test_ids_complete": {
+          "type": "boolean"
+        },
+        "acceptance_criterion_ids_complete": {
+          "type": "boolean"
+        },
+        "changed_paths_within_allowed_paths": {
+          "type": "boolean"
+        },
+        "forbidden_paths_untouched": {
+          "type": "boolean"
+        },
+        "path_scopes_non_overlapping": {
+          "type": "boolean"
+        },
+        "reference_access_matches": {
+          "type": "boolean"
         }
       }
     },
@@ -739,7 +1490,11 @@
         "branch",
         "base_sha",
         "head_sha",
+        "work_order_binding",
         "changed_paths",
+        "new_capabilities",
+        "unsupported_capabilities",
+        "reference_sources",
         "tests",
         "benchmark_before",
         "benchmark_after",
@@ -770,7 +1525,7 @@
         },
         "branch": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]+$"
+          "pattern": "^agent/[A-Za-z0-9][A-Za-z0-9._/-]+$"
         },
         "base_sha": {
           "$ref": "#/$defs/gitSha"
@@ -778,19 +1533,123 @@
         "head_sha": {
           "$ref": "#/$defs/gitSha"
         },
+        "work_order_binding": {
+          "$ref": "#/$defs/workOrderBinding"
+        },
         "changed_paths": {
           "type": "array",
+          "minItems": 1,
           "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/gitPath"
           }
         },
+        "new_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unsupported_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reference_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "tests": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/testResult"
-          }
+          },
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "unit"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "contract"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "protocol_preview"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_blind"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_regression"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "no_reference_leak"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            }
+          ]
         },
         "benchmark_before": {
           "$ref": "#/$defs/benchmarkSummary"
@@ -809,13 +1668,42 @@
           "$ref": "#/$defs/referenceIsolationAttestation"
         },
         "real_materials_studio": {
-          "$ref": "#/$defs/realEnvironmentResult"
+          "allOf": [
+            {
+              "$ref": "#/$defs/realEnvironmentResult"
+            },
+            {
+              "properties": {
+                "environment": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "not_run"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "real_castep": {
-          "$ref": "#/$defs/realEnvironmentResult"
+          "allOf": [
+            {
+              "$ref": "#/$defs/realEnvironmentResult"
+            },
+            {
+              "properties": {
+                "environment": {
+                  "enum": [
+                    "real_castep",
+                    "not_run"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "scientific_boundaries": {
           "type": "array",
+          "minItems": 1,
           "items": {
             "type": "string",
             "minLength": 1
@@ -849,7 +1737,10 @@
                       "const": true
                     },
                     "status": {
-                      "const": "FAIL"
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
                     }
                   },
                   "required": [
@@ -881,7 +1772,10 @@
                       "const": "hard_failure"
                     },
                     "status": {
-                      "const": "FAIL"
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
                     }
                   },
                   "required": [
@@ -893,6 +1787,117 @@
             },
             "required": [
               "acceptance_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "work_order_binding": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "goal_id_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "contract_version_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "work_order_id_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "role_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "base_sha_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "branch_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "dependencies_reconciled": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "required_test_ids_complete": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "acceptance_criterion_ids_complete": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "changed_paths_within_allowed_paths": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "forbidden_paths_untouched": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "path_scopes_non_overlapping": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "reference_access_matches": {
+                        "const": false
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "work_order_binding"
             ]
           },
           "then": {
@@ -925,6 +1930,99 @@
             "properties": {
               "overall_status": {
                 "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "runtime_orchestration_agent",
+                  "bulk_and_alloy_agent",
+                  "surface_and_2d_agent",
+                  "defect_and_dopant_agent",
+                  "interface_and_device_stack_agent",
+                  "calculation_agent",
+                  "gui_and_ms_adapter_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "reference_data_agent"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "reference_builder"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "canonicalization_and_comparator_agent",
+                  "benchmark_and_release_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only",
+                      "evaluation_only"
+                    ]
+                  }
+                }
               }
             }
           }

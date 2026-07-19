@@ -8,6 +8,8 @@ multiple autonomous modeling agents. This document is an architecture
 contract; the first contract PR does not implement the described modules.
 
 Plugin manifests must validate against `schemas/domain_plugin.schema.json`.
+This repository-level manifest schema is reviewed in CI and is not exposed as
+a public MCP input or bundled runtime resource by this architecture-only PR.
 
 ## Public Boundary
 
@@ -105,6 +107,7 @@ stages:
 class SemiconductorDomainPlugin(Protocol):
     plugin_id: str
     contract_version: str
+    implementation_version: str
 
     def match(self, intent: ModelingIntent) -> MatchResult: ...
 
@@ -119,10 +122,14 @@ class SemiconductorDomainPlugin(Protocol):
     def validate(self, model: ModelSpec) -> DomainValidationReport: ...
 ```
 
-The manifest binds each stage to named input and output contracts. `match`,
-`plan`, and `validate` are pure. `build` may allocate in-memory objects but is
-filesystem- and process-side-effect free. Every stage is deterministic for its
-declared inputs.
+The manifest binds each stage to exact input and output contract names:
+`ModelingIntent -> MatchResult`, `ModelingIntent + ModelState -> ModelingPlan`,
+`ModelingPlan -> ModelSpec | SemanticPatch`, and
+`ModelSpec -> DomainValidationReport`. The Runtime Contract Models PR freezes
+the corresponding Pydantic shapes before registry or router behavior is added.
+`match`, `plan`, and `validate` are pure. `build` may allocate in-memory objects
+but is filesystem- and process-side-effect free. Every stage is deterministic
+for its declared inputs.
 
 ### Match
 
@@ -169,6 +176,11 @@ the plan receipt.
 A manifest declares periodicity, atom-count bounds, model kinds, whether a
 current structure is required, creation and patch support, and unsupported
 capabilities. A request outside those limits is rejected before `build`.
+At least one of create or patch support is mandatory. The registry's semantic
+manifest validator must also reject cross-field contradictions that JSON
+Schema cannot compare directly, including `min_atoms > max_atoms`; that
+validator is delivered with the registry rather than trusted as a plugin-authored
+attestation.
 
 Plugins must distinguish:
 
@@ -179,6 +191,42 @@ Plugins must distinguish:
 - `internal_error`: the plugin violated its deterministic contract.
 
 None of these states may be converted to success by a GUI screenshot.
+
+## Migration Modes
+
+Plugin rollout is controlled per scenario by one architect-owned mode. A user
+request or plugin cannot promote its own mode.
+
+### `off`
+
+The existing compatibility path remains fully authoritative. The new router
+and plugin are not loaded or invoked for the scenario.
+
+### `shadow`
+
+The existing path remains authoritative and produces the only publishable
+result. The new path may normalize intent, match one plugin, and produce a
+plan for comparison. It must stop before `build`, revision allocation, runner
+execution, calculation execution, filesystem publication, or GUI input. The
+shadow receipt binds both decisions, their hashes, and structured differences.
+Shadow failures are diagnostic only: they cannot change the legacy return
+value, exception, persisted report, capability response, public status, or GUI
+behavior.
+
+### `active`
+
+A scenario may become active only after deterministic routing and plan hashes,
+blind benchmark acceptance, reference-isolation checks, compatibility
+regression, an explicit plugin version, architect approval, and a tested
+fallback path are all recorded. Different scenarios migrate independently.
+Failure of an active plugin fails closed or uses only the explicitly reviewed
+fallback; it never silently executes arbitrary script text.
+
+Migration mode is internal architect-owned configuration. It is not a public
+MCP argument, response-field requirement, or user-controlled plugin selector.
+The existing `NaturalLanguagePlan` representation remains the authoritative
+public compatibility boundary until a separately reviewed lossless adapter and
+golden protocol tests are merged.
 
 ## State And Execution Ownership
 
@@ -218,10 +266,11 @@ and requires an architect migration decision. A minor change may add optional
 capabilities without changing existing stage meaning. A patch change may fix
 behavior within the same declared contract.
 
-A runtime receipt records the selected `plugin_id`, plugin implementation
-version, contract version, normalized intent hash, current revision identity,
-plan hash, and emitted spec or patch hash. Reproducing a model requires those
-bindings, not merely the plugin name.
+A runtime receipt records the migration mode, selected `plugin_id`, plugin
+implementation version, contract version, normalized intent hash, current
+revision identity, plan hash, and emitted spec or patch hash. A shadow receipt
+also records the authoritative legacy decision and structured comparison.
+Reproducing a model requires those bindings, not merely the plugin name.
 
 ## Failure And Fallback
 

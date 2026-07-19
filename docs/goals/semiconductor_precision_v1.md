@@ -2,6 +2,8 @@
 
 ## Status
 
+Goal ID: `SEM-PRECISION-MULTI-AGENT-V1`
+
 Frozen architecture goal. The implementation baseline is commit
 `cfa1b27b8e88c94e3719f8f6a0407d29c6a78365`, the head of Draft PR #90 when
 this goal was created.
@@ -64,6 +66,21 @@ particular, visual similarity cannot compensate for incorrect termination,
 small lattice error cannot compensate for a misplaced defect, and process
 completion cannot compensate for unconverged calculation evidence.
 
+Overall aggregation follows a fixed truth table over gates marked
+`required_for_overall_pass`: any hard failure or required `FAIL` yields `FAIL`;
+otherwise any required `NOT_RUN` yields `NOT_RUN`; otherwise any required
+`PASS_WITH_WARNINGS` or failed warning criterion yields
+`PASS_WITH_WARNINGS`; only all-required-`PASS` yields `PASS`. Disabled gates
+must be non-required and retain `NOT_RUN` without being silently dropped.
+JSON Schema enforces local hard gates; referential completeness between gate,
+criterion, and hard-failure IDs is attested only after the named
+`benchmark_evaluation_semantic_validator_v1` performs the cross-record check.
+That validator, delivered with the blind evaluator, also proves reference,
+candidate, and evaluator roots are disjoint; binds artifacts to those roots;
+rejects duplicate IDs; reconciles count totals; requires disabled gates to
+remain `NOT_RUN`; and verifies the exact aggregation truth table. A producer
+cannot satisfy this gate by copying `true` values into the receipt.
+
 ## Target Architecture
 
 The intended runtime flow is:
@@ -111,14 +128,17 @@ number of agents:
 
 ## Delivery Sequence
 
-The planned increments are:
+After this architecture-contract bootstrap, the planned major PRs are:
 
-1. Architecture contracts and governance.
-2. Reference ingestion and canonicalization.
-3. Blind evaluator and report contracts.
-4. First reference-driven semiconductor domain case.
-5. Real Materials Studio round-trip acceptance.
-6. Minimal real CASTEP acceptance with revision-bound evidence.
+1. Runtime contract models.
+2. Capability registry and shadow router.
+3. Reference ingestion.
+4. Structure canonicalization.
+5. Blind evaluator.
+6. 3C-SiC surface plugin.
+7. Real Materials Studio round-trip acceptance.
+8. Minimal real CASTEP acceptance with revision-bound evidence.
+9. Integration release review.
 
 Each substantial increment is delivered as a separate PR targeting
 `integration/semiconductor-precision-v1` until the integration goal is ready
@@ -127,9 +147,11 @@ for release review.
 ## Scope Of The First Contract PR
 
 The first PR adds only this goal, development and runtime architecture
-documents, two ADRs, and three JSON Schemas. It does not add runtime plugin
-code, material templates, reference adapters, benchmark execution, public MCP
-tools, or GUI behavior. Materials Studio and CASTEP are not run for this PR.
+documents, two ADRs, three JSON Schemas, and contract regression tests. It does
+add the repository-level Work Order/receipt reconciliation CLI required to use
+those governance contracts. It does not add runtime plugin code, material
+templates, reference adapters, benchmark execution, public MCP tools, or GUI
+behavior. Materials Studio and CASTEP are not run for this PR.
 
 ## Exit Criteria
 
@@ -137,6 +159,8 @@ This goal is complete only when all of the following are true:
 
 - Domain capabilities route through a versioned internal contract without
   expanding the public tool surface for each material or scenario.
+- Each scenario migrates through `off`, `shadow`, and explicitly approved
+  `active` modes without shadow-side effects.
 - Development changes can be traced from a Work Order through a branch, tests,
   benchmark delta, scientific boundaries, and a reviewed result receipt.
 - Reference and candidate access controls prevent hidden-coordinate leakage.

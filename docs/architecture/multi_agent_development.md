@@ -8,7 +8,17 @@ agents contribute isolated code and evidence; one architect owns shared
 contracts and integration decisions.
 
 All assignments and completion receipts must validate against
-`schemas/work_order.schema.json`.
+`schemas/work_order.schema.json`. Receipt acceptance also requires the
+cross-document validator:
+
+```text
+python schemas/validate_work_order.py <work-order.json> <receipt.json>
+```
+
+The JSON Schema files in the repository root are development-governance
+artifacts consumed by review and CI. They are not runtime package resources;
+packaged runtime schemas are introduced only with the corresponding Pydantic
+contract implementation.
 
 ## Roles
 
@@ -32,6 +42,7 @@ ownership of core files, or equate mocked acceptance with a real backend run.
 
 | Role | Primary responsibility |
 | --- | --- |
+| `runtime_orchestration_agent` | Modeling intent, capability registry, deterministic routing, plugin lifecycle, migration modes, and runtime receipts. |
 | `reference_data_agent` | Provenance, licenses, source adapters, immutable source records, and reference deduplication. |
 | `canonicalization_and_comparator_agent` | Lattice normalization, atom mapping, symmetry, periodic images, and quantitative structure comparison. |
 | `bulk_and_alloy_agent` | Bulk phases, conventional and primitive cells, supercells, and alloy occupancy. |
@@ -50,13 +61,29 @@ explicit `allowed_paths`.
 A Work Order is the only normal way to assign specialist work. It records:
 
 - stable goal and Work Order identifiers;
-- specialist role and exact 40-character base commit;
+- specialist role, exact 40-character base commit, and expected `agent/*`
+  branch;
+- accepted upstream Work Order dependencies, each bound to its merged head and
+  integration commit;
 - scoped scenarios, materials, and operations;
 - non-overlapping allowed and forbidden paths;
 - reference-access policy, including hidden-holdout restrictions;
 - required test and acceptance gates;
 - explicit, typed acceptance criteria;
 - a mandatory structured result receipt.
+
+The JSON object in the development Goal is an abbreviated minimum-field
+illustration. The canonical exchange document uses the richer, closed shape in
+`schemas/work_order.schema.json`: test identifiers are expanded to typed test
+requirements with commands and environments, reference policy fields are
+explicit, and acceptance criteria are machine-readable. No implicit defaults
+are applied when issuing a schema-valid Work Order.
+
+Every Work Order and receipt explicitly carries `unit`, `contract`,
+`protocol_preview`, `benchmark_blind`, `benchmark_regression`, and
+`no_reference_leak` entries. A category that does not apply is still present,
+marked optional in the Work Order, and returned as `NOT_RUN`; required entries
+may not use `NOT_RUN` at merge time.
 
 Natural-language notes may explain the task but cannot widen its scope. A
 specialist that needs a shared contract change returns it in
@@ -68,8 +95,11 @@ Completion produces a separate `agent_result_receipt` document validated by
 the same schema. It binds the Work Order to:
 
 - branch, base SHA, and head SHA;
+- the SHA-256 of the exact Work Order plus reconciliation of role, branch,
+  dependencies, paths, tests, criteria, and reference policy;
 - changed paths;
-- exact test commands and outcomes;
+- new and unsupported capabilities and declared reference sources;
+- exact test categories, environments, commands, and outcomes;
 - benchmark before and after summaries;
 - acceptance-criterion results;
 - reference-isolation attestation;
@@ -77,7 +107,17 @@ the same schema. It binds the Work Order to:
 - whether real Materials Studio and real CASTEP were run.
 
 `NOT_RUN` is an explicit outcome. It must not be omitted or converted to a
-passing mock result.
+passing mock result. A required test or hard-failure acceptance criterion with
+`NOT_RUN` makes the receipt merge-blocking and forces `overall_status=FAIL`.
+Completeness across the separate Work Order and receipt documents is checked by
+the executable `work_order_result_reconciliation_v1` semantic validator. It
+recomputes the canonical Work Order SHA-256, rejects duplicate identifiers,
+compares contract versions, test commands/required flags, acceptance severities
+and real-environment requirements, checks changed and conflicting path scopes,
+reconciles benchmark counts/status, and verifies role, branch, dependency,
+reference-policy, and allowed-source bindings.
+Caller-supplied reconciliation booleans are evidence inputs, not authority;
+the PR is ineligible unless the validator independently returns `ok=true`.
 
 ## Reference Access Policies
 
@@ -97,6 +137,14 @@ modeling agent uses `task_only`. Reference roots and candidate roots remain
 separate, and test fixtures must not copy hidden coordinates into task files,
 logs, snapshots, or agent prompts.
 
+Role-to-policy compatibility is closed by schema. Modeling, calculation, GUI,
+and runtime-orchestration roles may use only `none`, `metadata_only`, or
+`task_only`. Only `reference_data_agent` may use `reference_builder`. Only
+`canonicalization_and_comparator_agent` and `benchmark_and_release_agent` may
+use `evaluation_only`; those policies forbid candidate writes. An isolation
+violation remains representable in a result receipt, but it forces
+`complied=false` and `overall_status=FAIL`.
+
 ## Branch And Worktree Model
 
 The integration baseline for this goal is:
@@ -110,6 +158,7 @@ Each substantial assignment uses a dedicated branch and worktree created from
 the current architect-approved integration SHA. Example branch names are:
 
 ```text
+agent/runtime-orchestration-v1
 agent/reference-ingestion-v1
 agent/structure-canonicalization-v1
 agent/bulk-alloy-v1
@@ -124,7 +173,10 @@ agent/benchmark-release-v1
 Every PR targets `integration/semiconductor-precision-v1`. Long chains in
 which one specialist PR is based on another specialist PR are prohibited
 unless the architect records an explicit dependency and rebases the dependent
-Work Order onto an accepted integration SHA.
+Work Order onto an accepted integration SHA. The dependency record carries the
+upstream Work Order ID, merged specialist head SHA, and resulting integration
+SHA; the dependent Work Order's `base_sha` must resolve to that accepted
+integration history before work starts.
 
 Specialists must not share an uncommitted worktree, force-push another role's
 branch, or resolve scope conflicts by editing a forbidden path. Large progress
@@ -148,15 +200,31 @@ increments receive separate PRs so review evidence remains attributable.
 
 A specialist PR must state:
 
-1. Work Order ID.
-2. Changed scope and new capability.
-3. Reference sources and access policy.
-4. Scientific boundaries and unsupported cases.
-5. Unit, contract, protocol, and benchmark results required by the Work Order.
-6. Benchmark before and after evidence.
-7. Whether real Materials Studio 20.1 was run.
-8. Whether real CASTEP was run.
-9. Known gaps and requested contract changes.
+1. Goal ID.
+2. Work Order ID.
+3. Exact base SHA.
+4. Branch name.
+5. Responsible specialist role.
+6. Changed file scope.
+7. New capability.
+8. Unsupported capability.
+9. Reference-data sources.
+10. Reference-access policy.
+11. Scientific boundaries.
+12. Unit-test evidence.
+13. Contract-test evidence.
+14. MCP protocol-smoke evidence.
+15. Benchmark-before evidence.
+16. Benchmark-after evidence.
+17. Reference-leak test evidence.
+18. Whether real Materials Studio 20.1 was run.
+19. Whether real CASTEP was run.
+20. Known issues.
+21. Requested contract changes.
+
+The PR also carries a schema-valid `agent_result_receipt`. Missing or not-yet-
+implemented evidence is reported as `NOT_RUN`; it is never omitted or promoted
+to a pass.
 
 Recommended required checks are `unit-tests`, `contract-tests`,
 `protocol-smoke`, `benchmark-no-reference-leak`, `benchmark-regression`,
@@ -164,11 +232,21 @@ Recommended required checks are `unit-tests`, `contract-tests`,
 as `real-ms-20.1-acceptance` and `real-castep-small-cell-acceptance` are
 separate gates and are never inferred from CI mocks.
 
+The architect-owned bootstrap PR that first introduces this schema cannot have
+a pre-existing schema-valid Work Order or specialist receipt. That single PR
+uses bootstrap exemption `ARCH-CONTRACT-BOOTSTRAP-V1`, records the principal
+architect role and all 21 evidence fields directly in its PR body, and may use
+an `arch/*` branch. The exemption ends when the schema reaches the integration
+branch; every subsequent specialist PR requires an `agent/*` Work Order and
+reconciled receipt.
+
 ## Merge Gates
 
 A PR is not eligible for integration when any of these conditions holds:
 
 - a required hard acceptance criterion fails or is silently absent;
+- a required test is absent, `NOT_RUN`, or failed;
+- Work Order/receipt reconciliation is incomplete or mismatched;
 - benchmark performance regresses outside an approved, documented boundary;
 - another domain's regression gate fails;
 - a hidden reference or final coordinate leaked into candidate construction;

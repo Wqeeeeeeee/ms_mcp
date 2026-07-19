@@ -106,6 +106,829 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "structure_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "structure_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "structure_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "semiconductor_domain_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "semiconductor_domain_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "semiconductor_domain_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "ms_roundtrip_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "ms_roundtrip_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "ms_roundtrip_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "calculation_evidence_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "calculation_evidence_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "calculation_evidence_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "scientifically_verified": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "scientifically_verified": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "scientifically_verified": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "structure_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "structure_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "semiconductor_domain_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "semiconductor_domain_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "ms_roundtrip_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "calculation_evidence_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "calculation_evidence_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "scientifically_verified": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "scientifically_verified": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "properties": {
+              "overall_status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "overall_status"
+            ]
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "structure_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "structure_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "semiconductor_domain_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "semiconductor_domain_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "ms_roundtrip_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "calculation_evidence_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "calculation_evidence_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "scientifically_verified": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "scientifically_verified": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "ms_roundtrip_valid": {
+                        "enum": [
+                          "PASS",
+                          "PASS_WITH_WARNINGS"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "result"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "real_materials_studio": {
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "PASS",
+                      "PASS_WITH_WARNINGS"
+                    ]
+                  },
+                  "real_environment": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "anyOf": [
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "structure_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "semiconductor_domain_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "ms_roundtrip_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "calculation_evidence_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "scientifically_verified": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -635,6 +1458,9 @@
           },
           "else": {
             "properties": {
+              "required_for_overall_pass": {
+                "const": false
+              },
               "not_run_reason": {
                 "type": "string",
                 "minLength": 1
@@ -858,6 +1684,7 @@
       "required": [
         "criterion_id",
         "validity_state",
+        "severity",
         "status",
         "evidence",
         "notes"
@@ -868,6 +1695,13 @@
         },
         "validity_state": {
           "$ref": "#/$defs/validityStateName"
+        },
+        "severity": {
+          "enum": [
+            "hard_failure",
+            "warning",
+            "evidence_only"
+          ]
         },
         "status": {
           "$ref": "#/$defs/status"
@@ -888,7 +1722,35 @@
             "minLength": 1
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "hardFailureResult": {
       "type": "object",
@@ -912,6 +1774,7 @@
         },
         "evidence": {
           "type": "array",
+          "minItems": 1,
           "items": {
             "$ref": "#/$defs/artifactBinding"
           }
@@ -939,6 +1802,104 @@
             "$ref": "#/$defs/artifactBinding"
           }
         }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "real_environment": {
+                "const": false
+              }
+            },
+            "required": [
+              "real_environment"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "PASS",
+                  "PASS_WITH_WARNINGS",
+                  "FAIL"
+                ]
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "semanticValidationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_contract",
+        "gate_state_bindings_complete",
+        "required_gate_truth_table_satisfied",
+        "criterion_results_complete",
+        "criterion_bindings_complete",
+        "hard_failure_results_complete",
+        "hard_failure_rule_bindings_complete",
+        "backend_evidence_bindings_complete",
+        "isolation_roots_disjoint",
+        "reference_artifacts_bound_to_reference_root",
+        "candidate_artifacts_bound_to_candidate_root",
+        "evaluator_artifacts_bound_to_evaluator_root",
+        "candidate_root_matches_declared_candidate"
+      ],
+      "properties": {
+        "validator_contract": {
+          "const": "benchmark_evaluation_semantic_validator_v1"
+        },
+        "gate_state_bindings_complete": {
+          "const": true
+        },
+        "required_gate_truth_table_satisfied": {
+          "const": true
+        },
+        "criterion_results_complete": {
+          "const": true
+        },
+        "criterion_bindings_complete": {
+          "const": true
+        },
+        "hard_failure_results_complete": {
+          "const": true
+        },
+        "hard_failure_rule_bindings_complete": {
+          "const": true
+        },
+        "backend_evidence_bindings_complete": {
+          "const": true
+        },
+        "isolation_roots_disjoint": {
+          "const": true
+        },
+        "reference_artifacts_bound_to_reference_root": {
+          "const": true
+        },
+        "candidate_artifacts_bound_to_candidate_root": {
+          "const": true
+        },
+        "evaluator_artifacts_bound_to_evaluator_root": {
+          "const": true
+        },
+        "candidate_root_matches_declared_candidate": {
+          "const": true
+        }
       }
     },
     "evaluationResult": {
@@ -950,6 +1911,7 @@
         "reference_sha256",
         "started_at",
         "completed_at",
+        "semantic_validation",
         "states",
         "overall_status",
         "criterion_results",
@@ -977,6 +1939,9 @@
           "type": "string",
           "format": "date-time"
         },
+        "semantic_validation": {
+          "$ref": "#/$defs/semanticValidationReceipt"
+        },
         "states": {
           "$ref": "#/$defs/validityStates"
         },
@@ -985,6 +1950,7 @@
         },
         "criterion_results": {
           "type": "array",
+          "minItems": 1,
           "items": {
             "$ref": "#/$defs/criterionResult"
           }
@@ -1017,6 +1983,77 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "criterion_results": {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "hard_failure"
+                    },
+                    "status": {
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "criterion_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "criterion_results": {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "warning"
+                    },
+                    "status": {
+                      "const": "FAIL"
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "criterion_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "enum": [
+                  "PASS_WITH_WARNINGS",
+                  "NOT_RUN",
+                  "FAIL"
+                ]
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {

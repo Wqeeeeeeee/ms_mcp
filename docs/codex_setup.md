@@ -53,6 +53,14 @@ the exact UIA tree. Explicit execute is limited to one standard face view in
 the existing wrapper and still requires a separate visual review before the
 record tool can accept the view.
 
+The example allowlist also includes `material_studio_gui_fit_to_view` with
+`approval_mode="prompt"`. Its default `execution_mode="preview"` verifies the
+exact current wrapper, the installed Fit-to-View toolbar mapping, and a fresh
+UIA tree without sending input. Explicit execute invokes only
+`cmdViewer3DFitToView` in the existing window, captures before/after screenshots
+by default, and requires the bound structure SHA-256 to remain unchanged. It
+never launches another Materials Studio process or uses blind coordinates.
+
 Use `response_mode="compact"` for normal interactive calls to the live
 capabilities, modeling, update, status, view-bundle, and GUI-apply tools. The
 compact receipt includes multi-view camera parameters, normality and

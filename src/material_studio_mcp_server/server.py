@@ -165,6 +165,7 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
         "material_studio_castep_run_current",
         "material_studio_gui_activate",
         "material_studio_gui_apply_current_revision",
+        "material_studio_gui_fit_to_view",
         "material_studio_gui_launch",
         "material_studio_gui_open_structure",
         "material_studio_gui_snapshot",
@@ -994,6 +995,7 @@ RUNTIME_SOURCE_GUARDED_TOOL_NAMES = (
     "material_studio_gui_execute_view_replay",
     "material_studio_gui_record_view_replay",
     "material_studio_gui_apply_current_revision",
+    "material_studio_gui_fit_to_view",
 )
 _RUNTIME_SOURCE_GUARDED_TOOL_NAME_SET = frozenset(
     RUNTIME_SOURCE_GUARDED_TOOL_NAMES
@@ -7675,6 +7677,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "material_studio_gui_record_visual_confirmation",
             "material_studio_gui_open_structure",
             "material_studio_gui_apply_current_revision",
+            "material_studio_gui_fit_to_view",
             "material_studio_gui_copy_script_assist",
             "material_studio_gui_prepare_view_replay",
             "material_studio_gui_execute_view_replay",
@@ -7689,6 +7692,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "visual_confirmation_tool": "material_studio_gui_record_visual_confirmation",
             "open_structure_tool": "material_studio_gui_open_structure",
             "apply_current_revision_tool": "material_studio_gui_apply_current_revision",
+            "fit_to_view_tool": "material_studio_gui_fit_to_view",
             "copy_script_assist_tool": "material_studio_gui_copy_script_assist",
             "prepare_view_replay_tool": "material_studio_gui_prepare_view_replay",
             "execute_view_replay_tool": "material_studio_gui_execute_view_replay",
@@ -7817,6 +7821,25 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "viewport_warnings",
                     "warnings",
                 ],
+            },
+            "fit_to_view_policy": {
+                "tool": "material_studio_gui_fit_to_view",
+                "preview_first": True,
+                "default_execution_mode": "preview",
+                "explicit_execute_required": True,
+                "requires_exact_current_revision_wrapper": True,
+                "requires_single_matstudio_process": True,
+                "requires_installed_toolbar_registry_match": True,
+                "requires_fresh_local_uia_tree_before_invoke": True,
+                "uses_invoke_pattern_only": True,
+                "blind_coordinates_allowed": False,
+                "keyboard_input_used": False,
+                "structure_mutation_allowed": False,
+                "launches_new_matstudio_process": False,
+                "captures_before_after_snapshots_by_default": True,
+                "structure_sha256_must_remain_unchanged": True,
+                "post_action_visual_confirmation_required": True,
+                "report_writes_serialized": True,
             },
             "visual_confirmation_policy": {
                 "tool": "material_studio_gui_record_visual_confirmation",
@@ -48006,6 +48029,149 @@ def material_studio_gui_record_view_replay(
         return _compact_live_response(_ok(response), response_mode)
     except Exception as exc:
         return _compact_live_response(_error(exc), response_mode)
+
+
+@mcp.tool(
+    name="material_studio_gui_fit_to_view",
+    annotations={
+        "title": "Preview or execute Materials Studio Fit-to-View",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_gui_fit_to_view(
+    project_id: Annotated[str | None, Field(description="Optional structured project ID; omitted uses the latest current project.", min_length=1, max_length=120)] = None,
+    revision: Annotated[int | None, Field(description="Optional current revision; omitted uses the project's current revision.", ge=0)] = None,
+    execution_mode: Annotated[ExecutionMode, Field(description="preview performs read-only preflight; execute invokes Fit-to-View in the existing verified window.")] = ExecutionMode.PREVIEW,
+    take_snapshot: Annotated[bool, Field(description="Capture project-scoped BMP screenshots before and after execute.")] = True,
+    working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
+) -> dict[str, Any]:
+    """Preview or invoke Fit-to-View without opening another Materials Studio process."""
+
+    try:
+        mode = _execution_mode(execution_mode)
+        context = _resolve_gui_action_context(
+            project_id=project_id,
+            revision=revision,
+            working_dir=working_dir,
+        )
+        if context.get("project_id") is None or context.get("revision") is None:
+            return _error(
+                ValueError(
+                    f"Cannot resolve project/revision for Fit-to-View: {context}"
+                )
+            )
+        resolved_project_id = str(context["project_id"])
+        resolved_revision = int(context["revision"])
+        gui = _gui_controller(working_dir)
+        if mode == ExecutionMode.PREVIEW:
+            result = gui.fit_to_view(
+                project_id=resolved_project_id,
+                revision=resolved_revision,
+                execution_mode=mode.value,
+                take_snapshot=take_snapshot,
+            )
+            result.update(
+                {
+                    "project_resolution": context.get("project_resolution"),
+                    "gui_action_context": context,
+                    "resolved_latest_current_for_fit_to_view": (
+                        project_id is None
+                        and revision is None
+                        and context.get("reason") == "latest_current_project"
+                    ),
+                }
+            )
+            confirmation_action = result.get("confirmation_action")
+            if isinstance(confirmation_action, dict):
+                confirmation_action["payload"] = _workspace_bound_payload_hint(
+                    "material_studio_gui_fit_to_view",
+                    confirmation_action.get("payload"),
+                    working_dir,
+                )
+            return _ok(result)
+
+        retry_payload = {
+            "project_id": resolved_project_id,
+            "revision": resolved_revision,
+            "execution_mode": "execute",
+            "take_snapshot": take_snapshot,
+        }
+        retry_payload = _workspace_bound_payload_hint(
+            "material_studio_gui_fit_to_view", retry_payload, working_dir
+        )
+        try:
+            with _gui_artifact_report_transaction(
+                project_id=resolved_project_id,
+                revision=resolved_revision,
+                working_dir=working_dir,
+                coverage=(
+                    "fit_to_view",
+                    "target_window_revalidation",
+                    "gui_snapshot" if take_snapshot else "gui_action",
+                    "report_read_modify_write" if take_snapshot else "gui_log",
+                ),
+            ) as transaction:
+                result = gui.fit_to_view(
+                    project_id=resolved_project_id,
+                    revision=resolved_revision,
+                    execution_mode=mode.value,
+                    take_snapshot=take_snapshot,
+                )
+                result.update(
+                    {
+                        "project_resolution": context.get("project_resolution"),
+                        "gui_action_context": context,
+                        "resolved_latest_current_for_fit_to_view": (
+                            project_id is None
+                            and revision is None
+                            and context.get("reason") == "latest_current_project"
+                        ),
+                    }
+                )
+                for snapshot_key in ("before_snapshot", "after_snapshot"):
+                    snapshot = result.get(snapshot_key)
+                    if not isinstance(snapshot, dict) or not snapshot.get("screenshot_path"):
+                        continue
+                    structured = _persist_gui_snapshot_report(
+                        project_id=resolved_project_id,
+                        revision=resolved_revision,
+                        snapshot=snapshot,
+                        gui=gui,
+                        working_dir=working_dir,
+                        views=None,
+                        project_resolution=context.get("project_resolution"),
+                    )
+                    result.update(structured)
+                result["gui_action_transaction"] = transaction
+                _attach_gui_artifact_transaction(result, transaction)
+                return _ok(result)
+        except GuiError as exc:
+            if "GUI artifact report write transaction is busy" not in str(exc):
+                raise
+            return {
+                "ok": False,
+                "status": "gui_fit_to_view_deferred",
+                "error": str(exc),
+                "project_id": resolved_project_id,
+                "revision": resolved_revision,
+                "execution_mode": mode.value,
+                "gui_input_started": False,
+                "gui_modified": False,
+                "structure_modified": False,
+                "report_persistence_deferred": True,
+                "recommended_tool": "material_studio_gui_fit_to_view",
+                "required_next_step": (
+                    "Retry Fit-to-View after the active GUI artifact transaction completes."
+                ),
+                "gui_fit_to_view_retry_tool": "material_studio_gui_fit_to_view",
+                "gui_fit_to_view_retry_payload": retry_payload,
+            }
+    except Exception as exc:
+        return _error(exc)
 
 
 @mcp.tool(

@@ -30,6 +30,7 @@ enabled_tools = [
   "material_studio_gui_snapshot",
   "material_studio_gui_open_structure",
   "material_studio_gui_apply_current_revision",
+  "material_studio_gui_fit_to_view",
   "material_studio_gui_record_visual_confirmation",
   "material_studio_gui_copy_script_assist",
   "material_studio_gui_prepare_view_replay",
@@ -67,6 +68,9 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_apply_current_revision]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_fit_to_view]
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_record_visual_confirmation]

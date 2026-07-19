@@ -52,6 +52,10 @@ MILLER_VIEW_ONTO_RECIPE_KINDS = frozenset(
 SAFE_ARROW_KEYS = frozenset({"Up", "Down", "Left", "Right"})
 VIEWPORT_CLASS_NAME = "CViewer3DCtrl"
 VIEWPORT_CONTROL_TYPE = "Pane"
+FIT_TO_VIEW_COMMAND_ID = "cmdViewer3DFitToView"
+FIT_TO_VIEW_CONTROL_NAME = "3D Viewer Fit to View"
+FIT_TO_VIEW_TOOLBAR_NAME = "3D Viewer"
+FIT_TO_VIEW_TOOLBAR_CHILD_INDEX = 7
 MOVEMENT_WINDOW_TITLE = "Movement"
 MOVEMENT_OPTIONS_PANE_ID = "MovementOptions"
 MOVEMENT_ANGLE_CONTROL_ID = "numNudgeAngle"
@@ -188,6 +192,18 @@ class ViewReplayAutomationBackend(Protocol):
         command_labels: dict[str, str],
     ) -> dict[str, Any]:
         """Read the exact window's UIA tree without invoking any control."""
+        ...
+
+    def execute_fit_to_view(
+        self,
+        *,
+        window_handle: int,
+        expected_window_title: str,
+        toolbar_contracts: dict[str, dict[str, Any]],
+        command_labels: dict[str, str],
+        registry_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke the server-verified Fit-to-View control once."""
         ...
 
     def execute_standard_recipe(
@@ -1023,6 +1039,109 @@ class PywinautoViewReplayBackend:
                     "post_action_observation_required": True,
                     "record_call_ready": False,
                     "retry_restarts_from_reset_baseline": True,
+                }
+            )
+            return receipt
+
+    def execute_fit_to_view(
+        self,
+        *,
+        window_handle: int,
+        expected_window_title: str,
+        toolbar_contracts: dict[str, dict[str, Any]],
+        command_labels: dict[str, str],
+        registry_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke Fit-to-View after a fresh, exact-window UIA preflight."""
+
+        started_at = _utc_now()
+        receipt: dict[str, Any] = {
+            "schema_version": 1,
+            "kind": "materials_studio_local_uia_fit_to_view",
+            "started_at": started_at,
+            "window_handle": window_handle,
+            "expected_window_title": expected_window_title,
+            "command_id": FIT_TO_VIEW_COMMAND_ID,
+            "registry_sha256": registry_sha256,
+            "execution_succeeded": False,
+            "failure_phase": "preflight",
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "coordinate_input_used": False,
+            "pointer_input_used": False,
+            "modifier_keys": [],
+        }
+        try:
+            if not self.supported:
+                raise UiaReplayError(
+                    self.unavailable_reason or "Local UIA backend is unavailable."
+                )
+            if FIT_TO_VIEW_COMMAND_ID not in command_labels:
+                raise UiaReplayError(
+                    "Fit-to-View command label is missing from the server allowlist."
+                )
+            viewer_contracts = {
+                FIT_TO_VIEW_TOOLBAR_NAME: toolbar_contracts[FIT_TO_VIEW_TOOLBAR_NAME]
+            }
+            fit_labels = {FIT_TO_VIEW_COMMAND_ID: command_labels[FIT_TO_VIEW_COMMAND_ID]}
+            self._require_foreground(window_handle)
+            snapshot = self._inspect_window(
+                window_handle=window_handle,
+                expected_window_title=expected_window_title,
+                toolbar_contracts=viewer_contracts,
+                command_labels=fit_labels,
+            )
+            if snapshot["block_reasons"]:
+                raise UiaReplayError(
+                    "Fresh UIA tree failed the Fit-to-View contract: "
+                    + ", ".join(snapshot["block_reasons"])
+                )
+            fit_wrapper, fit_receipt = self._resolve_toolbar_command_target(
+                snapshot=snapshot,
+                toolbar_contracts=viewer_contracts,
+                command_labels=fit_labels,
+                toolbar_name=FIT_TO_VIEW_TOOLBAR_NAME,
+                command_id=FIT_TO_VIEW_COMMAND_ID,
+                expected_child_index=FIT_TO_VIEW_TOOLBAR_CHILD_INDEX,
+            )
+            receipt["fit_command"] = fit_receipt
+            receipt["failure_phase"] = "fit_to_view_invoke"
+            fit_wrapper.invoke()
+            receipt["gui_input_performed"] = True
+            receipt["gui_modified"] = True
+            self._sleep(0.2)
+            self._require_foreground(window_handle)
+            final_snapshot = self._inspect_window(
+                window_handle=window_handle,
+                expected_window_title=expected_window_title,
+                toolbar_contracts=viewer_contracts,
+                command_labels=fit_labels,
+            )
+            if final_snapshot["block_reasons"]:
+                raise UiaReplayError(
+                    "The post-action UIA tree no longer matches the Fit-to-View contract: "
+                    + ", ".join(final_snapshot["block_reasons"])
+                )
+            receipt.update(
+                {
+                    "execution_succeeded": True,
+                    "failure_phase": None,
+                    "finished_at": _utc_now(),
+                    "post_action_window_title": final_snapshot["window"]["title"],
+                    "post_action_viewport_observed": final_snapshot.get("viewport")
+                    is not None,
+                    "post_action_observation_required": True,
+                }
+            )
+            return receipt
+        except Exception as exc:
+            receipt.update(
+                {
+                    "finished_at": _utc_now(),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                    "post_action_observation_required": True,
                 }
             )
             return receipt
@@ -3048,6 +3167,67 @@ class PywinautoViewReplayBackend:
             "view_name": view_name,
             "key_sequence": observed_keys,
             "keyboard_stages": None,
+        }
+
+    def _resolve_toolbar_command_target(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        toolbar_contracts: dict[str, dict[str, Any]],
+        command_labels: dict[str, str],
+        toolbar_name: str,
+        command_id: str,
+        expected_child_index: int,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Resolve one control from the freshly inspected semantic toolbar."""
+
+        toolbar = snapshot["toolbar_wrappers"].get(toolbar_name)
+        toolbar_result = snapshot["toolbars"].get(toolbar_name)
+        if toolbar is None or not isinstance(toolbar_result, dict):
+            raise UiaReplayError(f"The exact {toolbar_name} toolbar is unavailable.")
+        if toolbar_result.get("contract_verified") is not True:
+            raise UiaReplayError(f"The {toolbar_name} toolbar contract is not verified.")
+        entries = list(toolbar_contracts[toolbar_name].get("entries") or [])
+        matching_indexes = [
+            index
+            for index, (kind, item_command_id) in enumerate(entries)
+            if kind == "tool" and item_command_id == command_id
+        ]
+        if matching_indexes != [expected_child_index]:
+            raise UiaReplayError(
+                f"{command_id} is not at the reviewed {toolbar_name} toolbar position."
+            )
+        child_index = matching_indexes[0]
+        children = list(toolbar.children())
+        if child_index >= len(children):
+            raise UiaReplayError(f"{command_id} toolbar child is unavailable.")
+        wrapper = children[child_index]
+        child = toolbar_result["children"][child_index]
+        expected_name = command_labels[command_id]
+        observed_name = child.get("observed_control_name")
+        if observed_name not in {None, expected_name}:
+            raise UiaReplayError(
+                f"Fresh {command_id} control name is unexpected: {observed_name!r}."
+            )
+        if child.get("enabled") is not True:
+            raise UiaReplayError(f"Fresh {command_id} control is disabled.")
+        if child.get("visible") is not True:
+            raise UiaReplayError(f"Fresh {command_id} control is not visible.")
+        if child.get("invoke_supported") is not True:
+            raise UiaReplayError(f"Fresh {command_id} control lacks InvokePattern.")
+        target_kind = "named_control" if observed_name == expected_name else "verified_anonymous_toolbar_child"
+        return wrapper, {
+            "command_id": command_id,
+            "target_kind": target_kind,
+            "invocation_method": "local_uia_invoke_pattern",
+            "toolbar_name": toolbar_name,
+            "toolbar_automation_id": toolbar_result["toolbar_automation_id"],
+            "registry_toolbar_name": toolbar_result["registry_toolbar_name"],
+            "zero_based_child_index": child_index,
+            "element_index": child["computer_use_compatible_element_index"],
+            "observed_control_name": observed_name,
+            "invoke_pattern_verified": True,
+            "accessibility_tree_refreshed": True,
         }
 
     def _resolve_reset_target(

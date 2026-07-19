@@ -29,6 +29,10 @@ from typing import Any, Protocol
 from xml.sax.saxutils import escape as xml_escape
 
 from .gui_uia import (
+    FIT_TO_VIEW_COMMAND_ID,
+    FIT_TO_VIEW_CONTROL_NAME,
+    FIT_TO_VIEW_TOOLBAR_CHILD_INDEX,
+    FIT_TO_VIEW_TOOLBAR_NAME,
     PywinautoViewReplayBackend,
     SAFE_ISOMETRIC_KEYBOARD_STAGES,
     SAFE_LOCAL_VIEW_NAMES,
@@ -3041,6 +3045,8 @@ class MaterialsStudioGuiController:
                 "execution_requires_explicit_execute": True,
                 "post_action_visual_confirmation_required": True,
             },
+            "local_uia_fit_to_view_supported": local_uia_supported,
+            "local_uia_fit_to_view_command_id": FIT_TO_VIEW_COMMAND_ID,
             "capabilities": [
                 "detect_matstudio_window",
                 "list_matstudio_windows",
@@ -3064,6 +3070,7 @@ class MaterialsStudioGuiController:
                     else []
                 ),
                 "record_external_view_replay",
+                *(["execute_fit_to_view_with_local_uia"] if local_uia_supported else []),
             ],
             "limits": [
                 "COM automation is not used.",
@@ -3072,8 +3079,308 @@ class MaterialsStudioGuiController:
                 "Miller planes and exact-collinear crystal directions require a prepared automation-ready transactional recipe.",
                 "Non-collinear crystal directions still require a reviewed camera backend.",
                 "Blind coordinates, viewport modifier keys, and implicit MatStudio launches are prohibited.",
+                "Fit-to-View only changes the current GUI camera framing; it never changes the structure artifact.",
             ],
         }
+
+    def _fit_to_view_registry_preflight(self) -> dict[str, Any]:
+        """Verify the installed Materials Studio toolbar mapping for Fit-to-View."""
+
+        command_evidence = _materials_studio_view_command_evidence()
+        reasons: list[str] = []
+        registry_sha256 = str(command_evidence.get("registry_sha256") or "").lower()
+        if command_evidence.get("registry_found") is not True:
+            reasons.append("installed_view_toolbar_registry_not_found")
+        if not re.fullmatch(r"[0-9a-f]{64}", registry_sha256):
+            reasons.append("installed_view_toolbar_registry_hash_missing")
+        if command_evidence.get("registry_toolbar_parse_error") not in {None, ""}:
+            reasons.append("installed_view_toolbar_registry_parse_failed")
+        if FIT_TO_VIEW_COMMAND_ID not in {
+            str(item) for item in command_evidence.get("registered_view_command_ids") or []
+        }:
+            reasons.append("fit_to_view_command_not_registered")
+
+        contract = VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[FIT_TO_VIEW_TOOLBAR_NAME]
+        layouts = [
+            item
+            for item in command_evidence.get("registry_toolbar_layouts") or []
+            if isinstance(item, dict)
+            and item.get("registry_toolbar_name") == contract.get("registry_toolbar_name")
+            and item.get("title") == FIT_TO_VIEW_TOOLBAR_NAME
+        ]
+        if len(layouts) != 1:
+            reasons.append("fit_to_view_toolbar_registry_identity_not_unique")
+        else:
+            installed_entries = tuple(
+                (
+                    str(entry.get("kind") or ""),
+                    str(entry.get("command_id"))
+                    if entry.get("command_id") is not None
+                    else None,
+                )
+                for entry in layouts[0].get("entries") or []
+                if isinstance(entry, dict)
+            )
+            expected_entries = tuple(contract.get("entries") or ())
+            if installed_entries != expected_entries:
+                reasons.append("fit_to_view_toolbar_registry_sequence_mismatch")
+
+        return {
+            "source": "installed_materials_studio_view_registry",
+            "command_id": FIT_TO_VIEW_COMMAND_ID,
+            "command_label": FIT_TO_VIEW_CONTROL_NAME,
+            "toolbar_name": FIT_TO_VIEW_TOOLBAR_NAME,
+            "toolbar_child_index": FIT_TO_VIEW_TOOLBAR_CHILD_INDEX,
+            "registry_path": command_evidence.get("registry_path"),
+            "registry_sha256": registry_sha256 or None,
+            "registry_found": command_evidence.get("registry_found"),
+            "registered_command": FIT_TO_VIEW_COMMAND_ID
+            in {
+                str(item)
+                for item in command_evidence.get("registered_view_command_ids") or []
+            },
+            "registry_verified": not reasons,
+            "block_reasons": _unique_strings(reasons),
+            "registry_toolbar_layouts": layouts,
+        }
+
+    def _fit_to_view_runtime_preflight(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        """Read-only preflight for one exact current wrapper and Fit control."""
+
+        safe_project = sanitize_project_id(project_id)
+        status = self.status(project_id=safe_project, revision=revision)
+        target_window = (
+            status.get("target_window")
+            if isinstance(status.get("target_window"), dict)
+            else {}
+        )
+        target_resolution = (
+            status.get("target_window_resolution")
+            if isinstance(status.get("target_window_resolution"), dict)
+            else {}
+        )
+        reasons: list[str] = []
+        if status.get("supported") is not True:
+            reasons.append("gui_backend_unavailable")
+        if status.get("process_count") != 1:
+            reasons.append("exactly_one_matstudio_process_required")
+        if status.get("single_window_policy_ok") is not True:
+            reasons.extend(str(item) for item in status.get("single_window_violation_reasons") or [])
+        if status.get("target_window_found") is not True:
+            reasons.append("target_revision_window_not_found")
+        if target_resolution.get("matched_project_window") is not True:
+            reasons.append("target_revision_window_identity_unverified")
+        if status.get("current_revision_loaded") is not True:
+            reasons.append("target_revision_not_loaded_in_gui")
+        if target_resolution.get("target_wrapper_workspace_matches_controller") is False:
+            reasons.append("target_wrapper_workspace_mismatch")
+        if target_window.get("is_visible") is not True:
+            reasons.append("target_window_not_visible")
+        if target_window.get("is_minimized") is True:
+            reasons.append("target_window_minimized")
+        if target_window.get("is_foreground") is not True:
+            reasons.append("target_window_not_foreground")
+        structure_path = _target_structure_path(target_resolution)
+        if structure_path is None or not structure_path.exists() or not structure_path.is_file():
+            reasons.append("target_structure_artifact_unavailable")
+
+        registry = self._fit_to_view_registry_preflight()
+        reasons.extend(str(item) for item in registry.get("block_reasons") or [])
+        probe: dict[str, Any] | None = None
+        if not reasons:
+            probe = self.view_replay_backend.probe(
+                window_handle=int(target_window["handle"]),
+                expected_window_title=str(target_window["title"]),
+                expected_revision=revision,
+                toolbar_contracts={
+                    FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                        FIT_TO_VIEW_TOOLBAR_NAME
+                    ]
+                },
+                command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+            )
+            if probe.get("supported") is not True:
+                reasons.append("local_uia_backend_unavailable")
+            reasons.extend(str(item) for item in probe.get("block_reasons") or [])
+            if FIT_TO_VIEW_COMMAND_ID not in {
+                str(item) for item in probe.get("resolved_command_ids") or []
+            }:
+                reasons.append("fit_to_view_control_not_invocable")
+            if probe.get("viewport") is None:
+                reasons.append("local_uia_unique_viewport_not_observed")
+
+        reasons = _unique_strings(reasons)
+        return {
+            "status": "verified_fit_to_view_ready" if not reasons else "fit_to_view_blocked",
+            "execution_ready": not reasons,
+            "project_id": safe_project,
+            "revision": revision,
+            "target_window": target_window or None,
+            "target_window_resolution": target_resolution or None,
+            "target_window_is_foreground": target_window.get("is_foreground"),
+            "single_window_policy_ok": status.get("single_window_policy_ok"),
+            "structure_path": str(structure_path) if structure_path is not None else None,
+            "registry": registry,
+            "local_uia_probe": probe,
+            "block_reasons": reasons,
+            "gui_input_performed": False,
+            "structure_modified": False,
+        }
+
+    def fit_to_view(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+        execution_mode: str = "preview",
+        take_snapshot: bool = True,
+    ) -> dict[str, Any]:
+        """Preview or execute Fit-to-View in the existing verified GUI window."""
+
+        mode = str(execution_mode).strip().lower()
+        if mode not in {"preview", "execute"}:
+            raise GuiError("execution_mode must be preview or execute")
+        if revision < 0:
+            raise GuiError("revision must be non-negative")
+
+        preflight = self._fit_to_view_runtime_preflight(
+            project_id=project_id,
+            revision=revision,
+        )
+        response: dict[str, Any] = {
+            "project_id": preflight["project_id"],
+            "revision": revision,
+            "execution_mode": mode,
+            "status": "preview_ready" if preflight["execution_ready"] else "blocked",
+            "execution_ready": preflight["execution_ready"],
+            "preflight": preflight,
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "structure_unchanged": True,
+            "snapshot_requested": bool(take_snapshot),
+            "confirmation_required": mode == "preview" and preflight["execution_ready"],
+            "confirmation_action": (
+                {
+                    "tool": "material_studio_gui_fit_to_view",
+                    "payload": {
+                        "project_id": preflight["project_id"],
+                        "revision": revision,
+                        "execution_mode": "execute",
+                        "take_snapshot": bool(take_snapshot),
+                    },
+                }
+                if mode == "preview" and preflight["execution_ready"]
+                else None
+            ),
+        }
+        if mode == "preview" or not preflight["execution_ready"]:
+            response["recommended_tool"] = (
+                "material_studio_gui_activate"
+                if "target_window_not_foreground" in preflight["block_reasons"]
+                else "material_studio_gui_status"
+                if not preflight["execution_ready"]
+                else "material_studio_gui_fit_to_view"
+            )
+            response["recommended_action"] = (
+                "activate_exact_target_window_then_retry_fit_to_view"
+                if "target_window_not_foreground" in preflight["block_reasons"]
+                else "resolve_fit_to_view_preflight_then_retry"
+                if not preflight["execution_ready"]
+                else "execute_fit_to_view_after_explicit_confirmation"
+            )
+            return response
+
+        target_window = preflight["target_window"] or {}
+        target_resolution = preflight["target_window_resolution"] or {}
+        structure_path = _target_structure_path(target_resolution)
+        structure_sha256_before: str | None = None
+        structure_size_before: int | None = None
+        if structure_path is not None and structure_path.exists():
+            structure_sha256_before, structure_size_before = _sha256_file(structure_path)
+
+        before_snapshot: dict[str, Any] | None = None
+        if take_snapshot:
+            before_snapshot = self.snapshot(
+                label="fit_to_view_before",
+                project_id=preflight["project_id"],
+                revision=revision,
+            )
+
+        execute_method = getattr(self.view_replay_backend, "execute_fit_to_view", None)
+        if not callable(execute_method):
+            raise GuiError("The configured local UIA backend does not support Fit-to-View.")
+        action_receipt = execute_method(
+            window_handle=int(target_window["handle"]),
+            expected_window_title=str(target_window["title"]),
+            toolbar_contracts={
+                FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                    FIT_TO_VIEW_TOOLBAR_NAME
+                ]
+            },
+            command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+            registry_sha256=preflight["registry"].get("registry_sha256"),
+        )
+
+        structure_sha256_after: str | None = None
+        structure_size_after: int | None = None
+        if structure_path is not None and structure_path.exists():
+            structure_sha256_after, structure_size_after = _sha256_file(structure_path)
+        structure_unchanged = bool(
+            structure_sha256_before is not None
+            and structure_sha256_before == structure_sha256_after
+            and structure_size_before == structure_size_after
+        )
+
+        after_snapshot: dict[str, Any] | None = None
+        snapshot_warning: str | None = None
+        if take_snapshot:
+            try:
+                after_snapshot = self.snapshot(
+                    label="fit_to_view_after",
+                    project_id=preflight["project_id"],
+                    revision=revision,
+                )
+            except Exception as exc:
+                snapshot_warning = str(exc)
+
+        execution_succeeded = bool(
+            action_receipt.get("execution_succeeded") is True and structure_unchanged
+        )
+        response.update(
+            {
+                "status": "executed" if execution_succeeded else "execution_failed",
+                "execution_ready": True,
+                "action_receipt": action_receipt,
+                "before_snapshot": before_snapshot,
+                "after_snapshot": after_snapshot,
+                "snapshot_warning": snapshot_warning,
+                "structure_path": str(structure_path) if structure_path is not None else None,
+                "structure_sha256_before": structure_sha256_before,
+                "structure_sha256_after": structure_sha256_after,
+                "structure_unchanged": structure_unchanged,
+                "gui_input_performed": bool(
+                    action_receipt.get("gui_input_performed") is True
+                ),
+                "gui_modified": bool(action_receipt.get("gui_modified") is True),
+                "structure_modified": not structure_unchanged,
+                "visual_acceptance_recorded": False,
+                "post_action_visual_confirmation_required": True,
+            }
+        )
+        log_path = self._write_log(
+            "fit_to_view",
+            project_id=preflight["project_id"],
+            revision=revision,
+            payload=response,
+        )
+        response["gui_log_path"] = str(log_path)
+        return response
 
     def _window_inventory(self, windows: list[WindowInfo], *, selected_window: WindowInfo | None) -> list[dict[str, Any]]:
         """Return window entries enriched with live wrapper metadata when available."""

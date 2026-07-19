@@ -41,6 +41,7 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_gui_snapshot",
     "material_studio_gui_open_structure",
     "material_studio_gui_apply_current_revision",
+    "material_studio_gui_fit_to_view",
     "material_studio_gui_record_visual_confirmation",
     "material_studio_gui_prepare_view_replay",
     "material_studio_gui_execute_view_replay",
@@ -54,7 +55,7 @@ EXPECTED_LIVE_COMPACT_SCHEMA = "material_studio_live_compact_v2"
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
-EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 27
+EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 28
 
 _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_capabilities": {"readOnlyHint": True, "destructiveHint": False},
@@ -72,6 +73,7 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
         "destructiveHint": True,
     },
     "material_studio_gui_apply_current_revision": {"readOnlyHint": False, "destructiveHint": True},
+    "material_studio_gui_fit_to_view": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_gui_record_visual_confirmation": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_gui_record_view_replay": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_gui_execute_view_replay": {"readOnlyHint": False, "destructiveHint": False},

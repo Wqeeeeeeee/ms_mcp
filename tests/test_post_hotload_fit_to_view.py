@@ -430,3 +430,195 @@ def test_executed_fit_without_final_snapshot_is_not_accepted(
     compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
     assert compact["post_hotload_fit_to_view"]["action_completed"] is True
     assert compact["post_hotload_fit_to_view"]["final_snapshot_bound"] is False
+
+
+def test_explicit_current_reload_wins_over_display_only_fit_routing() -> None:
+    spec = _silicon_spec("session_fit_route")
+
+    pure_fit = infer_modeling_plan(
+        "Fit the current model to view in Materials Studio.",
+        current_spec=spec,
+    )
+    reload_and_fit = infer_modeling_plan(
+        (
+            "Reload the current revision in Materials Studio and fit the "
+            "current model to view."
+        ),
+        current_spec=spec,
+    )
+
+    assert pure_fit.kind == "fit_to_view"
+    assert reload_and_fit.kind == "show_current"
+    assert reload_and_fit.template_id == "show_current_revision"
+    assert fit_to_view_requested(
+        "Reload the current revision in Materials Studio and fit the current model to view."
+    ) is True
+    fit_policy = server._live_capabilities_payload()["gui"][
+        "fit_to_view_policy"
+    ]
+    assert fit_policy["combined_session_workflows"] == [
+        "create",
+        "patch",
+        "show_current",
+        "rollback",
+        "redo",
+        "restore",
+        "gui_apply_current_revision",
+    ]
+
+
+def test_show_current_preview_defers_fit_and_execute_reuses_current_revision(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    gui = _LiveGui(tmp_path)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond crystal.",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    assert created["ok"] is True
+    project_id = created["project_id"]
+    gui.calls.clear()
+
+    preview = server.material_studio_live_modeling_request(
+        (
+            "Reload the current revision in Materials Studio and fit the "
+            "current model to view."
+        ),
+        project_id=project_id,
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+
+    assert preview["ok"] is True
+    assert preview["workflow"] == "show_current"
+    assert preview["nl_plan"]["kind"] == "show_current"
+    assert preview["revision"] == 0
+    assert preview["post_hotload_fit_to_view_request_source"] == "natural_language"
+    assert preview["post_hotload_fit_to_view"]["status"] == "deferred_until_execute"
+    assert preview["post_hotload_fit_to_view"]["gui_input_performed"] is False
+    assert all(
+        name not in {"open_structure", "fit_to_view", "snapshot"}
+        for name, _ in gui.calls
+    )
+
+    gui.calls.clear()
+    executed = server.material_studio_live_modeling_request(
+        (
+            "Reload the current revision, hot-load it in Materials Studio, "
+            "and fit the current model to view."
+        ),
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+
+    assert executed["ok"] is True
+    assert executed["workflow"] == "show_current"
+    assert executed["execution_mode"] == "execute"
+    assert executed["execution_mode_source"] == "explicit_live_intent"
+    assert executed["revision"] == 0
+    fit = executed["post_hotload_fit_to_view"]
+    assert fit["request_source"] == "natural_language"
+    assert fit["completed"] is True
+    assert fit["final_snapshot_bound"] is True
+    assert "workflow:show_current" in executed["gui_action_transaction"]["coverage"]
+    assert "gui_fit_to_view" in executed["gui_action_transaction"]["coverage"]
+    action_names = [name for name, _ in gui.calls]
+    assert action_names.index("open_structure") < action_names.index("fit_to_view")
+    assert "snapshot" in action_names[action_names.index("fit_to_view") + 1 :]
+    store = ProjectStore(tmp_path)
+    assert store.load_current(project_id).revision == 0
+    assert len(store.list_history(project_id)) == 1
+
+
+def test_rollback_redo_and_restore_fit_after_each_same_window_hotload(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    gui = _LiveGui(tmp_path)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    created = server.material_studio_live_modeling_request(
+        "Build silicon diamond crystal.",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    project_id = created["project_id"]
+    patched = server.material_studio_live_modeling_request(
+        "Make a 2x1x1 supercell.",
+        project_id=project_id,
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    assert patched["ok"] is True
+    assert patched["revision"] == 1
+    gui.calls.clear()
+
+    rolled_back = server.material_studio_live_modeling_request(
+        (
+            "Undo the last change, hot-load it in Materials Studio, and fit "
+            "the current model to view."
+        ),
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    assert rolled_back["ok"] is True
+    assert rolled_back["workflow"] == "rollback"
+    assert rolled_back["target_revision"] == 0
+    assert rolled_back["new_revision"] == 2
+    assert rolled_back["post_hotload_fit_to_view_request_source"] == "natural_language"
+    assert rolled_back["post_hotload_fit_to_view"]["completed"] is True
+    assert rolled_back["modeling_report"]["post_hotload_fit_to_view"]["completed"] is True
+
+    redone = server.material_studio_live_modeling_request(
+        (
+            "Redo the last change, hot-load it in Materials Studio, and fit "
+            "the current model to view."
+        ),
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    assert redone["ok"] is True
+    assert redone["workflow"] == "redo"
+    assert redone["target_revision"] == 1
+    assert redone["new_revision"] == 3
+    assert redone["post_hotload_fit_to_view"]["request_source"] == "natural_language"
+    assert redone["post_hotload_fit_to_view"]["completed"] is True
+
+    restored = server.material_studio_live_modeling_request(
+        (
+            "Restore r000, hot-load it in Materials Studio, and fit the "
+            "current model to view."
+        ),
+        project_id=project_id,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+    assert restored["ok"] is True
+    assert restored["workflow"] == "rollback"
+    assert restored["nl_plan"]["template_id"] == "restore_revision"
+    assert restored["target_revision"] == 0
+    assert restored["new_revision"] == 4
+    assert restored["post_hotload_fit_to_view"]["completed"] is True
+    assert restored["post_hotload_fit_to_view"]["final_snapshot_bound"] is True
+    assert "workflow:rollback" in restored["gui_action_transaction"]["coverage"]
+    assert "gui_fit_to_view" in restored["gui_action_transaction"]["coverage"]
+
+    history = ProjectStore(tmp_path).list_history(project_id)
+    assert [item["revision"] for item in history] == [0, 1, 2, 3, 4]
+    assert [item["action"] for item in history] == [
+        "create",
+        "live_patch",
+        "rollback:r000",
+        "rollback:r001",
+        "rollback:r000",
+    ]
+    assert [name for name, _ in gui.calls].count("fit_to_view") == 3

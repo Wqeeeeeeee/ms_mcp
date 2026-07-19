@@ -7849,6 +7849,15 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "captures_before_after_snapshots_by_default": True,
                 "combined_live_modeling_parameter": "fit_to_view_after_open",
                 "combined_natural_language_intent_supported": True,
+                "combined_session_workflows": [
+                    "create",
+                    "patch",
+                    "show_current",
+                    "rollback",
+                    "redo",
+                    "restore",
+                    "gui_apply_current_revision",
+                ],
                 "combined_action_requires_execute_and_same_window_hotload": True,
                 "combined_preview_performs_gui_input": False,
                 "combined_open_fit_snapshot_share_gui_artifact_transaction": True,
@@ -45917,6 +45926,8 @@ def material_studio_live_modeling_request(
                     execution_mode_source=execution_mode_source,
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
+                    fit_to_view_after_open=fit_to_view_requested_after_open,
+                    fit_to_view_request_source=fit_to_view_request_source,
                     export_view_audit=export_view_audit,
                     views=views,
                     working_dir=working_dir,
@@ -45955,6 +45966,8 @@ def material_studio_live_modeling_request(
                     execution_mode_source=execution_mode_source,
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
+                    fit_to_view_after_open=fit_to_view_requested_after_open,
+                    fit_to_view_request_source=fit_to_view_request_source,
                     export_view_audit=export_view_audit,
                     views=views,
                     working_dir=working_dir,
@@ -46376,6 +46389,12 @@ def material_studio_live_modeling_request(
                     "diagnostic_export_requested": export_requested,
                     "normality_check_requested": normality_requested,
                     "requested_diagnostic_focuses": requested_diagnostic_focuses,
+                    "post_hotload_fit_to_view_requested": (
+                        fit_to_view_requested_after_open
+                    ),
+                    "post_hotload_fit_to_view_request_source": (
+                        fit_to_view_request_source
+                    ),
                 }
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_gui_apply_current_revision(
@@ -46383,6 +46402,7 @@ def material_studio_live_modeling_request(
                         execution_mode=mode,
                         open_in_gui=open_in_gui,
                         take_snapshot=take_snapshot,
+                        fit_to_view_after_open=fit_to_view_requested_after_open,
                         export_view_audit=(
                             export_view_audit
                             or export_requested
@@ -46674,6 +46694,8 @@ def _handle_live_rollback_request(
     execution_mode_source: str,
     open_in_gui: bool,
     take_snapshot: bool,
+    fit_to_view_after_open: bool,
+    fit_to_view_request_source: str,
     export_view_audit: bool,
     views: list[str] | None,
     working_dir: str | None,
@@ -46693,6 +46715,25 @@ def _handle_live_rollback_request(
         working_dir=working_dir,
     )
     if not rollback.get("ok"):
+        fit_receipt = _post_hotload_fit_to_view_request_receipt(
+            requested=fit_to_view_after_open,
+            request_source=fit_to_view_request_source,
+            execution_mode=execution_mode,
+            open_in_gui=open_in_gui,
+            take_snapshot=take_snapshot,
+        )
+        if fit_to_view_after_open:
+            fit_receipt.update(
+                {
+                    "status": "not_run_rollback_failed",
+                    "completed": False,
+                    "automatic_after_hotload": False,
+                    "required_next_step": (
+                        "Resolve the rollback failure before retrying the requested "
+                        "same-window hot-load and Fit-to-View action."
+                    ),
+                }
+            )
         return {
             **rollback,
             "workflow": workflow,
@@ -46704,6 +46745,9 @@ def _handle_live_rollback_request(
             "diagnostic_export_requested": diagnostic_export_requested,
             "normality_check_requested": normality_check_requested,
             "requested_diagnostic_focuses": requested_diagnostic_focuses,
+            "post_hotload_fit_to_view_requested": fit_to_view_after_open,
+            "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
+            "post_hotload_fit_to_view": fit_receipt,
         }
 
     orchestration_context = {
@@ -46720,6 +46764,8 @@ def _handle_live_rollback_request(
         "diagnostic_export_requested": diagnostic_export_requested,
         "normality_check_requested": normality_check_requested,
         "requested_diagnostic_focuses": requested_diagnostic_focuses,
+        "post_hotload_fit_to_view_requested": fit_to_view_after_open,
+        "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
     }
     with _live_orchestration_context(orchestration_context):
         return material_studio_gui_apply_current_revision(
@@ -46727,6 +46773,7 @@ def _handle_live_rollback_request(
             execution_mode=execution_mode,
             open_in_gui=open_in_gui,
             take_snapshot=take_snapshot,
+            fit_to_view_after_open=fit_to_view_after_open,
             export_view_audit=effective_export_view_audit,
             views=views,
             working_dir=working_dir,
@@ -49085,9 +49132,20 @@ def material_studio_gui_apply_current_revision(
 
     try:
         mode = _execution_mode(execution_mode)
+        fit_to_view_requested_after_open = bool(fit_to_view_after_open)
         fit_to_view_request_source = (
             "explicit_parameter" if fit_to_view_after_open else "default_disabled"
         )
+        if "post_hotload_fit_to_view_requested" in orchestration_context:
+            fit_to_view_requested_after_open = bool(
+                orchestration_context["post_hotload_fit_to_view_requested"]
+            )
+            fit_to_view_request_source = str(
+                orchestration_context.get(
+                    "post_hotload_fit_to_view_request_source",
+                    fit_to_view_request_source,
+                )
+            )
         store = _structured_store(working_dir)
         if project_id is None:
             latest = _latest_live_project(store)
@@ -49133,10 +49191,10 @@ def material_studio_gui_apply_current_revision(
             "project_resolution": project_resolution,
             "revision": spec.revision,
             "execution_mode": mode.value,
-            "post_hotload_fit_to_view_requested": bool(fit_to_view_after_open),
+            "post_hotload_fit_to_view_requested": fit_to_view_requested_after_open,
             "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
             "post_hotload_fit_to_view": _post_hotload_fit_to_view_request_receipt(
-                requested=bool(fit_to_view_after_open),
+                requested=fit_to_view_requested_after_open,
                 request_source=fit_to_view_request_source,
                 execution_mode=mode,
                 open_in_gui=open_in_gui,
@@ -49214,7 +49272,7 @@ def material_studio_gui_apply_current_revision(
                         ),
                         record_gui_open_artifact=True,
                         refresh_view_audit_report=False,
-                        fit_to_view_after_open=bool(fit_to_view_after_open),
+                        fit_to_view_after_open=fit_to_view_requested_after_open,
                     )
                 )
             else:

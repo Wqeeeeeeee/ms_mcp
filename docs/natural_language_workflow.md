@@ -71,6 +71,19 @@ stage reports partial success and an exact retry payload without rebuilding or
 reopening another Materials Studio process. Callers can explicitly set
 `fit_to_view_after_open=false` to suppress inferred framing.
 
+The same post-hot-load stage applies to revision-session commands. `Reload the
+current revision in Materials Studio and fit the current model to view` remains
+`show_current`, executes the immutable current revision without creating a new
+revision, and then frames that exact GUI document. `Undo the last change,
+hot-load it, and fit the current model to view`, `redo ... and fit`, and
+`restore r000 ... and fit` preserve their non-destructive rollback/redo/restore
+history semantics; Fit-to-View runs only after the newly allocated revision is
+successfully materialized and opened. Explicit preview still creates no GUI
+input, and explicit `fit_to_view_after_open=false` overrides the framing phrase.
+A pure `fit the current model to view in Materials Studio` request remains the
+display-only `fit_to_view` workflow and does not reopen or rematerialize the
+structure.
+
 Requests that contain an actual structural edit still take precedence over
 display-only routing. For example, `把 Si1_000 从 P 换回 Si并热加载到当前窗口` and
 `replace Si1_000 from P back to Si and hot-load it` create a new semantic-patch

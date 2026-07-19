@@ -4315,9 +4315,14 @@ def infer_modeling_plan(
         if replay_plan is not None:
             return replay_plan
         fit_to_view_plan = _infer_fit_to_view_plan(text, current_spec)
+        show_current_plan = _infer_show_current_plan(text, current_spec)
+        if show_current_plan is not None and (
+            fit_to_view_plan is None
+            or _looks_like_explicit_current_display_request(text)
+        ):
+            return show_current_plan
         if fit_to_view_plan is not None:
             return fit_to_view_plan
-        show_current_plan = _infer_show_current_plan(text, current_spec)
         if show_current_plan is not None:
             return show_current_plan
         inspect_current_plan = _infer_inspect_current_plan(text, current_spec)
@@ -5063,6 +5068,46 @@ def _infer_show_current_plan(text: str, current_spec: ModelSpec) -> NaturalLangu
             "Export view-bundle diagnostics." if export_diagnostics else "Use existing diagnostic export settings.",
         ],
     )
+
+
+def _looks_like_explicit_current_display_request(text: str) -> bool:
+    """Return whether a request explicitly asks to load or show the current revision."""
+
+    terms = (
+        "show",
+        "display",
+        "see",
+        "open",
+        "load",
+        "reload",
+        "refresh",
+        "hot-load",
+        "hot load",
+        "hotload",
+        "live-load",
+        "live load",
+        "push",
+        "send",
+        "sync",
+        "\u663e\u793a",
+        "\u5c55\u793a",
+        "\u770b\u5230",
+        "\u770b\u89c1",
+        "\u6253\u5f00",
+        "\u52a0\u8f7d",
+        "\u8f7d\u5165",
+        "\u5237\u65b0",
+        "\u70ed\u52a0\u8f7d",
+        "\u5b9e\u65f6\u70ed\u52a0\u8f7d",
+        "\u63a8\u9001",
+        "\u63a8\u5230",
+        "\u63a8\u5165",
+        "\u53d1\u9001",
+        "\u53d1\u5230",
+        "\u9001\u5230",
+        "\u540c\u6b65",
+    )
+    return any(term in text for term in terms)
 
 
 def _looks_like_show_current_request(text: str) -> bool:

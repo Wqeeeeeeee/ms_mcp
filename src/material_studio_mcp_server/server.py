@@ -44850,6 +44850,7 @@ def material_studio_live_modeling_request(
                     "redo",
                     "rollback",
                     "continue_view_replay",
+                    "fit_to_view",
                     "inspect_current",
                     "show_current",
                 }
@@ -45520,6 +45521,137 @@ def material_studio_live_modeling_request(
                 )
                 if prepare_receipt is not None:
                     result["view_replay_prepare"] = prepare_receipt
+                return finish(result)
+            elif plan.kind == "fit_to_view":
+                if project_id is None or current_spec is None:
+                    return _attach_live_failure_contract({
+                        "ok": False,
+                        "error": "A natural-language Fit-to-View request was inferred, but no current project exists.",
+                        "user_request": user_request,
+                        "nl_plan": nl_plan,
+                        "project_resolution": project_resolution,
+                        "capabilities_hint": _live_capabilities_hint(),
+                    }, status="missing_current_project", recommended_action="create_or_select_project", payload_hint={"project_id": "existing project id"})
+
+                fit_payload = plan.payload if isinstance(plan.payload, dict) else {}
+                normality_requested = bool(
+                    fit_payload.get("check_normality")
+                    or _normality_check_requested_from_text(user_request)
+                )
+                export_requested = bool(
+                    fit_payload.get("export_diagnostics")
+                    or _diagnostic_export_requested_from_text(user_request)
+                )
+                fit_mode = mode
+                fit_execution_mode_source = execution_mode_source
+                if execution_mode is None:
+                    fit_mode = ExecutionMode.PREVIEW
+                    fit_execution_mode_source = "default_preview_fit_to_view"
+
+                try:
+                    current_at_action, current_pointer = store.resolve_current(project_id)
+                except Exception as exc:
+                    return finish(_attach_live_failure_contract({
+                        "ok": False,
+                        "workflow": "fit_to_view",
+                        "user_request": user_request,
+                        "nl_plan": nl_plan,
+                        "project_id": project_id,
+                        "revision": current_spec.revision,
+                        "project_resolution": project_resolution,
+                        "revision_created": False,
+                        "structure_modified": False,
+                        "structure_unchanged": True,
+                        "error": f"Unable to revalidate the current revision before Fit-to-View: {exc}",
+                    }, status="fit_to_view_current_revision_unavailable", recommended_action="refresh_current_project_and_retry_fit_to_view", payload_hint={
+                        "user_request": user_request,
+                        "project_id": project_id,
+                        "execution_mode": fit_mode.value,
+                        "take_snapshot": take_snapshot,
+                        "working_dir": working_dir,
+                    }))
+                if current_at_action.revision != current_spec.revision:
+                    return finish(_attach_live_failure_contract({
+                        "ok": False,
+                        "workflow": "fit_to_view",
+                        "user_request": user_request,
+                        "nl_plan": nl_plan,
+                        "project_id": project_id,
+                        "revision": current_spec.revision,
+                        "current_revision": current_at_action.revision,
+                        "current_pointer": current_pointer,
+                        "project_resolution": project_resolution,
+                        "revision_created": False,
+                        "structure_modified": False,
+                        "structure_unchanged": True,
+                        "error": (
+                            f"Refusing Fit-to-View for revision {current_spec.revision} because "
+                            f"the current revision is now {current_at_action.revision}."
+                        ),
+                    }, status="fit_to_view_current_revision_block", recommended_action="retry_fit_to_view_for_current_revision", payload_hint={
+                        "user_request": user_request,
+                        "project_id": project_id,
+                        "execution_mode": fit_mode.value,
+                        "take_snapshot": take_snapshot,
+                        "working_dir": working_dir,
+                    }))
+
+                result = material_studio_gui_fit_to_view(
+                    project_id=project_id,
+                    revision=current_spec.revision,
+                    execution_mode=fit_mode,
+                    take_snapshot=take_snapshot,
+                    working_dir=working_dir,
+                )
+                result = {
+                    **result,
+                    "workflow": "fit_to_view",
+                    "user_request": user_request,
+                    "nl_plan": nl_plan,
+                    "project_id": project_id,
+                    "revision": current_spec.revision,
+                    "project_resolution": project_resolution or result.get("project_resolution"),
+                    "execution_mode": fit_mode.value,
+                    "execution_mode_source": fit_execution_mode_source,
+                    "revision_created": False,
+                    "structure_modified": result.get("structure_modified", False),
+                    "structure_unchanged": result.get("structure_unchanged", True),
+                    "diagnostic_export_requested": export_requested,
+                    "normality_check_requested": normality_requested,
+                }
+
+                if normality_requested:
+                    status_result = material_studio_live_project_status(
+                        project_id=project_id,
+                        include_gui_status=True,
+                        working_dir=working_dir,
+                        response_mode=McpResponseMode.FULL,
+                    )
+                    result["normality_check"] = {
+                        "requested": True,
+                        "ok": status_result.get("ok") is True,
+                        "normality": status_result.get("normality"),
+                        "health_verdict": status_result.get("health_verdict"),
+                        "ready_for_next_edit": status_result.get("ready_for_next_edit"),
+                        "ready_for_calculation": status_result.get("ready_for_calculation"),
+                        "status": status_result.get("status"),
+                        "error": status_result.get("error"),
+                    }
+                    result["project_status"] = status_result
+
+                if export_requested:
+                    diagnostic_export = material_studio_model_export_view_bundle(
+                        project_id=project_id,
+                        views=views,
+                        include_gui_snapshot=False,
+                        working_dir=working_dir,
+                        response_mode=McpResponseMode.FULL,
+                    )
+                    result["diagnostic_export"] = diagnostic_export
+                    result["view_bundle_manifest_path"] = diagnostic_export.get("manifest_path")
+                    result["view_bundle_files"] = diagnostic_export.get("files")
+                    result["view_bundle_row_counts"] = diagnostic_export.get("row_counts")
+
                 return finish(result)
             elif plan.kind == "inspect_current":
                 if project_id is None or current_spec is None:

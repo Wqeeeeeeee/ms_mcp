@@ -4314,6 +4314,9 @@ def infer_modeling_plan(
         replay_plan = _infer_continue_view_replay_plan(text, current_spec)
         if replay_plan is not None:
             return replay_plan
+        fit_to_view_plan = _infer_fit_to_view_plan(text, current_spec)
+        if fit_to_view_plan is not None:
+            return fit_to_view_plan
         show_current_plan = _infer_show_current_plan(text, current_spec)
         if show_current_plan is not None:
             return show_current_plan
@@ -4662,6 +4665,83 @@ def _looks_like_continue_view_replay_request(text: str) -> bool:
         "恢复 gui 视角验证",
     )
     return english_replay or any(term in text for term in cjk_replay_terms)
+
+
+def _infer_fit_to_view_plan(
+    text: str,
+    current_spec: ModelSpec,
+) -> NaturalLanguagePlan | None:
+    """Infer a read-only or explicitly executable Fit-to-View request."""
+
+    if not _looks_like_fit_to_view_request(text):
+        return None
+    check_normality = _looks_like_normality_check_request(text)
+    export_diagnostics = _looks_like_export_diagnostics_request(text)
+    notes = [
+        f"Fit the current project {current_spec.project_id} r{current_spec.revision:03d} to the Materials Studio viewport.",
+        "Fit-to-View does not create a structural revision or change the model.",
+        "The high-level route remains preview-first; GUI input requires execution_mode=execute.",
+    ]
+    if check_normality:
+        notes.append("Also return the current project's read-only normality and health status.")
+    if export_diagnostics:
+        notes.append("Also export the current revision's view diagnostics without changing the model.")
+    return NaturalLanguagePlan(
+        kind="fit_to_view",
+        payload={
+            "project_id": current_spec.project_id,
+            "revision": current_spec.revision,
+            "check_normality": check_normality,
+            "export_diagnostics": export_diagnostics,
+        },
+        confidence=0.94,
+        template_id="fit_to_view_with_normality_check" if check_normality else "fit_to_view",
+        notes=notes,
+    )
+
+
+def _looks_like_fit_to_view_request(text: str) -> bool:
+    """Return True for explicit viewport framing requests."""
+
+    if not text:
+        return False
+    explicit_terms = (
+        "fit to view",
+        "fit-to-view",
+        "fit to viewport",
+        "fit current model to view",
+        "fit the current model to view",
+        "fit current structure to view",
+        "fit the current structure to view",
+        "fit model in view",
+        "fit model in viewport",
+        "fit structure in view",
+        "fit structure in viewport",
+        "frame current model",
+        "frame the current model",
+        "frame current structure",
+        "frame the current structure",
+        "zoom to fit",
+        "center and fit the current model",
+        "center and fit current model",
+        "center and fit the current structure",
+        "center and fit current structure",
+        "\u9002\u914d\u5230\u89c6\u56fe",
+        "\u9002\u914d\u89c6\u56fe",
+        "\u9002\u914d\u5230\u89c6\u53e3",
+        "\u7f29\u653e\u81f3\u9002\u5408",
+        "\u7f29\u653e\u5230\u9002\u5408",
+        "\u8c03\u6574\u5230\u89c6\u56fe",
+        "\u8c03\u6574\u5230\u89c6\u53e3",
+    )
+    if any(term in text for term in explicit_terms):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:fit|frame|zoom)\b.{0,36}\b(?:current\s+)?(?:model|structure|viewport|view)\b",
+            text,
+        )
+    )
 
 
 def _infer_inspect_current_plan(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | None:

@@ -47,6 +47,16 @@ MS 窗口，同时导出视角参数` should resolve to `workflow=show_current`,
 revision` also resolve to `show_current` and execute against the latest current
 revision without creating a new revision.
 
+Viewport framing is a separate current-revision workflow. Requests such as
+`fit the current model to view`, `frame current structure`, or an equivalent
+Chinese "adapt the current model to the viewport" request resolve to
+`workflow=fit_to_view`; they never create a revision or modify the structure.
+The natural-language route stays in `execution_mode=preview` unless the caller
+passes `execution_mode=execute`. A normality phrase additionally returns the
+read-only `normality_check` and `project_status` receipts. Fit-to-View reuses
+the existing single Materials Studio window and preserves the direct tool's
+UIA and structure-integrity gates.
+
 Requests that contain an actual structural edit still take precedence over
 display-only routing. For example, `把 Si1_000 从 P 换回 Si并热加载到当前窗口` and
 `replace Si1_000 from P back to Si and hot-load it` create a new semantic-patch

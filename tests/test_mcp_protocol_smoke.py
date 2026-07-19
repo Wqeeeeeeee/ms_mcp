@@ -54,6 +54,18 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
         "unavailable",
     }
     assert calls["capabilities_replay_runtime_observed"] is True
+    assert calls["capabilities_post_hotload_replay_prepare_parameter"] == (
+        "prepare_view_replay_after_open"
+    )
+    assert calls[
+        "capabilities_post_hotload_replay_prepare_after_report_lock"
+    ] is True
+    assert calls[
+        "capabilities_post_hotload_replay_prepare_rewrites_report"
+    ] is False
+    assert calls[
+        "capabilities_post_hotload_replay_prepare_preserves_hotload"
+    ] is True
     assert calls["capabilities_transactional_miller_implemented"] is True
     assert calls["capabilities_exact_collinear_direction_implemented"] is True
     assert calls["capabilities_non_collinear_direction_implemented"] is False

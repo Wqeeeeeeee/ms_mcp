@@ -84,6 +84,30 @@ A pure `fit the current model to view in Materials Studio` request remains the
 display-only `fit_to_view` workflow and does not reopen or rematerialize the
 structure.
 
+View-replay preparation can be attached to the same workflows without changing
+the selected structural or revision-history action. For example, `Make a 2x1x1
+silicon supercell, hot-load it in Materials Studio, and export front, top, and
+isometric view parameters to check whether the model is normal` creates and
+opens the new revision, then prepares the exact three-view replay manifest.
+`Reload the current revision, hot-load it in Materials Studio, and export front
+and top view parameters` remains `show_current`; rollback, redo, and restore use
+the same post-hot-load stage. The inference requires both explicit live GUI
+intent and either a requested view subset or a normality phrase. Callers can set
+`prepare_view_replay_after_open=true` directly, while explicit `false` suppresses
+inference.
+
+With `execution_mode=preview`, the response records
+`post_hotload_view_replay_prepare.status=deferred_until_execute` and performs no
+GUI action. With `open_in_gui=false`, it records `not_run_gui_open_disabled`.
+After execute, preparation runs only after same-window open and after the GUI
+artifact report lock has been released. It writes the revision manifest but does
+not rotate the viewer, accept a camera result, create a revision, or rewrite the
+published modeling report. Continue with the returned
+`view_replay_continuation`; each actual GUI recipe still needs its own runtime
+safety gate and explicit execute intent. If preparation fails, retry the returned
+workspace-bound `material_studio_gui_prepare_view_replay` payload without
+rebuilding or reopening the structure.
+
 Requests that contain an actual structural edit still take precedence over
 display-only routing. For example, `把 Si1_000 从 P 换回 Si并热加载到当前窗口` and
 `replace Si1_000 from P back to Si and hot-load it` create a new semantic-patch

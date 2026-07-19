@@ -8561,6 +8561,40 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["record_view_replay_tool"] == "material_studio_gui_record_view_replay"
     view_replay_policy = capabilities["gui"]["view_replay_policy"]
     assert view_replay_policy["preview_first"] is True
+    assert view_replay_policy["post_hotload_prepare_parameter"] == (
+        "prepare_view_replay_after_open"
+    )
+    assert view_replay_policy["post_hotload_prepare_supported_tools"] == [
+        "material_studio_live_modeling_request",
+        "material_studio_live_update_with_patch",
+        "material_studio_gui_apply_current_revision",
+    ]
+    assert view_replay_policy["post_hotload_prepare_supported_workflows"] == [
+        "create",
+        "patch",
+        "show_current",
+        "rollback",
+        "redo",
+        "restore",
+        "gui_apply_current_revision",
+    ]
+    assert view_replay_policy[
+        "post_hotload_natural_language_requires_explicit_gui_open"
+    ] is True
+    assert view_replay_policy[
+        "post_hotload_natural_language_requires_views_or_normality"
+    ] is True
+    assert view_replay_policy["post_hotload_prepare_changes_gui"] is False
+    assert view_replay_policy["post_hotload_prepare_creates_revision"] is False
+    assert view_replay_policy[
+        "post_hotload_prepare_runs_after_gui_report_lock_release"
+    ] is True
+    assert view_replay_policy[
+        "post_hotload_prepare_rewrites_modeling_report"
+    ] is False
+    assert view_replay_policy[
+        "post_hotload_prepare_failure_preserves_hotload"
+    ] is True
     assert view_replay_policy["reviewed_copy_script_execution_allowed"] is False
     assert view_replay_policy[
         "reviewed_copy_script_requires_exact_window_and_screenshot"

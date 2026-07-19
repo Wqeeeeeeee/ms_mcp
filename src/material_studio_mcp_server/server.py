@@ -169,6 +169,7 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
         "material_studio_gui_fit_to_view",
         "material_studio_gui_launch",
         "material_studio_gui_open_structure",
+        "material_studio_gui_prepare_view_replay",
         "material_studio_gui_snapshot",
         "material_studio_gui_status",
         "material_studio_live_modeling_request",
@@ -4493,6 +4494,28 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "view_replay_automation_policy": {
             "manifest_recipe_field": "views[].execution_recipe",
             "continuation_field": "replay_continuation",
+            "post_hotload_prepare_parameter": "prepare_view_replay_after_open",
+            "post_hotload_prepare_supported_tools": [
+                "material_studio_live_modeling_request",
+                "material_studio_live_update_with_patch",
+                "material_studio_gui_apply_current_revision",
+            ],
+            "post_hotload_prepare_supported_workflows": [
+                "create",
+                "patch",
+                "show_current",
+                "rollback",
+                "redo",
+                "restore",
+                "gui_apply_current_revision",
+            ],
+            "post_hotload_natural_language_requires_explicit_gui_open": True,
+            "post_hotload_natural_language_requires_views_or_normality": True,
+            "post_hotload_prepare_changes_gui": False,
+            "post_hotload_prepare_creates_revision": False,
+            "post_hotload_prepare_runs_after_gui_report_lock_release": True,
+            "post_hotload_prepare_rewrites_modeling_report": False,
+            "post_hotload_prepare_failure_preserves_hotload": True,
             "local_uia_execute_tool": "material_studio_gui_execute_view_replay",
             "local_uia_default_execution_mode": "preview",
             "local_uia_requires_explicit_execute": True,
@@ -7889,6 +7912,28 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "prepare_tool": "material_studio_gui_prepare_view_replay",
                 "record_tool": "material_studio_gui_record_view_replay",
                 "preview_first": True,
+                "post_hotload_prepare_parameter": "prepare_view_replay_after_open",
+                "post_hotload_prepare_supported_tools": [
+                    "material_studio_live_modeling_request",
+                    "material_studio_live_update_with_patch",
+                    "material_studio_gui_apply_current_revision",
+                ],
+                "post_hotload_prepare_supported_workflows": [
+                    "create",
+                    "patch",
+                    "show_current",
+                    "rollback",
+                    "redo",
+                    "restore",
+                    "gui_apply_current_revision",
+                ],
+                "post_hotload_natural_language_requires_explicit_gui_open": True,
+                "post_hotload_natural_language_requires_views_or_normality": True,
+                "post_hotload_prepare_changes_gui": False,
+                "post_hotload_prepare_creates_revision": False,
+                "post_hotload_prepare_runs_after_gui_report_lock_release": True,
+                "post_hotload_prepare_rewrites_modeling_report": False,
+                "post_hotload_prepare_failure_preserves_hotload": True,
                 "persists_revision_manifest": True,
                 "manifest_filename": "gui_view_replay_manifest.json",
                 "events_filename": "gui_view_replay_events.jsonl",
@@ -12463,6 +12508,79 @@ def _post_hotload_fit_to_view_request_receipt(
             "gui_input_performed": False,
             "gui_modified": False,
             "structure_modified": False,
+            "automatic_after_hotload": bool(
+                requested and mode == ExecutionMode.EXECUTE and open_in_gui
+            ),
+            "required_next_step": required_next_step,
+        }
+    )
+
+
+def _resolve_post_hotload_view_replay_prepare(
+    value: bool | None,
+    user_request: str | None,
+    *,
+    views: list[str] | None,
+) -> tuple[bool, str]:
+    """Resolve optional replay preparation without authorizing GUI view input."""
+
+    if value is not None:
+        return bool(value), "explicit_parameter"
+    request = str(user_request or "")
+    if not (
+        _explicit_live_hotload_requested(request)
+        or _explicit_live_gui_open_requested(request)
+    ):
+        return False, "default_disabled"
+    if views or _requested_views_from_text(request):
+        return True, "natural_language_views"
+    if _normality_check_requested_from_text(request):
+        return True, "natural_language_normality_check"
+    return False, "default_disabled"
+
+
+def _post_hotload_view_replay_prepare_request_receipt(
+    *,
+    requested: bool,
+    request_source: str,
+    execution_mode: ExecutionMode | str,
+    open_in_gui: bool,
+    views: list[str] | None,
+) -> dict[str, Any]:
+    """Return the pre-action contract for preview-only replay preparation."""
+
+    mode = _execution_mode(execution_mode)
+    if not requested:
+        status = "not_requested"
+        required_next_step = None
+    elif mode != ExecutionMode.EXECUTE:
+        status = "deferred_until_execute"
+        required_next_step = (
+            "Explicitly execute and hot-load the immutable revision before preparing "
+            "a replay manifest for the existing Materials Studio window."
+        )
+    elif not open_in_gui:
+        status = "not_run_gui_open_disabled"
+        required_next_step = (
+            "Set open_in_gui=true so replay preparation can bind the exact hot-loaded "
+            "revision and existing Materials Studio window."
+        )
+    else:
+        status = "pending_successful_hotload"
+        required_next_step = None
+    return _drop_none_values(
+        {
+            "requested": bool(requested),
+            "request_source": request_source,
+            "status": status,
+            "prepared": False,
+            "execution_mode": mode.value,
+            "open_in_gui": bool(open_in_gui),
+            "view_names": list(views or []),
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "revision_created": False,
             "automatic_after_hotload": bool(
                 requested and mode == ExecutionMode.EXECUTE and open_in_gui
             ),
@@ -36821,6 +36939,69 @@ def _compact_view_replay_prepare(value: Any) -> dict[str, Any]:
     return prepared
 
 
+def _compact_post_hotload_view_replay_prepare(value: Any) -> dict[str, Any]:
+    """Retain the post-hot-load preparation contract and exact continuation."""
+
+    if not isinstance(value, dict):
+        return {}
+    prepared = _mapping_subset(
+        value,
+        (
+            "requested",
+            "request_source",
+            "status",
+            "prepared",
+            "execution_mode",
+            "open_in_gui",
+            "automatic_after_hotload",
+            "gui_input_performed",
+            "gui_modified",
+            "structure_modified",
+            "revision_created",
+            "manifest_path",
+            "gui_log_path",
+            "replay_status",
+            "ready_for_external_replay",
+            "preflight_block_reasons",
+            "view_selection",
+            "view_names",
+            "requested_view_count",
+            "supported_view_count",
+            "unsupported_view_count",
+            "prepared_after_gui_artifact_transaction",
+            "report_rewritten_after_prepare",
+            "current_revision",
+            "error",
+            "recommended_tool",
+            "required_next_step",
+            "retry_tool",
+            "retry_payload",
+            "followup_tool",
+            "followup_payload",
+        ),
+    )
+    continuation = _compact_view_replay_continuation(
+        value.get("replay_continuation"),
+        compact_terminal=False,
+    )
+    if continuation:
+        prepared["replay_continuation"] = continuation
+    recipe_contract = _compact_view_replay_recipe_contract(
+        value.get("recipe_contract")
+    )
+    if recipe_contract:
+        prepared["recipe_contract"] = recipe_contract
+    next_action = _compact_view_replay_next_action(value.get("next_action"))
+    if next_action:
+        prepared["next_action"] = next_action
+    next_action_resolution = _compact_view_replay_next_action_resolution(
+        value.get("next_action_resolution")
+    )
+    if next_action_resolution:
+        prepared["next_action_resolution"] = next_action_resolution
+    return prepared
+
+
 def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -37494,6 +37675,14 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "post_hotload_fit_to_view_warning",
             "post_hotload_fit_to_view_retry_tool",
             "post_hotload_fit_to_view_retry_payload",
+            "post_hotload_view_replay_prepare",
+            "post_hotload_view_replay_prepare",
+            "post_hotload_view_replay_prepare",
+            "post_hotload_view_replay_prepare_requested",
+            "post_hotload_view_replay_prepare_request_source",
+            "post_hotload_view_replay_prepare_warning",
+            "post_hotload_view_replay_prepare_retry_tool",
+            "post_hotload_view_replay_prepare_retry_payload",
             "partial_success",
             "task",
             "run_directory",
@@ -37700,6 +37889,11 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "post_hotload_fit_to_view_warning",
             "post_hotload_fit_to_view_retry_tool",
             "post_hotload_fit_to_view_retry_payload",
+            "post_hotload_view_replay_prepare_requested",
+            "post_hotload_view_replay_prepare_request_source",
+            "post_hotload_view_replay_prepare_warning",
+            "post_hotload_view_replay_prepare_retry_tool",
+            "post_hotload_view_replay_prepare_retry_payload",
             "partial_success",
             "task",
             "run_directory",
@@ -38181,6 +38375,11 @@ def _compact_live_response(
             "post_hotload_fit_to_view_warning",
             "post_hotload_fit_to_view_retry_tool",
             "post_hotload_fit_to_view_retry_payload",
+            "post_hotload_view_replay_prepare_requested",
+            "post_hotload_view_replay_prepare_request_source",
+            "post_hotload_view_replay_prepare_warning",
+            "post_hotload_view_replay_prepare_retry_tool",
+            "post_hotload_view_replay_prepare_retry_payload",
             "partial_success",
             "task",
             "run_directory",
@@ -38332,6 +38531,21 @@ def _compact_live_response(
             "structure_modified",
         ),
     )
+    replay_prepare_request_source = response.get(
+        "post_hotload_view_replay_prepare_request_source"
+    )
+    retain_post_hotload_replay_prepare = bool(
+        response.get("post_hotload_view_replay_prepare_requested")
+    ) or replay_prepare_request_source not in (None, "default_disabled")
+    if not retain_post_hotload_replay_prepare:
+        for key in (
+            "post_hotload_view_replay_prepare_requested",
+            "post_hotload_view_replay_prepare_request_source",
+            "post_hotload_view_replay_prepare_warning",
+            "post_hotload_view_replay_prepare_retry_tool",
+            "post_hotload_view_replay_prepare_retry_payload",
+        ):
+            compact.pop(key, None)
     project_resolution = response.get("project_resolution")
     if (
         isinstance(project_resolution, dict)
@@ -38484,6 +38698,25 @@ def _compact_live_response(
                 "followup_tool",
                 "followup_payload",
             ),
+        )
+    post_hotload_view_replay_prepare = response.get(
+        "post_hotload_view_replay_prepare"
+    )
+    if not isinstance(post_hotload_view_replay_prepare, dict):
+        post_hotload_view_replay_prepare = report.get(
+            "post_hotload_view_replay_prepare"
+        )
+    compact_post_hotload_view_replay_prepare = (
+        _compact_post_hotload_view_replay_prepare(
+            post_hotload_view_replay_prepare
+        )
+    )
+    if (
+        retain_post_hotload_replay_prepare
+        and compact_post_hotload_view_replay_prepare
+    ):
+        compact["post_hotload_view_replay_prepare"] = (
+            compact_post_hotload_view_replay_prepare
         )
     compact_live = _mapping_subset(
         live,
@@ -42167,6 +42400,7 @@ def material_studio_live_update_with_patch(
     open_in_gui: Annotated[bool, Field(description="Open the generated structure in Materials Studio after successful execution.")] = True,
     take_snapshot: Annotated[bool, Field(description="Capture a GUI snapshot after opening when possible.")] = True,
     fit_to_view_after_open: Annotated[bool | None, Field(description="Optionally invoke Fit-to-View after an explicitly executed same-window hot-load; omitted infers only explicit user_text intent.")] = None,
+    prepare_view_replay_after_open: Annotated[bool | None, Field(description="Optionally prepare a preview-only GUI view-replay manifest after a successful same-window hot-load; omitted infers explicit hot-load requests that also ask for views or a normality check.")] = None,
     export_view_audit: Annotated[bool, Field(description="Write model/view diagnostic report for the new revision.")] = True,
     views: Annotated[list[str] | None, Field(description="View names for the audit report.")] = None,
     working_dir: Annotated[str | None, Field(description="Optional structured/GUI workspace root.")] = None,
@@ -42222,6 +42456,26 @@ def material_studio_live_update_with_patch(
         inferred_views = _requested_views_from_text(user_text)
         if views is None and inferred_views is not None:
             views = inferred_views
+        (
+            prepare_view_replay_requested_after_open,
+            view_replay_prepare_request_source,
+        ) = _resolve_post_hotload_view_replay_prepare(
+            prepare_view_replay_after_open,
+            user_text,
+            views=views,
+        )
+        if "post_hotload_view_replay_prepare_requested" in orchestration_context:
+            prepare_view_replay_requested_after_open = bool(
+                orchestration_context[
+                    "post_hotload_view_replay_prepare_requested"
+                ]
+            )
+            view_replay_prepare_request_source = str(
+                orchestration_context.get(
+                    "post_hotload_view_replay_prepare_request_source",
+                    view_replay_prepare_request_source,
+                )
+            )
         diagnostic_export_requested = _diagnostic_export_requested_from_text(user_text)
         normality_check_requested = _normality_check_requested_from_text(user_text)
         effective_export_view_audit = (
@@ -42694,6 +42948,21 @@ def material_studio_live_update_with_patch(
                 open_in_gui=open_in_gui,
                 take_snapshot=take_snapshot,
             ),
+            "post_hotload_view_replay_prepare_requested": (
+                prepare_view_replay_requested_after_open
+            ),
+            "post_hotload_view_replay_prepare_request_source": (
+                view_replay_prepare_request_source
+            ),
+            "post_hotload_view_replay_prepare": (
+                _post_hotload_view_replay_prepare_request_receipt(
+                    requested=prepare_view_replay_requested_after_open,
+                    request_source=view_replay_prepare_request_source,
+                    execution_mode=mode,
+                    open_in_gui=open_in_gui,
+                    views=views,
+                )
+            ),
             "diff": patch_diff,
             "revision_delta": revision_delta,
             "script": generated["script"],
@@ -42843,6 +43112,13 @@ def material_studio_live_update_with_patch(
                     record_gui_open_artifact=effective_export_view_audit,
                     refresh_view_audit_report=effective_export_view_audit,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    view_replay_prepare_request_source=(
+                        view_replay_prepare_request_source
+                    ),
+                    views=views,
                 )
                 return _compact_live_response(
                     _attach_recommended_kpoint_postcondition(finalized),
@@ -45039,6 +45315,7 @@ def material_studio_live_modeling_request(
     open_in_gui: Annotated[bool, Field(description="Open the generated structure in Materials Studio after successful execution.")] = True,
     take_snapshot: Annotated[bool, Field(description="Capture a GUI snapshot after opening when possible.")] = True,
     fit_to_view_after_open: Annotated[bool | None, Field(description="Optionally invoke Fit-to-View after an explicitly executed same-window hot-load; omitted recognizes an explicit framing phrase in user_request.")] = None,
+    prepare_view_replay_after_open: Annotated[bool | None, Field(description="Optionally prepare a preview-only GUI view-replay manifest after a successful same-window hot-load; omitted recognizes explicit hot-load requests that also ask for views or a normality check.")] = None,
     export_view_audit: Annotated[bool, Field(description="Write model/view diagnostic report for the resulting revision.")] = True,
     views: Annotated[list[str] | None, Field(description="View names for the audit report.")] = None,
     remediation_intent: Annotated[str | None, Field(description="Optional machine-readable remediation intent from a prior diagnostic payload.", max_length=200)] = None,
@@ -45358,6 +45635,14 @@ def material_studio_live_modeling_request(
         inferred_views = _requested_views_from_text(user_request)
         if views is None and inferred_views is not None:
             views = inferred_views
+        (
+            prepare_view_replay_requested_after_open,
+            view_replay_prepare_request_source,
+        ) = _resolve_post_hotload_view_replay_prepare(
+            prepare_view_replay_after_open,
+            user_request,
+            views=views,
+        )
         requested_diagnostic_focuses = _requested_diagnostic_focuses_from_text(user_request)
         explicit_required_focuses = _dedupe_strings(
             str(item).strip()
@@ -45928,6 +46213,12 @@ def material_studio_live_modeling_request(
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
                     fit_to_view_request_source=fit_to_view_request_source,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    view_replay_prepare_request_source=(
+                        view_replay_prepare_request_source
+                    ),
                     export_view_audit=export_view_audit,
                     views=views,
                     working_dir=working_dir,
@@ -45968,6 +46259,12 @@ def material_studio_live_modeling_request(
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
                     fit_to_view_request_source=fit_to_view_request_source,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    view_replay_prepare_request_source=(
+                        view_replay_prepare_request_source
+                    ),
                     export_view_audit=export_view_audit,
                     views=views,
                     working_dir=working_dir,
@@ -46395,6 +46692,12 @@ def material_studio_live_modeling_request(
                     "post_hotload_fit_to_view_request_source": (
                         fit_to_view_request_source
                     ),
+                    "post_hotload_view_replay_prepare_requested": (
+                        prepare_view_replay_requested_after_open
+                    ),
+                    "post_hotload_view_replay_prepare_request_source": (
+                        view_replay_prepare_request_source
+                    ),
                 }
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_gui_apply_current_revision(
@@ -46403,6 +46706,9 @@ def material_studio_live_modeling_request(
                         open_in_gui=open_in_gui,
                         take_snapshot=take_snapshot,
                         fit_to_view_after_open=fit_to_view_requested_after_open,
+                        prepare_view_replay_after_open=(
+                            prepare_view_replay_requested_after_open
+                        ),
                         export_view_audit=(
                             export_view_audit
                             or export_requested
@@ -46483,6 +46789,12 @@ def material_studio_live_modeling_request(
                 "requested_diagnostic_focuses": requested_diagnostic_focuses,
                 "post_hotload_fit_to_view_requested": fit_to_view_requested_after_open,
                 "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
+                "post_hotload_view_replay_prepare_requested": (
+                    prepare_view_replay_requested_after_open
+                ),
+                "post_hotload_view_replay_prepare_request_source": (
+                    view_replay_prepare_request_source
+                ),
             }
             with _live_orchestration_context(orchestration_context):
                 result = material_studio_live_update_with_patch(
@@ -46495,6 +46807,9 @@ def material_studio_live_modeling_request(
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
                     export_view_audit=export_view_audit,
                     views=views,
                     working_dir=working_dir,
@@ -46538,6 +46853,21 @@ def material_studio_live_modeling_request(
                 execution_mode=mode,
                 open_in_gui=open_in_gui,
                 take_snapshot=take_snapshot,
+            ),
+            "post_hotload_view_replay_prepare_requested": (
+                prepare_view_replay_requested_after_open
+            ),
+            "post_hotload_view_replay_prepare_request_source": (
+                view_replay_prepare_request_source
+            ),
+            "post_hotload_view_replay_prepare": (
+                _post_hotload_view_replay_prepare_request_receipt(
+                    requested=prepare_view_replay_requested_after_open,
+                    request_source=view_replay_prepare_request_source,
+                    execution_mode=mode,
+                    open_in_gui=open_in_gui,
+                    views=views,
+                )
             ),
             "script": generated["script"],
             "validation": generated["script_validation"],
@@ -46614,6 +46944,13 @@ def material_studio_live_modeling_request(
                         record_gui_open_artifact=export_view_audit,
                         refresh_view_audit_report=export_view_audit,
                         fit_to_view_after_open=fit_to_view_requested_after_open,
+                        prepare_view_replay_after_open=(
+                            prepare_view_replay_requested_after_open
+                        ),
+                        view_replay_prepare_request_source=(
+                            view_replay_prepare_request_source
+                        ),
+                        views=views,
                     )
                 )
             else:
@@ -46696,6 +47033,8 @@ def _handle_live_rollback_request(
     take_snapshot: bool,
     fit_to_view_after_open: bool,
     fit_to_view_request_source: str,
+    prepare_view_replay_after_open: bool,
+    view_replay_prepare_request_source: str,
     export_view_audit: bool,
     views: list[str] | None,
     working_dir: str | None,
@@ -46734,6 +47073,27 @@ def _handle_live_rollback_request(
                     ),
                 }
             )
+        replay_prepare_receipt = (
+            _post_hotload_view_replay_prepare_request_receipt(
+                requested=prepare_view_replay_after_open,
+                request_source=view_replay_prepare_request_source,
+                execution_mode=execution_mode,
+                open_in_gui=open_in_gui,
+                views=views,
+            )
+        )
+        if prepare_view_replay_after_open:
+            replay_prepare_receipt.update(
+                {
+                    "status": "not_run_rollback_failed",
+                    "prepared": False,
+                    "automatic_after_hotload": False,
+                    "required_next_step": (
+                        "Resolve the rollback failure before retrying the requested "
+                        "same-window hot-load and replay preparation."
+                    ),
+                }
+            )
         return {
             **rollback,
             "workflow": workflow,
@@ -46748,6 +47108,13 @@ def _handle_live_rollback_request(
             "post_hotload_fit_to_view_requested": fit_to_view_after_open,
             "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
             "post_hotload_fit_to_view": fit_receipt,
+            "post_hotload_view_replay_prepare_requested": (
+                prepare_view_replay_after_open
+            ),
+            "post_hotload_view_replay_prepare_request_source": (
+                view_replay_prepare_request_source
+            ),
+            "post_hotload_view_replay_prepare": replay_prepare_receipt,
         }
 
     orchestration_context = {
@@ -46766,6 +47133,12 @@ def _handle_live_rollback_request(
         "requested_diagnostic_focuses": requested_diagnostic_focuses,
         "post_hotload_fit_to_view_requested": fit_to_view_after_open,
         "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
+        "post_hotload_view_replay_prepare_requested": (
+            prepare_view_replay_after_open
+        ),
+        "post_hotload_view_replay_prepare_request_source": (
+            view_replay_prepare_request_source
+        ),
     }
     with _live_orchestration_context(orchestration_context):
         return material_studio_gui_apply_current_revision(
@@ -46774,6 +47147,7 @@ def _handle_live_rollback_request(
             open_in_gui=open_in_gui,
             take_snapshot=take_snapshot,
             fit_to_view_after_open=fit_to_view_after_open,
+            prepare_view_replay_after_open=prepare_view_replay_after_open,
             export_view_audit=effective_export_view_audit,
             views=views,
             working_dir=working_dir,
@@ -46877,6 +47251,191 @@ def _attach_gui_artifact_transaction(
     return result
 
 
+def _prepare_view_replay_after_high_level_hotload(
+    *,
+    response: dict[str, Any],
+    store: ProjectStore,
+    spec: ModelSpec,
+    gui: MaterialsStudioGuiController,
+    requested: bool,
+    request_source: str,
+    views: list[str] | None,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Prepare a replay manifest after the GUI report transaction is released."""
+
+    if not requested:
+        return response
+
+    receipt = dict(response.get("post_hotload_view_replay_prepare") or {})
+    receipt.update(
+        {
+            "requested": True,
+            "request_source": request_source,
+            "prepared": False,
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "revision_created": False,
+            "automatic_after_hotload": True,
+            "prepared_after_gui_artifact_transaction": True,
+            "report_rewritten_after_prepare": False,
+        }
+    )
+    gui_open = response.get("gui_open")
+    if not isinstance(gui_open, dict):
+        receipt.update(
+            {
+                "status": "not_run_hotload_incomplete",
+                "required_next_step": (
+                    "Complete the exact current-revision same-window hot-load before "
+                    "preparing GUI view replay."
+                ),
+            }
+        )
+        response["post_hotload_view_replay_prepare"] = receipt
+        return response
+
+    if _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get() is not None:
+        raise GuiError(
+            "post-hotload view replay preparation must run after the GUI artifact "
+            "report transaction is released"
+        )
+
+    audit_view_names = [str(item) for item in views or [] if str(item)]
+    retry_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_prepare_view_replay",
+        {
+            "project_id": spec.project_id,
+            "revision": spec.revision,
+            "views": audit_view_names,
+        },
+        working_dir,
+    )
+    try:
+        current_spec, current_pointer = store.resolve_current(spec.project_id)
+        if current_spec.revision != spec.revision:
+            receipt.update(
+                {
+                    "status": "current_revision_advanced_before_prepare",
+                    "required_next_step": (
+                        "Refresh the current project and prepare replay only for the "
+                        "newly current revision."
+                    ),
+                    "recommended_tool": "material_studio_live_project_status",
+                    "current_revision": current_spec.revision,
+                    "current_pointer": current_pointer,
+                }
+            )
+            response["post_hotload_view_replay_prepare"] = receipt
+            response.update(
+                {
+                    "ok": False,
+                    "partial_success": True,
+                    "status": "hotload_completed_view_replay_prepare_superseded",
+                    "post_hotload_view_replay_prepare_warning": (
+                        "The structure hot-load completed, but replay preparation was "
+                        "blocked because the current revision advanced."
+                    ),
+                }
+            )
+            return response
+
+        audit = response.get("view_audit")
+        if not isinstance(audit, dict) or (
+            audit.get("project_id") != spec.project_id
+            or audit.get("revision") != spec.revision
+        ):
+            audit = model_view_audit(spec, views)
+        audit_view_names = [
+            str(item.get("name"))
+            for item in audit.get("views") or []
+            if isinstance(item, dict) and item.get("name")
+        ]
+        retry_payload = _workspace_bound_payload_hint(
+            "material_studio_gui_prepare_view_replay",
+            {
+                "project_id": spec.project_id,
+                "revision": spec.revision,
+                "views": audit_view_names,
+            },
+            working_dir,
+        )
+        prepared = gui.prepare_view_replay(
+            audit,
+            project_id=spec.project_id,
+            revision=spec.revision,
+        )
+        receipt.update(
+            {
+                "status": "prepared",
+                "prepared": True,
+                "manifest_path": prepared.get("manifest_path"),
+                "gui_log_path": prepared.get("gui_log_path"),
+                "replay_status": prepared.get("replay_status"),
+                "ready_for_external_replay": prepared.get(
+                    "ready_for_external_replay"
+                ),
+                "preflight_block_reasons": list(
+                    prepared.get("preflight_block_reasons") or []
+                ),
+                "view_selection": prepared.get("view_selection"),
+                "view_names": list(prepared.get("view_names") or []),
+                "requested_view_count": prepared.get("requested_view_count"),
+                "supported_view_count": prepared.get("supported_view_count"),
+                "unsupported_view_count": prepared.get("unsupported_view_count"),
+                "replay_continuation": prepared.get("replay_continuation"),
+                "recipe_contract": prepared.get("recipe_contract"),
+                "next_action": prepared.get("next_action"),
+                "next_action_resolution": prepared.get(
+                    "next_action_resolution"
+                ),
+                "prepared_after_gui_artifact_transaction": True,
+                "report_rewritten_after_prepare": False,
+            }
+        )
+        response["post_hotload_view_replay_prepare"] = receipt
+        response["view_replay_prepared"] = True
+        response["view_replay_continuation"] = prepared.get(
+            "replay_continuation"
+        )
+        return response
+    except Exception as exc:
+        receipt.update(
+            {
+                "status": "prepare_failed",
+                "error": str(exc),
+                "retry_tool": "material_studio_gui_prepare_view_replay",
+                "retry_payload": retry_payload,
+                "required_next_step": (
+                    "Retry replay preparation for this exact revision without "
+                    "rerunning or reopening the structure."
+                ),
+            }
+        )
+        message = (
+            "The structure was hot-loaded, but the requested GUI view replay "
+            f"manifest could not be prepared: {exc}"
+        )
+        response["post_hotload_view_replay_prepare"] = receipt
+        response["view_replay_prepared"] = False
+        response["post_hotload_view_replay_prepare_warning"] = message
+        response["post_hotload_view_replay_prepare_retry_tool"] = (
+            "material_studio_gui_prepare_view_replay"
+        )
+        response["post_hotload_view_replay_prepare_retry_payload"] = retry_payload
+        if response.get("ok") is True:
+            response.update(
+                {
+                    "ok": False,
+                    "partial_success": True,
+                    "status": "hotload_completed_view_replay_prepare_failed",
+                    "error": message,
+                }
+            )
+        return response
+
+
 def _finalize_high_level_gui_hotload(
     *,
     response: dict[str, Any],
@@ -46892,6 +47451,9 @@ def _finalize_high_level_gui_hotload(
     record_gui_open_artifact: bool,
     refresh_view_audit_report: bool,
     fit_to_view_after_open: bool = False,
+    prepare_view_replay_after_open: bool = False,
+    view_replay_prepare_request_source: str = "default_disabled",
+    views: list[str] | None = None,
 ) -> dict[str, Any]:
     """Revalidate, hot-load, and publish one high-level response under the GUI lock."""
 
@@ -47153,7 +47715,7 @@ def _finalize_high_level_gui_hotload(
                             response["gui_status_warning"] = str(status_exc)
             response["gui_action_transaction"] = transaction
             _attach_gui_artifact_transaction(response, transaction)
-            return _attach_modeling_health(
+            finalized = _attach_modeling_health(
                 response,
                 execution_mode=execution_mode,
                 store=store,
@@ -47205,6 +47767,35 @@ def _finalize_high_level_gui_hotload(
                     working_dir,
                 ),
             }
+        if prepare_view_replay_after_open:
+            deferred["post_hotload_view_replay_prepare"] = {
+                **dict(
+                    response.get("post_hotload_view_replay_prepare") or {}
+                ),
+                "requested": True,
+                "request_source": view_replay_prepare_request_source,
+                "status": "deferred_gui_transaction_busy",
+                "prepared": False,
+                "automatic_after_hotload": True,
+                "gui_input_performed": False,
+                "gui_modified": False,
+                "structure_modified": False,
+                "revision_created": False,
+                "required_next_step": (
+                    "Retry the exact same-window structure open, then prepare replay "
+                    "for that current revision without rerunning the structure."
+                ),
+                "followup_tool": "material_studio_gui_prepare_view_replay",
+                "followup_payload": _workspace_bound_payload_hint(
+                    "material_studio_gui_prepare_view_replay",
+                    {
+                        "project_id": spec.project_id,
+                        "revision": spec.revision,
+                        "views": list(views or []),
+                    },
+                    working_dir,
+                ),
+            }
         deferred = _attach_modeling_health(
             deferred,
             execution_mode=execution_mode,
@@ -47215,6 +47806,17 @@ def _finalize_high_level_gui_hotload(
         deferred["recommended_tool"] = "material_studio_gui_open_structure"
         deferred["gui_open_retry_tool"] = "material_studio_gui_open_structure"
         return deferred
+
+    return _prepare_view_replay_after_high_level_hotload(
+        response=finalized,
+        store=store,
+        spec=spec,
+        gui=gui,
+        requested=prepare_view_replay_after_open,
+        request_source=view_replay_prepare_request_source,
+        views=views,
+        working_dir=working_dir,
+    )
 
 
 def _serialize_gui_artifact_report_update(method: Any) -> Any:
@@ -49110,6 +49712,7 @@ def material_studio_gui_apply_current_revision(
     open_in_gui: Annotated[bool, Field(description="成功执行后在现有 GUI 中打开生成的结构。")] = True,
     take_snapshot: Annotated[bool, Field(description="打开后尽可能捕获 GUI 快照。")] = True,
     fit_to_view_after_open: Annotated[bool, Field(description="After explicit execute and same-window open, invoke verified Fit-to-View before the final snapshot.")] = False,
+    prepare_view_replay_after_open: Annotated[bool | None, Field(description="After explicit execute and same-window open, optionally prepare a preview-only view-replay manifest without changing the GUI.")] = None,
     export_view_audit: Annotated[bool, Field(description="导出当前 revision 的 view_audit.json 和 modeling_health。")] = True,
     views: Annotated[list[str] | None, Field(description="可选的标准视角名称，例如 front/back/right/left/top/bottom/isometric。")] = None,
     working_dir: Annotated[str | None, Field(description="可选的结构化/GUI 工作区根目录。")] = None,
@@ -49144,6 +49747,26 @@ def material_studio_gui_apply_current_revision(
                 orchestration_context.get(
                     "post_hotload_fit_to_view_request_source",
                     fit_to_view_request_source,
+                )
+            )
+        (
+            prepare_view_replay_requested_after_open,
+            view_replay_prepare_request_source,
+        ) = _resolve_post_hotload_view_replay_prepare(
+            prepare_view_replay_after_open,
+            None,
+            views=views,
+        )
+        if "post_hotload_view_replay_prepare_requested" in orchestration_context:
+            prepare_view_replay_requested_after_open = bool(
+                orchestration_context[
+                    "post_hotload_view_replay_prepare_requested"
+                ]
+            )
+            view_replay_prepare_request_source = str(
+                orchestration_context.get(
+                    "post_hotload_view_replay_prepare_request_source",
+                    view_replay_prepare_request_source,
                 )
             )
         store = _structured_store(working_dir)
@@ -49199,6 +49822,21 @@ def material_studio_gui_apply_current_revision(
                 execution_mode=mode,
                 open_in_gui=open_in_gui,
                 take_snapshot=take_snapshot,
+            ),
+            "post_hotload_view_replay_prepare_requested": (
+                prepare_view_replay_requested_after_open
+            ),
+            "post_hotload_view_replay_prepare_request_source": (
+                view_replay_prepare_request_source
+            ),
+            "post_hotload_view_replay_prepare": (
+                _post_hotload_view_replay_prepare_request_receipt(
+                    requested=prepare_view_replay_requested_after_open,
+                    request_source=view_replay_prepare_request_source,
+                    execution_mode=mode,
+                    open_in_gui=open_in_gui,
+                    views=views,
+                )
             ),
             "script_path": str(script_path),
             "validation": script_validation,
@@ -49273,6 +49911,13 @@ def material_studio_gui_apply_current_revision(
                         record_gui_open_artifact=True,
                         refresh_view_audit_report=False,
                         fit_to_view_after_open=fit_to_view_requested_after_open,
+                        prepare_view_replay_after_open=(
+                            prepare_view_replay_requested_after_open
+                        ),
+                        view_replay_prepare_request_source=(
+                            view_replay_prepare_request_source
+                        ),
+                        views=views,
                     )
                 )
             else:

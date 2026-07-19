@@ -95,6 +95,8 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "execution_mode",
             "open_in_gui",
             "take_snapshot",
+            "fit_to_view_after_open",
+            "prepare_view_replay_after_open",
             "export_view_audit",
             "views",
             "confirm_metadata_reconciliation",
@@ -116,6 +118,8 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "patch",
             "confirm_metadata_reconciliation",
             "execution_mode",
+            "fit_to_view_after_open",
+            "prepare_view_replay_after_open",
             "working_dir",
             "response_mode",
         },
@@ -209,6 +213,8 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "execution_mode",
             "open_in_gui",
             "take_snapshot",
+            "fit_to_view_after_open",
+            "prepare_view_replay_after_open",
             "export_view_audit",
             "views",
             "working_dir",
@@ -938,6 +944,30 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_non_collinear_direction_boundary_missing"
             )
+        if replay_policy.get("post_hotload_prepare_parameter") != (
+            "prepare_view_replay_after_open"
+        ):
+            validation_errors.append(
+                "capabilities_post_hotload_replay_prepare_parameter_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_prepare_runs_after_gui_report_lock_release"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_prepare_lock_boundary_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_prepare_rewrites_modeling_report"
+        ) is not False:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_prepare_report_boundary_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_prepare_failure_preserves_hotload"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_prepare_partial_success_missing"
+            )
         trusted_clean_view_policy = replay_policy.get(
             "trusted_clean_view_normality_evidence"
         )
@@ -1403,6 +1433,24 @@ async def _run_preview_calls(
                 ),
                 "capabilities_replay_runtime_observed": replay_runtime.get(
                     "observed"
+                ),
+                "capabilities_post_hotload_replay_prepare_parameter": (
+                    replay_policy.get("post_hotload_prepare_parameter")
+                ),
+                "capabilities_post_hotload_replay_prepare_after_report_lock": (
+                    replay_policy.get(
+                        "post_hotload_prepare_runs_after_gui_report_lock_release"
+                    )
+                ),
+                "capabilities_post_hotload_replay_prepare_rewrites_report": (
+                    replay_policy.get(
+                        "post_hotload_prepare_rewrites_modeling_report"
+                    )
+                ),
+                "capabilities_post_hotload_replay_prepare_preserves_hotload": (
+                    replay_policy.get(
+                        "post_hotload_prepare_failure_preserves_hotload"
+                    )
                 ),
                 "capabilities_castep_relaxation_tool": (
                     castep_relaxation_capability.get("tool")

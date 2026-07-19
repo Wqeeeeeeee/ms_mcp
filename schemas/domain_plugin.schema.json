@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wqeeeeeeee.github.io/ms_mcp/schemas/domain_plugin.schema.json",
+  "title": "Semiconductor Domain Plugin Manifest",
+  "description": "Declares a deterministic internal domain plugin and its side-effect boundaries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plugin_id",
+    "contract_version",
+    "implementation_version",
+    "description",
+    "capabilities",
+    "limits",
+    "routing",
+    "reference_policy",
+    "runtime_behavior",
+    "contracts",
+    "dependencies"
+  ],
+  "properties": {
+    "plugin_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$"
+    },
+    "contract_version": {
+      "$ref": "#/$defs/semanticVersion"
+    },
+    "implementation_version": {
+      "$ref": "#/$defs/semanticVersion"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilities"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "routing": {
+      "$ref": "#/$defs/routing"
+    },
+    "reference_policy": {
+      "$ref": "#/$defs/referencePolicy"
+    },
+    "runtime_behavior": {
+      "$ref": "#/$defs/runtimeBehavior"
+    },
+    "contracts": {
+      "$ref": "#/$defs/contracts"
+    },
+    "dependencies": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/dependency"
+      }
+    }
+  },
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "contractName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{1,127}$"
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materials",
+        "scenarios",
+        "operations"
+      ],
+      "properties": {
+        "materials": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_atoms",
+        "max_atoms",
+        "supported_periodicity_dimensions",
+        "supported_model_kinds",
+        "requires_current_model",
+        "supports_create",
+        "supports_patch",
+        "supports_calculation_plan",
+        "unsupported_capabilities"
+      ],
+      "properties": {
+        "min_atoms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_atoms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "supported_periodicity_dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          }
+        },
+        "supported_model_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "molecule",
+              "crystal",
+              "imported_structure"
+            ]
+          }
+        },
+        "requires_current_model": {
+          "type": "boolean"
+        },
+        "supports_create": {
+          "type": "boolean"
+        },
+        "supports_patch": {
+          "type": "boolean"
+        },
+        "supports_calculation_plan": {
+          "type": "boolean"
+        },
+        "unsupported_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "supports_create": {
+              "const": true
+            }
+          },
+          "required": [
+            "supports_create"
+          ]
+        },
+        {
+          "properties": {
+            "supports_patch": {
+              "const": true
+            }
+          },
+          "required": [
+            "supports_patch"
+          ]
+        }
+      ]
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "priority",
+        "ambiguity_policy",
+        "forced_selection_requires_capability_match"
+      ],
+      "properties": {
+        "priority": {
+          "type": "integer",
+          "minimum": -1000,
+          "maximum": 1000
+        },
+        "ambiguity_policy": {
+          "const": "fail_closed"
+        },
+        "forced_selection_requires_capability_match": {
+          "const": true
+        }
+      }
+    },
+    "referencePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_access_modes",
+        "hidden_holdout_access",
+        "final_reference_coordinate_access"
+      ],
+      "properties": {
+        "allowed_access_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "none",
+              "metadata_only",
+              "task_only"
+            ]
+          }
+        },
+        "hidden_holdout_access": {
+          "const": false
+        },
+        "final_reference_coordinate_access": {
+          "const": false
+        }
+      }
+    },
+    "runtimeBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deterministic",
+        "preview_first",
+        "mutates_input_model",
+        "owns_revision_state",
+        "executes_backend_directly",
+        "registers_public_mcp_tools",
+        "owns_gui_session",
+        "network_access_during_match_plan_build_validate"
+      ],
+      "properties": {
+        "deterministic": {
+          "const": true
+        },
+        "preview_first": {
+          "const": true
+        },
+        "mutates_input_model": {
+          "const": false
+        },
+        "owns_revision_state": {
+          "const": false
+        },
+        "executes_backend_directly": {
+          "const": false
+        },
+        "registers_public_mcp_tools": {
+          "const": false
+        },
+        "owns_gui_session": {
+          "const": false
+        },
+        "network_access_during_match_plan_build_validate": {
+          "const": false
+        }
+      }
+    },
+    "stageContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "callable",
+        "input_contracts",
+        "output_contracts",
+        "deterministic",
+        "filesystem_side_effects",
+        "process_side_effects",
+        "network_access",
+        "gui_access"
+      ],
+      "properties": {
+        "callable": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.:]*$"
+        },
+        "input_contracts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/contractName"
+          }
+        },
+        "output_contracts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/contractName"
+          }
+        },
+        "deterministic": {
+          "const": true
+        },
+        "filesystem_side_effects": {
+          "const": false
+        },
+        "process_side_effects": {
+          "const": false
+        },
+        "network_access": {
+          "const": false
+        },
+        "gui_access": {
+          "const": false
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "plan",
+        "build",
+        "validate"
+      ],
+      "properties": {
+        "match": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingIntent"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "MatchResult"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "plan": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingIntent",
+                    "ModelState"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "ModelingPlan"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "build": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelingPlan"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "ModelSpec",
+                    "SemanticPatch"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "validate": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/stageContract"
+            },
+            {
+              "properties": {
+                "input_contracts": {
+                  "const": [
+                    "ModelSpec"
+                  ]
+                },
+                "output_contracts": {
+                  "const": [
+                    "DomainValidationReport"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dependency_id",
+        "kind",
+        "version_constraint",
+        "required"
+      ],
+      "properties": {
+        "dependency_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
+        },
+        "kind": {
+          "enum": [
+            "python_package",
+            "shared_contract",
+            "shared_service"
+          ]
+        },
+        "version_constraint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

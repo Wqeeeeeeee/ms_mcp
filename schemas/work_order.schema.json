@@ -1,0 +1,2033 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wqeeeeeeee.github.io/ms_mcp/schemas/work_order.schema.json",
+  "title": "Semiconductor Precision Work Order Exchange",
+  "description": "Validates either an architect-issued Work Order or the structured result receipt returned for that Work Order.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/workOrder"
+    },
+    {
+      "$ref": "#/$defs/agentResultReceipt"
+    }
+  ],
+  "$defs": {
+    "contractVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
+    },
+    "gitPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000]+$"
+    },
+    "artifactPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000]+$"
+    },
+    "role": {
+      "enum": [
+        "runtime_orchestration_agent",
+        "reference_data_agent",
+        "canonicalization_and_comparator_agent",
+        "bulk_and_alloy_agent",
+        "surface_and_2d_agent",
+        "defect_and_dopant_agent",
+        "interface_and_device_stack_agent",
+        "calculation_agent",
+        "gui_and_ms_adapter_agent",
+        "benchmark_and_release_agent"
+      ]
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "PASS_WITH_WARNINGS",
+        "FAIL",
+        "NOT_RUN"
+      ]
+    },
+    "validityStateName": {
+      "enum": [
+        "structure_valid",
+        "semiconductor_domain_valid",
+        "ms_roundtrip_valid",
+        "calculation_evidence_valid",
+        "scientifically_verified"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarios",
+        "materials",
+        "operations"
+      ],
+      "properties": {
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "materials": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      }
+    },
+    "workOrderDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "work_order_id",
+        "merged_head_sha",
+        "integration_sha"
+      ],
+      "properties": {
+        "work_order_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "merged_head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "integration_sha": {
+          "$ref": "#/$defs/gitSha"
+        }
+      }
+    },
+    "referenceAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "allowed_sources",
+        "raw_reference_structure_access",
+        "hidden_holdout_access",
+        "candidate_write_access",
+        "coordinate_disclosure_to_modeler",
+        "constraints"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "none",
+            "metadata_only",
+            "task_only",
+            "reference_builder",
+            "evaluation_only"
+          ]
+        },
+        "allowed_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "raw_reference_structure_access": {
+          "type": "boolean"
+        },
+        "hidden_holdout_access": {
+          "type": "boolean"
+        },
+        "candidate_write_access": {
+          "type": "boolean"
+        },
+        "coordinate_disclosure_to_modeler": {
+          "const": false
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "enum": [
+                  "none",
+                  "metadata_only",
+                  "task_only"
+                ]
+              }
+            },
+            "required": [
+              "policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "raw_reference_structure_access": {
+                "const": false
+              },
+              "hidden_holdout_access": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "enum": [
+                  "reference_builder",
+                  "evaluation_only"
+                ]
+              }
+            },
+            "required": [
+              "policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "candidate_write_access": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hidden_holdout_access": {
+                "const": true
+              }
+            },
+            "required": [
+              "hidden_holdout_access"
+            ]
+          },
+          "then": {
+            "properties": {
+              "policy": {
+                "enum": [
+                  "reference_builder",
+                  "evaluation_only"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "const": "none"
+              }
+            },
+            "required": [
+              "policy"
+            ]
+          },
+          "then": {
+            "properties": {
+              "allowed_sources": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "allowed_sources": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "testRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "test_id",
+        "category",
+        "command",
+        "required",
+        "environment"
+      ],
+      "properties": {
+        "test_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "category": {
+          "enum": [
+            "unit",
+            "contract",
+            "protocol_preview",
+            "benchmark_blind",
+            "benchmark_regression",
+            "no_reference_leak",
+            "fake_gui",
+            "compileall",
+            "diff_check",
+            "real_ms_20_1",
+            "real_castep_small_cell"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "environment": {
+          "enum": [
+            "ci",
+            "local_mock",
+            "real_ms",
+            "real_castep"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_ms_20_1"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_ms"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_castep_small_cell"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_castep"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "not": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "real_castep_small_cell"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "ci",
+                  "local_mock"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "criterionValue": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "acceptanceCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "validity_state",
+        "metric",
+        "operator",
+        "expected",
+        "severity",
+        "evidence_required",
+        "real_environment_required",
+        "required_real_environment"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "validity_state": {
+          "$ref": "#/$defs/validityStateName"
+        },
+        "metric": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.]*$"
+        },
+        "operator": {
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "lte",
+            "gt",
+            "gte",
+            "contains",
+            "set_eq",
+            "present"
+          ]
+        },
+        "expected": {
+          "$ref": "#/$defs/criterionValue"
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "hard_failure",
+            "warning"
+          ]
+        },
+        "evidence_required": {
+          "type": "boolean"
+        },
+        "real_environment_required": {
+          "type": "boolean"
+        },
+        "required_real_environment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "materials_studio_20_1",
+            "castep",
+            null
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "real_environment_required": {
+                "const": true
+              }
+            },
+            "required": [
+              "real_environment_required"
+            ]
+          },
+          "then": {
+            "properties": {
+              "required_real_environment": {
+                "enum": [
+                  "materials_studio_20_1",
+                  "castep"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "required_real_environment": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "acceptanceContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criteria",
+        "weighted_score_allowed",
+        "hard_failures_compensable"
+      ],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/acceptanceCriterion"
+          }
+        },
+        "weighted_score_allowed": {
+          "const": false
+        },
+        "hard_failures_compensable": {
+          "const": false
+        }
+      }
+    },
+    "workOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_type",
+        "contract_version",
+        "goal_id",
+        "work_order_id",
+        "role",
+        "base_sha",
+        "expected_branch",
+        "dependencies",
+        "scope",
+        "allowed_paths",
+        "forbidden_paths",
+        "reference_access",
+        "required_tests",
+        "acceptance",
+        "result_receipt_required"
+      ],
+      "properties": {
+        "document_type": {
+          "const": "work_order"
+        },
+        "contract_version": {
+          "$ref": "#/$defs/contractVersion"
+        },
+        "goal_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "work_order_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        },
+        "base_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "expected_branch": {
+          "type": "string",
+          "pattern": "^agent/[A-Za-z0-9][A-Za-z0-9._/-]+$"
+        },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/workOrderDependency"
+          }
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/gitPath"
+          }
+        },
+        "forbidden_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/gitPath"
+          }
+        },
+        "reference_access": {
+          "$ref": "#/$defs/referenceAccess"
+        },
+        "required_tests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/testRequirement"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "unit"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "contract"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "protocol_preview"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_blind"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_regression"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "no_reference_leak"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            }
+          ]
+        },
+        "acceptance": {
+          "$ref": "#/$defs/acceptanceContract"
+        },
+        "result_receipt_required": {
+          "const": true
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "runtime_orchestration_agent",
+                  "bulk_and_alloy_agent",
+                  "surface_and_2d_agent",
+                  "defect_and_dopant_agent",
+                  "interface_and_device_stack_agent",
+                  "calculation_agent",
+                  "gui_and_ms_adapter_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "reference_data_agent"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "reference_builder"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "canonicalization_and_comparator_agent",
+                  "benchmark_and_release_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_access": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only",
+                      "evaluation_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "testResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "test_id",
+        "category",
+        "command",
+        "required",
+        "status",
+        "environment",
+        "evidence_paths",
+        "summary"
+      ],
+      "properties": {
+        "test_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "category": {
+          "enum": [
+            "unit",
+            "contract",
+            "protocol_preview",
+            "benchmark_blind",
+            "benchmark_regression",
+            "no_reference_leak",
+            "fake_gui",
+            "compileall",
+            "diff_check",
+            "real_ms_20_1",
+            "real_castep_small_cell"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "environment": {
+          "enum": [
+            "ci",
+            "local_mock",
+            "real_ms",
+            "real_castep"
+          ]
+        },
+        "evidence_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath"
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_ms_20_1"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_ms"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "real_castep_small_cell"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "real_castep"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "not": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "real_castep_small_cell"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "ci",
+                  "local_mock"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "benchmarkSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suite_id",
+        "run_id",
+        "status",
+        "case_count",
+        "passed",
+        "passed_with_warnings",
+        "failed",
+        "not_run",
+        "counts_reconciled",
+        "report_paths",
+        "notes"
+      ],
+      "properties": {
+        "suite_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "case_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed_with_warnings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_run": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "counts_reconciled": {
+          "const": true
+        },
+        "report_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "run_id": {
+                "type": "null"
+              },
+              "case_count": {
+                "const": 0
+              },
+              "passed": {
+                "const": 0
+              },
+              "passed_with_warnings": {
+                "const": 0
+              },
+              "failed": {
+                "const": 0
+              },
+              "not_run": {
+                "const": 0
+              },
+              "report_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "run_id": {
+                "type": "string"
+              },
+              "case_count": {
+                "minimum": 1
+              },
+              "report_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "acceptanceResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "severity",
+        "status",
+        "evidence_paths",
+        "notes"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "severity": {
+          "enum": [
+            "hard_failure",
+            "warning"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "observed": {
+          "$ref": "#/$defs/criterionValue"
+        },
+        "evidence_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "referenceIsolationAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "complied",
+        "hidden_reference_read",
+        "reference_coordinates_disclosed_to_modeler",
+        "candidate_modified_by_evaluator",
+        "evidence_paths",
+        "notes"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "none",
+            "metadata_only",
+            "task_only",
+            "reference_builder",
+            "evaluation_only"
+          ]
+        },
+        "complied": {
+          "type": "boolean"
+        },
+        "hidden_reference_read": {
+          "type": "boolean"
+        },
+        "reference_coordinates_disclosed_to_modeler": {
+          "type": "boolean"
+        },
+        "candidate_modified_by_evaluator": {
+          "type": "boolean"
+        },
+        "evidence_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reference_coordinates_disclosed_to_modeler": {
+                "const": true
+              }
+            },
+            "required": [
+              "reference_coordinates_disclosed_to_modeler"
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "candidate_modified_by_evaluator": {
+                "const": true
+              }
+            },
+            "required": [
+              "candidate_modified_by_evaluator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "allOf": [
+              {
+                "properties": {
+                  "hidden_reference_read": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "hidden_reference_read"
+                ]
+              },
+              {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                },
+                "required": [
+                  "policy"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "complied": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "realEnvironmentResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "environment",
+        "evidence_paths",
+        "notes"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "environment": {
+          "enum": [
+            "real_ms_20_1",
+            "real_castep",
+            "not_run"
+          ]
+        },
+        "evidence_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactPath"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "environment": {
+                "const": "not_run"
+              },
+              "evidence_paths": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "environment": {
+                "enum": [
+                  "real_ms_20_1",
+                  "real_castep"
+                ]
+              },
+              "evidence_paths": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "environment": {
+                "const": "not_run"
+              }
+            },
+            "required": [
+              "environment"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "workOrderBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_contract",
+        "work_order_sha256",
+        "goal_id_matches",
+        "contract_version_matches",
+        "work_order_id_matches",
+        "role_matches",
+        "base_sha_matches",
+        "branch_matches",
+        "dependencies_reconciled",
+        "dependencies",
+        "required_test_ids_complete",
+        "acceptance_criterion_ids_complete",
+        "changed_paths_within_allowed_paths",
+        "forbidden_paths_untouched",
+        "path_scopes_non_overlapping",
+        "reference_access_matches"
+      ],
+      "properties": {
+        "validator_contract": {
+          "const": "work_order_result_reconciliation_v1"
+        },
+        "work_order_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "goal_id_matches": {
+          "type": "boolean"
+        },
+        "contract_version_matches": {
+          "type": "boolean"
+        },
+        "work_order_id_matches": {
+          "type": "boolean"
+        },
+        "role_matches": {
+          "type": "boolean"
+        },
+        "base_sha_matches": {
+          "type": "boolean"
+        },
+        "branch_matches": {
+          "type": "boolean"
+        },
+        "dependencies_reconciled": {
+          "type": "boolean"
+        },
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/workOrderDependency"
+          }
+        },
+        "required_test_ids_complete": {
+          "type": "boolean"
+        },
+        "acceptance_criterion_ids_complete": {
+          "type": "boolean"
+        },
+        "changed_paths_within_allowed_paths": {
+          "type": "boolean"
+        },
+        "forbidden_paths_untouched": {
+          "type": "boolean"
+        },
+        "path_scopes_non_overlapping": {
+          "type": "boolean"
+        },
+        "reference_access_matches": {
+          "type": "boolean"
+        }
+      }
+    },
+    "contractChangeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "reason",
+        "breaking"
+      ],
+      "properties": {
+        "contract": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "breaking": {
+          "type": "boolean"
+        }
+      }
+    },
+    "agentResultReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "document_type",
+        "contract_version",
+        "goal_id",
+        "work_order_id",
+        "role",
+        "branch",
+        "base_sha",
+        "head_sha",
+        "work_order_binding",
+        "changed_paths",
+        "new_capabilities",
+        "unsupported_capabilities",
+        "reference_sources",
+        "tests",
+        "benchmark_before",
+        "benchmark_after",
+        "acceptance_results",
+        "reference_isolation",
+        "real_materials_studio",
+        "real_castep",
+        "scientific_boundaries",
+        "known_gaps",
+        "contract_changes_requested",
+        "overall_status"
+      ],
+      "properties": {
+        "document_type": {
+          "const": "agent_result_receipt"
+        },
+        "contract_version": {
+          "$ref": "#/$defs/contractVersion"
+        },
+        "goal_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "work_order_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^agent/[A-Za-z0-9][A-Za-z0-9._/-]+$"
+        },
+        "base_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "head_sha": {
+          "$ref": "#/$defs/gitSha"
+        },
+        "work_order_binding": {
+          "$ref": "#/$defs/workOrderBinding"
+        },
+        "changed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/gitPath"
+          }
+        },
+        "new_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unsupported_capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reference_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/testResult"
+          },
+          "allOf": [
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "unit"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "contract"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "protocol_preview"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_blind"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "benchmark_regression"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            },
+            {
+              "contains": {
+                "properties": {
+                  "category": {
+                    "const": "no_reference_leak"
+                  }
+                },
+                "required": [
+                  "category"
+                ]
+              }
+            }
+          ]
+        },
+        "benchmark_before": {
+          "$ref": "#/$defs/benchmarkSummary"
+        },
+        "benchmark_after": {
+          "$ref": "#/$defs/benchmarkSummary"
+        },
+        "acceptance_results": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/acceptanceResult"
+          }
+        },
+        "reference_isolation": {
+          "$ref": "#/$defs/referenceIsolationAttestation"
+        },
+        "real_materials_studio": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/realEnvironmentResult"
+            },
+            {
+              "properties": {
+                "environment": {
+                  "enum": [
+                    "real_ms_20_1",
+                    "not_run"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "real_castep": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/realEnvironmentResult"
+            },
+            {
+              "properties": {
+                "environment": {
+                  "enum": [
+                    "real_castep",
+                    "not_run"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "scientific_boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "known_gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "contract_changes_requested": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contractChangeRequest"
+          }
+        },
+        "overall_status": {
+          "$ref": "#/$defs/status"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tests": {
+                "contains": {
+                  "properties": {
+                    "required": {
+                      "const": true
+                    },
+                    "status": {
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "required",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "tests"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "acceptance_results": {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "hard_failure"
+                    },
+                    "status": {
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "acceptance_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "work_order_binding": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "goal_id_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "contract_version_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "work_order_id_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "role_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "base_sha_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "branch_matches": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "dependencies_reconciled": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "required_test_ids_complete": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "acceptance_criterion_ids_complete": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "changed_paths_within_allowed_paths": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "forbidden_paths_untouched": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "path_scopes_non_overlapping": {
+                        "const": false
+                      }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "reference_access_matches": {
+                        "const": false
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "work_order_binding"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "complied": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "complied"
+                ]
+              }
+            },
+            "required": [
+              "reference_isolation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "runtime_orchestration_agent",
+                  "bulk_and_alloy_agent",
+                  "surface_and_2d_agent",
+                  "defect_and_dopant_agent",
+                  "interface_and_device_stack_agent",
+                  "calculation_agent",
+                  "gui_and_ms_adapter_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "reference_data_agent"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "reference_builder"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "enum": [
+                  "canonicalization_and_comparator_agent",
+                  "benchmark_and_release_agent"
+                ]
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reference_isolation": {
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "none",
+                      "metadata_only",
+                      "task_only",
+                      "evaluation_only"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

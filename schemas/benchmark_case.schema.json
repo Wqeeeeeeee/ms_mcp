@@ -1,0 +1,2149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wqeeeeeeee.github.io/ms_mcp/schemas/benchmark_case.schema.json",
+  "title": "Semiconductor Precision Benchmark Case",
+  "description": "Defines an isolated reference-driven benchmark case and an optional hard-gated evaluation result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "case_id",
+    "split",
+    "domain",
+    "scenario",
+    "material",
+    "task",
+    "isolation",
+    "reference",
+    "candidate",
+    "gates",
+    "calculation_comparison",
+    "aggregation",
+    "hard_failure_rules"
+  ],
+  "properties": {
+    "contract_version": {
+      "$ref": "#/$defs/semanticVersion"
+    },
+    "case_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "split": {
+      "enum": [
+        "development",
+        "validation",
+        "hidden_holdout"
+      ]
+    },
+    "domain": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "scenario": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "material": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "task": {
+      "$ref": "#/$defs/blindTask"
+    },
+    "isolation": {
+      "$ref": "#/$defs/isolation"
+    },
+    "reference": {
+      "$ref": "#/$defs/reference"
+    },
+    "candidate": {
+      "$ref": "#/$defs/candidate"
+    },
+    "gates": {
+      "$ref": "#/$defs/gates"
+    },
+    "calculation_comparison": {
+      "$ref": "#/$defs/calculationComparison"
+    },
+    "aggregation": {
+      "$ref": "#/$defs/aggregation"
+    },
+    "hard_failure_rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/hardFailureRule"
+      }
+    },
+    "result": {
+      "$ref": "#/$defs/evaluationResult"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "split": {
+            "const": "hidden_holdout"
+          }
+        },
+        "required": [
+          "split"
+        ]
+      },
+      "then": {
+        "properties": {
+          "isolation": {
+            "properties": {
+              "reference_visibility": {
+                "const": "evaluator_only"
+              }
+            },
+            "required": [
+              "reference_visibility"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "structure_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "structure_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "structure_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "semiconductor_domain_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "semiconductor_domain_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "semiconductor_domain_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "ms_roundtrip_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "ms_roundtrip_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "ms_roundtrip_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "calculation_evidence_valid": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "calculation_evidence_valid": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "calculation_evidence_valid": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "scientifically_verified": {
+                "properties": {
+                  "required_for_overall_pass": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "scientifically_verified": {
+                          "const": "NOT_RUN"
+                        }
+                      }
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "overall_status": {
+                      "enum": [
+                        "NOT_RUN",
+                        "FAIL"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "overall_status": {
+                      "const": "PASS"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "states": {
+                      "properties": {
+                        "scientifically_verified": {
+                          "const": "PASS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "structure_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "structure_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "semiconductor_domain_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "semiconductor_domain_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "ms_roundtrip_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "calculation_evidence_valid": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "calculation_evidence_valid": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gates": {
+            "properties": {
+              "scientifically_verified": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "gates"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "states": {
+                "properties": {
+                  "scientifically_verified": {
+                    "const": "NOT_RUN"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "result": {
+            "properties": {
+              "overall_status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "overall_status"
+            ]
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "structure_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "structure_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "semiconductor_domain_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "semiconductor_domain_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "ms_roundtrip_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "calculation_evidence_valid": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "calculation_evidence_valid": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "scientifically_verified": {
+                    "properties": {
+                      "required_for_overall_pass": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              },
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "scientifically_verified": {
+                        "const": "NOT_RUN"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "gates": {
+                "properties": {
+                  "ms_roundtrip_valid": {
+                    "properties": {
+                      "enabled": {
+                        "const": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "result": {
+                "properties": {
+                  "states": {
+                    "properties": {
+                      "ms_roundtrip_valid": {
+                        "enum": [
+                          "PASS",
+                          "PASS_WITH_WARNINGS"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "required": [
+              "result"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "real_materials_studio": {
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "PASS",
+                      "PASS_WITH_WARNINGS"
+                    ]
+                  },
+                  "real_environment": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "anyOf": [
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "structure_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "semiconductor_domain_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "ms_roundtrip_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "calculation_evidence_valid": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "gates": {
+          "properties": {
+            "scientifically_verified": {
+              "properties": {
+                "required_for_overall_pass": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*\\.[0-9]+\\.[0-9]+$"
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[^\\u0000]+$"
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "PASS_WITH_WARNINGS",
+        "FAIL",
+        "NOT_RUN"
+      ]
+    },
+    "validityStateName": {
+      "enum": [
+        "structure_valid",
+        "semiconductor_domain_valid",
+        "ms_roundtrip_valid",
+        "calculation_evidence_valid",
+        "scientifically_verified"
+      ]
+    },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "blindTask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_id",
+        "prompt",
+        "semantic_requirements",
+        "declared_assumptions",
+        "input_artifacts",
+        "expected_output_kind",
+        "includes_final_reference_coordinates"
+      ],
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantic_requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "declared_assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "input_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactBinding"
+          }
+        },
+        "expected_output_kind": {
+          "enum": [
+            "molecule",
+            "crystal",
+            "imported_structure"
+          ]
+        },
+        "includes_final_reference_coordinates": {
+          "const": false
+        }
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference_root",
+        "candidate_root",
+        "evaluator_output_root",
+        "reference_visibility",
+        "modeler_input_scope",
+        "modeler_reference_access",
+        "evaluator_reference_access",
+        "evaluator_candidate_access",
+        "reference_coordinates_in_task",
+        "candidate_write_after_evaluation_start",
+        "process_isolation_required"
+      ],
+      "properties": {
+        "reference_root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "candidate_root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "evaluator_output_root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "reference_visibility": {
+          "enum": [
+            "development_auditor",
+            "evaluator_only"
+          ]
+        },
+        "modeler_input_scope": {
+          "const": "compiled_task_only"
+        },
+        "modeler_reference_access": {
+          "const": "denied"
+        },
+        "evaluator_reference_access": {
+          "const": "read_only"
+        },
+        "evaluator_candidate_access": {
+          "const": "read_only"
+        },
+        "reference_coordinates_in_task": {
+          "const": false
+        },
+        "candidate_write_after_evaluation_start": {
+          "const": false
+        },
+        "process_isolation_required": {
+          "const": true
+        }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url",
+        "redistributable"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "spdx_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.+-]+$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "redistributable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "sourceRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "provider",
+        "source_url",
+        "retrieved_at",
+        "query_or_record_id",
+        "license",
+        "record_sha256"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_or_record_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "$ref": "#/$defs/license"
+        },
+        "record_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "structureArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "source_id",
+        "path",
+        "format",
+        "sha256",
+        "canonical",
+        "contains_coordinates"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "format": {
+          "enum": [
+            "cif",
+            "poscar",
+            "cell",
+            "xsd",
+            "json"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "canonical": {
+          "type": "boolean"
+        },
+        "contains_coordinates": {
+          "const": true
+        }
+      }
+    },
+    "canonicalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "method_version",
+        "settings_sha256",
+        "preserves_original_artifact"
+      ],
+      "properties": {
+        "method": {
+          "type": "string",
+          "minLength": 1
+        },
+        "method_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "settings_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "preserves_original_artifact": {
+          "const": true
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "structure_artifacts",
+        "canonicalization"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sourceRecord"
+          }
+        },
+        "structure_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/structureArtifact"
+          }
+        },
+        "canonicalization": {
+          "$ref": "#/$defs/canonicalization"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "required_artifacts",
+        "immutable_after_submission",
+        "public_entry_tool"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "model_spec",
+              "semantic_patch",
+              "structure",
+              "revision_metadata",
+              "ms_roundtrip_structure",
+              "calculation_result"
+            ]
+          }
+        },
+        "immutable_after_submission": {
+          "const": true
+        },
+        "public_entry_tool": {
+          "const": "material_studio_live_modeling_request"
+        }
+      }
+    },
+    "criterionValue": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "gateCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "metric",
+        "comparison_basis",
+        "operator",
+        "expected",
+        "severity",
+        "evidence_kind",
+        "description"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "metric": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.]*$"
+        },
+        "comparison_basis": {
+          "enum": [
+            "exact",
+            "reference",
+            "threshold",
+            "presence",
+            "method_compatible"
+          ]
+        },
+        "operator": {
+          "enum": [
+            "eq",
+            "ne",
+            "lt",
+            "lte",
+            "gt",
+            "gte",
+            "contains",
+            "set_eq",
+            "present"
+          ]
+        },
+        "expected": {
+          "$ref": "#/$defs/criterionValue"
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": [
+            "hard_failure",
+            "warning",
+            "evidence_only"
+          ]
+        },
+        "evidence_kind": {
+          "enum": [
+            "structure",
+            "semiconductor_domain",
+            "ms_roundtrip",
+            "calculation",
+            "scientific"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "gateDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state_name",
+        "enabled",
+        "required_for_overall_pass",
+        "criteria",
+        "not_run_reason"
+      ],
+      "properties": {
+        "state_name": {
+          "$ref": "#/$defs/validityStateName"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "required_for_overall_pass": {
+          "type": "boolean"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gateCriterion"
+          }
+        },
+        "not_run_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "properties": {
+              "criteria": {
+                "minItems": 1
+              },
+              "not_run_reason": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "required_for_overall_pass": {
+                "const": false
+              },
+              "not_run_reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "structure_valid",
+        "semiconductor_domain_valid",
+        "ms_roundtrip_valid",
+        "calculation_evidence_valid",
+        "scientifically_verified"
+      ],
+      "properties": {
+        "structure_valid": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gateDefinition"
+            },
+            {
+              "properties": {
+                "state_name": {
+                  "const": "structure_valid"
+                }
+              }
+            }
+          ]
+        },
+        "semiconductor_domain_valid": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gateDefinition"
+            },
+            {
+              "properties": {
+                "state_name": {
+                  "const": "semiconductor_domain_valid"
+                }
+              }
+            }
+          ]
+        },
+        "ms_roundtrip_valid": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gateDefinition"
+            },
+            {
+              "properties": {
+                "state_name": {
+                  "const": "ms_roundtrip_valid"
+                }
+              }
+            }
+          ]
+        },
+        "calculation_evidence_valid": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gateDefinition"
+            },
+            {
+              "properties": {
+                "state_name": {
+                  "const": "calculation_evidence_valid"
+                }
+              }
+            }
+          ]
+        },
+        "scientifically_verified": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/gateDefinition"
+            },
+            {
+              "properties": {
+                "state_name": {
+                  "const": "scientifically_verified"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "calculationComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_equal_settings",
+        "mismatch_policy",
+        "cross_method_results_strictly_scored"
+      ],
+      "properties": {
+        "required_equal_settings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "castep_version",
+              "functional",
+              "pseudopotential",
+              "cutoff_energy",
+              "k_points",
+              "spin",
+              "dft_u",
+              "dispersion_correction",
+              "fixed_atoms",
+              "dipole_correction",
+              "convergence_thresholds"
+            ]
+          }
+        },
+        "mismatch_policy": {
+          "const": "cross_method_reference_only"
+        },
+        "cross_method_results_strictly_scored": {
+          "const": false
+        }
+      }
+    },
+    "aggregation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "weighted_score_allowed",
+        "hard_failures_compensable",
+        "all_required_gates_must_pass"
+      ],
+      "properties": {
+        "weighted_score_allowed": {
+          "const": false
+        },
+        "hard_failures_compensable": {
+          "const": false
+        },
+        "all_required_gates_must_pass": {
+          "const": true
+        }
+      }
+    },
+    "hardFailureRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "applies_to_states",
+        "trigger",
+        "description",
+        "forces_overall_status"
+      ],
+      "properties": {
+        "rule_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "applies_to_states": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/validityStateName"
+          }
+        },
+        "trigger": {
+          "enum": [
+            "criterion_failed",
+            "state_failed",
+            "required_evidence_missing",
+            "method_mismatch",
+            "reference_leak",
+            "artifact_identity_mismatch"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "forces_overall_status": {
+          "const": "FAIL"
+        }
+      }
+    },
+    "validityStates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "structure_valid",
+        "semiconductor_domain_valid",
+        "ms_roundtrip_valid",
+        "calculation_evidence_valid",
+        "scientifically_verified"
+      ],
+      "properties": {
+        "structure_valid": {
+          "$ref": "#/$defs/status"
+        },
+        "semiconductor_domain_valid": {
+          "$ref": "#/$defs/status"
+        },
+        "ms_roundtrip_valid": {
+          "$ref": "#/$defs/status"
+        },
+        "calculation_evidence_valid": {
+          "$ref": "#/$defs/status"
+        },
+        "scientifically_verified": {
+          "$ref": "#/$defs/status"
+        }
+      }
+    },
+    "criterionResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion_id",
+        "validity_state",
+        "severity",
+        "status",
+        "evidence",
+        "notes"
+      ],
+      "properties": {
+        "criterion_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "validity_state": {
+          "$ref": "#/$defs/validityStateName"
+        },
+        "severity": {
+          "enum": [
+            "hard_failure",
+            "warning",
+            "evidence_only"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "observed": {
+          "$ref": "#/$defs/criterionValue"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactBinding"
+          }
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "hardFailureResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "validity_state",
+        "message",
+        "evidence"
+      ],
+      "properties": {
+        "rule_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "validity_state": {
+          "$ref": "#/$defs/validityStateName"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/artifactBinding"
+          }
+        }
+      }
+    },
+    "backendRunStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "real_environment",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "real_environment": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactBinding"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "real_environment": {
+                "const": false
+              }
+            },
+            "required": [
+              "real_environment"
+            ]
+          },
+          "then": {
+            "properties": {
+              "status": {
+                "const": "NOT_RUN"
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "PASS",
+                  "PASS_WITH_WARNINGS",
+                  "FAIL"
+                ]
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "semanticValidationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validator_contract",
+        "gate_state_bindings_complete",
+        "required_gate_truth_table_satisfied",
+        "criterion_results_complete",
+        "criterion_bindings_complete",
+        "hard_failure_results_complete",
+        "hard_failure_rule_bindings_complete",
+        "backend_evidence_bindings_complete",
+        "isolation_roots_disjoint",
+        "reference_artifacts_bound_to_reference_root",
+        "candidate_artifacts_bound_to_candidate_root",
+        "evaluator_artifacts_bound_to_evaluator_root",
+        "candidate_root_matches_declared_candidate"
+      ],
+      "properties": {
+        "validator_contract": {
+          "const": "benchmark_evaluation_semantic_validator_v1"
+        },
+        "gate_state_bindings_complete": {
+          "const": true
+        },
+        "required_gate_truth_table_satisfied": {
+          "const": true
+        },
+        "criterion_results_complete": {
+          "const": true
+        },
+        "criterion_bindings_complete": {
+          "const": true
+        },
+        "hard_failure_results_complete": {
+          "const": true
+        },
+        "hard_failure_rule_bindings_complete": {
+          "const": true
+        },
+        "backend_evidence_bindings_complete": {
+          "const": true
+        },
+        "isolation_roots_disjoint": {
+          "const": true
+        },
+        "reference_artifacts_bound_to_reference_root": {
+          "const": true
+        },
+        "candidate_artifacts_bound_to_candidate_root": {
+          "const": true
+        },
+        "evaluator_artifacts_bound_to_evaluator_root": {
+          "const": true
+        },
+        "candidate_root_matches_declared_candidate": {
+          "const": true
+        }
+      }
+    },
+    "evaluationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluation_run_id",
+        "candidate_sha256",
+        "reference_sha256",
+        "started_at",
+        "completed_at",
+        "semantic_validation",
+        "states",
+        "overall_status",
+        "criterion_results",
+        "hard_failures",
+        "warnings",
+        "real_materials_studio",
+        "real_castep",
+        "report_artifacts"
+      ],
+      "properties": {
+        "evaluation_run_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "candidate_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reference_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "semantic_validation": {
+          "$ref": "#/$defs/semanticValidationReceipt"
+        },
+        "states": {
+          "$ref": "#/$defs/validityStates"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/status"
+        },
+        "criterion_results": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/criterionResult"
+          }
+        },
+        "hard_failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hardFailureResult"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "real_materials_studio": {
+          "$ref": "#/$defs/backendRunStatus"
+        },
+        "real_castep": {
+          "$ref": "#/$defs/backendRunStatus"
+        },
+        "report_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/artifactBinding"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "criterion_results": {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "hard_failure"
+                    },
+                    "status": {
+                      "enum": [
+                        "FAIL",
+                        "NOT_RUN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "criterion_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "criterion_results": {
+                "contains": {
+                  "properties": {
+                    "severity": {
+                      "const": "warning"
+                    },
+                    "status": {
+                      "const": "FAIL"
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "criterion_results"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "enum": [
+                  "PASS_WITH_WARNINGS",
+                  "NOT_RUN",
+                  "FAIL"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hard_failures": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "hard_failures"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "states": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "structure_valid": {
+                        "const": "FAIL"
+                      }
+                    },
+                    "required": [
+                      "structure_valid"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "semiconductor_domain_valid": {
+                        "const": "FAIL"
+                      }
+                    },
+                    "required": [
+                      "semiconductor_domain_valid"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "ms_roundtrip_valid": {
+                        "const": "FAIL"
+                      }
+                    },
+                    "required": [
+                      "ms_roundtrip_valid"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "calculation_evidence_valid": {
+                        "const": "FAIL"
+                      }
+                    },
+                    "required": [
+                      "calculation_evidence_valid"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "scientifically_verified": {
+                        "const": "FAIL"
+                      }
+                    },
+                    "required": [
+                      "scientifically_verified"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "states"
+            ]
+          },
+          "then": {
+            "properties": {
+              "overall_status": {
+                "const": "FAIL"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

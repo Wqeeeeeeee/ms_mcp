@@ -4906,6 +4906,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "ready_for_live_hotload",
                 "live_edit_blocking_reasons",
                 "current_revision_loaded_in_gui",
+                "fit_to_view_preview_recommended",
+                "fit_to_view_preview_status",
+                "fit_to_view_preview_payload_hint",
                 "visible_followup_ready",
                 "visible_followup_status",
                 "visible_followup_blocking_reasons",
@@ -6694,6 +6697,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "needs_activation",
                 "needs_snapshot",
                 "needs_single_window_resolution",
+                "fit_to_view_preview_recommended",
+                "fit_to_view_preview_status",
+                "fit_to_view_preview_blocking_reasons",
                 "single_window_policy_ok",
                 "single_window_violation_reasons",
                 "visual_validation",
@@ -7156,6 +7162,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_current_revision_needs_reload",
                 "gui_current_revision_needs_activation",
                 "gui_current_revision_needs_snapshot",
+                "gui_current_revision_fit_to_view_preview_recommended",
                 "gui_current_revision_needs_single_window_resolution",
                 "gui_current_revision_single_window_policy_ok",
                 "gui_current_revision_single_window_violation_reasons",
@@ -7176,6 +7183,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_current_revision_activation_reasons",
                 "gui_current_revision_window_management_warning_count",
                 "gui_current_revision_recommended_tool",
+                "gui_current_revision_recommended_action",
+                "gui_current_revision_payload_hint",
                 "snapshot_path",
                 "snapshot_viewport_likely_visible_model",
                 "snapshot_viewport_foreground_ratio",
@@ -9338,6 +9347,11 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         if isinstance(report.get("gui_current_revision"), dict)
         else {}
     )
+    fit_to_view_preview = _gui_fit_to_view_preview_plan(report)
+    fit_to_view_preview_recommended = bool(
+        fit_to_view_preview.get("recommended") is True
+        and gui_current.get("recommended_tool") == "material_studio_gui_fit_to_view"
+    )
 
     project_id = report.get("project_id")
     single_window_policy_ok = readiness.get("gui_single_window_policy_ok", gui.get("single_window_policy_ok"))
@@ -9530,12 +9544,20 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
     elif gui_target_window_needs_activation:
         visible_followup_blocking_reasons.append("current_revision_window_not_active")
+    if fit_to_view_preview_recommended:
+        visible_followup_blocking_reasons.append("current_revision_view_not_fit_to_view")
     visible_followup_ready = bool(
         ready_for_live_edit
         and current_loaded
         and not gui_target_window_needs_activation
+        and not fit_to_view_preview_recommended
     )
-    if visible_followup_ready:
+    if fit_to_view_preview_recommended:
+        visible_followup_status = "fit_to_view_preview_recommended"
+        visible_followup_recommended_tool = "material_studio_gui_fit_to_view"
+        visible_followup_recommended_action = "preview_fit_to_view_for_current_revision"
+        visible_followup_payload_hint = dict(fit_to_view_preview.get("payload_hint") or {})
+    elif visible_followup_ready:
         visible_followup_status = "ready"
         visible_followup_recommended_tool = "material_studio_live_modeling_request"
         visible_followup_recommended_action = "continue_next_visible_model_edit"
@@ -9681,6 +9703,8 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
 
     if report.get("ok") is False:
         status = "blocked"
+    elif fit_to_view_preview_recommended:
+        status = "live_gui_fit_to_view_preview_recommended"
     elif current_loaded and normality_gate.get("can_claim_live_gui_normal") is True and calculation_review_required:
         status = "live_gui_normal_calculation_review"
     elif current_loaded and normality_gate.get("can_claim_live_gui_normal") is True:
@@ -9756,6 +9780,9 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "can_export_view_diagnostics": can_export_view_diagnostics,
             "diagnostics_exported": diagnostics_exported,
             "current_revision_loaded_in_gui": current_loaded,
+            "fit_to_view_preview_recommended": fit_to_view_preview_recommended,
+            "fit_to_view_preview_status": fit_to_view_preview.get("status"),
+            "fit_to_view_preview_payload_hint": fit_to_view_preview.get("payload_hint") or {},
             "visible_followup_ready": visible_followup_ready,
             "visible_followup_status": visible_followup_status,
             "visible_followup_blocking_reasons": _dedupe_strings(visible_followup_blocking_reasons),
@@ -17060,6 +17087,7 @@ def _refresh_response_summaries(response: dict[str, Any]) -> None:
     response["diagnostic_focus_plan"] = modeling_report["diagnostic_focus_plan"]
     modeling_report["diagnostic_export_manifest"] = _diagnostic_export_manifest(modeling_report)
     response["diagnostic_export_manifest"] = modeling_report["diagnostic_export_manifest"]
+    modeling_report["live_readiness"] = _live_readiness_summary(modeling_report)
     modeling_report["semiconductor_calculation_readiness"] = _semiconductor_calculation_readiness_summary(
         modeling_report
     )
@@ -21911,6 +21939,219 @@ def _single_window_policy_summary(
     }
 
 
+def _gui_fit_to_view_preview_plan(report: dict[str, Any]) -> dict[str, Any]:
+    """Return a fail-closed Fit-to-View preview recommendation for one revision."""
+
+    gui = report.get("gui") if isinstance(report.get("gui"), dict) else {}
+    gui_current = (
+        report.get("gui_current_revision")
+        if isinstance(report.get("gui_current_revision"), dict)
+        else {}
+    )
+    window_management = (
+        gui.get("window_management")
+        if isinstance(gui.get("window_management"), dict)
+        else gui_current.get("window_management")
+        if isinstance(gui_current.get("window_management"), dict)
+        else {}
+    )
+    derived_current_fallback_allowed = gui.get("status_was_probed") is not True
+    single_window = _single_window_policy_summary(gui, window_management)
+    capture_diagnostic = gui.get("snapshot_viewport_capture_diagnostic")
+    low_contrast_not_fit = bool(
+        gui.get("snapshot_viewport_likely_visible_model") is False
+        and gui.get("snapshot_viewport_capture_limitation_possible") is not True
+        and capture_diagnostic == "low_contrast_or_not_fit_to_view"
+    )
+
+    loaded_current_revision = _first_not_none(
+        gui.get("loaded_current_revision"),
+        gui_current.get("loaded_current_revision")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_loaded = bool(
+        gui.get("matching_window_count")
+        or gui.get("target_window_matched_project_window") is True
+        or window_management.get("matched_project_window") is True
+        or (
+            derived_current_fallback_allowed
+            and gui_current.get("target_window_loaded") is True
+        )
+    )
+    matching_window_identity = _first_not_none(
+        gui.get("matching_window_identity_verification"),
+        window_management.get("matching_window_identity_verification"),
+        gui_current.get("matching_window_identity_verification")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_identity_verified = bool(
+        matching_window_identity == "verified"
+        or (
+            derived_current_fallback_allowed
+            and gui_current.get("target_window_identity_verified") is True
+        )
+    )
+    selected_window_matches_current = _first_not_none(
+        gui.get("selected_window_matches_current"),
+        gui_current.get("selected_window_matches_current")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    foreground_window_matches_current = _first_not_none(
+        gui.get("foreground_window_matches_current"),
+        gui_current.get("foreground_window_matches_current")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_is_selected = _first_not_none(
+        window_management.get("target_window_is_selected"),
+        gui.get("window_management_target_window_is_selected"),
+        gui_current.get("target_window_is_selected")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_is_visible = _first_not_none(
+        window_management.get("target_window_is_visible"),
+        gui.get("window_management_target_window_is_visible"),
+        gui_current.get("target_window_is_visible")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_is_minimized = _first_not_none(
+        window_management.get("target_window_is_minimized"),
+        gui.get("window_management_target_window_is_minimized"),
+        gui_current.get("target_window_is_minimized")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_foreground_observed = _first_not_none(
+        window_management.get("target_window_foreground_observed"),
+        gui.get("window_management_target_window_foreground_observed"),
+        gui_current.get("target_window_foreground_observed")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    target_window_is_foreground = _first_not_none(
+        window_management.get("target_window_is_foreground"),
+        gui.get("window_management_target_window_is_foreground"),
+        gui_current.get("target_window_is_foreground")
+        if derived_current_fallback_allowed
+        else None,
+    )
+    activation_required = bool(
+        window_management.get("needs_activation") is True
+        or window_management.get("activation_required_before_capture_or_input") is True
+        or gui.get("window_management_activation_required_before_capture_or_input") is True
+        or (
+            derived_current_fallback_allowed
+            and (
+                gui_current.get("needs_activation") is True
+                or gui_current.get("activation_required_before_capture_or_input") is True
+            )
+        )
+    )
+    live_gui_acceptance = (
+        report.get("live_gui_acceptance")
+        if isinstance(report.get("live_gui_acceptance"), dict)
+        else {}
+    )
+    trusted_clean_view_replay = (
+        report.get("trusted_clean_view_replay")
+        if isinstance(report.get("trusted_clean_view_replay"), dict)
+        else {}
+    )
+    accepted_visual_evidence = bool(
+        gui.get("external_visual_confirmation_ok") is True
+        or live_gui_acceptance.get("external_visual_confirmation_ok") is True
+        or trusted_clean_view_replay.get("ok") is True
+    )
+
+    blocking_reasons: list[str] = []
+    if low_contrast_not_fit:
+        if report.get("ok") is False:
+            blocking_reasons.append("modeling_report_blocked")
+        if not report.get("project_id"):
+            blocking_reasons.append("project_id_missing")
+        if report.get("revision") is None:
+            blocking_reasons.append("current_revision_missing")
+        structure = report.get("structure") if isinstance(report.get("structure"), dict) else {}
+        if structure.get("exists") is False:
+            blocking_reasons.append("current_structure_artifact_missing")
+        if gui.get("status_was_probed") is not True:
+            blocking_reasons.append("gui_status_not_freshly_probed")
+        if gui.get("window_found") is not True:
+            blocking_reasons.append("gui_window_not_found")
+        if gui.get("hot_loaded") is not True:
+            blocking_reasons.append("current_revision_not_hot_loaded")
+        if loaded_current_revision is not True:
+            blocking_reasons.append("current_revision_not_loaded_in_gui")
+        if single_window.get("single_window_policy_ok") is not True:
+            blocking_reasons.append("single_window_policy_not_verified")
+        if not target_window_loaded:
+            blocking_reasons.append("current_revision_target_window_not_loaded")
+        if not target_window_identity_verified:
+            blocking_reasons.append("current_revision_target_window_identity_not_verified")
+        if selected_window_matches_current is not True:
+            blocking_reasons.append("selected_window_not_current_revision")
+        if foreground_window_matches_current is not True:
+            blocking_reasons.append("foreground_window_not_current_revision")
+        if target_window_is_selected is False:
+            blocking_reasons.append("target_window_not_selected")
+        if target_window_is_visible is False:
+            blocking_reasons.append("target_window_not_visible")
+        if target_window_is_minimized is True:
+            blocking_reasons.append("target_window_minimized")
+        if target_window_foreground_observed is True and target_window_is_foreground is False:
+            blocking_reasons.append("target_window_not_foreground")
+        if activation_required:
+            blocking_reasons.append("target_window_activation_required")
+        if accepted_visual_evidence:
+            blocking_reasons.append("accepted_visual_evidence_already_available")
+    blocking_reasons = _dedupe_strings(blocking_reasons)
+    recommended = bool(low_contrast_not_fit and not blocking_reasons)
+    if recommended:
+        status = "preview_recommended"
+    elif low_contrast_not_fit and accepted_visual_evidence:
+        status = "not_needed_visual_evidence_already_accepted"
+    elif low_contrast_not_fit:
+        status = "blocked"
+    else:
+        status = "not_applicable"
+
+    payload_hint = _workspace_bound_payload_hint(
+        "material_studio_gui_fit_to_view",
+        {
+            "project_id": report.get("project_id"),
+            "revision": report.get("revision"),
+            "execution_mode": ExecutionMode.PREVIEW.value,
+            "take_snapshot": True,
+        },
+        report.get("working_dir"),
+    )
+    return {
+        "available": low_contrast_not_fit,
+        "status": status,
+        "recommended": recommended,
+        "capture_diagnostic": capture_diagnostic,
+        "accepted_visual_evidence": accepted_visual_evidence,
+        "current_revision_loaded": loaded_current_revision,
+        "single_window_policy_ok": single_window.get("single_window_policy_ok"),
+        "target_window_loaded": target_window_loaded,
+        "target_window_identity_verified": target_window_identity_verified,
+        "target_window_activation_required": activation_required,
+        "blocking_reasons": blocking_reasons,
+        "recommended_tool": "material_studio_gui_fit_to_view" if recommended else None,
+        "recommended_action": (
+            "preview_fit_to_view_for_current_revision" if recommended else None
+        ),
+        "needs_user_confirmation": False,
+        "safe_to_call_without_confirmation": recommended,
+        "payload_hint": _drop_none_values(payload_hint) if recommended else {},
+    }
+
+
 def _single_window_hotload_block(gui_status: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a hard block payload when hot-loading would violate one-window policy."""
 
@@ -22947,6 +23188,7 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
     single_window = _single_window_policy_summary(gui)
     gui_single_window_policy_ok = single_window.get("single_window_policy_ok")
     gui_single_window_violation_reasons = single_window.get("single_window_violation_reasons") or []
+    fit_to_view_preview = _gui_fit_to_view_preview_plan(report)
     if gui_single_window_policy_ok is False:
         blocking_reasons.append("gui_single_window_policy_violation")
         review_reasons.extend(
@@ -23003,17 +23245,22 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         recommended_tool = "material_studio_gui_apply_current_revision"
         needs_user_confirmation = True
     elif gui.get("hot_loaded"):
-        state = "hot_loaded_with_review" if review_reasons or normality == "review_warnings" else (
-            "hot_loaded_ready_with_visual_notes" if visual_review_reasons else "hot_loaded_ready"
-        )
-        recommended_action = (
-            "review_flags_then_continue_next_model_edit"
-            if review_reasons
-            else "continue_next_model_edit_with_visual_notes"
-            if visual_review_reasons
-            else "continue_next_model_edit"
-        )
-        recommended_tool = "material_studio_live_modeling_request"
+        if fit_to_view_preview.get("recommended") is True:
+            state = "hot_loaded_fit_to_view_preview_recommended"
+            recommended_action = "preview_fit_to_view_for_current_revision"
+            recommended_tool = "material_studio_gui_fit_to_view"
+        else:
+            state = "hot_loaded_with_review" if review_reasons or normality == "review_warnings" else (
+                "hot_loaded_ready_with_visual_notes" if visual_review_reasons else "hot_loaded_ready"
+            )
+            recommended_action = (
+                "review_flags_then_continue_next_model_edit"
+                if review_reasons
+                else "continue_next_model_edit_with_visual_notes"
+                if visual_review_reasons
+                else "continue_next_model_edit"
+            )
+            recommended_tool = "material_studio_live_modeling_request"
     else:
         state = "executed_without_gui_review" if review_reasons else (
             "executed_without_gui_visual_notes" if visual_review_reasons else "executed_without_gui"
@@ -23097,6 +23344,9 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         "gui_single_window_policy_ok": gui_single_window_policy_ok,
         "gui_single_window_violation_reasons": gui_single_window_violation_reasons,
         "needs_user_confirmation": needs_user_confirmation,
+        "fit_to_view_preview_recommended": fit_to_view_preview.get("recommended"),
+        "fit_to_view_preview_status": fit_to_view_preview.get("status"),
+        "fit_to_view_preview_blocking_reasons": fit_to_view_preview.get("blocking_reasons") or [],
         "acceptance_ok": None if not acceptance_review.get("available") else not acceptance_failed,
         "change_verification_ok": change_verification.get("ok"),
         "change_verification_status": change_verification.get("status"),
@@ -26925,6 +27175,7 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("structure_artifact_validation"), dict)
         else {}
     )
+    fit_to_view_preview = _gui_fit_to_view_preview_plan(report)
     state = readiness.get("state") or "unknown"
     recommended_tool = readiness.get("recommended_tool") or "material_studio_live_project_status"
     needs_user_confirmation = bool(readiness.get("needs_user_confirmation"))
@@ -26984,6 +27235,12 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
             "take_snapshot": True,
             "export_view_audit": True,
         }
+    elif fit_to_view_preview.get("recommended") is True:
+        action_id = "preview_fit_to_view_for_current_revision"
+        recommended_tool = "material_studio_gui_fit_to_view"
+        recommended_action_override = "preview_fit_to_view_for_current_revision"
+        needs_user_confirmation = False
+        payload_hint = dict(fit_to_view_preview.get("payload_hint") or {})
     elif (
         semiconductor_calculation_readiness.get("status") == "blocked"
         and semiconductor_calculation_readiness.get("recommended_tool")
@@ -27251,6 +27508,10 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
     loaded_current_revision = gui_current.get("loaded_current_revision", gui.get("loaded_current_revision"))
     needs_reload = bool(gui_current.get("needs_reload"))
     needs_snapshot = bool(gui_current.get("needs_snapshot"))
+    fit_to_view_preview_recommended = bool(
+        gui_current.get("fit_to_view_preview_recommended") is True
+        and gui_current.get("recommended_tool") == "material_studio_gui_fit_to_view"
+    )
     hot_loaded = bool(gui.get("hot_loaded"))
 
     blocking_reasons: list[str] = []
@@ -27335,13 +27596,20 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             payload_hint = {"project_id": project_id}
         needs_user_confirmation = False
     elif current_revision_loaded:
-        status = "current_revision_loaded"
-        action_id = "continue_live_modeling_on_loaded_revision"
-        recommended_tool = "material_studio_gui_snapshot" if needs_snapshot else "material_studio_live_modeling_request"
-        recommended_action = (
-            "capture_gui_snapshot_for_current_revision" if needs_snapshot else "continue_next_model_edit"
-        )
-        payload_hint = {"project_id": project_id, "revision": revision} if needs_snapshot else {"project_id": project_id}
+        if fit_to_view_preview_recommended:
+            status = "current_revision_loaded_fit_to_view_preview_recommended"
+            action_id = "preview_fit_to_view_for_current_revision"
+            recommended_tool = "material_studio_gui_fit_to_view"
+            recommended_action = "preview_fit_to_view_for_current_revision"
+            payload_hint = dict(gui_current.get("payload_hint") or {})
+        else:
+            status = "current_revision_loaded"
+            action_id = "continue_live_modeling_on_loaded_revision"
+            recommended_tool = "material_studio_gui_snapshot" if needs_snapshot else "material_studio_live_modeling_request"
+            recommended_action = (
+                "capture_gui_snapshot_for_current_revision" if needs_snapshot else "continue_next_model_edit"
+            )
+            payload_hint = {"project_id": project_id, "revision": revision} if needs_snapshot else {"project_id": project_id}
         needs_user_confirmation = False
     elif gui_preflight_required:
         status = "gui_preflight_required"
@@ -27418,6 +27686,7 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
             "workspace_context": workspace_context or None,
             "single_window_execution_verified": gui_preflight_verified,
             "current_revision_loaded": current_revision_loaded,
+            "fit_to_view_preview_recommended": fit_to_view_preview_recommended,
             "needs_user_confirmation": needs_user_confirmation,
             "safe_to_call_without_confirmation": not needs_user_confirmation,
             "recommended_tool": recommended_tool,
@@ -30213,6 +30482,12 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
             selected_matches is False
             or foreground_matches is False
             or target_window_is_selected is False
+            or target_window_is_visible is False
+            or target_window_is_minimized is True
+            or (
+                target_window_foreground_observed is True
+                and target_window_is_foreground is False
+            )
             or window_management.get("needs_activation") is True
             or activation_required_before_capture_or_input is True
         )
@@ -30230,6 +30505,7 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
     )
     needs_snapshot = bool(hot_loaded and visual_validation in {"snapshot_missing", "not_available"})
     needs_visual_review = bool(hot_loaded and visual_validation in {"warning", "failed"})
+    fit_to_view_preview = _gui_fit_to_view_preview_plan(report)
     if needs_single_window_resolution:
         status = "single_window_policy_review"
     elif not hot_loaded:
@@ -30263,6 +30539,9 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
     elif needs_snapshot:
         recommended_tool = "material_studio_gui_snapshot"
         recommended_action = "capture_gui_snapshot_for_current_revision"
+    elif fit_to_view_preview.get("recommended") is True:
+        recommended_tool = "material_studio_gui_fit_to_view"
+        recommended_action = "preview_fit_to_view_for_current_revision"
     elif needs_visual_review:
         recommended_tool = "material_studio_gui_snapshot"
         recommended_action = "recapture_or_review_gui_snapshot_for_current_revision"
@@ -30307,6 +30586,8 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
             "revision": report.get("revision"),
             "label": "current_revision_visual_review" if needs_visual_review else "current_revision",
         }
+    elif recommended_tool == "material_studio_gui_fit_to_view":
+        payload_hint = dict(fit_to_view_preview.get("payload_hint") or {})
 
     payload_hint = _workspace_bound_payload_hint(
         recommended_tool,
@@ -30323,6 +30604,9 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
         "needs_activation": needs_activation,
         "needs_snapshot": needs_snapshot,
         "needs_single_window_resolution": needs_single_window_resolution,
+        "fit_to_view_preview_recommended": fit_to_view_preview.get("recommended"),
+        "fit_to_view_preview_status": fit_to_view_preview.get("status"),
+        "fit_to_view_preview_blocking_reasons": fit_to_view_preview.get("blocking_reasons") or [],
         **single_window,
         "visual_validation": visual_validation,
         "snapshot_path": gui.get("snapshot_path"),
@@ -30389,6 +30673,9 @@ def _gui_current_revision_live_summary(gui_current_revision: dict[str, Any]) -> 
             "gui_current_revision_needs_reload": gui_current_revision.get("needs_reload"),
             "gui_current_revision_needs_activation": gui_current_revision.get("needs_activation"),
             "gui_current_revision_needs_snapshot": gui_current_revision.get("needs_snapshot"),
+            "gui_current_revision_fit_to_view_preview_recommended": gui_current_revision.get(
+                "fit_to_view_preview_recommended"
+            ),
             "gui_current_revision_needs_single_window_resolution": gui_current_revision.get(
                 "needs_single_window_resolution"
             ),
@@ -30446,6 +30733,8 @@ def _gui_current_revision_live_summary(gui_current_revision: dict[str, Any]) -> 
                 "view_bundle_manifest_path_source"
             ),
             "gui_current_revision_recommended_tool": gui_current_revision.get("recommended_tool"),
+            "gui_current_revision_recommended_action": gui_current_revision.get("recommended_action"),
+            "gui_current_revision_payload_hint": gui_current_revision.get("payload_hint") or {},
         }
     )
 
@@ -34560,6 +34849,9 @@ def _compact_gui_current_revision(value: Any) -> dict[str, Any] | None:
             "needs_activation",
             "needs_snapshot",
             "needs_single_window_resolution",
+            "fit_to_view_preview_recommended",
+            "fit_to_view_preview_status",
+            "fit_to_view_preview_blocking_reasons",
             "single_window_policy_ok",
             "single_window_violation_reasons",
             "visual_validation",
@@ -38188,6 +38480,12 @@ def _compact_live_response(
             "visible_followup_ready",
             "visible_followup_status",
             "visible_followup_blocking_reasons",
+            "visible_followup_recommended_tool",
+            "visible_followup_recommended_action",
+            "visible_followup_payload_hint",
+            "fit_to_view_preview_recommended",
+            "fit_to_view_preview_status",
+            "fit_to_view_preview_payload_hint",
             "single_window_policy_ok",
             "recommended_tool",
             "recommended_action",

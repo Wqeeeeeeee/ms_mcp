@@ -2113,6 +2113,74 @@ class WindowInfo:
         }
 
 
+def _native_matstudio_processes() -> list[ProcessInfo]:
+    """Enumerate MatStudio processes without relying on tasklist output access."""
+
+    if os.name != "nt":
+        return []
+
+    # Some MCP hosts can start tasklist but receive "Access denied" for its
+    # CSV output even though the same process is visible to Win32 APIs. The
+    # Toolhelp snapshot is read-only and keeps the single-window guard fail
+    # closed in that environment.
+    try:
+        class ProcessEntry32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", ctypes.c_uint32),
+                ("cntUsage", ctypes.c_uint32),
+                ("th32ProcessID", ctypes.c_uint32),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", ctypes.c_uint32),
+                ("cntThreads", ctypes.c_uint32),
+                ("th32ParentProcessID", ctypes.c_uint32),
+                ("pcPriClassBase", ctypes.c_int32),
+                ("dwFlags", ctypes.c_uint32),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
+
+        kernel32 = ctypes.windll.kernel32
+        create_snapshot = kernel32.CreateToolhelp32Snapshot
+        create_snapshot.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        create_snapshot.restype = ctypes.c_void_p
+        process32_first = kernel32.Process32FirstW
+        process32_first.argtypes = [ctypes.c_void_p, ctypes.POINTER(ProcessEntry32W)]
+        process32_first.restype = ctypes.c_int
+        process32_next = kernel32.Process32NextW
+        process32_next.argtypes = [ctypes.c_void_p, ctypes.POINTER(ProcessEntry32W)]
+        process32_next.restype = ctypes.c_int
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_int
+
+        snapshot = create_snapshot(0x00000002, 0)
+        snapshot_value = snapshot.value if isinstance(snapshot, ctypes.c_void_p) else int(snapshot or 0)
+        invalid_handle = ctypes.c_void_p(-1).value
+        if not snapshot_value or snapshot_value == invalid_handle:
+            return []
+
+        processes: list[ProcessInfo] = []
+        try:
+            entry = ProcessEntry32W()
+            entry.dwSize = ctypes.sizeof(ProcessEntry32W)
+            if not process32_first(ctypes.c_void_p(snapshot_value), ctypes.byref(entry)):
+                return []
+            while True:
+                if entry.szExeFile.lower() == "matstudio.exe":
+                    processes.append(
+                        ProcessInfo(
+                            name=entry.szExeFile,
+                            pid=int(entry.th32ProcessID),
+                        )
+                    )
+                if not process32_next(ctypes.c_void_p(snapshot_value), ctypes.byref(entry)):
+                    break
+        finally:
+            close_handle(ctypes.c_void_p(snapshot_value))
+        return processes
+    except Exception:
+        return []
+
+
 class GuiBackend(Protocol):
     """GUI 后端协议。"""
 
@@ -2206,26 +2274,32 @@ class WindowsGuiBackend:
         """列出进程。"""
         if not self.supported:
             return []
-        completed = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq MatStudio.exe", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode != 0:
-            return []
-        rows = csv.reader(line for line in completed.stdout.splitlines() if line.strip())
         processes: list[ProcessInfo] = []
-        for row in rows:
-            if len(row) < 2 or row[0].upper().startswith("INFO:"):
-                continue
-            try:
-                pid = int(row[1])
-            except ValueError:
-                continue
-            if row[0].lower() == "matstudio.exe":
-                processes.append(ProcessInfo(name=row[0], pid=pid))
-        return processes
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq MatStudio.exe", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            completed = None
+
+        if completed is not None and completed.returncode == 0:
+            rows = csv.reader(line for line in completed.stdout.splitlines() if line.strip())
+            for row in rows:
+                if len(row) < 2 or row[0].upper().startswith("INFO:"):
+                    continue
+                try:
+                    pid = int(row[1])
+                except ValueError:
+                    continue
+                if row[0].lower() == "matstudio.exe":
+                    processes.append(ProcessInfo(name=row[0], pid=pid))
+            if processes:
+                return processes
+
+        return _native_matstudio_processes()
 
     def find_window(self, pid: int | None = None) -> WindowInfo | None:
         """查找窗口。"""
@@ -11744,10 +11818,16 @@ def _window_management_receipt(
     warnings.extend(interaction_activation_reasons)
     if target_window is not None and not same_window_open_supported:
         warnings.append("same_window_open_not_supported_by_local_backend")
+    if processes and target_window is None:
+        warnings.append("matstudio_process_without_usable_window")
 
     if target_window is None:
-        recommended_tool = "material_studio_gui_launch"
-        recommended_action = "explicitly_launch_or_activate_materials_studio_only_if_intended"
+        if processes:
+            recommended_tool = "material_studio_gui_status"
+            recommended_action = "resolve_existing_matstudio_process_without_usable_window"
+        else:
+            recommended_tool = "material_studio_gui_launch"
+            recommended_action = "explicitly_launch_or_activate_materials_studio_only_if_intended"
         ready_for_snapshot = False
         ready_for_open = False
     elif single_window_violation_reasons:
@@ -11818,7 +11898,7 @@ def _window_management_receipt(
         can_hotload_without_new_window and not workspace_context_mismatch
     )
     if target_window is None:
-        status = "target_window_missing"
+        status = "matstudio_process_without_usable_window" if processes else "target_window_missing"
     elif needs_single_window_resolution:
         status = "single_window_policy_violation"
     elif needs_dialog_resolution:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -911,6 +912,45 @@ def test_windows_backend_uses_welcome_dialog_without_ctrl_open(monkeypatch, tmp_
     assert result["same_window_open_requested"] is True
     assert result["spawned_process_ids"] == []
     assert opened_paths == [str(project)]
+
+
+def test_windows_backend_uses_native_process_fallback_when_tasklist_is_denied(monkeypatch) -> None:
+    backend = WindowsGuiBackend()
+    backend.supported = True
+    monkeypatch.setattr(
+        gui_module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0], returncode=1, stdout="", stderr="ERROR: Access denied"
+        ),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_native_matstudio_processes",
+        lambda: [ProcessInfo(name="MatStudio.exe", pid=42448)],
+    )
+
+    assert [item.to_dict() for item in backend.list_processes()] == [
+        {"name": "MatStudio.exe", "pid": 42448, "title": None, "path": None}
+    ]
+
+
+def test_gui_status_distinguishes_existing_process_without_usable_window(tmp_path: Path) -> None:
+    controller = MaterialsStudioGuiController(
+        tmp_path,
+        backend=ProcessOnlyFakeGuiBackend(),
+    )
+
+    status = controller.status()
+
+    assert status["process_found"] is True
+    assert status["process_count"] == 1
+    assert status["window_found"] is False
+    assert status["status"] == "matstudio_process_without_usable_window"
+    assert status["recommended_tool"] == "material_studio_gui_status"
+    assert status["recommended_action"] == "resolve_existing_matstudio_process_without_usable_window"
+    assert "matstudio_process_without_usable_window" in status["window_management"]["warnings"]
+    assert status["can_launch_blank_session"] is True
 
 
 def test_welcome_dialog_uses_browse_picker_instead_of_direct_path_write(monkeypatch, tmp_path: Path) -> None:

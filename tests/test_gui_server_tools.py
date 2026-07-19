@@ -6131,6 +6131,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_semiconductor_contact" in sic_4h_contact["default_diagnostic_focuses"]
     assert "surface_slab_polarity" in sic_4h_contact["default_diagnostic_focuses"]
     assert "semiconductor_surface_polarity_csv" in sic_4h_contact["required_csv_keys"]
+    sic_4h_c_face_contact = virtual_profiles[
+        "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
+    ]
+    assert sic_4h_c_face_contact["base_template_id"] == "silicon_carbide_4h_hexagonal"
+    assert sic_4h_c_face_contact["variant_kind"] == "interface_scaffold"
+    assert sic_4h_c_face_contact["surface_orientation"] == "4H-SiC(000-1) C-face"
+    assert "metal_semiconductor_contact" in sic_4h_c_face_contact["default_diagnostic_focuses"]
+    assert "10.1016/j.susc.2015.11.019" in sic_4h_c_face_contact["source_references"]
     sic_4h_si_face_slab = virtual_profiles["silicon_carbide_4h_0001_si_face_slab"]
     assert sic_4h_si_face_slab["base_template_id"] == "silicon_carbide_4h_hexagonal"
     assert sic_4h_si_face_slab["variant_kind"] == "surface_scaffold"
@@ -6180,6 +6188,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert sic_6h_contact["surface_orientation"] == "6H-SiC(0001) Si-face"
     assert "metal_semiconductor_contact" in sic_6h_contact["default_diagnostic_focuses"]
     assert "semiconductor_contact_csv" in sic_6h_contact["required_csv_keys"]
+    sic_6h_c_face_contact = virtual_profiles[
+        "metal_silicon_carbide_6h_000m1_c_face_schottky_contact"
+    ]
+    assert sic_6h_c_face_contact["base_template_id"] == "silicon_carbide_6h_hexagonal"
+    assert sic_6h_c_face_contact["variant_kind"] == "interface_scaffold"
+    assert sic_6h_c_face_contact["surface_orientation"] == "6H-SiC(000-1) C-face"
+    assert "metal_semiconductor_contact" in sic_6h_c_face_contact["default_diagnostic_focuses"]
+    assert "10.2320/matertrans.47.2690" in sic_6h_c_face_contact["source_references"]
     sic_6h_mos = virtual_profiles["aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor"]
     assert sic_6h_mos["base_template_id"] == "silicon_carbide_6h_hexagonal"
     assert sic_6h_mos["variant_kind"] == "gate_stack_scaffold"
@@ -6566,14 +6582,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "alloy short-range order" in alloy_preflight["request_terms"]
     assert "mos_gate_stack" in use_cases
     metal_contact = use_cases["metal_semiconductor_contact"]
-    assert metal_contact["unsupported_variants"] == [
-        {
-            "material": "4H-SiC",
-            "surface_orientation": "4H-SiC(000-1) C-face",
-            "request_kind": "metal_semiconductor_contact",
-            "reason": "No reviewed C-face metal registry; the Si-face Schottky scaffold is never substituted.",
-        }
-    ]
+    assert metal_contact["unsupported_variants"] == []
     assert "Al/Si Schottky contact" in metal_contact["request_terms"]
     assert "Au/Si Schottky contact" in metal_contact["request_terms"]
     assert "Pt/Si Schottky contact" in metal_contact["request_terms"]
@@ -6673,7 +6682,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_zinc_oxide_0001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_beta_gallium_oxide_010_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_silicon_carbide_4h_0001_schottky_contact" in metal_contact["virtual_templates"]
+    assert "metal_silicon_carbide_4h_000m1_c_face_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in metal_contact["virtual_templates"]
+    assert "metal_silicon_carbide_6h_000m1_c_face_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_indium_phosphide_001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_indium_arsenide_001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_aluminum_arsenide_001_schottky_contact" in metal_contact["virtual_templates"]
@@ -6840,7 +6851,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "silicon_carbide_4h_0001_si_face_slab" in surface["virtual_templates"]
     assert "silicon_carbide_4h_000m1_c_face_slab" in surface["virtual_templates"]
     assert "metal_silicon_carbide_4h_0001_schottky_contact" in surface["virtual_templates"]
+    assert "metal_silicon_carbide_4h_000m1_c_face_schottky_contact" in surface["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in surface["virtual_templates"]
+    assert "metal_silicon_carbide_6h_000m1_c_face_schottky_contact" in surface["virtual_templates"]
     assert "surface_termination_summary" in surface["diagnostic_summaries"]
     assert "surface_model_summary" in surface["diagnostic_summaries"]
     assert "surface_polarity_summary" in surface["diagnostic_summaries"]
@@ -17289,6 +17302,105 @@ def test_live_modeling_request_builds_sic_4h_si_face_schottky_contact_scaffold(
     )
 
 
+def test_live_modeling_request_previews_and_same_window_hotloads_sic_c_face_contacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            "4H",
+            "metal_silicon_carbide_4h_000m1_c_face_schottky_contact",
+            {"Au": 8, "C": 16, "H": 4, "Si": 16},
+            44,
+            308,
+            1.5,
+            1.76,
+        ),
+        (
+            "6H",
+            "metal_silicon_carbide_6h_000m1_c_face_schottky_contact",
+            {"Au": 8, "C": 24, "H": 4, "Si": 24},
+            60,
+            420,
+            1.25,
+            1.75,
+        ),
+    )
+    for polytype, template_id, elements, atom_count, projection_count, n_barrier, p_barrier in cases:
+        backend = ProjectWindowFakeGuiBackend()
+        monkeypatch.setattr(
+            server,
+            "_gui_controller",
+            lambda working_dir=None, backend=backend: MaterialsStudioGuiController(
+                working_dir,
+                backend=backend,
+            ),
+        )
+        request = (
+            f"Build an Au/{polytype}-SiC(000-1) C-face Schottky contact and export contact "
+            "and all-view diagnostics."
+        )
+        preview = server.material_studio_live_modeling_request(
+            request,
+            execution_mode="preview",
+            open_in_gui=False,
+            take_snapshot=False,
+            working_dir=str(tmp_path / f"{polytype.lower()}_c_face_preview"),
+        )
+
+        assert preview["ok"] is True
+        assert preview["workflow"] == "create"
+        assert preview["execution_mode"] == "preview"
+        assert preview["nl_plan"]["template_id"] == template_id
+        assert preview["semiconductor_virtual_template_id"] == template_id
+        assert preview["view_audit"]["model"]["elements"] == elements
+        metadata = preview["view_audit"]["metadata"]
+        assert metadata["surface_orientation"] == f"{polytype}-SiC(000-1) C-face"
+        assert metadata["surface_miller_bravais_indices"] == [0, 0, 0, -1]
+        assert metadata["surface_face"] == "C-face"
+        assert metadata["bottom_termination"] == "silicon_terminated_hydrogen_passivated"
+        assert metadata["top_semiconductor_termination"] == "carbon_terminated"
+        assert metadata["back_surface_hydrogen_count"] == 4
+        assert metadata["interface_reference"]["sbh_surface_scope"].startswith("no_face_specific")
+        semiconductor = preview["modeling_report"]["inspection"]["semiconductor_health"]
+        contact = semiconductor["metal_semiconductor_contact_summary"]
+        assert contact["quality"] == "complete"
+        assert contact["material_sequence"] == [f"{polytype}-SiC", "Au"]
+        assert contact["contact_geometry_status"] == "matched"
+        assert abs(contact["actual_contact_gap_angstrom"] - 2.4) < 1e-4
+        assert contact["barrier_preflight"]["ideal_n_type_barrier_ev"] == n_barrier
+        assert contact["barrier_preflight"]["ideal_p_type_barrier_ev"] == p_barrier
+        polarity = semiconductor["surface_polarity_summary"]
+        assert polarity["bottom"]["formula"] == "Si4"
+        assert polarity["top"]["formula"] == "Au4"
+        assert polarity["surface_polarity_status"] == "asymmetric_expected"
+        orientation = semiconductor["surface_orientation_summary"]
+        assert orientation["surface_plane_label"] == "(000-1)"
+        assert orientation["surface_plane_indices"] == [0, 0, 0, -1]
+        assert preview["view_bundle_row_counts"]["atoms"] == atom_count
+        assert preview["view_bundle_row_counts"]["view_summary"] == 7
+        assert preview["view_bundle_row_counts"]["view_projections"] == projection_count
+        assert not backend.opened
+
+        hotload = server.material_studio_live_modeling_request(
+            request.replace("export contact and all-view diagnostics", "hot-load it in Materials Studio and export contact and all-view diagnostics"),
+            working_dir=str(tmp_path / f"{polytype.lower()}_c_face_hotload"),
+            take_snapshot=False,
+        )
+        assert hotload["ok"] is True
+        assert hotload["execution_mode"] == "execute"
+        assert hotload["execution_mode_source"] == "explicit_live_intent"
+        assert hotload["nl_plan"]["template_id"] == template_id
+        assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+        assert hotload["structure_artifact_validation"]["status"] == "matched"
+        assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+        assert hotload["single_window_policy_ok"] is True
+        assert hotload["mcp_same_window_hotload_ready"] is True
+        assert len(backend.list_processes()) == 1
+        assert len(backend.opened) == 1
+        assert backend.opened[0].suffix == ".stp"
+
+
 def test_live_modeling_request_rejects_unsupported_schottky_contact_without_downgrade(tmp_path: Path) -> None:
     result = server.material_studio_live_modeling_request(
         "Build an Au/Ge Schottky contact and export contact diagnostics.",
@@ -17300,7 +17412,7 @@ def test_live_modeling_request_rejects_unsupported_schottky_contact_without_down
     assert result["nl_plan"]["template_id"] is None
     assert "non-silicon semiconductor host" in result["nl_plan"]["notes"][0]
     assert (
-        "Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), 4H-SiC(0001) Si-face, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001)"
+        "Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), both polar 4H-SiC and 6H-SiC basal faces, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001)"
         in result["nl_plan"]["notes"][1]
     )
     assert "view_audit" not in result
@@ -27817,6 +27929,23 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
     assert reversed_contact.template_id == "metal_silicon_carbide_6h_0001_schottky_contact"
     assert reversed_contact.payload is not None
     assert reversed_contact.payload["metadata"]["metal_contact_material"] == "Pt"
+    c_face_contact = infer_modeling_plan("Build an Au/6H-SiC(000-1) C-face Schottky contact.")
+    chinese_c_face_contact = infer_modeling_plan(
+        "\u6784\u5efa Pt/6H-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u8096\u7279\u57fa\u63a5\u89e6\uff0c\u754c\u9762\u95f4\u8ddd 3.0 \u57c3"
+    )
+    for plan, metal, gap in (
+        (c_face_contact, "Au", 2.4),
+        (chinese_c_face_contact, "Pt", 3.0),
+    ):
+        assert plan.kind == "spec"
+        assert plan.template_id == "metal_silicon_carbide_6h_000m1_c_face_schottky_contact"
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 60
+        assert plan.payload["metadata"]["metal_contact_material"] == metal
+        assert plan.payload["metadata"]["interface_gap_angstrom"] == gap
+        assert plan.payload["metadata"]["surface_orientation"] == "6H-SiC(000-1) C-face"
+        assert plan.payload["metadata"]["bottom_termination"] == "silicon_terminated_hydrogen_passivated"
+        assert plan.payload["metadata"]["top_semiconductor_termination"] == "carbon_terminated"
 
     mos = infer_modeling_plan("Build an Al/SiO2/6H-SiC(0001) Si-face MOS capacitor.")
     chinese_mos = infer_modeling_plan(
@@ -27869,11 +27998,11 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
 
     for request in (
         "Build a 6H-SiC surface.",
-        "Build an Au/6H-SiC(000-1) C-face Schottky contact.",
         "Build a 6H-SiC MOS device.",
         "Build a GaN/6H-SiC heterostructure.",
         "Build a GaN/6H-SiC(000-1) C-face heterostructure.",
         "Build a 6H-SiC(0001) Si-face and (000-1) C-face slab.",
+        "Build an Au/6H-SiC(0001) Si-face and (000-1) C-face Schottky contact.",
     ):
         plan = infer_modeling_plan(request)
         assert plan.kind == "unsupported"
@@ -28069,10 +28198,28 @@ def test_4h_sic_polar_surface_oxide_and_mos_routing_is_exact_and_fail_closed(
     assert generic_mos.payload["metadata"]["surface_orientation"] == "4H-SiC(0001) Si-face"
     assert len(generic_mos.payload["model"]["basis_atoms"]) == 56
 
+    c_face_contact = infer_modeling_plan("Build an Au/4H-SiC(000-1) C-face Schottky contact.")
+    chinese_c_face_contact = infer_modeling_plan(
+        "\u6784\u5efa Pt/4H-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u8096\u7279\u57fa\u63a5\u89e6\uff0c\u754c\u9762\u95f4\u8ddd 3.0 \u57c3"
+    )
+    for plan, metal, gap in (
+        (c_face_contact, "Au", 2.4),
+        (chinese_c_face_contact, "Pt", 3.0),
+    ):
+        assert plan.kind == "spec"
+        assert plan.template_id == "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 44
+        assert plan.payload["metadata"]["metal_contact_material"] == metal
+        assert plan.payload["metadata"]["interface_gap_angstrom"] == gap
+        assert plan.payload["metadata"]["surface_orientation"] == "4H-SiC(000-1) C-face"
+        assert plan.payload["metadata"]["bottom_termination"] == "silicon_terminated_hydrogen_passivated"
+        assert plan.payload["metadata"]["top_semiconductor_termination"] == "carbon_terminated"
+
     for request in (
         "Build a 4H-SiC surface.",
         "Build a 4H-SiC(0001) Si-face and (000-1) C-face slab.",
-        "Build an Au/4H-SiC(000-1) C-face Schottky contact.",
+        "Build an Au/4H-SiC(0001) Si-face and (000-1) C-face Schottky contact.",
         "Build a 4H-SiC MOSFET.",
         "Build a GaN/4H-SiC heterostructure.",
     ):

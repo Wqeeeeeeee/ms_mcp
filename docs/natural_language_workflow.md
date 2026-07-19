@@ -192,8 +192,8 @@ and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
 Si/SiO2(100), SiO2/4H-SiC, and SiO2/6H-SiC semiconductor-oxide interfaces on explicit Si or C faces,
 Al/SiO2/Si MOS capacitor gate-stack plus Al/SiO2/4H-SiC and Al/SiO2/6H-SiC MOS capacitor scaffolds on explicit Si or C faces,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
-Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/4H-SiC(0001), and
-metal/6H-SiC(0001) Si-face Schottky metal-semiconductor contacts,
+Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), and metal/4H-SiC or
+metal/6H-SiC Schottky contacts on an explicit `(0001)` Si-face or `(000-1)` C-face,
 GaAs/AlAs(001) zinc-blende, Al0.25Ga0.75N/GaN(0001), AlN/GaN(0001), and
 In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
@@ -220,7 +220,9 @@ InN(0001), ZnO(0001), hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backe
 "build an Al/Si Schottky contact", "build an Au/ZnO Schottky contact",
 "build an Au/beta-Ga2O3(010) Schottky contact",
 "build an Au/4H-SiC(0001) Si-face Schottky contact",
+"build an Au/4H-SiC(000-1) C-face Schottky contact",
 "build an Au/6H-SiC(0001) Si-face Schottky contact",
+"build an Au/6H-SiC(000-1) C-face Schottky contact",
 "build a metal-semiconductor contact",
 "build GaAs/AlAs superlattice", "build GaAs/AlAs quantum well",
 "build AlGaN/GaN HEMT heterostructure", "build AlN/GaN HEMT heterostructure", "build InGaN/GaN quantum well",
@@ -248,6 +250,13 @@ internal geometry while providing a reproducible boundary-neighbor preflight.
 It is not an amorphous oxide, a relaxed structure, or a literature-exact atomic
 interface.
 
+Each explicit 4H-SiC polar face also has a deterministic Schottky-contact
+start. `metal_silicon_carbide_4h_000m1_c_face_schottky_contact` reuses the
+reviewed C-face slab registry, keeps four H atoms on the Si-terminated back
+face, and places two metal visualization layers above the C-terminated top
+face. It is a contact-geometry and polarity-review scaffold, not a relaxed
+interface or a calculated Schottky barrier.
+
 The 4H bulk metadata cites the room-temperature structure refinement by Peng
 et al. ([DOI 10.1154/1.3257905](https://doi.org/10.1154/1.3257905)). Surface
 metadata uses the polarity and reconstruction analysis of Kaneko et al.
@@ -258,8 +267,8 @@ Chattopadhyay et al.
 Those sources constrain crystal identity, face polarity, and interface risk;
 they do not validate the generated marker-plane coordinates. An unqualified
 `SiC MOS capacitor` request remains a backward-compatible 4H `(0001)` Si-face
-route. Requests that name both faces, a C-face metal contact, a full MOSFET or
-MOS device, an ambiguous surface, or another 4H-SiC heterostructure fail closed
+route. Requests that name both faces, a full MOSFET or MOS device, an ambiguous
+surface, or another 4H-SiC heterostructure fail closed
 instead of selecting the old static MOS fixture or another SiC polytype.
 
 The `silicon_carbide_6h_hexagonal` template is a 12-atom P63mc bulk cell with
@@ -298,16 +307,20 @@ follow-ups, but it is not amorphous, relaxed, literature-exact, or device-ready.
 
 The corresponding C-face virtual templates are
 `silicon_carbide_6h_000m1_c_face_slab`,
+`metal_silicon_carbide_6h_000m1_c_face_schottky_contact`,
 `silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface`, and
 `aluminum_silicon_dioxide_silicon_carbide_6h_000m1_c_face_mos_capacitor`.
 They require an explicit `(000-1)`, `C-face`, `carbon-terminated`, or `碳面`
 request. The deterministic slab preserves six Si-C bilayers, exposes a
 C-terminated top face, and places four H atoms on the Si-terminated back face.
-The oxide and MOS variants use the same marker-plane and gate construction as
+The Schottky variant places its first metal layer on the top C registry and a
+shifted second layer for thickness diagnostics. No C-face-specific literature
+barrier is assigned; its Schottky-Mott values are metadata-only screening
+inputs. The oxide and MOS variants use the same marker-plane and gate construction as
 the Si-face starts, but bind their semiconductor boundary to the top C layer.
 `surface_orientation_summary` records `[0, 0, 0, -1]`, while the generated cell
 maps that parent-bulk normal to the positive current-cell `c` axis for view and
-vacuum diagnostics. All three variants remain unreconstructed, unrelaxed
+vacuum diagnostics. All four variants remain unreconstructed, unrelaxed
 preflight scaffolds.
 
 All 4H-SiC and 6H-SiC oxide/MOS starts and the Si/SiO2 and HfO2 gate-stack starts emit an
@@ -324,8 +337,8 @@ automatically. A clean result remains construction evidence only and does not
 establish an amorphous oxide, relaxation, charge state, convergence, or
 calculation readiness. Metal/oxide-only starts such as Cu/SiO2 remain outside
 this semiconductor/oxide geometry contract.
-Ambiguous unoriented surfaces, C-face metal contacts, complete MOS
-device/transistor geometries, and other 4H-SiC or 6H-SiC heterostructures remain
+Ambiguous unoriented surfaces, complete MOS device/transistor geometries, and
+other 4H-SiC or 6H-SiC heterostructures remain
 unsupported and never fall back to another SiC polytype or silicon. A request that
 names both Si-face and C-face is also rejected rather than choosing one.
 
@@ -439,7 +452,8 @@ it does not establish an amorphous oxide network, interface relaxation, defect
 charge state, electronic convergence, or calculation readiness. The normality
 gate therefore keeps these starts in an oxide-interface review category and
 returns a preview-first relaxation or defect-review action.
-The Al/Si Schottky contact template is treated as a metal/semiconductor contact,
+Schottky templates, including both explicit polar faces of 4H-SiC and 6H-SiC,
+are treated as metal/semiconductor contacts,
 not as a quantum-well stack or an unpassivated slab. It emits
 `metal_semiconductor_contact_summary` plus `semiconductor_contact.csv` with
 metal/semiconductor roles, contact type, declared gap, metal thickness, channel

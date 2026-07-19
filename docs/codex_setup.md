@@ -632,7 +632,8 @@ For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
 For preview-only 4H-SiC polar-surface acceptance without touching the GUI, use
-`sic_4h_slab`, `sic_4h_c_face_slab`, `sic_4h_oxide_interface`,
+`sic_4h_slab`, `sic_4h_c_face_slab`, `sic_4h_contact`,
+`sic_4h_c_face_contact`, `sic_4h_oxide_interface`,
 `sic_4h_c_face_oxide_interface`, `sic_mos`, or `sic_4h_c_face_mos` with
 `--execution-mode preview --no-include-gui-status --no-take-snapshot` and a
 scenario-specific `--working-dir`. For example:
@@ -651,6 +652,7 @@ or
 `ms-mcp-live-smoke --scenario sic_6h_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_mos`.
 The equivalent explicit C-face checks are
 `ms-mcp-live-smoke --scenario sic_6h_c_face_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_slab`,
+`ms-mcp-live-smoke --scenario sic_6h_c_face_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_contact`,
 `ms-mcp-live-smoke --scenario sic_6h_c_face_oxide_interface --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_oxide_interface`, and
 `ms-mcp-live-smoke --scenario sic_6h_c_face_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_6h_c_face_mos`.
 To verify the deterministic O-vacancy continuation without touching a real GUI,

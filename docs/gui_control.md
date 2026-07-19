@@ -762,12 +762,16 @@ measured values with a default `0.05` Angstrom tolerance and expose the exact
 `set_gate_stack_interface_gap` repair payload for a mismatch. A clean spacing
 receipt validates deterministic scaffold geometry only; it is not relaxation,
 bonding, interface-energy, or electronic-structure evidence.
-Al/Si Schottky contact templates use `metal_semiconductor_contact_summary` and
+Schottky contact templates, including explicit 4H-SiC and 6H-SiC `(0001)`
+Si-face and `(000-1)` C-face starts, use `metal_semiconductor_contact_summary` and
 `semiconductor_contact.csv` so reports show metal/semiconductor roles, contact
 type, gap, thicknesses, sequence checks, and metadata-only Schottky-Mott barrier
 preflight fields without misclassifying the contact as a quantum-well stack or
 surface-passivation problem. The barrier preflight is a quick reference check,
-not a DFT band-alignment calculation.
+not a DFT band-alignment calculation. The C-face SiC contacts bind the first
+metal layer to the exposed C registry and preserve four H atoms on the
+Si-terminated back face. They remain unrelaxed geometry-review scaffolds, and
+no face-specific C-face barrier is represented as a calculated result.
 Heterostructure and MQW templates with electronic metadata use
 `band_alignment_summary` and `semiconductor_band_alignment.csv` to expose
 electron-affinity band-offset preflight values, type-I confinement hints, and

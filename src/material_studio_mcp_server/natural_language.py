@@ -1517,6 +1517,9 @@ GAN_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_gallium_nitride_0001_schottky_
 ZNO_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_zinc_oxide_0001_schottky_contact"
 BETA_GA2O3_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_beta_gallium_oxide_010_schottky_contact"
 SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_4h_0001_schottky_contact"
+SIC_4H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
+    "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
+)
 SIC_4H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_4h_0001_si_face_slab"
 SIC_4H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_4h_000m1_c_face_slab"
 SIC_4H_SI_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = (
@@ -1534,6 +1537,9 @@ SIC_4H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = (
 SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_6h_0001_si_face_slab"
 SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_6h_000m1_c_face_slab"
 SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_6h_0001_schottky_contact"
+SIC_6H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
+    "metal_silicon_carbide_6h_000m1_c_face_schottky_contact"
+)
 SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = "silicon_dioxide_silicon_carbide_6h_0001_interface"
 SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = (
     "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
@@ -1636,6 +1642,7 @@ class SicSurfaceFaceProfile:
     base_template_id: str
     bilayer_count: int
     surface_cell_c_angstrom: float
+    contact_cell_c_angstrom: float
     oxide_interface_cell_c_angstrom: float
     mos_cell_c_angstrom: float
     electron_affinity_ev: float
@@ -1648,6 +1655,7 @@ class SicSurfaceFaceProfile:
     bottom_element: str
     top_element: str
     slab_template_id: str
+    contact_template_id: str
     oxide_interface_template_id: str
     mos_capacitor_template_id: str
     axis_reorientation: str
@@ -1676,6 +1684,7 @@ SIC_4H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         base_template_id="silicon_carbide_4h_hexagonal",
         bilayer_count=4,
         surface_cell_c_angstrom=SIC_4H_SURFACE_CELL_C_ANGSTROM,
+        contact_cell_c_angstrom=SIC_4H_CONTACT_CELL_C_ANGSTROM,
         oxide_interface_cell_c_angstrom=SIC_4H_OXIDE_INTERFACE_CELL_C_ANGSTROM,
         mos_cell_c_angstrom=SIC_4H_MOS_CELL_C_ANGSTROM,
         electron_affinity_ev=SIC_4H_ELECTRON_AFFINITY_EV,
@@ -1688,6 +1697,7 @@ SIC_4H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         bottom_element="C",
         top_element="Si",
         slab_template_id=SIC_4H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
         oxide_interface_template_id=SIC_4H_SI_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
         mos_capacitor_template_id=SIC_4H_SI_FACE_MOS_CAPACITOR_TEMPLATE_ID,
         axis_reorientation="bulk_fractional_z_shifted_to_place_4H-SiC_0001_Si_face_at_top",
@@ -1698,6 +1708,7 @@ SIC_4H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         base_template_id="silicon_carbide_4h_hexagonal",
         bilayer_count=4,
         surface_cell_c_angstrom=SIC_4H_SURFACE_CELL_C_ANGSTROM,
+        contact_cell_c_angstrom=SIC_4H_CONTACT_CELL_C_ANGSTROM,
         oxide_interface_cell_c_angstrom=SIC_4H_OXIDE_INTERFACE_CELL_C_ANGSTROM,
         mos_cell_c_angstrom=SIC_4H_MOS_CELL_C_ANGSTROM,
         electron_affinity_ev=SIC_4H_ELECTRON_AFFINITY_EV,
@@ -1710,6 +1721,7 @@ SIC_4H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         bottom_element="Si",
         top_element="C",
         slab_template_id=SIC_4H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_4H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
         oxide_interface_template_id=SIC_4H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
         mos_capacitor_template_id=SIC_4H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
         axis_reorientation="bulk_fractional_z_preserved_to_place_4H-SiC_000m1_C_face_at_top",
@@ -1724,6 +1736,7 @@ SIC_6H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         base_template_id="silicon_carbide_6h_hexagonal",
         bilayer_count=6,
         surface_cell_c_angstrom=SIC_6H_SURFACE_CELL_C_ANGSTROM,
+        contact_cell_c_angstrom=SIC_6H_CONTACT_CELL_C_ANGSTROM,
         oxide_interface_cell_c_angstrom=SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM,
         mos_cell_c_angstrom=SIC_6H_MOS_CELL_C_ANGSTROM,
         electron_affinity_ev=SIC_6H_ELECTRON_AFFINITY_EV,
@@ -1736,6 +1749,7 @@ SIC_6H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         bottom_element="C",
         top_element="Si",
         slab_template_id=SIC_6H_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
         oxide_interface_template_id=SIC_6H_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
         mos_capacitor_template_id=SIC_6H_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
         axis_reorientation="bulk_fractional_z_reflected_to_place_6H-SiC_0001_Si_face_at_top",
@@ -1746,6 +1760,7 @@ SIC_6H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         base_template_id="silicon_carbide_6h_hexagonal",
         bilayer_count=6,
         surface_cell_c_angstrom=SIC_6H_SURFACE_CELL_C_ANGSTROM,
+        contact_cell_c_angstrom=SIC_6H_CONTACT_CELL_C_ANGSTROM,
         oxide_interface_cell_c_angstrom=SIC_6H_OXIDE_INTERFACE_CELL_C_ANGSTROM,
         mos_cell_c_angstrom=SIC_6H_MOS_CELL_C_ANGSTROM,
         electron_affinity_ev=SIC_6H_ELECTRON_AFFINITY_EV,
@@ -1758,6 +1773,7 @@ SIC_6H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
         bottom_element="Si",
         top_element="C",
         slab_template_id=SIC_6H_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_6H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
         oxide_interface_template_id=SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
         mos_capacitor_template_id=SIC_6H_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
         axis_reorientation=(
@@ -2149,6 +2165,82 @@ def supported_semiconductor_template_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def _sic_c_face_schottky_virtual_template_profile(
+    profile: SicSurfaceFaceProfile,
+) -> dict[str, Any]:
+    if profile.face != "C-face":
+        raise ValueError("C-face Schottky capability profile requires a C-face SiC surface profile")
+    material = f"{profile.polytype}-SiC"
+    source_references = (
+        ["10.1154/1.3257905", "10.1016/j.susc.2015.11.019"]
+        if profile.polytype == "4H"
+        else ["10.2138/am.2007.2346", "10.2320/matertrans.47.2690", "10.3390/ma10060583"]
+    )
+    return {
+        "template_id": profile.contact_template_id,
+        "base_template_id": profile.base_template_id,
+        "variant_kind": "interface_scaffold",
+        "generated_by_tool": "material_studio_live_modeling_request",
+        "response_template_id": profile.contact_template_id,
+        "example_request": (
+            f"Build an Au/{profile.orientation} Schottky contact and export contact diagnostics."
+        ),
+        "terms": [
+            f"Au/{profile.orientation} Schottky contact",
+            f"Pt/{profile.orientation} Schottky contact",
+            f"metal/{material}(000-1) C-face Schottky contact",
+            f"gold on {material} C-face contact",
+            f"{material} C-face metal-semiconductor contact",
+            f"\u91d1/{profile.polytype}-\u78b3\u5316\u7845(000-1)\u78b3\u9762\u8096\u7279\u57fa\u63a5\u89e6",
+        ],
+        "notes": (
+            f"Programmatic centered 2x2 {profile.bilayer_count}-bilayer metal/{profile.orientation} "
+            "pre-relaxation scaffold with a hydrogen-saturated Si-terminated back surface. The generated "
+            "revision supports same-window visualization, contact geometry diagnostics, polar-surface review, "
+            "and metadata-only Schottky-Mott preflight; it does not assert a calculated barrier."
+        ),
+        "model_type": "crystal",
+        "model_name": profile.contact_template_id,
+        "structure_family": f"hexagonal {material} C-face metal semiconductor schottky contact scaffold",
+        "materials": [material, "Au/Pt/Al/Ti/Ni/Cu/Mo/W/Pd/Ag"],
+        "polytype": profile.polytype,
+        "interface": f"metal/{material}",
+        "interface_orientation": f"metal contact / {profile.orientation}",
+        "surface_orientation": profile.orientation,
+        "surface_axis": "c",
+        "simulation_module": "CASTEP",
+        "simulation_task": "Energy",
+        "execute_backend": "crystal_cif_materialize_for_gui_hotload",
+        "default_diagnostic_focuses": _unique_preserving_order(
+            [
+                "semiconductor_structure_health",
+                "metal_semiconductor_contact",
+                "band_alignment",
+                "epitaxial_strain_preflight",
+                "surface_slab_polarity",
+                "electronic_structure_preflight",
+                "view_quality",
+            ]
+        ),
+        "required_summary_keys": [
+            "metal_semiconductor_contact_summary",
+            "interface_profile_summary",
+            "interface_quality_summary",
+            "surface_polarity_summary",
+            "calculation_preflight_summary",
+        ],
+        "required_csv_keys": [
+            "semiconductor_contact_csv",
+            "semiconductor_interface_profile_csv",
+            "semiconductor_interface_quality_csv",
+            "semiconductor_surface_polarity_csv",
+            "semiconductor_calculation_preflight_csv",
+            "view_quality_csv",
+        ],
+        "source_references": source_references,
+    }
+
+
 def _sic_4h_polar_virtual_template_profiles() -> list[dict[str, Any]]:
     common = {
         "base_template_id": "silicon_carbide_4h_hexagonal",
@@ -2311,6 +2403,8 @@ def _sic_4h_polar_virtual_template_profiles() -> list[dict[str, Any]]:
                 },
             ]
         )
+        if surface_face == "C-face":
+            profiles.append(_sic_c_face_schottky_virtual_template_profile(face))
     return profiles
 
 
@@ -2374,6 +2468,7 @@ def _sic_6h_c_face_virtual_template_profiles() -> list[dict[str, Any]]:
                 "view_quality_csv",
             ],
         },
+        _sic_c_face_schottky_virtual_template_profile(SIC_6H_SURFACE_FACE_PROFILES["C-face"]),
         {
             **common,
             "template_id": SIC_6H_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
@@ -5248,7 +5343,7 @@ def _mentions_unqualified_sic(text: str) -> bool:
 
 
 def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLanguagePlan | None:
-    """Reject 6H-SiC geometries outside the reviewed bulk and Si-face scaffold set."""
+    """Reject 6H-SiC geometries outside the reviewed polar-surface scaffold set."""
 
     if not _mentions_sic_6h(text):
         return None
@@ -5304,9 +5399,9 @@ def _infer_unsupported_sic_6h_derived_structure_request(text: str) -> NaturalLan
         template_id=None,
         notes=[
             "A 6H-SiC derived-geometry request was recognized outside the reviewed local template set.",
-            "Reviewed 6H-SiC starts cover P63mc bulk, explicit (0001) Si-face and (000-1) C-face six-bilayer slabs, Si-face metal contacts, and bare SiO2 plus Al/SiO2 MOS capacitor scaffolds on either face.",
+            "Reviewed 6H-SiC starts cover P63mc bulk plus explicit (0001) Si-face and (000-1) C-face six-bilayer slabs, metal contacts, bare SiO2 interfaces, and Al/SiO2 MOS capacitor scaffolds.",
             "No 3C-SiC, 4H-SiC, or silicon substitute was selected.",
-            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, C-face metal contacts, heterostructures, or device geometries before live loading.",
+            "Provide a reviewed ModelSpec for other 6H-SiC surfaces, heterostructures, or device geometries before live loading.",
         ],
     )
 
@@ -5323,7 +5418,7 @@ def _infer_unsupported_metal_semiconductor_contact_request(text: str) -> Natural
         template_id=None,
         notes=[
             "A metal/semiconductor contact request named a non-silicon semiconductor host.",
-            "The local deterministic Schottky contact templates currently cover Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), 4H-SiC(0001) Si-face, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001) scaffold geometry; other hosts need a reviewed structure.",
+            "The local deterministic Schottky contact templates currently cover Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), both polar 4H-SiC and 6H-SiC basal faces, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001) scaffold geometry; other hosts need a reviewed structure.",
             "Provide a reviewed ModelSpec or SemanticPatch for this material-specific contact before live loading or execution.",
         ],
     )
@@ -6883,9 +6978,9 @@ def _infer_unsupported_sic_4h_derived_structure_request(text: str) -> NaturalLan
         template_id=None,
         notes=[
             "A 4H-SiC derived-geometry request was recognized outside the reviewed local template set.",
-            "Reviewed 4H-SiC starts cover P63mc bulk, explicit (0001) Si-face and (000-1) C-face four-bilayer slabs, a Si-face Schottky contact, and bare SiO2 plus Al/SiO2 MOS capacitor scaffolds on either face.",
+            "Reviewed 4H-SiC starts cover P63mc bulk plus explicit (0001) Si-face and (000-1) C-face four-bilayer slabs, Schottky contacts, bare SiO2 interfaces, and Al/SiO2 MOS capacitor scaffolds.",
             "No 3C-SiC, 6H-SiC, or silicon substitute was selected.",
-            "Provide a reviewed ModelSpec for C-face metal contacts, other surfaces, heterostructures, or device geometries before live loading.",
+            "Provide a reviewed ModelSpec for other surfaces, heterostructures, or device geometries before live loading.",
         ],
     )
 
@@ -6898,16 +6993,17 @@ def _infer_sic_6h_schottky_contact_template(
 ) -> NaturalLanguagePlan | None:
     if not _looks_like_metal_semiconductor_contact_text(text) or not _mentions_sic_6h(text):
         return None
-    if _sic_c_face_requested(text):
+    si_face_requested = _sic_si_face_requested(text)
+    c_face_requested = _sic_c_face_requested(text)
+    if si_face_requested and c_face_requested:
         return NaturalLanguagePlan(
             kind="unsupported",
             payload=None,
             confidence=0.0,
             template_id=None,
             notes=[
-                "The reviewed 6H-SiC Schottky scaffold covers only the Si-terminated (0001) face.",
-                "A C-terminated 6H-SiC(000-1) contact was not substituted with the Si-face scaffold.",
-                "Provide a reviewed C-face ModelSpec before preview or live loading.",
+                "The 6H-SiC Schottky contact request names both the (0001) Si-face and (000-1) C-face.",
+                "Choose exactly one polar surface before generating a contact scaffold.",
             ],
         )
 
@@ -6924,15 +7020,18 @@ def _infer_sic_6h_schottky_contact_template(
             ],
         )
 
-    chosen_project_id = project_id or _project_id(SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID, user_request)
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = _sic_surface_face_profile(polytype="6H", surface_face=surface_face)
+    chosen_project_id = project_id or _project_id(profile.contact_template_id, user_request)
     model_spec = _sic_6h_schottky_contact_spec(
         metal=metal,
         user_request=user_request,
         project_id=chosen_project_id,
+        surface_face=surface_face,
     )
     notes = [
-        "Generated a deterministic centered metal/6H-SiC(0001) Si-face pre-relaxation Schottky contact scaffold.",
-        "The six-bilayer 2x2 slab has a hydrogen-saturated C back face and is intended for visualization and preflight before relaxation.",
+        f"Generated a deterministic centered metal/{profile.orientation} pre-relaxation Schottky contact scaffold.",
+        f"The six-bilayer 2x2 slab has a hydrogen-saturated {profile.bottom_element} back face and is intended for visualization and preflight before relaxation.",
     ]
     confidence = 0.89
     composite = _apply_new_crystal_composite_operations(user_request, model_spec)
@@ -6952,7 +7051,7 @@ def _infer_sic_6h_schottky_contact_template(
         kind="spec",
         payload=model_spec.model_dump(mode="json"),
         confidence=confidence,
-        template_id=SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        template_id=profile.contact_template_id,
         notes=notes,
     )
 
@@ -7854,7 +7953,13 @@ def _sic_6h_mos_capacitor_spec(
     )
 
 
-def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: str) -> ModelSpec:
+def _sic_polar_surface_schottky_contact_spec(
+    *,
+    profile: SicSurfaceFaceProfile,
+    metal: str,
+    user_request: str,
+    project_id: str,
+) -> ModelSpec:
     interface_gap = _match_contact_length_value(
         user_request,
         [
@@ -7872,7 +7977,7 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
         ],
     ) or 2.56
 
-    assembly = _sic_6h_si_face_assembly(cell_c=SIC_6H_CONTACT_CELL_C_ANGSTROM)
+    assembly = _sic_surface_assembly(cell_c=profile.contact_cell_c_angstrom, profile=profile)
     required_cell_c = round(
         assembly.semiconductor_thickness_angstrom
         + SIC_BACK_SURFACE_H_BOND_ANGSTROM
@@ -7882,7 +7987,7 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
         6,
     )
     if required_cell_c > assembly.cell_c:
-        assembly = _sic_6h_si_face_assembly(cell_c=required_cell_c)
+        assembly = _sic_surface_assembly(cell_c=required_cell_c, profile=profile)
 
     atoms = list(assembly.atoms)
     metal_start = assembly.semiconductor_top_fractional + float(interface_gap) / assembly.cell_c
@@ -7904,29 +8009,73 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
         atoms,
         cell_c=assembly.cell_c,
     )
+    material = f"{profile.polytype}-SiC"
+    plane_label = "(0001)" if profile.face == "Si-face" else "(000-1)"
+    top_name = "silicon" if profile.top_element == "Si" else "carbon"
+    bottom_name = "silicon" if profile.bottom_element == "Si" else "carbon"
+    bilayer_label = "four" if profile.bilayer_count == 4 else "six"
     metal_work_function = CONTACT_METAL_WORK_FUNCTION_EV[metal]
-    literature_sbh = SIC_6H_SI_FACE_P_TYPE_SBH_EV.get(metal)
+    literature_sbh = (
+        SIC_6H_SI_FACE_P_TYPE_SBH_EV.get(metal)
+        if profile.polytype == "6H" and profile.face == "Si-face"
+        else None
+    )
+    if profile.polytype == "6H":
+        interface_reference = {
+            "reference": "Tanaka et al., First-Principles Calculations of Schottky Barrier Heights of Monolayer Metal/6H-SiC{0001} Interfaces",
+            "doi": "10.2320/matertrans.47.2690",
+            "reference_geometry": (
+                f"2x2 {bilayer_label}-bilayer {top_name}-terminated interface with one top-site metal "
+                "monolayer and hydrogen-saturated back surface"
+            ),
+            "generated_geometry_difference": (
+                "A second shifted metal layer is added for contact-thickness visualization and diagnostics."
+            ),
+            "si_face_p_type_sbh_ev": literature_sbh,
+            "sbh_surface_scope": (
+                "Si-face_literature_value"
+                if profile.face == "Si-face"
+                else "no_face_specific_C-face_value_assigned"
+            ),
+            "sbh_usage": "literature_context_only_not_a_generated_or_calculated_result",
+        }
+    else:
+        interface_reference = {
+            "reference": "Kaneko et al., First-principles study on reconstruction of 4H-SiC(0001) and (000-1)",
+            "doi": "10.1016/j.susc.2015.11.019",
+            "reference_geometry": (
+                f"2x2 {bilayer_label}-bilayer {top_name}-terminated polar surface used as a deterministic "
+                "metal-contact starting registry"
+            ),
+            "generated_geometry_difference": (
+                "Two visualization metal layers and deterministic back-surface hydrogen passivation are added; "
+                "the resulting interface is not a literature-exact relaxed structure."
+            ),
+            "face_specific_sbh_ev": None,
+            "sbh_surface_scope": "no_face_specific_barrier_value_assigned",
+            "sbh_usage": "surface_polarity_context_only_not_a_generated_or_calculated_result",
+        }
     metadata = {
         **_sic_common_surface_metadata(
             assembly,
             center_shift=center_shift,
             assembly_extent=assembly_extent,
         ),
-        "structure_family": "hexagonal 6H-SiC metal semiconductor schottky contact scaffold",
-        "material": f"{metal}/6H-SiC",
-        "materials": ["6H-SiC", metal],
-        "stack_sequence": ["6H-SiC", metal],
-        "interface": f"{metal}/6H-SiC",
-        "interface_orientation": f"{metal} contact / 6H-SiC(0001) Si-face",
+        "structure_family": f"hexagonal {material} metal semiconductor schottky contact scaffold",
+        "material": f"{metal}/{material}",
+        "materials": [material, metal],
+        "stack_sequence": [material, metal],
+        "interface": f"{metal}/{material}",
+        "interface_orientation": f"{metal} contact / {profile.orientation}",
         "interface_axis": "c",
-        "substrate": "6H-SiC",
+        "substrate": material,
         "metal_semiconductor_interface": True,
         "schottky_contact": True,
         "contact_type": "schottky",
         "metal_contact_material": metal,
-        "semiconductor_channel_material": "6H-SiC",
+        "semiconductor_channel_material": material,
         "schottky_barrier_model": "ideal_schottky_mott_metadata_reference",
-        "schottky_barrier_reference": "6H-SiC_device_screening_values",
+        "schottky_barrier_reference": f"{profile.polytype}-SiC_device_screening_values",
         "metal_work_function_ev": metal_work_function,
         "interface_gap_angstrom": round(float(interface_gap), 6),
         "semiconductor_channel_thickness_angstrom": round(assembly.semiconductor_thickness_angstrom, 6),
@@ -7935,30 +8084,29 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
         "reference_interface_metal_layer_count": 1,
         "interface_scaffold": True,
         "unrelaxed_interface": True,
-        "surface_asymmetry_expected_reason": "metal_contacted_Si_top_and_hydrogen_passivated_C_bottom_on_polar_6H-SiC_0001",
-        "contact_registry": "two_layer_metal_grid_with_first_layer_on_top_of_si_terminated_6H-SiC_0001",
+        "surface_asymmetry_expected_reason": (
+            f"metal_contacted_{profile.top_element}_top_and_hydrogen_passivated_{profile.bottom_element}_bottom_"
+            f"on_polar_{profile.polytype}-SiC_{profile.plane_slug}"
+        ),
+        "contact_registry": (
+            f"two_layer_metal_grid_with_first_layer_on_top_of_{top_name}_terminated_"
+            f"{profile.polytype}-SiC_{profile.plane_slug}"
+        ),
         "material_marker_map": {
-            "C": "6H-SiC",
-            "Si": "6H-SiC",
-            "C;Si": "6H-SiC",
-            "Si;C": "6H-SiC",
+            "C": material,
+            "Si": material,
+            "C;Si": material,
+            "Si;C": material,
             metal: metal,
         },
-        "interface_reference": {
-            "reference": "Tanaka et al., First-Principles Calculations of Schottky Barrier Heights of Monolayer Metal/6H-SiC{0001} Interfaces",
-            "doi": "10.2320/matertrans.47.2690",
-            "reference_geometry": "2x2 six-bilayer Si-terminated interface with one top-site metal monolayer and hydrogen-saturated back surface",
-            "generated_geometry_difference": "A second shifted metal layer is added for contact-thickness visualization and diagnostics.",
-            "si_face_p_type_sbh_ev": literature_sbh,
-            "sbh_usage": "literature_context_only_not_a_generated_or_calculated_result",
-        },
-        "nl_template": SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
-        "nl_virtual_template": SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
-        "nl_source": "sic_6h_schottky_contact_scaffold_template",
+        "interface_reference": interface_reference,
+        "nl_template": profile.contact_template_id,
+        "nl_virtual_template": profile.contact_template_id,
+        "nl_source": f"sic_{profile.polytype.lower()}_{profile.plane_slug}_schottky_contact_scaffold_template",
         "nl_user_request": user_request,
         "scaffold_notes": [
-            "Deterministic centered 2x2 six-bilayer 6H-SiC(0001) Si-face contact scaffold for live visualization and diagnostics.",
-            "The C-terminated back surface is hydrogen-saturated and the contacted semiconductor surface is Si-terminated.",
+            f"Deterministic centered 2x2 {bilayer_label}-bilayer {profile.orientation} contact scaffold for live visualization and diagnostics.",
+            f"The {bottom_name}-terminated back surface is hydrogen-saturated and the contacted semiconductor surface is {top_name}-terminated.",
             "The source interface study used one metal monolayer; this visualization scaffold adds a second layer to expose contact thickness.",
             "Relax the interface and review surface reconstruction, registry, and lattice mismatch before quantitative Schottky conclusions.",
             "Schottky-Mott and literature barrier values are metadata-only screening references, not calculated results.",
@@ -7972,7 +8120,7 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
             "software": "Materials Studio",
             "model_type": "crystal",
             "model": CrystalSpec(
-                name=SIC_6H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+                name=profile.contact_template_id,
                 lattice=LatticeSpec(
                     a=assembly.lattice_a,
                     b=assembly.lattice_b,
@@ -7994,15 +8142,30 @@ def _sic_6h_schottky_contact_spec(*, metal: str, user_request: str, project_id: 
             },
             "outputs": {},
             "acceptance": {
-                "max_warnings": 16,
+                "max_warnings": 16 if profile.polytype == "6H" else 14,
                 "require_convergence": False,
                 "notes": [
-                    "Metal/6H-SiC(0001) Si-face Schottky scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    f"Metal/{profile.orientation} Schottky scaffold; explicit execute materializes CIF for GUI hot-loading.",
                     "This centered polar asymmetric interface is an unrelaxed visualization and preflight model, not a production interface.",
                 ],
             },
             "metadata": metadata,
         }
+    )
+
+
+def _sic_6h_schottky_contact_spec(
+    *,
+    metal: str,
+    user_request: str,
+    project_id: str,
+    surface_face: str = "Si-face",
+) -> ModelSpec:
+    return _sic_polar_surface_schottky_contact_spec(
+        profile=_sic_surface_face_profile(polytype="6H", surface_face=surface_face),
+        metal=metal,
+        user_request=user_request,
+        project_id=project_id,
     )
 
 
@@ -8030,18 +8193,6 @@ def _infer_sic_4h_schottky_contact_template(
                 "Choose exactly one polar surface before generating a contact scaffold.",
             ],
         )
-    if c_face_requested:
-        return NaturalLanguagePlan(
-            kind="unsupported",
-            payload=None,
-            confidence=0.0,
-            template_id=None,
-            notes=[
-                "The reviewed 4H-SiC Schottky contact scaffold currently supports only the (0001) Si-face.",
-                "A (000-1) C-face metal-contact registry is not generated implicitly; provide a reviewed ModelSpec or request a supported C-face slab, oxide interface, or MOS capacitor scaffold.",
-            ],
-        )
-
     metal = _match_sic_4h_contact_metal(text) or "Au"
     if metal not in CONTACT_METAL_WORK_FUNCTION_EV:
         return NaturalLanguagePlan(
@@ -8055,14 +8206,17 @@ def _infer_sic_4h_schottky_contact_template(
             ],
         )
 
-    chosen_project_id = project_id or _project_id(SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID, user_request)
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = _sic_surface_face_profile(polytype="4H", surface_face=surface_face)
+    chosen_project_id = project_id or _project_id(profile.contact_template_id, user_request)
     model_spec = _sic_4h_schottky_contact_spec(
         metal=metal,
         user_request=user_request,
         project_id=chosen_project_id,
+        surface_face=surface_face,
     )
     notes = [
-        "Generated a deterministic centered metal/4H-SiC(0001) Si-face pre-relaxation Schottky contact scaffold.",
+        f"Generated a deterministic centered metal/{profile.orientation} pre-relaxation Schottky contact scaffold.",
         "The scaffold is for same-window visualization, contact and polar-surface diagnostics, and metadata preflight before reviewed relaxation.",
     ]
     confidence = 0.86
@@ -8083,7 +8237,7 @@ def _infer_sic_4h_schottky_contact_template(
         kind="spec",
         payload=model_spec.model_dump(mode="json"),
         confidence=confidence,
-        template_id=SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        template_id=profile.contact_template_id,
         notes=notes,
     )
 
@@ -8115,7 +8269,23 @@ def _match_sic_4h_contact_metal(text: str) -> str | None:
     return None
 
 
-def _sic_4h_schottky_contact_spec(*, metal: str, user_request: str, project_id: str) -> ModelSpec:
+def _sic_4h_schottky_contact_spec(
+    *,
+    metal: str,
+    user_request: str,
+    project_id: str,
+    surface_face: str = "Si-face",
+) -> ModelSpec:
+    if surface_face == "C-face":
+        return _sic_polar_surface_schottky_contact_spec(
+            profile=_sic_surface_face_profile(polytype="4H", surface_face=surface_face),
+            metal=metal,
+            user_request=user_request,
+            project_id=project_id,
+        )
+    if surface_face != "Si-face":
+        raise ValueError(f"Unsupported 4H-SiC Schottky contact face: {surface_face}")
+
     source_spec = ModelSpec.model_validate(_load_example("silicon_carbide_4h_hexagonal_spec.json"))
     if not isinstance(source_spec.model, CrystalSpec):
         raise ValueError("4H-SiC contact source must be a crystal spec")

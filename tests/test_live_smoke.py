@@ -323,6 +323,7 @@ def test_default_sic_6h_oxide_interface_scenario_and_vacancy_follow_up() -> None
 
 def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
     slab = live_smoke.default_request_for_scenario("sic_6h_c_face_slab")
+    contact = live_smoke.default_request_for_scenario("sic_6h_c_face_contact", hotload=True)
     oxide = live_smoke.default_request_for_scenario("sic_6h_c_face_oxide_interface")
     mos = live_smoke.default_request_for_scenario("sic_6h_c_face_mos", hotload=True)
     gaps = live_smoke.default_follow_up_request_for_scenario(
@@ -331,12 +332,17 @@ def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
     )
 
     assert "6H-SiC(000-1) C-face slab" in slab
+    assert "Au/6H-SiC(000-1) C-face Schottky contact" in contact
+    assert "hot-load" in contact
     assert "SiO2/6H-SiC(000-1) C-face interface" in oxide
     assert "Al/SiO2/6H-SiC(000-1) C-face MOS capacitor" in mos
     assert "hot-load" in mos
     assert "semiconductor-oxide interface gap to 2.0 angstrom" in gaps
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_slab"] == (
         "silicon_carbide_6h_000m1_c_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_contact"] == (
+        "metal_silicon_carbide_6h_000m1_c_face_schottky_contact"
     )
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_6h_c_face_oxide_interface"] == (
         "silicon_dioxide_silicon_carbide_6h_000m1_c_face_interface"
@@ -346,6 +352,9 @@ def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
     )
     assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_slab"] == (
         live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_contact"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_contact"]
     )
     assert live_smoke.SCENARIO_EXPECTATIONS["sic_6h_c_face_oxide_interface"] == (
         live_smoke.SCENARIO_EXPECTATIONS["sic_6h_oxide_interface"]
@@ -358,6 +367,7 @@ def test_default_sic_6h_c_face_scenarios_are_discoverable() -> None:
 def test_default_sic_4h_polar_scenarios_are_discoverable() -> None:
     si_slab = live_smoke.default_request_for_scenario("sic_4h_slab")
     c_slab = live_smoke.default_request_for_scenario("sic_4h_c_face_slab")
+    c_contact = live_smoke.default_request_for_scenario("sic_4h_c_face_contact", hotload=True)
     si_oxide = live_smoke.default_request_for_scenario("sic_4h_oxide_interface")
     c_oxide = live_smoke.default_request_for_scenario("sic_4h_c_face_oxide_interface")
     si_mos = live_smoke.default_request_for_scenario("sic_mos")
@@ -369,6 +379,8 @@ def test_default_sic_4h_polar_scenarios_are_discoverable() -> None:
 
     assert "4H-SiC(0001) Si-face slab" in si_slab
     assert "4H-SiC(000-1) C-face slab" in c_slab
+    assert "Au/4H-SiC(000-1) C-face Schottky contact" in c_contact
+    assert "hot-load" in c_contact
     assert "SiO2/4H-SiC(0001) Si-face interface" in si_oxide
     assert "SiO2/4H-SiC(000-1) C-face interface" in c_oxide
     assert "4H-SiC MOS capacitor" in si_mos
@@ -380,6 +392,9 @@ def test_default_sic_4h_polar_scenarios_are_discoverable() -> None:
     )
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_c_face_slab"] == (
         "silicon_carbide_4h_000m1_c_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_c_face_contact"] == (
+        "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
     )
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_4h_oxide_interface"] == (
         "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface"
@@ -395,6 +410,9 @@ def test_default_sic_4h_polar_scenarios_are_discoverable() -> None:
     )
     assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_slab"] == (
         live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_c_face_contact"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_4h_contact"]
     )
     assert live_smoke.SCENARIO_EXPECTATIONS["sic_4h_c_face_oxide_interface"] == (
         live_smoke.SCENARIO_EXPECTATIONS["sic_6h_oxide_interface"]

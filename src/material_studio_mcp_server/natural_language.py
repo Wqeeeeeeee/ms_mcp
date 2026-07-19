@@ -4700,6 +4700,13 @@ def _infer_fit_to_view_plan(
     )
 
 
+def fit_to_view_requested(user_request: str | None) -> bool:
+    """Return whether a request explicitly asks to frame the model in the viewport."""
+
+    text = " ".join(str(user_request or "").strip().lower().split())
+    return _looks_like_fit_to_view_request(text)
+
+
 def _looks_like_fit_to_view_request(text: str) -> bool:
     """Return True for explicit viewport framing requests."""
 

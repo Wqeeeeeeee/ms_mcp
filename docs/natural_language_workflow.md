@@ -57,6 +57,20 @@ read-only `normality_check` and `project_status` receipts. Fit-to-View reuses
 the existing single Materials Studio window and preserves the direct tool's
 UIA and structure-integrity gates.
 
+Fit-to-View can also be the final stage of a structural request. For example,
+`Make a 2x1x1 silicon supercell, hot-load it in Materials Studio, and fit the
+current model to view` remains a `crystal_supercell` patch instead of being
+reclassified as a display-only workflow. The explicit hot-load text authorizes
+execute; after the immutable revision is materialized and opened in the one
+verified window, the server invokes Fit-to-View and captures the final viewport
+under the same GUI artifact transaction. The response and persisted report
+carry `post_hotload_fit_to_view`; accept that stage only when `completed=true`
+and `structure_unchanged=true`. With explicit preview, the same request returns
+`status=deferred_until_execute` and performs no GUI input. A blocked framing
+stage reports partial success and an exact retry payload without rebuilding or
+reopening another Materials Studio process. Callers can explicitly set
+`fit_to_view_after_open=false` to suppress inferred framing.
+
 Requests that contain an actual structural edit still take precedence over
 display-only routing. For example, `把 Si1_000 从 P 换回 Si并热加载到当前窗口` and
 `replace Si1_000 from P back to Si and hot-load it` create a new semantic-patch

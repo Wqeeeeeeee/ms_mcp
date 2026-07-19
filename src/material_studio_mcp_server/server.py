@@ -54,6 +54,7 @@ from .diagnostics import (
 )
 from .gui import (
     GuiError,
+    GuiSnapshotBlockedError,
     MaterialsStudioGuiController,
     _analyze_bmp_snapshot,
     _refresh_view_replay_summary,
@@ -1102,7 +1103,87 @@ def _ok(result: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, **result}
 
 
+def _gui_snapshot_deferred_receipt(
+    exc: GuiSnapshotBlockedError,
+    *,
+    project_id: str | None = None,
+    revision: int | None = None,
+    working_dir: str | Path | None = None,
+    views: list[str] | None = None,
+    activation_completed: bool = False,
+) -> dict[str, Any]:
+    """Return a directly callable continuation without weakening snapshot gates."""
+
+    block_receipt = dict(exc.receipt)
+    resolved_project_id = project_id if project_id is not None else block_receipt.get("project_id")
+    resolved_revision = revision if revision is not None else block_receipt.get("revision")
+    resolved_working_dir = working_dir if working_dir is not None else block_receipt.get("working_dir")
+    activation_reasons = [str(item) for item in block_receipt.get("activation_reasons") or []]
+    focus_lost_after_activation = bool(
+        activation_completed and "target_window_not_foreground" in activation_reasons
+    )
+
+    activate_payload: dict[str, Any] = {"take_snapshot": True}
+    snapshot_payload: dict[str, Any] = {
+        "label": str(block_receipt.get("label") or "snapshot_retry"),
+    }
+    if resolved_project_id is not None:
+        activate_payload["project_id"] = str(resolved_project_id)
+        snapshot_payload["project_id"] = str(resolved_project_id)
+    if resolved_revision is not None:
+        activate_payload["revision"] = int(resolved_revision)
+        snapshot_payload["revision"] = int(resolved_revision)
+    if views is not None:
+        activate_payload["views"] = list(views)
+    activate_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_activate",
+        activate_payload,
+        resolved_working_dir,
+    )
+    snapshot_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_snapshot",
+        snapshot_payload,
+        resolved_working_dir,
+    )
+
+    status = (
+        "gui_snapshot_focus_lost_after_activation"
+        if focus_lost_after_activation
+        else "gui_snapshot_activation_required"
+    )
+    return {
+        "status": status,
+        "snapshot_status": "deferred_before_capture",
+        "snapshot_captured": False,
+        "snapshot_after_activate": False,
+        "snapshot_deferred": True,
+        "snapshot_focus_lost_after_activation": focus_lost_after_activation,
+        "snapshot_block_reason": block_receipt.get("block_reason"),
+        "snapshot_activation_reasons": activation_reasons,
+        "snapshot_block_receipt": block_receipt,
+        "snapshot_evidence_persisted": False,
+        "capture_started": False,
+        "gui_process_launched": False,
+        "structure_reopened": False,
+        "recommended_tool": "material_studio_gui_activate",
+        "recommended_action": "reactivate_exact_target_and_retry_snapshot",
+        "snapshot_retry_tool": "material_studio_gui_activate",
+        "snapshot_retry_payload": activate_payload,
+        "snapshot_retry_requires_fresh_foreground_verification": True,
+        "snapshot_retry_reuses_existing_window_only": True,
+        "snapshot_retry_launches_new_process": False,
+        "snapshot_after_external_activation_tool": "material_studio_gui_snapshot",
+        "snapshot_after_external_activation_payload": snapshot_payload,
+    }
+
+
 def _error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, GuiSnapshotBlockedError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            **_gui_snapshot_deferred_receipt(exc),
+        }
     if isinstance(exc, RevisionExecutionBusyError):
         return {
             "ok": False,
@@ -7658,6 +7739,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "use_when_target_window_not_foreground": True,
                 "snapshot_requires_restored_foreground_target": True,
                 "same_window_input_requires_verified_activation": True,
+                "focus_loss_returns_deferred_snapshot_receipt": True,
+                "deferred_snapshot_retry_tool": "material_studio_gui_activate",
+                "deferred_snapshot_retry_reuses_existing_window_only": True,
+                "deferred_snapshot_retry_launches_new_process": False,
             },
             "open_structure_policy": {
                 "uses_existing_matstudio_window": True,
@@ -46966,6 +47051,18 @@ def material_studio_gui_activate(
                             "available": False,
                             "reason": "no_project_revision_context",
                         }
+                except GuiSnapshotBlockedError as exc:
+                    result["snapshot_warning"] = str(exc)
+                    result.update(
+                        _gui_snapshot_deferred_receipt(
+                            exc,
+                            project_id=context.get("project_id"),
+                            revision=context.get("revision"),
+                            working_dir=gui.workspace_root,
+                            views=views,
+                            activation_completed=result.get("activation_verified") is True,
+                        )
+                    )
                 except Exception as exc:
                     result["snapshot_warning"] = str(exc)
             return _ok(result)

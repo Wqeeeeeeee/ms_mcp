@@ -44,6 +44,14 @@ class GuiError(RuntimeError):
     """当本地 GUI 控制无法完成时引发。"""
 
 
+class GuiSnapshotBlockedError(GuiError):
+    """Raised when a snapshot is blocked before any capture starts."""
+
+    def __init__(self, message: str, *, receipt: dict[str, Any]) -> None:
+        self.receipt = dict(receipt)
+        super().__init__(message)
+
+
 VIEW_REPLAY_MANIFEST_SCHEMA_VERSION = 5
 VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 4
 VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
@@ -3397,6 +3405,11 @@ class MaterialsStudioGuiController:
         if window_management.get("activation_required_before_capture_or_input"):
             blocked_payload = {
                 "captured": False,
+                "capture_started": False,
+                "project_id": project_id,
+                "revision": revision,
+                "working_dir": str(self.workspace_root),
+                "label": label,
                 "window": window.to_dict(),
                 "target_window_resolution": target_resolution,
                 "window_management": window_management,
@@ -3404,10 +3417,13 @@ class MaterialsStudioGuiController:
                 "activation_reasons": list(window_management.get("interaction_activation_reasons") or []),
             }
             self._write_log("snapshot_blocked", project_id=project_id, revision=revision, payload=blocked_payload)
-            raise GuiError(
-                "Refusing to capture the Materials Studio window before the verified target is restored and "
-                "foreground. Call material_studio_gui_activate with the same project_id/revision and "
-                "take_snapshot=true."
+            raise GuiSnapshotBlockedError(
+                (
+                    "Refusing to capture the Materials Studio window before the verified target is restored and "
+                    "foreground. Call material_studio_gui_activate with the same project_id/revision and "
+                    "take_snapshot=true."
+                ),
+                receipt=blocked_payload,
             )
         output_path = self._screenshot_path(label=label, project_id=project_id, revision=revision)
         captured_path = self.backend.capture_window(window, output_path)

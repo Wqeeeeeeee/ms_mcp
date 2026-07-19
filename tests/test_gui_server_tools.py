@@ -8797,6 +8797,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["activate_policy"]["use_when_target_window_not_foreground"] is True
     assert capabilities["gui"]["activate_policy"]["snapshot_requires_restored_foreground_target"] is True
     assert capabilities["gui"]["activate_policy"]["same_window_input_requires_verified_activation"] is True
+    assert capabilities["gui"]["activate_policy"]["focus_loss_returns_deferred_snapshot_receipt"] is True
+    assert (
+        capabilities["gui"]["activate_policy"]["deferred_snapshot_retry_tool"]
+        == "material_studio_gui_activate"
+    )
+    assert capabilities["gui"]["activate_policy"]["deferred_snapshot_retry_reuses_existing_window_only"] is True
+    assert capabilities["gui"]["activate_policy"]["deferred_snapshot_retry_launches_new_process"] is False
     assert capabilities["gui"]["open_structure_policy"]["uses_existing_matstudio_window"] is True
     assert capabilities["gui"]["open_structure_policy"]["generated_structure_project_wrapper"] is True
     assert capabilities["gui"]["open_structure_policy"]["requires_existing_matstudio_window"] is True
@@ -10301,6 +10308,21 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     blocked_snapshot = server.material_studio_gui_snapshot(working_dir=str(tmp_path))
     assert blocked_snapshot["ok"] is False
     assert "before the verified target is restored and foreground" in blocked_snapshot["error"]
+    assert blocked_snapshot["status"] == "gui_snapshot_activation_required"
+    assert blocked_snapshot["snapshot_status"] == "deferred_before_capture"
+    assert blocked_snapshot["snapshot_deferred"] is True
+    assert blocked_snapshot["snapshot_captured"] is False
+    assert blocked_snapshot["capture_started"] is False
+    assert blocked_snapshot["snapshot_evidence_persisted"] is False
+    assert blocked_snapshot["snapshot_retry_tool"] == "material_studio_gui_activate"
+    assert blocked_snapshot["snapshot_retry_payload"] == {
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert blocked_snapshot["snapshot_retry_reuses_existing_window_only"] is True
+    assert blocked_snapshot["snapshot_retry_launches_new_process"] is False
     assert backend.captured_handles == []
 
     preflight = server.material_studio_live_session_preflight(working_dir=str(tmp_path))
@@ -10328,6 +10350,98 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     assert activated["snapshot"]["window"]["is_foreground"] is True
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert backend.captured_handles == [101]
+
+
+def test_gui_activate_returns_bound_retry_when_focus_is_lost_before_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    monkeypatch.setattr(server, "runner", FakeRunner())
+
+    created = server.material_studio_live_modeling_request(
+        "Build silicon crystal.",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    original_snapshot = controller.snapshot
+
+    def lose_focus_before_snapshot(**kwargs):
+        current = backend.window
+        backend.window = WindowInfo(
+            handle=current.handle,
+            title=current.title,
+            pid=current.pid,
+            rect=current.rect,
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=False,
+        )
+        return original_snapshot(**kwargs)
+
+    monkeypatch.setattr(controller, "snapshot", lose_focus_before_snapshot)
+
+    activated = server.material_studio_gui_activate(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        take_snapshot=True,
+        views=["front", "isometric"],
+        working_dir=str(tmp_path),
+    )
+
+    assert activated["ok"] is True
+    assert activated["activated"] is True
+    assert activated["activation_verified"] is True
+    assert activated["status"] == "gui_snapshot_focus_lost_after_activation"
+    assert activated["snapshot_status"] == "deferred_before_capture"
+    assert activated["snapshot_deferred"] is True
+    assert activated["snapshot_focus_lost_after_activation"] is True
+    assert activated["snapshot_after_activate"] is False
+    assert activated["snapshot_captured"] is False
+    assert activated["snapshot_evidence_persisted"] is False
+    assert activated["capture_started"] is False
+    assert activated["gui_process_launched"] is False
+    assert activated["structure_reopened"] is False
+    assert activated["snapshot_activation_reasons"] == ["target_window_not_foreground"]
+    assert activated["snapshot_retry_tool"] == "material_studio_gui_activate"
+    assert activated["snapshot_retry_payload"] == {
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "views": ["front", "isometric"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert activated["snapshot_after_external_activation_tool"] == "material_studio_gui_snapshot"
+    assert activated["snapshot_after_external_activation_payload"] == {
+        "label": "activate_current_revision",
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert activated["snapshot_retry_reuses_existing_window_only"] is True
+    assert activated["snapshot_retry_launches_new_process"] is False
+    assert "snapshot" not in activated
+    assert "structured_sync" not in activated
+    assert backend.captured_handles == []
 
 
 def test_live_session_preflight_surfaces_current_modeling_action_when_gui_ready(

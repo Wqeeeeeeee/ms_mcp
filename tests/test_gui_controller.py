@@ -12,6 +12,7 @@ import pytest
 import material_studio_mcp_server.gui as gui_module
 from material_studio_mcp_server.gui import (
     GuiError,
+    GuiSnapshotBlockedError,
     MaterialsStudioGuiController,
     ProcessInfo,
     WindowInfo,
@@ -419,9 +420,22 @@ def test_gui_status_requires_restore_and_activation_before_snapshot(tmp_path: Pa
     assert status["window_management"]["payload_hint"] == {"reuse_existing_window_only": True, "take_snapshot": True}
     assert "target_window_minimized" in status["window_management"]["warnings"]
 
-    with pytest.raises(GuiError, match="before the verified target is restored and foreground"):
+    with pytest.raises(
+        GuiSnapshotBlockedError,
+        match="before the verified target is restored and foreground",
+    ) as exc_info:
         controller.snapshot(label="blocked")
 
+    assert isinstance(exc_info.value, GuiError)
+    assert exc_info.value.receipt["captured"] is False
+    assert exc_info.value.receipt["capture_started"] is False
+    assert exc_info.value.receipt["working_dir"] == str(tmp_path.resolve())
+    assert exc_info.value.receipt["label"] == "blocked"
+    assert exc_info.value.receipt["block_reason"] == "target_window_activation_required"
+    assert exc_info.value.receipt["activation_reasons"] == [
+        "target_window_minimized",
+        "target_window_not_foreground",
+    ]
     assert backend.captured_handles == []
     assert "snapshot_blocked" in (tmp_path / "gui_actions.jsonl").read_text(encoding="utf-8")
 

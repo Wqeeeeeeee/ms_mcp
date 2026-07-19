@@ -957,6 +957,30 @@ async def _run_preview_calls(
                 "capabilities_post_hotload_replay_prepare_lock_boundary_missing"
             )
         if replay_policy.get(
+            "post_hotload_prepare_current_revision_checks"
+        ) != ["before_prepare", "after_prepare_return"]:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_prepare_revision_recheck_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_superseded_manifest_policy"
+        ) != "preserve_as_historical_without_current_continuation":
+            validation_errors.append(
+                "capabilities_post_hotload_replay_supersession_policy_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_visual_action_never_replaces_modeling_action"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_action_tracks_missing"
+            )
+        if replay_policy.get(
+            "post_hotload_direct_continuations_are_workspace_bound"
+        ) is not True:
+            validation_errors.append(
+                "capabilities_post_hotload_replay_workspace_binding_missing"
+            )
+        if replay_policy.get(
             "post_hotload_prepare_rewrites_modeling_report"
         ) is not False:
             validation_errors.append(
@@ -1440,6 +1464,21 @@ async def _run_preview_calls(
                 "capabilities_post_hotload_replay_prepare_after_report_lock": (
                     replay_policy.get(
                         "post_hotload_prepare_runs_after_gui_report_lock_release"
+                    )
+                ),
+                "capabilities_post_hotload_replay_prepare_revision_checks": (
+                    replay_policy.get(
+                        "post_hotload_prepare_current_revision_checks"
+                    )
+                ),
+                "capabilities_post_hotload_replay_superseded_manifest_policy": (
+                    replay_policy.get(
+                        "post_hotload_superseded_manifest_policy"
+                    )
+                ),
+                "capabilities_post_hotload_replay_action_tracks": (
+                    replay_policy.get(
+                        "post_hotload_visual_action_never_replaces_modeling_action"
                     )
                 ),
                 "capabilities_post_hotload_replay_prepare_rewrites_report": (

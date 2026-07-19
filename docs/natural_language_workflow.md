@@ -100,10 +100,17 @@ With `execution_mode=preview`, the response records
 `post_hotload_view_replay_prepare.status=deferred_until_execute` and performs no
 GUI action. With `open_in_gui=false`, it records `not_run_gui_open_disabled`.
 After execute, preparation runs only after same-window open and after the GUI
-artifact report lock has been released. It writes the revision manifest but does
-not rotate the viewer, accept a camera result, create a revision, or rewrite the
-published modeling report. Continue with the returned
-`view_replay_continuation`; each actual GUI recipe still needs its own runtime
+artifact report lock has been released. The server verifies the current revision
+both before preparation and after the replay controller returns. If a concurrent
+writer advances the project, the superseded revision's manifest is preserved as
+history, but its continuation is not returned as a current action. The only safe
+follow-up is the returned workspace-bound `material_studio_live_project_status`
+call for the new current revision. On success, the response keeps
+`next_action_plan` as the modeling or calculation action and exposes replay as a
+separate `visual_diagnostics_next_action_plan` plus an ordered
+`coordinated_next_action_plan`. It writes the revision manifest but does not
+rotate the viewer, accept a camera result, create a revision, or rewrite the
+published modeling report. Each actual GUI recipe still needs its own runtime
 safety gate and explicit execute intent. If preparation fails, retry the returned
 workspace-bound `material_studio_gui_prepare_view_replay` payload without
 rebuilding or reopening the structure.

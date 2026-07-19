@@ -166,6 +166,7 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
         "material_studio_castep_run_current",
         "material_studio_gui_activate",
         "material_studio_gui_apply_current_revision",
+        "material_studio_gui_execute_view_replay",
         "material_studio_gui_fit_to_view",
         "material_studio_gui_launch",
         "material_studio_gui_open_structure",
@@ -216,6 +217,9 @@ def _workspace_bound_action_plan(
 
 LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
     "next_action_plan",
+    "visual_diagnostics_next_action_plan",
+    "coordinated_next_action_plan",
+    "next_action_tracks",
     "normality_gate",
     "normality_explanation",
     "visual_normality_summary",
@@ -4514,6 +4518,25 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "post_hotload_prepare_changes_gui": False,
             "post_hotload_prepare_creates_revision": False,
             "post_hotload_prepare_runs_after_gui_report_lock_release": True,
+            "post_hotload_prepare_current_revision_checks": [
+                "before_prepare",
+                "after_prepare_return",
+            ],
+            "post_hotload_superseded_manifest_policy": (
+                "preserve_as_historical_without_current_continuation"
+            ),
+            "post_hotload_supersession_followup_tool": (
+                "material_studio_live_project_status"
+            ),
+            "post_hotload_visual_action_plan_field": (
+                "visual_diagnostics_next_action_plan"
+            ),
+            "post_hotload_modeling_action_plan_field": "next_action_plan",
+            "post_hotload_coordinated_action_plan_field": (
+                "coordinated_next_action_plan"
+            ),
+            "post_hotload_visual_action_never_replaces_modeling_action": True,
+            "post_hotload_direct_continuations_are_workspace_bound": True,
             "post_hotload_prepare_rewrites_modeling_report": False,
             "post_hotload_prepare_failure_preserves_hotload": True,
             "local_uia_execute_tool": "material_studio_gui_execute_view_replay",
@@ -7932,6 +7955,25 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "post_hotload_prepare_changes_gui": False,
                 "post_hotload_prepare_creates_revision": False,
                 "post_hotload_prepare_runs_after_gui_report_lock_release": True,
+                "post_hotload_prepare_current_revision_checks": [
+                    "before_prepare",
+                    "after_prepare_return",
+                ],
+                "post_hotload_superseded_manifest_policy": (
+                    "preserve_as_historical_without_current_continuation"
+                ),
+                "post_hotload_supersession_followup_tool": (
+                    "material_studio_live_project_status"
+                ),
+                "post_hotload_visual_action_plan_field": (
+                    "visual_diagnostics_next_action_plan"
+                ),
+                "post_hotload_modeling_action_plan_field": "next_action_plan",
+                "post_hotload_coordinated_action_plan_field": (
+                    "coordinated_next_action_plan"
+                ),
+                "post_hotload_visual_action_never_replaces_modeling_action": True,
+                "post_hotload_direct_continuations_are_workspace_bound": True,
                 "post_hotload_prepare_rewrites_modeling_report": False,
                 "post_hotload_prepare_failure_preserves_hotload": True,
                 "persists_revision_manifest": True,
@@ -35477,6 +35519,169 @@ def _compact_next_action_plan(value: Any) -> dict[str, Any] | None:
     return compact
 
 
+def _compact_coordinated_next_action_plan(
+    value: Any,
+    *,
+    visual_action_plan: Any = None,
+) -> dict[str, Any]:
+    """Keep the cross-track sequence without duplicating full action plans."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "primary_track",
+            "action_id",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "payload_hint",
+            "visual_diagnostics_action_available",
+            "modeling_action_available",
+            "modeling_action_ref",
+            "next_action_plan_preserved",
+            "requires_status_requery_after_each_completed_step",
+        ),
+    )
+    sequence = [
+        _mapping_subset(
+            item,
+            (
+                "step",
+                "track",
+                "plan_ref",
+                "action_id",
+                "needs_user_confirmation",
+            ),
+        )
+        for item in value.get("recommended_sequence") or []
+        if isinstance(item, dict)
+    ]
+    if sequence:
+        compact["recommended_sequence"] = sequence
+    visual_payload = (
+        visual_action_plan.get("payload_hint")
+        if isinstance(visual_action_plan, dict)
+        else None
+    )
+    if (
+        isinstance(visual_payload, dict)
+        and compact.get("payload_hint") == visual_payload
+    ):
+        compact.pop("payload_hint", None)
+        compact["payload_hint_ref"] = (
+            "visual_diagnostics_next_action_plan.payload_hint"
+        )
+    return compact
+
+
+def _compact_next_action_tracks(value: Any) -> dict[str, Any]:
+    """Return bounded visual/modeling track metadata and stable plan references."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "status",
+            "primary_track",
+            "visual_diagnostics_action_does_not_clear_modeling_action",
+            "next_action_plan_preserved_as_modeling_authority",
+            "requires_status_requery_after_visual_step",
+            "recommended_sequence_ref",
+        ),
+    )
+    for key in ("visual_diagnostics", "modeling"):
+        track = value.get(key)
+        if isinstance(track, dict):
+            compact[key] = _mapping_subset(
+                track,
+                (
+                    "available",
+                    "binding_verified",
+                    "plan_ref",
+                    "mirror_plan_ref",
+                    "action_id",
+                    "recommended_tool",
+                    "needs_user_confirmation",
+                    "safe_to_call_without_confirmation",
+                    "binding_reasons",
+                ),
+            )
+    return compact
+
+
+def _compact_visual_diagnostics_action_plan(
+    value: Any,
+    *,
+    replay_continuation: Any,
+) -> dict[str, Any]:
+    """Avoid copying non-callable external replay instructions into two fields."""
+
+    compact = _session_preflight_action_plan_summary(value)
+    continuation = (
+        replay_continuation if isinstance(replay_continuation, dict) else {}
+    )
+    execution_action = (
+        continuation.get("execution_action")
+        if isinstance(continuation.get("execution_action"), dict)
+        else {}
+    )
+    continuation_payload = execution_action.get("payload_hint")
+    if not isinstance(continuation_payload, dict):
+        continuation_payload = continuation.get("payload_hint")
+    if (
+        compact.get("payload_hint_is_directly_callable") is not True
+        and isinstance(continuation_payload, dict)
+        and compact.get("payload_hint") == continuation_payload
+    ):
+        compact.pop("payload_hint", None)
+        compact["payload_hint_ref"] = (
+            "view_replay_continuation.execution_action.payload_hint"
+            if execution_action
+            else "view_replay_continuation.payload_hint"
+        )
+    return compact
+
+
+def _compact_mirrored_modeling_action_plan(
+    value: Any,
+    *,
+    authoritative_plan: Any,
+) -> dict[str, Any]:
+    """Represent the modeling mirror by reference when next_action_plan matches."""
+
+    compact = _session_preflight_action_plan_summary(value)
+    authoritative = (
+        authoritative_plan if isinstance(authoritative_plan, dict) else {}
+    )
+    if not (
+        compact
+        and compact.get("action_id") == authoritative.get("action_id")
+        and compact.get("recommended_tool")
+        == authoritative.get("recommended_tool")
+    ):
+        return compact
+    return _drop_none_values(
+        {
+            "action_id": compact.get("action_id"),
+            "project_id": compact.get("project_id"),
+            "revision": compact.get("revision"),
+            "recommended_tool": compact.get("recommended_tool"),
+            "needs_user_confirmation": compact.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": compact.get(
+                "safe_to_call_without_confirmation"
+            ),
+            "plan_ref": "next_action_plan",
+        }
+    )
+
+
 def _compact_next_action_resolution(value: Any) -> dict[str, Any]:
     """Keep action-source and confirmation gates without duplicate action text."""
 
@@ -36951,6 +37156,8 @@ def _compact_post_hotload_view_replay_prepare(value: Any) -> dict[str, Any]:
             "request_source",
             "status",
             "prepared",
+            "prepared_revision",
+            "superseded_revision",
             "execution_mode",
             "open_in_gui",
             "automatic_after_hotload",
@@ -36971,6 +37178,15 @@ def _compact_post_hotload_view_replay_prepare(value: Any) -> dict[str, Any]:
             "prepared_after_gui_artifact_transaction",
             "report_rewritten_after_prepare",
             "current_revision",
+            "current_revision_verified_after_prepare",
+            "preparation_completed_for_superseded_revision",
+            "historical_manifest_path",
+            "historical_manifest_preserved",
+            "replay_continuation_published",
+            "visual_diagnostics_action_published",
+            "visual_diagnostics_next_action_plan_ref",
+            "modeling_next_action_plan_ref",
+            "coordinated_next_action_plan_ref",
             "error",
             "recommended_tool",
             "required_next_step",
@@ -37344,6 +37560,13 @@ def _compact_view_replay_continuation_ref(
             "payload_hint_is_directly_callable",
         ),
     )
+    for nullable_key in (
+        "next_pending_view_name",
+        "next_actionable_pending_view_name",
+        "next_automation_ready_view_name",
+    ):
+        if nullable_key in value:
+            compact[nullable_key] = value[nullable_key]
     compact["continuation_detail_ref"] = detail_ref
     return compact
 
@@ -37377,6 +37600,65 @@ def _deduplicate_compact_view_replay_for_budget(
             continue
         compact[key] = {f"{key}_detail_ref": f"view_replay.{key}"}
         omitted.append(f"{key}.duplicated_detail")
+    return omitted
+
+
+def _compact_top_level_replay_continuations_for_budget(
+    compact: dict[str, Any],
+) -> list[str]:
+    """Collapse large post-hot-load recipe details to persisted-response refs."""
+
+    omitted: list[str] = []
+    for key in ("view_replay_continuation", "replay_continuation"):
+        continuation = compact.get(key)
+        if not isinstance(continuation, dict):
+            continue
+        compact[key] = _compact_view_replay_continuation_ref(
+            continuation,
+            detail_ref=f"full_response.{key}",
+        )
+        omitted.append(f"{key}.recipe_detail")
+
+    visual_plan = compact.get("visual_diagnostics_next_action_plan")
+    if isinstance(visual_plan, dict) and isinstance(
+        visual_plan.get("payload_hint_ref"), str
+    ):
+        visual_plan = dict(visual_plan)
+        payload_ref = str(visual_plan["payload_hint_ref"])
+        if payload_ref.startswith("view_replay_continuation."):
+            visual_plan["payload_hint_ref"] = f"full_response.{payload_ref}"
+        elif payload_ref.startswith("replay_continuation."):
+            visual_plan["payload_hint_ref"] = f"full_response.{payload_ref}"
+        compact["visual_diagnostics_next_action_plan"] = visual_plan
+    if isinstance(visual_plan, dict) and isinstance(
+        visual_plan.get("payload_hint"), dict
+    ):
+        visual_plan = dict(visual_plan)
+        was_directly_callable = (
+            visual_plan.get("payload_hint_is_directly_callable") is True
+        )
+        visual_plan.pop("payload_hint", None)
+        visual_plan["payload_hint_ref"] = (
+            "full_response.visual_diagnostics_next_action_plan.payload_hint"
+        )
+        visual_plan["payload_hint_available_in_compact"] = False
+        visual_plan["payload_hint_was_directly_callable"] = was_directly_callable
+        visual_plan["payload_hint_is_directly_callable"] = False
+        visual_plan["tool_call_ready"] = False
+        compact["visual_diagnostics_next_action_plan"] = visual_plan
+        omitted.append("visual_diagnostics_next_action_plan.payload_hint")
+
+    coordinated = compact.get("coordinated_next_action_plan")
+    if isinstance(coordinated, dict) and isinstance(
+        coordinated.get("payload_hint"), dict
+    ):
+        coordinated = dict(coordinated)
+        coordinated.pop("payload_hint", None)
+        coordinated["payload_hint_ref"] = (
+            "visual_diagnostics_next_action_plan.payload_hint_ref"
+        )
+        compact["coordinated_next_action_plan"] = coordinated
+        omitted.append("coordinated_next_action_plan.payload_hint")
     return omitted
 
 
@@ -37509,6 +37791,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     receipt["hard_budget_applied"] = True
     omitted_fields = receipt["omitted_fields"]
     omitted_fields.extend(_deduplicate_compact_view_replay_for_budget(bounded))
+    if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+        return _finalize_live_compact_response(
+            bounded,
+            receipt,
+            semantic_core_fields,
+        )
+    omitted_fields.extend(
+        _compact_top_level_replay_continuations_for_budget(bounded)
+    )
     if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
         return _finalize_live_compact_response(
             bounded,
@@ -37683,6 +37974,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "post_hotload_view_replay_prepare_warning",
             "post_hotload_view_replay_prepare_retry_tool",
             "post_hotload_view_replay_prepare_retry_payload",
+            "visual_diagnostics_next_action_plan",
+            "modeling_next_action_plan",
+            "coordinated_next_action_plan",
+            "next_action_tracks",
             "partial_success",
             "task",
             "run_directory",
@@ -37785,6 +38080,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "normality_explanation",
             "visual_normality_summary",
             "next_action_plan",
+            "visual_diagnostics_next_action_plan",
+            "modeling_next_action_plan",
+            "coordinated_next_action_plan",
+            "next_action_tracks",
             "mcp_client_readiness",
             "revision_delta",
             "structure_artifact_validation",
@@ -37894,6 +38193,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "post_hotload_view_replay_prepare_warning",
             "post_hotload_view_replay_prepare_retry_tool",
             "post_hotload_view_replay_prepare_retry_payload",
+            "visual_diagnostics_next_action_plan",
+            "modeling_next_action_plan",
+            "coordinated_next_action_plan",
+            "next_action_tracks",
             "partial_success",
             "task",
             "run_directory",
@@ -37993,6 +38296,10 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "visual_normality_summary",
             "view_parameter_summary",
             "next_action_plan",
+            "visual_diagnostics_next_action_plan",
+            "modeling_next_action_plan",
+            "coordinated_next_action_plan",
+            "next_action_tracks",
             "mcp_client_readiness",
             "view_name",
             "accepted",
@@ -38380,6 +38687,10 @@ def _compact_live_response(
             "post_hotload_view_replay_prepare_warning",
             "post_hotload_view_replay_prepare_retry_tool",
             "post_hotload_view_replay_prepare_retry_payload",
+            "visual_diagnostics_next_action_plan",
+            "modeling_next_action_plan",
+            "coordinated_next_action_plan",
+            "next_action_tracks",
             "partial_success",
             "task",
             "run_directory",
@@ -38715,6 +39026,24 @@ def _compact_live_response(
         retain_post_hotload_replay_prepare
         and compact_post_hotload_view_replay_prepare
     ):
+        nested_continuation = compact_post_hotload_view_replay_prepare.get(
+            "replay_continuation"
+        )
+        top_level_continuation = compact.get("view_replay_continuation")
+        if (
+            isinstance(nested_continuation, dict)
+            and isinstance(top_level_continuation, dict)
+            and nested_continuation.get("status")
+            == top_level_continuation.get("status")
+            and nested_continuation.get("next_pending_view_name")
+            == top_level_continuation.get("next_pending_view_name")
+        ):
+            compact_post_hotload_view_replay_prepare["replay_continuation"] = (
+                _compact_view_replay_continuation_ref(
+                    nested_continuation,
+                    detail_ref="view_replay_continuation",
+                )
+            )
         compact["post_hotload_view_replay_prepare"] = (
             compact_post_hotload_view_replay_prepare
         )
@@ -38886,6 +39215,46 @@ def _compact_live_response(
             compact_value = projector(value) if projector is not None else value
             if compact_value:
                 compact[key] = compact_value
+    visual_action_value = response.get("visual_diagnostics_next_action_plan")
+    if isinstance(visual_action_value, dict):
+        compact_value = _compact_visual_diagnostics_action_plan(
+            visual_action_value,
+            replay_continuation=response.get("view_replay_continuation"),
+        )
+        if compact_value:
+            compact["visual_diagnostics_next_action_plan"] = compact_value
+    modeling_action_value = response.get("modeling_next_action_plan")
+    if isinstance(modeling_action_value, dict):
+        compact_value = _compact_mirrored_modeling_action_plan(
+            modeling_action_value,
+            authoritative_plan=response.get("next_action_plan"),
+        )
+        if compact_value:
+            compact["modeling_next_action_plan"] = compact_value
+    coordinated_next_action = _compact_coordinated_next_action_plan(
+        response.get("coordinated_next_action_plan"),
+        visual_action_plan=response.get("visual_diagnostics_next_action_plan"),
+    )
+    if coordinated_next_action:
+        compact_visual_action = compact.get(
+            "visual_diagnostics_next_action_plan"
+        )
+        if (
+            isinstance(compact_visual_action, dict)
+            and compact_visual_action.get("payload_hint") is None
+            and compact_visual_action.get("payload_hint_ref") is not None
+            and coordinated_next_action.get("payload_hint_ref")
+            == "visual_diagnostics_next_action_plan.payload_hint"
+        ):
+            coordinated_next_action["payload_hint_ref"] = (
+                "visual_diagnostics_next_action_plan.payload_hint_ref"
+            )
+        compact["coordinated_next_action_plan"] = coordinated_next_action
+    next_action_tracks = _compact_next_action_tracks(
+        response.get("next_action_tracks")
+    )
+    if next_action_tracks:
+        compact["next_action_tracks"] = next_action_tracks
     gui_view_replay = compact.get("gui_view_replay")
     if isinstance(gui_view_replay, dict) and compact.get("gui_view_replay_status") is None:
         compact["gui_view_replay_status"] = gui_view_replay.get("replay_status")
@@ -47251,6 +47620,318 @@ def _attach_gui_artifact_transaction(
     return result
 
 
+def _post_hotload_replay_current_refresh_action(
+    *,
+    project_id: str,
+    current_revision: int,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Return the only safe continuation after replay preparation is superseded."""
+
+    return {
+        "action_id": "refresh_current_project_after_replay_prepare_superseded",
+        "state": "current_revision_advanced_during_replay_prepare",
+        "project_id": project_id,
+        "revision": current_revision,
+        "recommended_tool": "material_studio_live_project_status",
+        "recommended_action": (
+            "refresh_current_revision_then_decide_whether_to_hotload_or_prepare_replay"
+        ),
+        "needs_user_confirmation": False,
+        "safe_to_call_without_confirmation": True,
+        "payload_hint": _workspace_bound_payload_hint(
+            "material_studio_live_project_status",
+            {
+                "project_id": project_id,
+                "include_gui_status": True,
+                "response_mode": McpResponseMode.COMPACT.value,
+            },
+            working_dir,
+        ),
+        "blocking_reasons": ["current_revision_advanced_during_replay_prepare"],
+        "review_reasons": [],
+    }
+
+
+def _post_hotload_replay_superseded_response(
+    *,
+    response: dict[str, Any],
+    receipt: dict[str, Any],
+    spec: ModelSpec,
+    current_spec: ModelSpec,
+    current_pointer: dict[str, Any],
+    phase: str,
+    working_dir: str | None,
+    prepared: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reject a stale replay continuation while preserving immutable artifacts."""
+
+    historical_manifest_path = (
+        str(prepared.get("manifest_path"))
+        if isinstance(prepared, dict) and prepared.get("manifest_path")
+        else None
+    )
+    historical_manifest_preserved = bool(
+        historical_manifest_path
+        and Path(historical_manifest_path).expanduser().is_file()
+    )
+    refresh_action = _post_hotload_replay_current_refresh_action(
+        project_id=spec.project_id,
+        current_revision=current_spec.revision,
+        working_dir=working_dir,
+    )
+    prior_action = (
+        _session_preflight_action_plan_summary(response.get("next_action_plan"))
+        if isinstance(response.get("next_action_plan"), dict)
+        else {}
+    )
+    action_resolution = {
+        "status": "current_revision_supersession_override_applied",
+        "authoritative_source": "post_hotload_revision_revalidation",
+        "contract_consistent": True,
+        "legacy_action_overridden": bool(prior_action),
+        "needs_user_confirmation": False,
+        "safe_to_call_without_confirmation": True,
+        "confirmation_gate_consistent": True,
+        "superseded_action": prior_action,
+    }
+    receipt.update(
+        {
+            "status": f"current_revision_advanced_{phase}",
+            "prepared": False,
+            "prepared_revision": spec.revision,
+            "superseded_revision": spec.revision,
+            "current_revision": current_spec.revision,
+            "current_pointer": current_pointer,
+            "current_revision_verified_after_prepare": False,
+            "preparation_completed_for_superseded_revision": phase == "during_prepare",
+            "historical_manifest_path": historical_manifest_path,
+            "historical_manifest_preserved": historical_manifest_preserved,
+            "replay_continuation_published": False,
+            "visual_diagnostics_action_published": False,
+            "recommended_tool": refresh_action["recommended_tool"],
+            "required_next_step": (
+                "Refresh the current project, then hot-load or prepare replay only "
+                "for the newly current revision. Do not retry the superseded revision."
+            ),
+            "followup_tool": refresh_action["recommended_tool"],
+            "followup_payload": refresh_action["payload_hint"],
+        }
+    )
+    response["post_hotload_view_replay_prepare"] = receipt
+    response["view_replay_prepared"] = False
+    for key in (
+        "view_replay_continuation",
+        "visual_diagnostics_next_action_plan",
+        "modeling_next_action_plan",
+        "coordinated_next_action_plan",
+        "next_action_tracks",
+    ):
+        response.pop(key, None)
+    response["next_action_plan"] = refresh_action
+    response["next_action_resolution"] = action_resolution
+    live_summary = (
+        dict(response.get("live_summary"))
+        if isinstance(response.get("live_summary"), dict)
+        else {}
+    )
+    live_summary.update(
+        {
+            "next_action_id": refresh_action["action_id"],
+            "next_action_tool": refresh_action["recommended_tool"],
+            "next_action": refresh_action["recommended_action"],
+            "next_action_payload_hint": refresh_action["payload_hint"],
+            "next_action_needs_user_confirmation": False,
+            "next_action_safe_to_call_without_confirmation": True,
+            "next_action_source": "post_hotload_revision_revalidation",
+            "next_action_resolution": action_resolution,
+        }
+    )
+    if live_summary:
+        response["live_summary"] = live_summary
+    response.update(
+        {
+            "ok": False,
+            "partial_success": True,
+            "status": "hotload_completed_view_replay_prepare_superseded",
+            "current_revision": current_spec.revision,
+            "post_hotload_view_replay_prepare_warning": (
+                "The structure hot-load completed, but the current revision advanced "
+                f"{phase.replace('_', ' ')}. The revision r{spec.revision:03d} "
+                "manifest remains historical and no stale replay action was published."
+            ),
+        }
+    )
+    _promote_response_followup_actions(response)
+    return response
+
+
+def _attach_post_hotload_replay_action_coordination(
+    *,
+    response: dict[str, Any],
+    prepared: dict[str, Any],
+    spec: ModelSpec,
+    working_dir: str | None,
+) -> None:
+    """Expose replay as a bound visual track without replacing modeling work."""
+
+    manifest_path = prepared.get("manifest_path")
+    replay = {
+        **prepared,
+        "project_id": spec.project_id,
+        "revision": spec.revision,
+        "manifest_exists": bool(
+            manifest_path and Path(str(manifest_path)).expanduser().is_file()
+        ),
+        "binding_verified": True,
+        "binding_reasons": [],
+    }
+    visual_summary = _latest_project_visual_diagnostics_preflight_summary(
+        {"gui_view_replay": replay},
+        project_id=spec.project_id,
+        revision=spec.revision,
+        current_status_binding_verified=True,
+    )
+    visual_plan = _workspace_bound_action_plan(
+        _session_preflight_action_plan_summary(
+            visual_summary.get("next_action_plan")
+        ),
+        working_dir,
+    )
+    if not (
+        visual_summary.get("action_available") is True
+        and visual_summary.get("binding_verified") is True
+        and _preflight_action_contract_complete(visual_plan)
+    ):
+        return
+
+    raw_modeling_plan = response.get("next_action_plan")
+    if not isinstance(raw_modeling_plan, dict):
+        report = (
+            response.get("modeling_report")
+            if isinstance(response.get("modeling_report"), dict)
+            else {}
+        )
+        raw_modeling_plan = report.get("next_action_plan")
+    modeling_plan = _workspace_bound_action_plan(
+        _session_preflight_action_plan_summary(raw_modeling_plan),
+        working_dir,
+    )
+    modeling_binding_reasons = _modeling_action_binding_reasons(
+        modeling_plan,
+        project_id=spec.project_id,
+        revision=spec.revision,
+    )
+    modeling_available = bool(
+        _preflight_action_contract_complete(modeling_plan)
+        and not modeling_binding_reasons
+    )
+    same_action = bool(
+        modeling_available
+        and modeling_plan.get("action_id") == visual_plan.get("action_id")
+        and modeling_plan.get("recommended_tool")
+        == visual_plan.get("recommended_tool")
+    )
+    sequence = [
+        {
+            "step": 1,
+            "track": "visual_diagnostics",
+            "plan_ref": "visual_diagnostics_next_action_plan",
+            "action_id": visual_plan.get("action_id"),
+            "needs_user_confirmation": visual_plan.get(
+                "needs_user_confirmation"
+            ),
+        }
+    ]
+    if modeling_available and not same_action:
+        sequence.append(
+            {
+                "step": 2,
+                "track": "modeling",
+                "plan_ref": "next_action_plan",
+                "action_id": modeling_plan.get("action_id"),
+                "needs_user_confirmation": modeling_plan.get(
+                    "needs_user_confirmation"
+                ),
+            }
+        )
+    coordination_status = (
+        "visual_diagnostics_then_modeling"
+        if len(sequence) == 2
+        else "visual_diagnostics_action_ready"
+    )
+    response["visual_diagnostics_next_action_plan"] = visual_plan
+    response["modeling_next_action_plan"] = modeling_plan if modeling_available else {}
+    response["next_action_tracks"] = {
+        "status": coordination_status,
+        "primary_track": "visual_diagnostics",
+        "visual_diagnostics": {
+            "available": True,
+            "binding_verified": True,
+            "plan_ref": "visual_diagnostics_next_action_plan",
+            "action_id": visual_plan.get("action_id"),
+            "recommended_tool": visual_plan.get("recommended_tool"),
+            "needs_user_confirmation": visual_plan.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": visual_plan.get(
+                "safe_to_call_without_confirmation"
+            ),
+        },
+        "modeling": {
+            "available": modeling_available,
+            "binding_verified": not modeling_binding_reasons,
+            "plan_ref": "next_action_plan",
+            "mirror_plan_ref": "modeling_next_action_plan",
+            "action_id": modeling_plan.get("action_id"),
+            "recommended_tool": modeling_plan.get("recommended_tool"),
+            "needs_user_confirmation": modeling_plan.get(
+                "needs_user_confirmation"
+            ),
+            "safe_to_call_without_confirmation": modeling_plan.get(
+                "safe_to_call_without_confirmation"
+            ),
+            "binding_reasons": modeling_binding_reasons,
+        },
+        "visual_diagnostics_action_does_not_clear_modeling_action": bool(
+            modeling_available and not same_action
+        ),
+        "next_action_plan_preserved_as_modeling_authority": True,
+        "requires_status_requery_after_visual_step": True,
+        "recommended_sequence_ref": (
+            "coordinated_next_action_plan.recommended_sequence"
+        ),
+    }
+    response["coordinated_next_action_plan"] = {
+        "status": coordination_status,
+        "primary_track": "visual_diagnostics",
+        "action_id": visual_plan.get("action_id"),
+        "recommended_tool": visual_plan.get("recommended_tool"),
+        "recommended_action": visual_plan.get("recommended_action"),
+        "needs_user_confirmation": visual_plan.get("needs_user_confirmation"),
+        "safe_to_call_without_confirmation": visual_plan.get(
+            "safe_to_call_without_confirmation"
+        ),
+        "payload_hint": visual_plan.get("payload_hint") or {},
+        "visual_diagnostics_action_available": True,
+        "modeling_action_available": modeling_available,
+        "modeling_action_ref": "next_action_plan" if modeling_available else None,
+        "next_action_plan_preserved": True,
+        "requires_status_requery_after_each_completed_step": True,
+        "recommended_sequence": sequence,
+    }
+    receipt = response.get("post_hotload_view_replay_prepare")
+    if isinstance(receipt, dict):
+        receipt["visual_diagnostics_action_published"] = True
+        receipt["visual_diagnostics_next_action_plan_ref"] = (
+            "visual_diagnostics_next_action_plan"
+        )
+        receipt["modeling_next_action_plan_ref"] = "next_action_plan"
+        receipt["coordinated_next_action_plan_ref"] = (
+            "coordinated_next_action_plan"
+        )
+
+
 def _prepare_view_replay_after_high_level_hotload(
     *,
     response: dict[str, Any],
@@ -47315,31 +47996,15 @@ def _prepare_view_replay_after_high_level_hotload(
     try:
         current_spec, current_pointer = store.resolve_current(spec.project_id)
         if current_spec.revision != spec.revision:
-            receipt.update(
-                {
-                    "status": "current_revision_advanced_before_prepare",
-                    "required_next_step": (
-                        "Refresh the current project and prepare replay only for the "
-                        "newly current revision."
-                    ),
-                    "recommended_tool": "material_studio_live_project_status",
-                    "current_revision": current_spec.revision,
-                    "current_pointer": current_pointer,
-                }
+            return _post_hotload_replay_superseded_response(
+                response=response,
+                receipt=receipt,
+                spec=spec,
+                current_spec=current_spec,
+                current_pointer=current_pointer,
+                phase="before_prepare",
+                working_dir=working_dir,
             )
-            response["post_hotload_view_replay_prepare"] = receipt
-            response.update(
-                {
-                    "ok": False,
-                    "partial_success": True,
-                    "status": "hotload_completed_view_replay_prepare_superseded",
-                    "post_hotload_view_replay_prepare_warning": (
-                        "The structure hot-load completed, but replay preparation was "
-                        "blocked because the current revision advanced."
-                    ),
-                }
-            )
-            return response
 
         audit = response.get("view_audit")
         if not isinstance(audit, dict) or (
@@ -47366,10 +48031,52 @@ def _prepare_view_replay_after_high_level_hotload(
             project_id=spec.project_id,
             revision=spec.revision,
         )
+        current_spec, current_pointer = store.resolve_current(spec.project_id)
+        if current_spec.revision != spec.revision:
+            return _post_hotload_replay_superseded_response(
+                response=response,
+                receipt=receipt,
+                spec=spec,
+                current_spec=current_spec,
+                current_pointer=current_pointer,
+                phase="during_prepare",
+                working_dir=working_dir,
+                prepared=prepared,
+            )
+        prepared_project_id = str(prepared.get("project_id") or "")
+        try:
+            prepared_revision = int(prepared.get("revision"))
+        except (TypeError, ValueError) as exc:
+            raise GuiError(
+                "post-hotload replay preparation returned an invalid revision identity"
+            ) from exc
+        expected_manifest_path = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / "gui_view_replay_manifest.json"
+        ).resolve()
+        returned_manifest_path = Path(
+            str(prepared.get("manifest_path") or "")
+        ).expanduser().resolve()
+        if (
+            prepared_project_id != spec.project_id
+            or prepared_revision != spec.revision
+            or returned_manifest_path != expected_manifest_path
+            or not returned_manifest_path.is_file()
+        ):
+            raise GuiError(
+                "post-hotload replay preparation did not return the exact immutable "
+                "project/revision manifest"
+            )
         receipt.update(
             {
                 "status": "prepared",
                 "prepared": True,
+                "prepared_revision": spec.revision,
+                "current_revision": current_spec.revision,
+                "current_revision_verified_after_prepare": True,
+                "replay_continuation_published": True,
                 "manifest_path": prepared.get("manifest_path"),
                 "gui_log_path": prepared.get("gui_log_path"),
                 "replay_status": prepared.get("replay_status"),
@@ -47398,6 +48105,12 @@ def _prepare_view_replay_after_high_level_hotload(
         response["view_replay_prepared"] = True
         response["view_replay_continuation"] = prepared.get(
             "replay_continuation"
+        )
+        _attach_post_hotload_replay_action_coordination(
+            response=response,
+            prepared=prepared,
+            spec=spec,
+            working_dir=working_dir,
         )
         return response
     except Exception as exc:

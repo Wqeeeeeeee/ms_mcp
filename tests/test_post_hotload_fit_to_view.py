@@ -272,8 +272,8 @@ class _LiveGui:
             raise RuntimeError("view replay preparation unavailable")
         manifest_path = (
             self.workspace
-            / "outputs"
             / project_id
+            / "outputs"
             / f"r{revision:03d}"
             / "gui_view_replay_manifest.json"
         )
@@ -302,8 +302,17 @@ class _LiveGui:
             "gui_input_required": True,
             "needs_user_confirmation": True,
             "safe_to_call_without_confirmation": False,
+            "payload_hint": {
+                "project_id": project_id,
+                "revision": revision,
+                "view_name": next_view,
+                "execution_mode": "preview",
+            },
+            "payload_hint_is_directly_callable": True,
         }
         return {
+            "project_id": project_id,
+            "revision": revision,
             "manifest_path": str(manifest_path),
             "gui_log_path": str(manifest_path.with_name("gui_operations.jsonl")),
             "replay_status": "prepared",
@@ -324,6 +333,7 @@ class _LiveGui:
                 "continuation_status": continuation["status"],
                 "recommended_tool": continuation["recommended_mcp_tool"],
                 "recommended_action": continuation["recommended_action"],
+                "payload_hint": continuation["payload_hint"],
                 "payload_hint_is_directly_callable": True,
                 "needs_user_confirmation": True,
                 "safe_to_call_without_confirmation": False,
@@ -332,6 +342,12 @@ class _LiveGui:
                 "status": "resolved",
                 "resolved_tool": continuation["recommended_mcp_tool"],
                 "resolved_action": continuation["recommended_action"],
+                "safety_gate": {
+                    "automatic_replay_allowed": True,
+                    "structure_mutation_allowed": False,
+                    "revision_creation_allowed": False,
+                    "record_tool_call_ready": False,
+                },
             },
         }
 
@@ -834,7 +850,42 @@ def test_post_hotload_view_replay_executes_open_fit_then_prepares_exact_views(
     assert result["view_replay_continuation"]["status"] == (
         "automatic_recipe_ready"
     )
+    assert prepare["current_revision_verified_after_prepare"] is True
+    assert prepare["replay_continuation_published"] is True
+    assert prepare["visual_diagnostics_action_published"] is True
     assert gui.prepare_transaction is None
+
+    modeling_action = result["next_action_plan"]
+    assert modeling_action["action_id"] == "continue_live_modeling"
+    assert result["modeling_next_action_plan"]["action_id"] == (
+        modeling_action["action_id"]
+    )
+    visual_action = result["visual_diagnostics_next_action_plan"]
+    assert visual_action["project_id"] == project_id
+    assert visual_action["revision"] == 0
+    assert visual_action["action_scope"] == "visual_diagnostics"
+    assert visual_action["recommended_tool"] == (
+        "material_studio_gui_execute_view_replay"
+    )
+    assert visual_action["payload_hint"] == {
+        "project_id": project_id,
+        "revision": 0,
+        "view_name": "front",
+        "execution_mode": "preview",
+        "working_dir": str(tmp_path),
+    }
+    coordinated = result["coordinated_next_action_plan"]
+    assert coordinated["primary_track"] == "visual_diagnostics"
+    assert coordinated["next_action_plan_preserved"] is True
+    assert [
+        step["track"] for step in coordinated["recommended_sequence"]
+    ] == ["visual_diagnostics", "modeling"]
+    assert result["next_action_tracks"][
+        "visual_diagnostics_action_does_not_clear_modeling_action"
+    ] is True
+    assert result["next_action_tracks"][
+        "next_action_plan_preserved_as_modeling_authority"
+    ] is True
 
     action_names = [name for name, _ in gui.calls]
     assert action_names.index("open_structure") < action_names.index("fit_to_view")
@@ -856,6 +907,181 @@ def test_post_hotload_view_replay_executes_open_fit_then_prepares_exact_views(
         "automatic_recipe_ready"
     )
     assert compact_prepare["recipe_contract"]["status"] == "current"
+    assert compact["next_action_plan"]["action_id"] == "continue_live_modeling"
+    assert compact["visual_diagnostics_next_action_plan"]["action_id"] == (
+        "preview_gui_view_replay"
+    )
+    assert compact["coordinated_next_action_plan"][
+        "recommended_sequence"
+    ] == coordinated["recommended_sequence"]
+    assert compact["next_action_tracks"]["recommended_sequence_ref"] == (
+        "coordinated_next_action_plan.recommended_sequence"
+    )
+    compact_size = len(json.dumps(compact, ensure_ascii=False).encode("utf-8"))
+    assert compact_size == compact["response_compaction"]["response_bytes"]
+    assert compact_size < server.COMPACT_RESPONSE_MAX_BYTES
+    assert compact["response_compaction"]["semantic_core_preserved"] is True
+
+
+def test_post_hotload_view_replay_rejects_continuation_when_revision_advances_during_prepare(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "post_hotload_replay_prepare_race"
+    gui = _LiveGui(tmp_path)
+    original_prepare = gui.prepare_view_replay
+
+    def prepare_then_advance(
+        audit: dict,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> dict:
+        prepared = original_prepare(
+            audit,
+            project_id=project_id,
+            revision=revision,
+        )
+        store = ProjectStore(tmp_path)
+        current = store.load_current(project_id)
+        store.save_revision(
+            project_id,
+            current,
+            user_text="concurrent revision during replay preparation",
+            action="concurrent_test_revision",
+            expected_revision=revision,
+        )
+        return prepared
+
+    monkeypatch.setattr(gui, "prepare_view_replay", prepare_then_advance)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_live_modeling_request(
+        "Hot-load this silicon model and export front and top view parameters.",
+        spec=_silicon_spec(project_id).model_dump(mode="json"),
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is False
+    assert result["partial_success"] is True
+    assert result["status"] == (
+        "hotload_completed_view_replay_prepare_superseded"
+    )
+    assert result["result"]["success"] is True
+    assert Path(result["planned_outputs"]["structure"]).exists()
+    assert result["current_revision"] == 1
+    prepare = result["post_hotload_view_replay_prepare"]
+    assert prepare["status"] == "current_revision_advanced_during_prepare"
+    assert prepare["prepared"] is False
+    assert prepare["prepared_revision"] == 0
+    assert prepare["superseded_revision"] == 0
+    assert prepare["current_revision"] == 1
+    assert prepare["current_revision_verified_after_prepare"] is False
+    assert prepare["preparation_completed_for_superseded_revision"] is True
+    assert prepare["historical_manifest_preserved"] is True
+    assert Path(prepare["historical_manifest_path"]).exists()
+    assert prepare["replay_continuation_published"] is False
+    assert prepare["visual_diagnostics_action_published"] is False
+    assert prepare["followup_tool"] == "material_studio_live_project_status"
+    assert prepare["followup_payload"] == {
+        "project_id": project_id,
+        "include_gui_status": True,
+        "response_mode": "compact",
+        "working_dir": str(tmp_path),
+    }
+    assert "view_replay_continuation" not in result
+    assert "visual_diagnostics_next_action_plan" not in result
+    assert "coordinated_next_action_plan" not in result
+    assert result["view_replay_prepared"] is False
+    assert result["next_action_plan"]["action_id"] == (
+        "refresh_current_project_after_replay_prepare_superseded"
+    )
+    assert result["next_action_plan"]["revision"] == 1
+    assert result["next_action_plan"]["recommended_tool"] == (
+        "material_studio_live_project_status"
+    )
+    assert result["next_action_plan"]["needs_user_confirmation"] is False
+    assert [item["revision"] for item in ProjectStore(tmp_path).list_history(project_id)] == [
+        0,
+        1,
+    ]
+
+    compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
+    assert "view_replay_continuation" not in compact
+    assert "visual_diagnostics_next_action_plan" not in compact
+    assert compact["next_action_plan"]["revision"] == 1
+    assert compact["post_hotload_view_replay_prepare"][
+        "historical_manifest_preserved"
+    ] is True
+    assert compact["response_compaction"]["semantic_core_preserved"] is True
+
+    resumed = server.material_studio_live_project_status(
+        project_id=project_id,
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert resumed["ok"] is True
+    assert resumed["revision"] == 1
+    assert resumed["gui_view_replay"]["manifest_exists"] is False
+
+
+def test_post_hotload_view_replay_compact_budget_references_large_external_recipe(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "post_hotload_replay_large_recipe"
+    gui = _LiveGui(tmp_path)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    result = server.material_studio_live_modeling_request(
+        "Hot-load this silicon model and export front and top view parameters.",
+        spec=_silicon_spec(project_id).model_dump(mode="json"),
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        take_snapshot=False,
+        response_mode="full",
+    )
+
+    external_recipe = {
+        "project_id": project_id,
+        "revision": 0,
+        "instructions": "external-observation-step:" + ("x" * 30_000),
+    }
+    continuation = result["view_replay_continuation"]
+    continuation["payload_hint_is_directly_callable"] = False
+    continuation["payload_hint"] = external_recipe
+    continuation["execution_action"] = {
+        "executor": "computer_use",
+        "payload_hint": external_recipe,
+        "payload_hint_is_directly_callable": False,
+        "gui_input_required": True,
+        "post_action_observation_required": True,
+    }
+    visual_action = result["visual_diagnostics_next_action_plan"]
+    visual_action["payload_hint_is_directly_callable"] = False
+    visual_action["payload_hint"] = external_recipe
+    result["coordinated_next_action_plan"]["payload_hint"] = external_recipe
+
+    compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
+    compact_size = len(json.dumps(compact, ensure_ascii=False).encode("utf-8"))
+    assert compact_size == compact["response_compaction"]["response_bytes"]
+    assert compact_size < server.COMPACT_RESPONSE_MAX_BYTES
+    assert compact["response_compaction"]["hard_budget_applied"] is True
+    assert compact["response_compaction"]["semantic_core_preserved"] is True
+    assert "view_replay_continuation.recipe_detail" in compact[
+        "response_compaction"
+    ]["omitted_fields"]
+    assert compact["view_replay_continuation"]["continuation_detail_ref"] == (
+        "full_response.view_replay_continuation"
+    )
+    assert compact["visual_diagnostics_next_action_plan"]["payload_hint_ref"] == (
+        "full_response.view_replay_continuation.execution_action.payload_hint"
+    )
+    assert compact["coordinated_next_action_plan"]["payload_hint_ref"] == (
+        "visual_diagnostics_next_action_plan.payload_hint_ref"
+    )
 
 
 def test_post_hotload_view_replay_explicit_false_overrides_inferred_views(

@@ -8589,6 +8589,31 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy[
         "post_hotload_prepare_runs_after_gui_report_lock_release"
     ] is True
+    assert view_replay_policy["post_hotload_prepare_current_revision_checks"] == [
+        "before_prepare",
+        "after_prepare_return",
+    ]
+    assert view_replay_policy["post_hotload_superseded_manifest_policy"] == (
+        "preserve_as_historical_without_current_continuation"
+    )
+    assert view_replay_policy["post_hotload_supersession_followup_tool"] == (
+        "material_studio_live_project_status"
+    )
+    assert view_replay_policy["post_hotload_visual_action_plan_field"] == (
+        "visual_diagnostics_next_action_plan"
+    )
+    assert view_replay_policy["post_hotload_modeling_action_plan_field"] == (
+        "next_action_plan"
+    )
+    assert view_replay_policy["post_hotload_coordinated_action_plan_field"] == (
+        "coordinated_next_action_plan"
+    )
+    assert view_replay_policy[
+        "post_hotload_visual_action_never_replaces_modeling_action"
+    ] is True
+    assert view_replay_policy[
+        "post_hotload_direct_continuations_are_workspace_bound"
+    ] is True
     assert view_replay_policy[
         "post_hotload_prepare_rewrites_modeling_report"
     ] is False

@@ -199,6 +199,44 @@ def test_default_beta_ga2o3_contact_scenario_requires_contact_surface_and_view_d
     assert "semiconductor_surface_polarity_csv" in expectation["files"]
 
 
+def test_default_sic_3c_polar_surface_and_contact_scenarios_are_discoverable() -> None:
+    si_slab = live_smoke.default_request_for_scenario("sic_3c_slab")
+    c_slab = live_smoke.default_request_for_scenario("sic_3c_c_face_slab", hotload=True)
+    si_contact = live_smoke.default_request_for_scenario("sic_3c_contact")
+    c_contact = live_smoke.default_request_for_scenario("sic_3c_c_face_contact", hotload=True)
+
+    assert "3C-SiC(001) Si-face slab" in si_slab
+    assert "3C-SiC(00-1) C-face slab" in c_slab
+    assert "Au/3C-SiC(001) Si-face Schottky contact" in si_contact
+    assert "Au/3C-SiC(00-1) C-face Schottky contact" in c_contact
+    assert "hot-load it in Materials Studio" in c_slab
+    assert "hot-load it in Materials Studio" in c_contact
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_slab"] == (
+        "silicon_carbide_3c_001_si_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_c_face_slab"] == (
+        "silicon_carbide_3c_00m1_c_face_slab"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_contact"] == (
+        "metal_silicon_carbide_3c_001_si_face_schottky_contact"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_c_face_contact"] == (
+        "metal_silicon_carbide_3c_00m1_c_face_schottky_contact"
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_slab"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_c_face_slab"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_6h_slab"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_contact"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_4h_contact"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_c_face_contact"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_4h_contact"]
+    )
+
+
 def test_default_sic_4h_contact_scenario_requires_contact_surface_and_view_diagnostics() -> None:
     preview = live_smoke.default_request_for_scenario("sic_4h_contact")
     hotload = live_smoke.default_request_for_scenario("sic_4h_contact", hotload=True)

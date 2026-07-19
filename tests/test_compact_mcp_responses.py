@@ -225,6 +225,9 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["target_response_bytes"] == server.COMPACT_RESPONSE_TARGET_BYTES
     assert compact["max_response_bytes"] == server.COMPACT_RESPONSE_MAX_BYTES
     assert compact["full_detail_hint"]["arguments"] == {"response_mode": "full"}
+    assert compact["schemas"]["model_spec"] == "model_spec.schema.json"
+    assert compact["schemas"]["semantic_patch"] == "patch_spec.schema.json"
+    assert all(isinstance(filename, str) for filename in compact["schemas"].values())
     assert compact["recommended_kpoint_remediation_action_id"] == (
         "apply_recommended_semiconductor_kpoint_grid"
     )
@@ -279,6 +282,20 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["natural_language"]["patch_command_count"] == len(
         compact["natural_language"]["patch_commands"]
     )
+    assert compact["natural_language"][
+        "patch_commands_require_existing_project_default"
+    ] is True
+    assert compact["natural_language"]["patch_command_project_requirement_overrides"] == {
+        "commensurate_tmd_heterobilayer": False,
+    }
+    assert all(
+        "requires_existing_project" not in command
+        for command in compact["natural_language"]["patch_commands"]
+    )
+    assert compact["natural_language"][
+        "session_commands_require_existing_project_default"
+    ] is True
+    assert "session_command_project_requirement_overrides" not in compact["natural_language"]
     assert compact["natural_language"][
         "cjk_semiconductor_hotload_example_count"
     ] >= 1

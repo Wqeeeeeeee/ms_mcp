@@ -192,14 +192,16 @@ and the graphene-vacancy example. Coherent Si/Ge(001) diamond-cubic,
 Si/SiO2(100), SiO2/4H-SiC, and SiO2/6H-SiC semiconductor-oxide interfaces on explicit Si or C faces,
 Al/SiO2/Si MOS capacitor gate-stack plus Al/SiO2/4H-SiC and Al/SiO2/6H-SiC MOS capacitor scaffolds on explicit Si or C faces,
 TiN/HfO2/Si high-k MOS capacitor gate-stack, Cu/SiO2(100) metal-oxide,
-Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), and metal/4H-SiC or
-metal/6H-SiC Schottky contacts on an explicit `(0001)` Si-face or `(000-1)` C-face,
+Al/Si(100), metal/ZnO(0001), metal/beta-Ga2O3(010), metal/3C-SiC on an explicit
+`(001)` Si-face or `(00-1)` C-face, and metal/4H-SiC or metal/6H-SiC Schottky
+contacts on an explicit `(0001)` Si-face or `(000-1)` C-face,
 GaAs/AlAs(001) zinc-blende, Al0.25Ga0.75N/GaN(0001), AlN/GaN(0001), and
 In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
-InN(0001), ZnO(0001), hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as
+InN(0001), ZnO(0001), hydrogen-backed 3C-SiC `(001)` Si/C-face slabs,
+hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as
 "build silicon crystal", "build a silicon p-n junction", "build GaAs zinc blende", "build AlAs zinc blende", "build AlP zinc blende", "build AlSb zinc blende", "build GaP zinc blende", "build GaSb zinc blende", "build InP zinc blende", "build InAs zinc blende", "build InSb zinc blende", "build GaN wurtzite",
 "build AlN wurtzite", "build InN wurtzite", "build 3C-SiC zinc blende",
 "build 6H-SiC crystal", "build cubic BN zinc blende", "build silicon carbide", "build ZnO wurtzite", "build CdTe zinc blende",
@@ -219,6 +221,8 @@ InN(0001), ZnO(0001), hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backe
 "build a Cu/SiO2 interface",
 "build an Al/Si Schottky contact", "build an Au/ZnO Schottky contact",
 "build an Au/beta-Ga2O3(010) Schottky contact",
+"build an Au/3C-SiC(001) Si-face Schottky contact",
+"build an Au/3C-SiC(00-1) C-face Schottky contact",
 "build an Au/4H-SiC(0001) Si-face Schottky contact",
 "build an Au/4H-SiC(000-1) C-face Schottky contact",
 "build an Au/6H-SiC(0001) Si-face Schottky contact",
@@ -233,10 +237,40 @@ InN(0001), ZnO(0001), hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backe
 "build AlN(0001) surface slab",
 "build InN(0001) surface slab",
 "build GaAs(001) surface", or
+"build a 3C-SiC(001) Si-face slab",
+"build a 3C-SiC(00-1) C-face slab",
 "build a 4H-SiC(000-1) C-face slab",
 "build a 6H-SiC(0001) Si-face slab", or
 "build ZnO(0001) surface slab" can be routed
 directly through `material_studio_live_modeling_request`.
+
+The 3C-SiC polar workflow is programmatic and preview-first. It starts from the
+reviewed conventional F-43m zinc-blende cell and repeats it `1x1x2` along the
+current `c` axis. Preserving the source layer order creates the
+`3C-SiC(00-1) C-face` scaffold; reflecting that order creates the
+`3C-SiC(001) Si-face` scaffold. Each model contains four Si-C bilayers in a
+centered vacuum cell. The two bottom surface atoms each have two missing
+tetrahedral bonds, so the constructor adds four H atoms along those missing
+bond directions. The exposed top face remains ideal, unreconstructed, and
+unrelaxed, with four expected dangling bonds retained for diagnostics.
+
+Each explicit 3C-SiC face also has a deterministic metal-contact start. The
+first two-atom metal layer follows the exposed semiconductor registry and the
+second shifted layer records contact thickness. These are visualization and
+contact-geometry scaffolds, not reconstructed or relaxed interfaces. Bulk
+identity and lattice metadata cite
+[DOI 10.1107/S0021889812049151](https://doi.org/10.1107/S0021889812049151),
+while termination and reconstruction risk cite
+[DOI 10.1016/S0039-6028(99)00463-X](https://doi.org/10.1016/S0039-6028(99)00463-X).
+The 4.0 eV electron affinity and 2.36 eV band gap are metadata-only screening
+inputs from [DOI 10.1134/S1063782607060152](https://doi.org/10.1134/S1063782607060152)
+and [DOI 10.1002/eem2.12678](https://doi.org/10.1002/eem2.12678); neither they
+nor the derived Schottky-Mott values are calculation results.
+
+An explicit 3C-SiC surface or contact request must name exactly one face.
+Unoriented requests, requests that name both faces, and 3C-SiC oxide, MOS,
+heterostructure, or device geometries outside this reviewed set fail closed.
+They never fall back to 4H-SiC, 6H-SiC, or silicon.
 
 The 4H-SiC polar workflow is programmatic and preview-first. It starts from the
 P63mc hP8 bulk example and generates centered `2x2` four-bilayer slabs for

@@ -190,6 +190,36 @@ SCENARIO_REQUESTS = {
             "export contact and all-view diagnostics and check whether the model is normal."
         ),
     },
+    "sic_3c_slab": {
+        "preview": "Build a 3C-SiC(001) Si-face slab and export surface and all-view diagnostics.",
+        "hotload": (
+            "Build a 3C-SiC(001) Si-face slab and hot-load it in Materials Studio, "
+            "export surface and all-view diagnostics and check whether the model is normal."
+        ),
+    },
+    "sic_3c_c_face_slab": {
+        "preview": "Build a 3C-SiC(00-1) C-face slab and export surface and all-view diagnostics.",
+        "hotload": (
+            "Build a 3C-SiC(00-1) C-face slab and hot-load it in Materials Studio, "
+            "export surface and all-view diagnostics and check whether the model is normal."
+        ),
+    },
+    "sic_3c_contact": {
+        "preview": "Build an Au/3C-SiC(001) Si-face Schottky contact and export contact and view diagnostics.",
+        "hotload": (
+            "Build an Au/3C-SiC(001) Si-face Schottky contact and hot-load it in Materials Studio, "
+            "export contact and all-view diagnostics and check whether the model is normal."
+        ),
+    },
+    "sic_3c_c_face_contact": {
+        "preview": (
+            "Build an Au/3C-SiC(00-1) C-face Schottky contact and export contact and view diagnostics."
+        ),
+        "hotload": (
+            "Build an Au/3C-SiC(00-1) C-face Schottky contact and hot-load it in Materials Studio, "
+            "export contact and all-view diagnostics and check whether the model is normal."
+        ),
+    },
     "sic_4h_contact": {
         "preview": "Build an Au/4H-SiC(0001) Si-face Schottky contact and export contact and view diagnostics.",
         "hotload": (
@@ -272,6 +302,10 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
     "p_gan_hemt": "aluminum_gallium_nitride_gallium_nitride_0001_heterostructure_p_gan_gate",
     "beta_ga2o3_contact": "metal_beta_gallium_oxide_010_schottky_contact",
     "sic_mos": "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor",
+    "sic_3c_slab": "silicon_carbide_3c_001_si_face_slab",
+    "sic_3c_c_face_slab": "silicon_carbide_3c_00m1_c_face_slab",
+    "sic_3c_contact": "metal_silicon_carbide_3c_001_si_face_schottky_contact",
+    "sic_3c_c_face_contact": "metal_silicon_carbide_3c_00m1_c_face_schottky_contact",
     "sic_4h_contact": "metal_silicon_carbide_4h_0001_schottky_contact",
     "sic_4h_c_face_contact": "metal_silicon_carbide_4h_000m1_c_face_schottky_contact",
     "sic_4h_slab": "silicon_carbide_4h_0001_si_face_slab",
@@ -693,6 +727,10 @@ SCENARIO_EXPECTATIONS = {
 }
 
 for _target_scenario, _source_scenario in (
+    ("sic_3c_slab", "sic_6h_slab"),
+    ("sic_3c_c_face_slab", "sic_6h_slab"),
+    ("sic_3c_contact", "sic_4h_contact"),
+    ("sic_3c_c_face_contact", "sic_4h_contact"),
     ("sic_4h_c_face_contact", "sic_4h_contact"),
     ("sic_4h_slab", "sic_6h_slab"),
     ("sic_4h_c_face_slab", "sic_6h_slab"),

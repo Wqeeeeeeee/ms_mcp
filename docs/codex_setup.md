@@ -631,6 +631,18 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
+For preview-only 3C-SiC polar-surface and Schottky-contact acceptance without
+touching the GUI, use `sic_3c_slab`, `sic_3c_c_face_slab`, `sic_3c_contact`, or
+`sic_3c_c_face_contact`. For example:
+`ms-mcp-live-smoke --scenario sic_3c_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_3c_slab`
+or
+`ms-mcp-live-smoke --scenario sic_3c_c_face_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_3c_c_face_contact`.
+The slab checks require four-bilayer polarity and termination diagnostics; the
+contact checks additionally require material sequence, declared-versus-measured
+gap, metal thickness, and metadata-only barrier preflight. The ideal exposed
+surface and metal interface remain unrelaxed review scaffolds, so a successful
+smoke run does not establish calculation readiness.
+
 For preview-only 4H-SiC polar-surface acceptance without touching the GUI, use
 `sic_4h_slab`, `sic_4h_c_face_slab`, `sic_4h_contact`,
 `sic_4h_c_face_contact`, `sic_4h_oxide_interface`,

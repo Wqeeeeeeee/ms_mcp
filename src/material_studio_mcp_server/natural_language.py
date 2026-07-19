@@ -1516,6 +1516,14 @@ GAAS_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_gallium_arsenide_001_schottky
 GAN_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_gallium_nitride_0001_schottky_contact"
 ZNO_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_zinc_oxide_0001_schottky_contact"
 BETA_GA2O3_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_beta_gallium_oxide_010_schottky_contact"
+SIC_3C_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_3c_001_si_face_slab"
+SIC_3C_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID = "silicon_carbide_3c_00m1_c_face_slab"
+SIC_3C_SI_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
+    "metal_silicon_carbide_3c_001_si_face_schottky_contact"
+)
+SIC_3C_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
+    "metal_silicon_carbide_3c_00m1_c_face_schottky_contact"
+)
 SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_4h_0001_schottky_contact"
 SIC_4H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
     "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
@@ -1576,6 +1584,13 @@ ZNO_INTERNAL_PARAMETER_U = 0.3825
 BETA_GA2O3_ELECTRON_AFFINITY_EV = 4.0
 BETA_GA2O3_BAND_GAP_EV = 4.8
 BETA_GA2O3_CONTACT_CELL_B_ANGSTROM = 32.0
+# Literature screening values used only for 3C-SiC metadata preflight.
+SIC_3C_ELECTRON_AFFINITY_EV = 4.0
+SIC_3C_BAND_GAP_EV = 2.36
+SIC_3C_SURFACE_CELL_C_ANGSTROM = 28.0
+SIC_3C_CONTACT_CELL_C_ANGSTROM = 32.0
+SIC_3C_SILICON_HYDROGEN_BOND_ANGSTROM = 1.48
+SIC_3C_CARBON_HYDROGEN_BOND_ANGSTROM = 1.09
 # Device-screening values for 4H-SiC; these are metadata, not calculated results.
 SIC_4H_ELECTRON_AFFINITY_EV = 3.6
 SIC_4H_BAND_GAP_EV = 3.26
@@ -1675,6 +1690,62 @@ class SicSurfaceAssembly:
     semiconductor_bottom_fractional: float
     semiconductor_top_fractional: float
     semiconductor_thickness_angstrom: float
+
+
+@dataclass(frozen=True)
+class Sic3cSurfaceFaceProfile:
+    face: str
+    orientation: str
+    plane_slug: str
+    reflect_bulk_z: bool
+    bottom_element: str
+    top_element: str
+    slab_template_id: str
+    contact_template_id: str
+    axis_reorientation: str
+
+
+@dataclass(frozen=True)
+class Sic3cSurfaceAssembly:
+    source_spec: ModelSpec
+    source_model: CrystalSpec
+    profile: Sic3cSurfaceFaceProfile
+    cell_c: float
+    lattice_a: float
+    lattice_b: float
+    semiconductor_atoms: tuple[BasisAtomSpec, ...]
+    atoms: tuple[BasisAtomSpec, ...]
+    top_registry: tuple[tuple[float, float], ...]
+    semiconductor_bottom_fractional: float
+    semiconductor_top_fractional: float
+    semiconductor_thickness_angstrom: float
+    back_hydrogen_bond_angstrom: float
+
+
+SIC_3C_SURFACE_FACE_PROFILES: dict[str, Sic3cSurfaceFaceProfile] = {
+    "Si-face": Sic3cSurfaceFaceProfile(
+        face="Si-face",
+        orientation="3C-SiC(001) Si-face",
+        plane_slug="001",
+        reflect_bulk_z=True,
+        bottom_element="C",
+        top_element="Si",
+        slab_template_id=SIC_3C_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_3C_SI_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        axis_reorientation="bulk_fractional_z_reflected_to_place_3C-SiC_001_Si_face_at_top",
+    ),
+    "C-face": Sic3cSurfaceFaceProfile(
+        face="C-face",
+        orientation="3C-SiC(00-1) C-face",
+        plane_slug="00m1",
+        reflect_bulk_z=False,
+        bottom_element="Si",
+        top_element="C",
+        slab_template_id=SIC_3C_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
+        contact_template_id=SIC_3C_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        axis_reorientation="bulk_fractional_z_preserved_to_place_3C-SiC_00m1_C_face_at_top",
+    ),
+}
 
 
 SIC_4H_SURFACE_FACE_PROFILES: dict[str, SicSurfaceFaceProfile] = {
@@ -2165,6 +2236,128 @@ def supported_semiconductor_template_profiles() -> list[dict[str, Any]]:
     return profiles
 
 
+def _sic_3c_polar_virtual_template_profiles() -> list[dict[str, Any]]:
+    common = {
+        "base_template_id": "silicon_carbide_3c_zincblende",
+        "generated_by_tool": "material_studio_live_modeling_request",
+        "model_type": "crystal",
+        "polytype": "3C",
+        "surface_axis": "c",
+        "simulation_module": "CASTEP",
+        "simulation_task": "Energy",
+        "execute_backend": "crystal_cif_materialize_for_gui_hotload",
+        "source_references": [
+            "10.1107/S0021889812049151",
+            "10.1016/S0039-6028(99)00463-X",
+            "10.1134/S1063782607060152",
+            "10.1002/eem2.12678",
+        ],
+    }
+    profiles: list[dict[str, Any]] = []
+    for surface_face in ("Si-face", "C-face"):
+        face = SIC_3C_SURFACE_FACE_PROFILES[surface_face]
+        profiles.extend(
+            [
+                {
+                    **common,
+                    "template_id": face.slab_template_id,
+                    "variant_kind": "surface_scaffold",
+                    "response_template_id": face.slab_template_id,
+                    "example_request": f"Build a {face.orientation} slab and export surface diagnostics.",
+                    "terms": [
+                        f"{face.orientation} slab",
+                        f"3C-SiC {surface_face} surface model",
+                        f"3C-SiC {face.plane_slug} slab",
+                    ],
+                    "notes": (
+                        f"Programmatic centered four-bilayer {face.orientation} slab derived from the reviewed "
+                        f"3C zinc-blende cell. Four H atoms saturate the two missing tetrahedral bonds on each "
+                        f"{face.bottom_element}-terminated back-surface atom. The exposed face remains ideal, "
+                        "unreconstructed, and unrelaxed."
+                    ),
+                    "model_name": face.slab_template_id,
+                    "structure_family": f"cubic {face.orientation} surface slab scaffold",
+                    "materials": ["3C-SiC", "H"],
+                    "surface_orientation": face.orientation,
+                    "default_diagnostic_focuses": _unique_preserving_order(
+                        [
+                            "semiconductor_structure_health",
+                            "surface_slab_polarity",
+                            "electronic_structure_preflight",
+                            "view_quality",
+                        ]
+                    ),
+                    "required_summary_keys": [
+                        "surface_termination_summary",
+                        "surface_polarity_summary",
+                        "surface_orientation_summary",
+                        "calculation_preflight_summary",
+                    ],
+                    "required_csv_keys": [
+                        "semiconductor_surface_termination_csv",
+                        "semiconductor_surface_polarity_csv",
+                        "semiconductor_surface_model_csv",
+                        "semiconductor_calculation_preflight_csv",
+                        "view_quality_csv",
+                    ],
+                },
+                {
+                    **common,
+                    "template_id": face.contact_template_id,
+                    "variant_kind": "interface_scaffold",
+                    "response_template_id": face.contact_template_id,
+                    "example_request": (
+                        f"Build an Au/{face.orientation} Schottky contact and export contact diagnostics."
+                    ),
+                    "terms": [
+                        f"Au/{face.orientation} Schottky contact",
+                        f"Pt/{face.orientation} Schottky contact",
+                        f"metal/3C-SiC {surface_face} Schottky contact",
+                        f"3C-SiC {face.plane_slug} metal-semiconductor contact",
+                    ],
+                    "notes": (
+                        f"Programmatic metal/{face.orientation} pre-relaxation scaffold derived from the "
+                        "four-bilayer surface. The first metal layer follows the exposed semiconductor registry, "
+                        "the second layer is a thickness marker, and Schottky-Mott values remain metadata-only."
+                    ),
+                    "model_name": face.contact_template_id,
+                    "structure_family": "cubic 3C-SiC metal semiconductor schottky contact scaffold",
+                    "materials": ["3C-SiC", "Au/Pt/Al/Ti/Ni/Cu/Mo/W/Pd/Ag"],
+                    "interface": "metal/3C-SiC",
+                    "interface_orientation": f"metal contact / {face.orientation}",
+                    "surface_orientation": face.orientation,
+                    "default_diagnostic_focuses": _unique_preserving_order(
+                        [
+                            "semiconductor_structure_health",
+                            "metal_semiconductor_contact",
+                            "band_alignment",
+                            "epitaxial_strain_preflight",
+                            "surface_slab_polarity",
+                            "electronic_structure_preflight",
+                            "view_quality",
+                        ]
+                    ),
+                    "required_summary_keys": [
+                        "metal_semiconductor_contact_summary",
+                        "interface_profile_summary",
+                        "interface_quality_summary",
+                        "surface_polarity_summary",
+                        "calculation_preflight_summary",
+                    ],
+                    "required_csv_keys": [
+                        "semiconductor_contact_csv",
+                        "semiconductor_interface_profile_csv",
+                        "semiconductor_interface_quality_csv",
+                        "semiconductor_surface_polarity_csv",
+                        "semiconductor_calculation_preflight_csv",
+                        "view_quality_csv",
+                    ],
+                },
+            ]
+        )
+    return profiles
+
+
 def _sic_c_face_schottky_virtual_template_profile(
     profile: SicSurfaceFaceProfile,
 ) -> dict[str, Any]:
@@ -2577,6 +2770,7 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
     sapphire_base_template_id = "alpha_alumina_sapphire_substrate"
     sapphire_base = base_profiles.get(sapphire_base_template_id, {})
     return [
+        *_sic_3c_polar_virtual_template_profiles(),
         *_sic_4h_polar_virtual_template_profiles(),
         *_sic_6h_c_face_virtual_template_profiles(),
         {
@@ -5331,10 +5525,31 @@ def _mentions_sic_4h(text: str) -> bool:
     )
 
 
+def _mentions_sic_3c(text: str) -> bool:
+    """Return whether a request explicitly names the cubic 3C-SiC polytype."""
+
+    return bool(
+        re.search(
+            r"(?<![A-Za-z0-9])3c[-\s]*(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)(?![A-Za-z0-9])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)[-\s]*3c(?![A-Za-z0-9])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:cubic|zinc[-\s]?blende)\s+(?:sic|silicon[-\s]+carbide)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or "\u7acb\u65b9\u78b3\u5316\u7845" in text
+    )
+
+
 def _mentions_unqualified_sic(text: str) -> bool:
-    if _mentions_sic_4h(text) or _mentions_sic_6h(text):
-        return False
-    if re.search(r"(?<![A-Za-z0-9])3c[-\s]*(?:sic|silicon[-\s]+carbide)", text, flags=re.IGNORECASE):
+    if _mentions_sic_3c(text) or _mentions_sic_4h(text) or _mentions_sic_6h(text):
         return False
     return bool(
         re.search(r"(?<![A-Za-z0-9])(?:sic|silicon[-\s]+carbide)(?![A-Za-z0-9])", text, flags=re.IGNORECASE)
@@ -5418,7 +5633,7 @@ def _infer_unsupported_metal_semiconductor_contact_request(text: str) -> Natural
         template_id=None,
         notes=[
             "A metal/semiconductor contact request named a non-silicon semiconductor host.",
-            "The local deterministic Schottky contact templates currently cover Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), both polar 4H-SiC and 6H-SiC basal faces, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001) scaffold geometry; other hosts need a reviewed structure.",
+            "The local deterministic Schottky contact templates currently cover Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), explicit Si- and C-terminated 3C-SiC(001) surfaces, both polar 4H-SiC and 6H-SiC basal faces, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001) scaffold geometry; other hosts need a reviewed structure.",
             "Provide a reviewed ModelSpec or SemanticPatch for this material-specific contact before live loading or execution.",
         ],
     )
@@ -6384,6 +6599,262 @@ def _sic_explicit_face_termination_requested(text: str) -> bool:
     )
 
 
+def _sic_3c_c_face_requested(text: str) -> bool:
+    return bool(
+        re.search(r"\(\s*0\s*0\s*[-\u2212]\s*1\s*\)", text)
+        or re.search(r"\b00[-\u2212]1\b", text)
+        or re.search(r"\b(?:c[-\s]?face|carbon[-\s]+terminated)\b", text, flags=re.IGNORECASE)
+        or any(term in text for term in ("\u78b3\u9762", "\u78b3\u7ec8\u6b62"))
+    )
+
+
+def _sic_3c_si_face_requested(text: str) -> bool:
+    return bool(
+        re.search(r"\(\s*0\s*0\s*1\s*\)", text)
+        or re.search(r"\b(?:si[-\s]?face|silicon[-\s]+terminated)\b", text, flags=re.IGNORECASE)
+        or any(term in text for term in ("\u7845\u9762", "\u7845\u7ec8\u6b62"))
+    )
+
+
+def _looks_like_sic_3c_surface_geometry_request(text: str) -> bool:
+    if not _mentions_sic_3c(text) or _looks_like_metal_semiconductor_contact_text(text):
+        return False
+    return bool(
+        re.search(r"\bslab\b", text, flags=re.IGNORECASE)
+        or re.search(r"\bsurface\s+(?:structure|model|cell|slab)\b", text, flags=re.IGNORECASE)
+        or re.search(
+            r"\b(?:build|create|construct|generate)\b.{0,96}\bsurface\b"
+            r"(?![-\s]+(?:normal|view|projection|parameter|diagnostic))",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or (
+            bool(re.search(r"\b(?:build|create|construct|generate)\b", text, flags=re.IGNORECASE))
+            and (_sic_3c_si_face_requested(text) or _sic_3c_c_face_requested(text))
+            and not _is_semiconductor_heterostructure_request(text)
+        )
+        or re.search(
+            r"\u8868\u9762(?!\u6cd5\u5411|\u89c6\u56fe|\u89c6\u89d2|\u6295\u5f71|\u53c2\u6570|\u8bca\u65ad)",
+            text,
+        )
+    )
+
+
+def _infer_sic_3c_surface_slab_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    if not _looks_like_sic_3c_surface_geometry_request(text):
+        return None
+    si_face_requested = _sic_3c_si_face_requested(text)
+    c_face_requested = _sic_3c_c_face_requested(text)
+    if si_face_requested and c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "The 3C-SiC slab request names both Si-face and C-face terminations.",
+                "Select exactly one of 3C-SiC(001) Si-face or 3C-SiC(00-1) C-face before preview or live loading.",
+            ],
+        )
+    if not si_face_requested and not c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "A 3C-SiC surface request was recognized, but its (001) termination is ambiguous.",
+                "The reviewed local surface scaffolds require either 3C-SiC(001) Si-face or 3C-SiC(00-1) C-face.",
+                "Request the Si face or C face explicitly; no 4H-SiC, 6H-SiC, or silicon substitute was selected.",
+            ],
+        )
+
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_3C_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.slab_template_id, user_request)
+    model_spec = _sic_3c_surface_slab_spec(
+        surface_face=surface_face,
+        user_request=user_request,
+        project_id=chosen_project_id,
+    )
+    notes = [
+        f"Generated a deterministic centered four-bilayer {profile.orientation} slab.",
+        (
+            f"Two missing tetrahedral bonds per {profile.bottom_element} back-surface atom are hydrogen-saturated; "
+            f"the exposed {profile.top_element} face remains unreconstructed for reviewed relaxation."
+        ),
+    ]
+    confidence = 0.9
+    composite = _apply_new_crystal_composite_operations(user_request, model_spec)
+    if isinstance(composite, NaturalLanguagePlan):
+        return composite
+    if composite is not None:
+        model_spec, diff = composite
+        metadata = {**dict(model_spec.metadata or {}), "nl_composite_operations": diff}
+        model_spec = model_spec.model_copy(update={"revision": 0, "metadata": metadata})
+        notes.append("Applied deterministic surface patch operations during planning: " + ", ".join(diff) + ".")
+        confidence = 0.86
+
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=model_spec.model_dump(mode="json"),
+        confidence=confidence,
+        template_id=profile.slab_template_id,
+        notes=notes,
+    )
+
+
+def _match_sic_3c_contact_metal(text: str) -> str | None:
+    metal = rf"(?P<metal>{ELEMENT_TERM_PATTERN})"
+    host = (
+        r"(?:3c[-\s]*(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)|"
+        r"(?:sic|silicon[-\s]+carbide|\u78b3\u5316\u7845)[-\s]*3c)"
+    )
+    patterns = [
+        rf"(?<![A-Za-z0-9]){metal}\s*/\s*{host}",
+        rf"(?<![A-Za-z0-9]){metal}\s*[- ]\s*{host}",
+        rf"{host}\s*/\s*{metal}(?![A-Za-z0-9])",
+        rf"{host}\s*[- ]\s*{metal}(?![A-Za-z0-9])",
+        rf"(?<![A-Za-z0-9]){metal}\s+(?:on|over)\s+{host}",
+        rf"(?<![A-Za-z0-9]){metal}\s+{host}\s+(?:schottky|metal[-\s]?semiconductor)?\s*(?:contact|diode)\b",
+        rf"{host}\s+(?:schottky|metal[-\s]?semiconductor)?\s*(?:contact|diode).{{0,40}}?\b(?:with|using|use|as)\s+{metal}\b",
+        rf"(?:\u4f7f\u7528|\u91c7\u7528|\u7528|\u4ee5)\s*{metal}\s*(?:\u4f5c\u4e3a)?\s*(?:\u91d1\u5c5e\u63a5\u89e6|\u63a5\u89e6\u91d1\u5c5e|\u7535\u6781).{{0,20}}?{host}",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match is None:
+            continue
+        normalized = _normalize_element(match.group("metal"))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _infer_sic_3c_schottky_contact_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    if not _looks_like_metal_semiconductor_contact_text(text) or not _mentions_sic_3c(text):
+        return None
+    si_face_requested = _sic_3c_si_face_requested(text)
+    c_face_requested = _sic_3c_c_face_requested(text)
+    if si_face_requested and c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "The 3C-SiC Schottky contact request names both the (001) Si-face and (00-1) C-face.",
+                "Choose exactly one terminated surface before generating a contact scaffold.",
+            ],
+        )
+    if not si_face_requested and not c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "A 3C-SiC Schottky contact request was recognized without an explicit (001) termination.",
+                "Choose 3C-SiC(001) Si-face or 3C-SiC(00-1) C-face; neither termination is selected implicitly.",
+            ],
+        )
+
+    metal = _match_sic_3c_contact_metal(text) or "Au"
+    if metal not in CONTACT_METAL_WORK_FUNCTION_EV:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                f"The 3C-SiC Schottky contact scaffold does not have a reviewed work-function preset for {metal}.",
+                "Use one of Al, Ti, Ni, Cu, Mo, W, Pd, Ag, Pt, or Au, or provide a reviewed ModelSpec with explicit metadata.",
+            ],
+        )
+
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_3C_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.contact_template_id, user_request)
+    model_spec = _sic_3c_schottky_contact_spec(
+        metal=metal,
+        surface_face=surface_face,
+        user_request=user_request,
+        project_id=chosen_project_id,
+    )
+    notes = [
+        f"Generated a deterministic centered metal/{profile.orientation} pre-relaxation Schottky contact scaffold.",
+        "The first metal layer follows the exposed semiconductor registry; the second layer is a visualization thickness marker.",
+    ]
+    confidence = 0.89
+    composite = _apply_new_crystal_composite_operations(user_request, model_spec)
+    if isinstance(composite, NaturalLanguagePlan):
+        return composite
+    if composite is not None:
+        model_spec, diff = composite
+        metadata = {**dict(model_spec.metadata or {}), "nl_composite_operations": diff}
+        model_spec = model_spec.model_copy(update={"revision": 0, "metadata": metadata})
+        notes.append("Applied deterministic contact patch operations during planning: " + ", ".join(diff) + ".")
+        confidence = 0.85
+
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=model_spec.model_dump(mode="json"),
+        confidence=confidence,
+        template_id=profile.contact_template_id,
+        notes=notes,
+    )
+
+
+def _infer_unsupported_sic_3c_derived_structure_request(text: str) -> NaturalLanguagePlan | None:
+    if not _mentions_sic_3c(text):
+        return None
+    english_derived_geometry = bool(
+        re.search(
+            r"\b(?:slab|interface|contact|schottky|mos(?:\s+capacitor)?|gate[-\s]+(?:stack|oxide)|heterostructure)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(r"\bsurface\s+(?:structure|model|cell|slab)\b", text, flags=re.IGNORECASE)
+    )
+    cjk_derived_geometry = any(
+        term in text
+        for term in (
+            "\u8868\u9762\u6a21\u578b",
+            "\u8868\u9762\u7ed3\u6784",
+            "\u754c\u9762",
+            "\u63a5\u89e6",
+            "\u8096\u7279\u57fa",
+            "\u6805\u5806",
+            "\u6805\u6c27",
+            "mos\u7535\u5bb9",
+            "\u5f02\u8d28\u7ed3",
+        )
+    )
+    if not english_derived_geometry and not cjk_derived_geometry:
+        return None
+    return NaturalLanguagePlan(
+        kind="unsupported",
+        payload=None,
+        confidence=0.0,
+        template_id=None,
+        notes=[
+            "A 3C-SiC derived-geometry request was recognized outside the reviewed local template set.",
+            "Reviewed 3C-SiC starts cover F-43m bulk plus explicit (001) Si-face and (00-1) C-face four-bilayer slabs and Schottky contacts.",
+            "No 4H-SiC, 6H-SiC, or silicon substitute was selected.",
+            "Provide a reviewed ModelSpec for oxide interfaces, MOS stacks, other surfaces, heterostructures, or device geometries before live loading.",
+        ],
+    )
+
+
 def _looks_like_sic_6h_surface_geometry_request(text: str) -> bool:
     if not _mentions_sic_6h(text) or _looks_like_metal_semiconductor_contact_text(text):
         return False
@@ -7080,6 +7551,505 @@ def _match_sic_6h_contact_metal(text: str) -> str | None:
         if normalized is not None:
             return normalized
     return None
+
+
+def _sic_3c_surface_face_profile(*, surface_face: str) -> Sic3cSurfaceFaceProfile:
+    profile = SIC_3C_SURFACE_FACE_PROFILES.get(surface_face)
+    if profile is None:
+        raise ValueError(f"Unsupported 3C-SiC surface face: {surface_face}")
+    return profile
+
+
+def _sic_3c_back_hydrogen_geometry(element: str) -> tuple[float, tuple[tuple[int, int], ...]]:
+    if element == "Si":
+        return SIC_3C_SILICON_HYDROGEN_BOND_ANGSTROM, ((1, -1), (-1, 1))
+    if element == "C":
+        return SIC_3C_CARBON_HYDROGEN_BOND_ANGSTROM, ((-1, -1), (1, 1))
+    raise ValueError(f"Unsupported 3C-SiC back-surface element for hydrogen passivation: {element}")
+
+
+def _sic_3c_surface_assembly(
+    *,
+    cell_c: float,
+    profile: Sic3cSurfaceFaceProfile,
+) -> Sic3cSurfaceAssembly:
+    source_spec = ModelSpec.model_validate(_load_example("silicon_carbide_3c_zincblende_spec.json"))
+    if not isinstance(source_spec.model, CrystalSpec):
+        raise ValueError("3C-SiC surface source must be a crystal spec")
+
+    source_model = source_spec.model
+    source_c = float(source_model.lattice.c)
+    source_positions: list[tuple[BasisAtomSpec, int, float]] = []
+    for repeat_c in range(2):
+        for source_atom in source_model.basis_atoms:
+            _, _, source_z = _basis_atom_fractional_tuple(source_atom)
+            source_positions.append((source_atom, repeat_c, (source_z + repeat_c) * source_c))
+    source_max_z = max(position[2] for position in source_positions)
+
+    back_hydrogen_bond, _ = _sic_3c_back_hydrogen_geometry(profile.bottom_element)
+    back_vertical_clearance = back_hydrogen_bond / math.sqrt(3.0)
+    semiconductor_atoms: list[BasisAtomSpec] = []
+    for source_atom, repeat_c, source_z_angstrom in source_positions:
+        source_x, source_y, _ = _basis_atom_fractional_tuple(source_atom)
+        oriented_z_angstrom = (
+            source_max_z - source_z_angstrom
+            if profile.reflect_bulk_z
+            else source_z_angstrom
+        )
+        semiconductor_atoms.append(
+            BasisAtomSpec(
+                id=f"{source_atom.id}_z{repeat_c}",
+                element=source_atom.element,
+                fractional=[
+                    _round_fractional(source_x),
+                    _round_fractional(source_y),
+                    _round_fractional((oriented_z_angstrom + back_vertical_clearance) / cell_c),
+                ],
+            )
+        )
+
+    semiconductor_z = [_basis_atom_fractional_tuple(atom)[2] for atom in semiconductor_atoms]
+    semiconductor_bottom = min(semiconductor_z)
+    semiconductor_top = max(semiconductor_z)
+    bottom_atoms = [
+        atom
+        for atom in semiconductor_atoms
+        if abs(_basis_atom_fractional_tuple(atom)[2] - semiconductor_bottom) < 1e-7
+    ]
+    top_atoms = [
+        atom
+        for atom in semiconductor_atoms
+        if abs(_basis_atom_fractional_tuple(atom)[2] - semiconductor_top) < 1e-7
+    ]
+    if {atom.element for atom in bottom_atoms} != {profile.bottom_element} or len(bottom_atoms) != 2:
+        raise ValueError(
+            f"3C-SiC {profile.face} cut did not produce the expected two-atom "
+            f"{profile.bottom_element} bottom layer"
+        )
+    if {atom.element for atom in top_atoms} != {profile.top_element} or len(top_atoms) != 2:
+        raise ValueError(
+            f"3C-SiC {profile.face} cut did not produce the expected two-atom "
+            f"{profile.top_element} top layer"
+        )
+
+    layer_elements: list[str] = []
+    for layer_z in sorted({round(value, 8) for value in semiconductor_z}):
+        elements = {
+            atom.element
+            for atom in semiconductor_atoms
+            if abs(_basis_atom_fractional_tuple(atom)[2] - layer_z) < 1e-7
+        }
+        if len(elements) != 1:
+            raise ValueError("3C-SiC surface assembly produced a mixed-element (001) plane")
+        layer_elements.append(next(iter(elements)))
+    expected_layer_elements = [profile.bottom_element, profile.top_element] * 4
+    if layer_elements != expected_layer_elements:
+        raise ValueError(
+            f"3C-SiC {profile.face} surface assembly did not preserve four "
+            f"{profile.bottom_element}-{profile.top_element} bilayers"
+        )
+
+    lattice_a = float(source_model.lattice.a)
+    lattice_b = float(source_model.lattice.b)
+    atoms = list(semiconductor_atoms)
+    hydrogen_index = 1
+    bond_component = back_hydrogen_bond / math.sqrt(3.0)
+    _, direction_signs = _sic_3c_back_hydrogen_geometry(profile.bottom_element)
+    for bottom_atom in sorted(bottom_atoms, key=lambda atom: atom.id):
+        x_value, y_value, _ = _basis_atom_fractional_tuple(bottom_atom)
+        for x_sign, y_sign in direction_signs:
+            atoms.append(
+                BasisAtomSpec(
+                    id=f"HBack{hydrogen_index}",
+                    element="H",
+                    fractional=[
+                        _round_fractional(_wrap_fractional(x_value + x_sign * bond_component / lattice_a)),
+                        _round_fractional(_wrap_fractional(y_value + y_sign * bond_component / lattice_b)),
+                        0.0,
+                    ],
+                )
+            )
+            hydrogen_index += 1
+
+    top_registry = tuple(
+        sorted((_basis_atom_fractional_tuple(atom)[0], _basis_atom_fractional_tuple(atom)[1]) for atom in top_atoms)
+    )
+    return Sic3cSurfaceAssembly(
+        source_spec=source_spec,
+        source_model=source_model,
+        profile=profile,
+        cell_c=cell_c,
+        lattice_a=lattice_a,
+        lattice_b=lattice_b,
+        semiconductor_atoms=tuple(semiconductor_atoms),
+        atoms=tuple(atoms),
+        top_registry=top_registry,
+        semiconductor_bottom_fractional=semiconductor_bottom,
+        semiconductor_top_fractional=semiconductor_top,
+        semiconductor_thickness_angstrom=(semiconductor_top - semiconductor_bottom) * cell_c,
+        back_hydrogen_bond_angstrom=back_hydrogen_bond,
+    )
+
+
+def _sic_3c_common_surface_metadata(
+    assembly: Sic3cSurfaceAssembly,
+    *,
+    center_shift: float,
+    assembly_extent: float,
+) -> dict[str, Any]:
+    source_metadata = dict(assembly.source_spec.metadata or {})
+    profile = assembly.profile
+    top_name = "silicon" if profile.top_element == "Si" else "carbon"
+    bottom_name = "silicon" if profile.bottom_element == "Si" else "carbon"
+    miller_index = 1 if profile.face == "Si-face" else -1
+    return {
+        **source_metadata,
+        "source": "local_dynamic_template_from_reviewed_3C-SiC_bulk",
+        "domain": "semiconductor",
+        "material": "3C-SiC",
+        "polytype": "3C",
+        "parent_bulk_space_group": "F-43m",
+        "parent_bulk_space_group_number": 216,
+        "surface_axis": "c",
+        "surface_normal_cell_axis": "c",
+        "surface_orientation": profile.orientation,
+        "surface_miller_indices": [0, 0, miller_index],
+        "surface_orientation_basis": "parent_bulk_mapped_to_cell_axis",
+        "surface_axis_reoriented": True,
+        "surface_axis_reorientation": profile.axis_reorientation,
+        "surface_face": profile.face,
+        "surface_context": True,
+        "surface_model": (
+            f"{profile.orientation} {top_name}-terminated four-bilayer slab scaffold"
+        ),
+        "surface_cell_axis_length_angstrom": assembly.cell_c,
+        "slab_centering": {
+            "axis": "c",
+            "shift_fractional": round(center_shift, 8),
+            "source": "dynamic_3C-SiC_001_surface_assembly_centering",
+        },
+        "slab_thickness_angstrom": round(assembly_extent, 6),
+        "semiconductor_slab_thickness_angstrom": round(assembly.semiconductor_thickness_angstrom, 6),
+        "vacuum_angstrom": round(assembly.cell_c - assembly_extent, 6),
+        "reference_lattice_angstrom": {
+            "a": float(assembly.source_model.lattice.a),
+            "c": float(assembly.source_model.lattice.c),
+        },
+        "template_supercell": [1, 1, 2],
+        "sic_bilayer_count": 4,
+        "back_surface_hydrogen_count": 4,
+        "back_surface_hydrogen_bonds_per_surface_atom": 2,
+        "back_surface_hydrogen_bond_angstrom": assembly.back_hydrogen_bond_angstrom,
+        "termination": (
+            f"{top_name}_terminated_top_{bottom_name}_terminated_hydrogen_passivated_bottom"
+        ),
+        "bottom_termination": f"{bottom_name}_terminated_hydrogen_passivated",
+        "top_semiconductor_termination": f"{top_name}_terminated",
+        "passivation": {
+            "surfaces": ["bottom"],
+            "element": "H",
+            "added_atom_count": 4,
+            "bonds_per_surface_atom": 2,
+            "bond_length_angstrom": assembly.back_hydrogen_bond_angstrom,
+            "full_passivation_requested": False,
+            "source": "deterministic_missing_tetrahedral_back_bond_saturation",
+        },
+        "polar_surface": True,
+        "surface_asymmetry_expected": True,
+        "pre_relaxation_scaffold": True,
+        "unrelaxed_surface": True,
+        "unreconstructed_surface": True,
+        "requires_geometry_relaxation": True,
+        "surface_reconstruction_review_required": True,
+        "material_marker_map": {
+            "C": "3C-SiC",
+            "Si": "3C-SiC",
+            "C;Si": "3C-SiC",
+            "Si;C": "3C-SiC",
+        },
+        "layer_profile_tolerance_fractional": 0.0001,
+        "semiconductor_electron_affinity_ev": SIC_3C_ELECTRON_AFFINITY_EV,
+        "semiconductor_band_gap_ev": SIC_3C_BAND_GAP_EV,
+        "electronic_screening_reference": {
+            "usage": "metadata_only_not_calculated",
+            "electron_affinity_reference_doi": "10.1134/S1063782607060152",
+            "band_gap_reference_doi": "10.1002/eem2.12678",
+            "electron_affinity_ev": SIC_3C_ELECTRON_AFFINITY_EV,
+            "band_gap_ev": SIC_3C_BAND_GAP_EV,
+            "scope": "device-screening input; not a reconstructed-surface electronic calculation",
+        },
+        "bulk_structure_reference": {
+            "reference": "3C-SiC zinc-blende crystal structure and lattice parameter",
+            "doi": "10.1107/S0021889812049151",
+        },
+        "surface_scaffold_reference": {
+            "reference": "3C-SiC(001) Si- and C-terminated surface reconstruction study",
+            "doi": "10.1016/S0039-6028(99)00463-X",
+            "model_scope": (
+                "four ideal Si-C bilayers in a 1x1 cell with two missing tetrahedral back bonds "
+                "per bottom surface atom saturated by hydrogen"
+            ),
+        },
+        "surface_reconstruction_caveat": (
+            f"{profile.orientation} surface properties depend on termination and reconstruction; "
+            "the generated ideal termination is an unreconstructed pre-relaxation scaffold."
+        ),
+        "base_template_id": "silicon_carbide_3c_zincblende",
+    }
+
+
+def _sic_3c_surface_slab_spec(*, surface_face: str, user_request: str, project_id: str) -> ModelSpec:
+    profile = _sic_3c_surface_face_profile(surface_face=surface_face)
+    assembly = _sic_3c_surface_assembly(cell_c=SIC_3C_SURFACE_CELL_C_ANGSTROM, profile=profile)
+    centered_atoms, center_shift, assembly_extent = _center_sic_surface_atoms(
+        assembly.atoms,
+        cell_c=assembly.cell_c,
+    )
+    metadata = {
+        **_sic_3c_common_surface_metadata(
+            assembly,
+            center_shift=center_shift,
+            assembly_extent=assembly_extent,
+        ),
+        "structure_family": f"cubic {profile.orientation} surface slab scaffold",
+        "materials": ["3C-SiC"],
+        "surface_asymmetry_expected_reason": (
+            f"bare_{profile.top_element}_top_and_hydrogen_passivated_{profile.bottom_element}_bottom_"
+            f"on_polar_3C-SiC_{profile.plane_slug}"
+        ),
+        "nl_template": profile.slab_template_id,
+        "nl_virtual_template": profile.slab_template_id,
+        "nl_source": f"sic_3c_{profile.face.lower().replace('-', '_')}_surface_scaffold_template",
+        "nl_user_request": user_request,
+        "scaffold_notes": [
+            f"Deterministic centered 1x1 four-bilayer {profile.orientation} slab for live visualization and diagnostics.",
+            (
+                f"Each {profile.bottom_element}-terminated back-surface atom has two missing tetrahedral bonds "
+                "saturated with hydrogen; the exposed face remains unreconstructed."
+            ),
+            "Relax and review the polar surface before quantitative surface-energy or electronic conclusions.",
+            "Electron-affinity and band-gap values are metadata-only device screening references, not calculated results.",
+        ],
+    }
+    lattice = assembly.source_model.lattice
+    return ModelSpec.model_validate(
+        {
+            "project_id": project_id,
+            "revision": 0,
+            "software": "Materials Studio",
+            "model_type": "crystal",
+            "model": CrystalSpec(
+                name=profile.slab_template_id,
+                lattice=LatticeSpec(
+                    a=assembly.lattice_a,
+                    b=assembly.lattice_b,
+                    c=assembly.cell_c,
+                    alpha=lattice.alpha,
+                    beta=lattice.beta,
+                    gamma=lattice.gamma,
+                ),
+                basis_atoms=centered_atoms,
+                operations=[],
+            ).model_dump(mode="json"),
+            "simulation": {
+                "module": "CASTEP",
+                "task": "Energy",
+                "functional": "PBE",
+                "quality": "Medium",
+                "cutoff_energy_ev": 600,
+                "kpoint_separation": 0.04,
+            },
+            "outputs": {},
+            "acceptance": {
+                "max_warnings": 14,
+                "require_convergence": False,
+                "notes": [
+                    f"{profile.orientation} slab scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    "This polar unreconstructed slab requires reviewed relaxation before production calculations.",
+                ],
+            },
+            "metadata": metadata,
+        }
+    )
+
+
+def _sic_3c_schottky_contact_spec(
+    *,
+    metal: str,
+    surface_face: str,
+    user_request: str,
+    project_id: str,
+) -> ModelSpec:
+    interface_gap = _match_contact_length_value(
+        user_request,
+        [
+            r"(?:interface|contact)\s+(?:gap|spacing|distance)",
+            r"(?:metal[-\s]?semiconductor|schottky)\s+(?:gap|spacing|distance)",
+            r"(?:\u754c\u9762|\u63a5\u89e6)\s*(?:\u95f4\u8ddd|\u8ddd\u79bb|\u7a7a\u9699)",
+        ],
+    ) or 2.4
+    metal_thickness = _match_contact_length_value(
+        user_request,
+        [
+            r"(?:metal\s+)?(?:contact|electrode|metal)\s+(?:layer\s+)?thickness",
+            r"(?:schottky|metal[-\s]?semiconductor)\s+(?:metal\s+)?(?:contact\s+)?thickness",
+            r"(?:\u91d1\u5c5e\u63a5\u89e6|\u63a5\u89e6\u91d1\u5c5e|\u91d1\u5c5e\u5c42|\u7535\u6781)\s*(?:\u5c42)?\s*\u539a\u5ea6",
+        ],
+    ) or 2.56
+
+    profile = _sic_3c_surface_face_profile(surface_face=surface_face)
+    assembly = _sic_3c_surface_assembly(cell_c=SIC_3C_CONTACT_CELL_C_ANGSTROM, profile=profile)
+    required_cell_c = round(
+        assembly.semiconductor_thickness_angstrom
+        + assembly.back_hydrogen_bond_angstrom
+        + float(interface_gap)
+        + float(metal_thickness)
+        + 12.0,
+        6,
+    )
+    if required_cell_c > assembly.cell_c:
+        assembly = _sic_3c_surface_assembly(cell_c=required_cell_c, profile=profile)
+
+    atoms = list(assembly.atoms)
+    metal_start = assembly.semiconductor_top_fractional + float(interface_gap) / assembly.cell_c
+    metal_layer_positions = [metal_start, metal_start + float(metal_thickness) / assembly.cell_c]
+    for layer_index, z_value in enumerate(metal_layer_positions, start=1):
+        for site_index, (x_value, y_value) in enumerate(assembly.top_registry, start=1):
+            if layer_index == 2:
+                x_value = _wrap_fractional(x_value + 0.25)
+                y_value = _wrap_fractional(y_value + 0.25)
+            atoms.append(
+                BasisAtomSpec(
+                    id=f"{metal}Contact{(layer_index - 1) * len(assembly.top_registry) + site_index}",
+                    element=metal,
+                    fractional=[
+                        _round_fractional(x_value),
+                        _round_fractional(y_value),
+                        _round_fractional(z_value),
+                    ],
+                )
+            )
+
+    centered_atoms, center_shift, assembly_extent = _center_sic_surface_atoms(
+        atoms,
+        cell_c=assembly.cell_c,
+    )
+    metal_work_function = CONTACT_METAL_WORK_FUNCTION_EV[metal]
+    top_name = "silicon" if profile.top_element == "Si" else "carbon"
+    bottom_name = "silicon" if profile.bottom_element == "Si" else "carbon"
+    metadata = {
+        **_sic_3c_common_surface_metadata(
+            assembly,
+            center_shift=center_shift,
+            assembly_extent=assembly_extent,
+        ),
+        "structure_family": "cubic 3C-SiC metal semiconductor schottky contact scaffold",
+        "material": f"{metal}/3C-SiC",
+        "materials": ["3C-SiC", metal],
+        "stack_sequence": ["3C-SiC", metal],
+        "interface": f"{metal}/3C-SiC",
+        "interface_orientation": f"{metal} contact / {profile.orientation}",
+        "interface_axis": "c",
+        "substrate": "3C-SiC",
+        "metal_semiconductor_interface": True,
+        "schottky_contact": True,
+        "contact_type": "schottky",
+        "metal_contact_material": metal,
+        "semiconductor_channel_material": "3C-SiC",
+        "schottky_barrier_model": "ideal_schottky_mott_metadata_reference",
+        "schottky_barrier_reference": "3C-SiC_device_screening_values",
+        "metal_work_function_ev": metal_work_function,
+        "interface_gap_angstrom": round(float(interface_gap), 6),
+        "semiconductor_channel_thickness_angstrom": round(assembly.semiconductor_thickness_angstrom, 6),
+        "metal_contact_thickness_angstrom": round(float(metal_thickness), 6),
+        "metal_contact_layer_count": 2,
+        "reference_interface_metal_layer_count": None,
+        "interface_scaffold": True,
+        "unrelaxed_interface": True,
+        "surface_asymmetry_expected_reason": (
+            f"metal_contacted_{profile.top_element}_top_and_hydrogen_passivated_{profile.bottom_element}_bottom_"
+            f"on_polar_3C-SiC_{profile.plane_slug}"
+        ),
+        "contact_registry": (
+            f"two_layer_metal_grid_with_first_layer_on_top_of_{top_name}_terminated_"
+            f"3C-SiC_{profile.plane_slug}"
+        ),
+        "material_marker_map": {
+            "C": "3C-SiC",
+            "Si": "3C-SiC",
+            "C;Si": "3C-SiC",
+            "Si;C": "3C-SiC",
+            metal: metal,
+        },
+        "interface_reference": {
+            "reference": "3C-SiC(001) Si- and C-terminated surface reconstruction study",
+            "doi": "10.1016/S0039-6028(99)00463-X",
+            "reference_geometry": (
+                f"Termination and reconstruction context for {profile.orientation}; no exact metal interface "
+                "geometry or face-specific barrier is assigned."
+            ),
+            "generated_geometry_difference": (
+                "Two idealized visualization metal layers are placed on the unreconstructed 1x1 surface registry."
+            ),
+            "face_specific_sbh_ev": None,
+            "sbh_surface_scope": "no_face_specific_barrier_value_assigned",
+            "sbh_usage": "surface_polarity_context_only_not_a_generated_or_calculated_result",
+        },
+        "nl_template": profile.contact_template_id,
+        "nl_virtual_template": profile.contact_template_id,
+        "nl_source": f"sic_3c_{profile.plane_slug}_schottky_contact_scaffold_template",
+        "nl_user_request": user_request,
+        "scaffold_notes": [
+            f"Deterministic centered 1x1 four-bilayer metal/{profile.orientation} scaffold for live visualization and diagnostics.",
+            (
+                f"Each {profile.bottom_element}-terminated back-surface atom has two hydrogen-saturated missing "
+                f"tetrahedral bonds, and the contacted semiconductor surface is {top_name}-terminated."
+            ),
+            "The two metal layers provide interface and thickness markers; they are not a literature-exact relaxed registry.",
+            "Relax the interface and review reconstruction, registry, and mismatch before quantitative Schottky conclusions.",
+            "Schottky-Mott values are metadata-only screening references, not calculated results.",
+        ],
+    }
+    lattice = assembly.source_model.lattice
+    return ModelSpec.model_validate(
+        {
+            "project_id": project_id,
+            "revision": 0,
+            "software": "Materials Studio",
+            "model_type": "crystal",
+            "model": CrystalSpec(
+                name=profile.contact_template_id,
+                lattice=LatticeSpec(
+                    a=assembly.lattice_a,
+                    b=assembly.lattice_b,
+                    c=assembly.cell_c,
+                    alpha=lattice.alpha,
+                    beta=lattice.beta,
+                    gamma=lattice.gamma,
+                ),
+                basis_atoms=centered_atoms,
+                operations=[],
+            ).model_dump(mode="json"),
+            "simulation": {
+                "module": "CASTEP",
+                "task": "Energy",
+                "functional": "PBE",
+                "quality": "Medium",
+                "cutoff_energy_ev": 600,
+                "kpoint_separation": 0.04,
+            },
+            "outputs": {},
+            "acceptance": {
+                "max_warnings": 16,
+                "require_convergence": False,
+                "notes": [
+                    f"Metal/{profile.orientation} Schottky scaffold; explicit execute materializes CIF for GUI hot-loading.",
+                    "This centered polar asymmetric interface is an unrelaxed visualization and preflight model, not a production interface.",
+                ],
+            },
+            "metadata": metadata,
+        }
+    )
 
 
 def _sic_surface_face_profile(*, polytype: str, surface_face: str) -> SicSurfaceFaceProfile:
@@ -9435,6 +10405,26 @@ def _infer_template(text: str, *, user_request: str, project_id: str | None) -> 
     )
     if tmd_heterobilayer_plan is not None:
         return tmd_heterobilayer_plan
+
+    sic_3c_contact_plan = _infer_sic_3c_schottky_contact_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if sic_3c_contact_plan is not None:
+        return sic_3c_contact_plan
+
+    sic_3c_surface_plan = _infer_sic_3c_surface_slab_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if sic_3c_surface_plan is not None:
+        return sic_3c_surface_plan
+
+    unsupported_sic_3c_plan = _infer_unsupported_sic_3c_derived_structure_request(text)
+    if unsupported_sic_3c_plan is not None:
+        return unsupported_sic_3c_plan
 
     sic_6h_mos_plan = _infer_sic_6h_mos_capacitor_template(
         text,

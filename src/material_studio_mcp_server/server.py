@@ -2383,6 +2383,7 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "gallium_nitride_wurtzite",
                 "zinc_oxide_wurtzite",
                 "beta_gallium_oxide_010_slab",
+                "silicon_carbide_3c_zincblende",
                 "silicon_carbide_4h_hexagonal",
                 "silicon_carbide_6h_hexagonal",
                 "indium_phosphide_zincblende",
@@ -2405,6 +2406,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "metal_gallium_nitride_0001_schottky_contact",
                 "metal_zinc_oxide_0001_schottky_contact",
                 "metal_beta_gallium_oxide_010_schottky_contact",
+                "metal_silicon_carbide_3c_001_si_face_schottky_contact",
+                "metal_silicon_carbide_3c_00m1_c_face_schottky_contact",
                 "metal_silicon_carbide_4h_0001_schottky_contact",
                 "metal_silicon_carbide_4h_000m1_c_face_schottky_contact",
                 "metal_silicon_carbide_6h_0001_schottky_contact",
@@ -2441,6 +2444,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Au/beta-Ga2O3 Schottky contact",
                 "Pt/beta-Ga2O3 Schottky contact",
                 "metal/beta-Ga2O3(010) Schottky contact",
+                "Au/3C-SiC(001) Si-face Schottky contact",
+                "metal/3C-SiC(00-1) C-face Schottky contact",
                 "Au/4H-SiC Schottky contact",
                 "Pt/4H-SiC Schottky contact",
                 "metal/4H-SiC(0001) Schottky contact",
@@ -2515,6 +2520,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u63a5\u89e6\u91d1\u5c5e",
                 "\u91d1\u5c5e\u7535\u6781\u66ff\u6362",
                 "\u91d1\u5c5e/\u03b2-\u6c27\u5316\u9553\u8096\u7279\u57fa\u63a5\u89e6",
+                "\u91d1\u5c5e/3C-\u78b3\u5316\u7845(001)\u7845\u9762\u8096\u7279\u57fa\u63a5\u89e6",
+                "\u91d1\u5c5e/3C-\u78b3\u5316\u7845(00-1)\u78b3\u9762\u8096\u7279\u57fa\u63a5\u89e6",
                 "\u91d1\u5c5e/4H-\u78b3\u5316\u7845\u8096\u7279\u57fa\u63a5\u89e6",
                 "\u91d1\u5c5e/6H-\u78b3\u5316\u7845\u8096\u7279\u57fa\u63a5\u89e6",
             ],
@@ -2530,6 +2537,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Build a Pt/ZnO Schottky contact with interface gap 3.0 angstrom.",
                 "Build an Au/beta-Ga2O3(010) Schottky contact and export contact diagnostics.",
                 "Build a Pt/beta-Ga2O3(010) Schottky contact with interface gap 3.0 angstrom.",
+                "Build an Au/3C-SiC(001) Si-face Schottky contact and export contact diagnostics.",
+                "Build an Au/3C-SiC(00-1) C-face Schottky contact and export contact diagnostics.",
                 "Build an Au/4H-SiC(0001) Si-face Schottky contact and export contact diagnostics.",
                 "Build a Pt/4H-SiC(0001) Si-face Schottky contact with interface gap 3.0 angstrom.",
                 "Build an Au/4H-SiC(000-1) C-face Schottky contact and export contact diagnostics.",
@@ -2860,6 +2869,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "black_phosphorus_2d_phosphorene_monolayer",
             ],
             "virtual_templates": [
+                "silicon_carbide_3c_001_si_face_slab",
+                "silicon_carbide_3c_00m1_c_face_slab",
                 "silicon_carbide_4h_0001_si_face_slab",
                 "silicon_carbide_4h_000m1_c_face_slab",
                 "silicon_carbide_6h_0001_si_face_slab",
@@ -2868,11 +2879,15 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "metal_silicon_carbide_4h_000m1_c_face_schottky_contact",
                 "metal_silicon_carbide_6h_0001_schottky_contact",
                 "metal_silicon_carbide_6h_000m1_c_face_schottky_contact",
+                "metal_silicon_carbide_3c_001_si_face_schottky_contact",
+                "metal_silicon_carbide_3c_00m1_c_face_schottky_contact",
             ],
             "request_terms": [
                 "GaN(0001) slab",
                 "ZnO(0001) surface",
                 "beta-Ga2O3(010) surface",
+                "3C-SiC(001) Si-face slab",
+                "3C-SiC(00-1) C-face slab",
                 "4H-SiC(0001) Si-face slab",
                 "4H-SiC(000-1) C-face slab",
                 "6H-SiC(0001) Si-face slab",
@@ -2887,6 +2902,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "Build a GaN(0001) slab and check surface polarity.",
                 "Build ZnO(0001) surface with 15 angstrom vacuum.",
                 "Build beta-Ga2O3(010) surface slab and check vacuum diagnostics.",
+                "Build a 3C-SiC(001) Si-face slab and export surface diagnostics.",
+                "Build a 3C-SiC(00-1) C-face slab and export surface diagnostics.",
                 "Build a 4H-SiC(0001) Si-face slab and export surface diagnostics.",
                 "Build a 4H-SiC(000-1) C-face slab and export surface diagnostics.",
                 "Build a 6H-SiC(0001) Si-face slab and export surface diagnostics.",
@@ -34832,22 +34849,42 @@ def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
 
     if not isinstance(value, dict):
         return {}
+    raw_patch_commands = [
+        item
+        for item in value.get("patch_commands") or []
+        if isinstance(item, dict)
+    ]
     patch_commands = [
         _mapping_subset(
             item,
-            ("template_id", "operations", "requires_existing_project"),
+            ("template_id", "operations"),
         )
-        for item in value.get("patch_commands") or []
+        for item in raw_patch_commands
+    ]
+    patch_project_requirement_overrides = {
+        str(item.get("template_id")): item.get("requires_existing_project")
+        for item in raw_patch_commands
+        if item.get("template_id")
+        and item.get("requires_existing_project") is not True
+    }
+    raw_session_commands = [
+        item
+        for item in value.get("session_commands") or []
         if isinstance(item, dict)
     ]
     session_commands = [
         _mapping_subset(
             item,
-            ("template_id", "operation", "requires_existing_project"),
+            ("template_id", "operation"),
         )
-        for item in value.get("session_commands") or []
-        if isinstance(item, dict)
+        for item in raw_session_commands
     ]
+    session_project_requirement_overrides = {
+        str(item.get("template_id")): item.get("requires_existing_project")
+        for item in raw_session_commands
+        if item.get("template_id")
+        and item.get("requires_existing_project") is not True
+    }
     view_selection = value.get("view_selection")
     compact_views: dict[str, Any] = {}
     if isinstance(view_selection, dict):
@@ -34898,8 +34935,12 @@ def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
             "view_selection": compact_views,
             "patch_commands": patch_commands,
             "patch_command_count": len(patch_commands),
+            "patch_commands_require_existing_project_default": True,
+            "patch_command_project_requirement_overrides": patch_project_requirement_overrides or None,
             "session_commands": session_commands,
             "session_command_count": len(session_commands),
+            "session_commands_require_existing_project_default": True,
+            "session_command_project_requirement_overrides": session_project_requirement_overrides or None,
             "new_structure_inline_modifiers": compact_inline,
             "unsupported_next_step": value.get("unsupported_next_step"),
             "full_catalog_hint": {
@@ -38304,6 +38345,13 @@ def _compact_capabilities_response(
                 "restart_is_never_automatic",
             ),
         )
+    schema_catalog = compact.get("schemas")
+    if isinstance(schema_catalog, dict):
+        compact["schemas"] = {
+            str(schema_id): str(schema.get("filename"))
+            for schema_id, schema in schema_catalog.items()
+            if isinstance(schema, dict) and schema.get("filename")
+        }
     compact.update(
         {
             "response_mode": McpResponseMode.COMPACT.value,

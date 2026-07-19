@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -6123,6 +6124,28 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_semiconductor_contact" in beta_ga2o3_contact["default_diagnostic_focuses"]
     assert "surface_slab_polarity" in beta_ga2o3_contact["default_diagnostic_focuses"]
     assert "semiconductor_surface_polarity_csv" in beta_ga2o3_contact["required_csv_keys"]
+    sic_3c_si_face_slab = virtual_profiles["silicon_carbide_3c_001_si_face_slab"]
+    assert sic_3c_si_face_slab["base_template_id"] == "silicon_carbide_3c_zincblende"
+    assert sic_3c_si_face_slab["variant_kind"] == "surface_scaffold"
+    assert sic_3c_si_face_slab["surface_orientation"] == "3C-SiC(001) Si-face"
+    assert "surface_slab_polarity" in sic_3c_si_face_slab["default_diagnostic_focuses"]
+    assert "10.1016/S0039-6028(99)00463-X" in sic_3c_si_face_slab["source_references"]
+    sic_3c_c_face_slab = virtual_profiles["silicon_carbide_3c_00m1_c_face_slab"]
+    assert sic_3c_c_face_slab["surface_orientation"] == "3C-SiC(00-1) C-face"
+    assert "semiconductor_surface_termination_csv" in sic_3c_c_face_slab["required_csv_keys"]
+    sic_3c_si_face_contact = virtual_profiles[
+        "metal_silicon_carbide_3c_001_si_face_schottky_contact"
+    ]
+    assert sic_3c_si_face_contact["base_template_id"] == "silicon_carbide_3c_zincblende"
+    assert sic_3c_si_face_contact["variant_kind"] == "interface_scaffold"
+    assert sic_3c_si_face_contact["surface_orientation"] == "3C-SiC(001) Si-face"
+    assert "metal_semiconductor_contact" in sic_3c_si_face_contact["default_diagnostic_focuses"]
+    assert "semiconductor_contact_csv" in sic_3c_si_face_contact["required_csv_keys"]
+    sic_3c_c_face_contact = virtual_profiles[
+        "metal_silicon_carbide_3c_00m1_c_face_schottky_contact"
+    ]
+    assert sic_3c_c_face_contact["surface_orientation"] == "3C-SiC(00-1) C-face"
+    assert "surface_slab_polarity" in sic_3c_c_face_contact["default_diagnostic_focuses"]
     sic_4h_contact = virtual_profiles["metal_silicon_carbide_4h_0001_schottky_contact"]
     assert sic_4h_contact["base_template_id"] == "silicon_carbide_4h_hexagonal"
     assert sic_4h_contact["variant_kind"] == "interface_scaffold"
@@ -6661,6 +6684,7 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "gallium_nitride_wurtzite" in metal_contact["templates"]
     assert "zinc_oxide_wurtzite" in metal_contact["templates"]
     assert "beta_gallium_oxide_010_slab" in metal_contact["templates"]
+    assert "silicon_carbide_3c_zincblende" in metal_contact["templates"]
     assert "silicon_carbide_4h_hexagonal" in metal_contact["templates"]
     assert "silicon_carbide_6h_hexagonal" in metal_contact["templates"]
     assert "indium_phosphide_zincblende" in metal_contact["templates"]
@@ -6681,6 +6705,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_gallium_nitride_0001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_zinc_oxide_0001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_beta_gallium_oxide_010_schottky_contact" in metal_contact["virtual_templates"]
+    assert "metal_silicon_carbide_3c_001_si_face_schottky_contact" in metal_contact["virtual_templates"]
+    assert "metal_silicon_carbide_3c_00m1_c_face_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_silicon_carbide_4h_0001_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_silicon_carbide_4h_000m1_c_face_schottky_contact" in metal_contact["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in metal_contact["virtual_templates"]
@@ -6701,6 +6727,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "Build a Pt/Si Schottky contact with interface gap 3.0 angstrom." in metal_contact["examples"]
     assert "Build an Au/GaAs Schottky contact and export contact diagnostics." in metal_contact["examples"]
     assert "Build an Au/beta-Ga2O3(010) Schottky contact and export contact diagnostics." in metal_contact["examples"]
+    assert "Build an Au/3C-SiC(001) Si-face Schottky contact and export contact diagnostics." in metal_contact["examples"]
+    assert "Build an Au/3C-SiC(00-1) C-face Schottky contact and export contact diagnostics." in metal_contact["examples"]
     assert "Build a Pt/GaAs Schottky contact with interface gap 3.0 angstrom." in metal_contact["examples"]
     assert "Build an Au/GaN Schottky contact and export contact diagnostics." in metal_contact["examples"]
     assert "Build a Pt/GaN Schottky contact with interface gap 3.1 angstrom." in metal_contact["examples"]
@@ -6846,6 +6874,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "silicon_100_slab" in surface["templates"]
     assert "hexagonal_boron_nitride_2d_hbn_monolayer" in surface["templates"]
     assert "beta_gallium_oxide_010_slab" in surface["templates"]
+    assert "silicon_carbide_3c_001_si_face_slab" in surface["virtual_templates"]
+    assert "silicon_carbide_3c_00m1_c_face_slab" in surface["virtual_templates"]
     assert "silicon_carbide_6h_0001_si_face_slab" in surface["virtual_templates"]
     assert "silicon_carbide_6h_000m1_c_face_slab" in surface["virtual_templates"]
     assert "silicon_carbide_4h_0001_si_face_slab" in surface["virtual_templates"]
@@ -6854,6 +6884,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "metal_silicon_carbide_4h_000m1_c_face_schottky_contact" in surface["virtual_templates"]
     assert "metal_silicon_carbide_6h_0001_schottky_contact" in surface["virtual_templates"]
     assert "metal_silicon_carbide_6h_000m1_c_face_schottky_contact" in surface["virtual_templates"]
+    assert "metal_silicon_carbide_3c_001_si_face_schottky_contact" in surface["virtual_templates"]
+    assert "metal_silicon_carbide_3c_00m1_c_face_schottky_contact" in surface["virtual_templates"]
     assert "surface_termination_summary" in surface["diagnostic_summaries"]
     assert "surface_model_summary" in surface["diagnostic_summaries"]
     assert "surface_polarity_summary" in surface["diagnostic_summaries"]
@@ -17411,10 +17443,12 @@ def test_live_modeling_request_rejects_unsupported_schottky_contact_without_down
     assert result["nl_plan"]["kind"] == "unsupported"
     assert result["nl_plan"]["template_id"] is None
     assert "non-silicon semiconductor host" in result["nl_plan"]["notes"][0]
-    assert (
-        "Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010), both polar 4H-SiC and 6H-SiC basal faces, InP(001), InAs(001), AlAs(001), GaP(001), GaSb(001), AlP(001), AlSb(001), InSb(001), CdTe(001), ZnS(001), ZnSe(001), ZnTe(001), CdS(001), and CdSe(001)"
-        in result["nl_plan"]["notes"][1]
-    )
+    coverage_note = result["nl_plan"]["notes"][1]
+    assert "Si(100), GaAs(001), GaN(0001), ZnO(0001), beta-Ga2O3(010)" in coverage_note
+    assert "explicit Si- and C-terminated 3C-SiC(001) surfaces" in coverage_note
+    assert "both polar 4H-SiC and 6H-SiC basal faces" in coverage_note
+    assert "InP(001), InAs(001), AlAs(001)" in coverage_note
+    assert "ZnTe(001), CdS(001), and CdSe(001)" in coverage_note
     assert "view_audit" not in result
 
 
@@ -28025,6 +28059,229 @@ def test_6h_sic_routing_is_polytype_specific_and_limits_derived_geometries(tmp_p
 
     assert infer_modeling_plan("Build 4H-SiC crystal.").template_id == "silicon_carbide_4h_hexagonal"
     assert infer_modeling_plan("Build 3C-SiC crystal.").template_id == "silicon_carbide_3c_zincblende"
+
+
+def test_3c_sic_polar_surface_and_schottky_routing_is_exact_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    slab_cases = (
+        (
+            "Build a 3C-SiC(001) Si-face slab.",
+            "silicon_carbide_3c_001_si_face_slab",
+            "Si-face",
+            "C",
+            "Si",
+            [0, 0, 1],
+        ),
+        (
+            "\u6784\u5efa3C-\u78b3\u5316\u7845(00-1)\u78b3\u9762\u8868\u9762\u6a21\u578b\u3002",
+            "silicon_carbide_3c_00m1_c_face_slab",
+            "C-face",
+            "Si",
+            "C",
+            [0, 0, -1],
+        ),
+    )
+    for request, template_id, surface_face, bottom, top, miller_indices in slab_cases:
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "spec"
+        assert plan.template_id == template_id
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 20
+        assert Counter(atom["element"] for atom in plan.payload["model"]["basis_atoms"]) == {
+            "C": 8,
+            "H": 4,
+            "Si": 8,
+        }
+        metadata = plan.payload["metadata"]
+        assert metadata["polytype"] == "3C"
+        assert metadata["surface_face"] == surface_face
+        assert metadata["surface_miller_indices"] == miller_indices
+        assert metadata["template_supercell"] == [1, 1, 2]
+        assert metadata["sic_bilayer_count"] == 4
+        assert metadata["back_surface_hydrogen_count"] == 4
+        assert metadata["back_surface_hydrogen_bonds_per_surface_atom"] == 2
+        assert metadata["bottom_termination"].startswith(
+            "carbon" if bottom == "C" else "silicon"
+        )
+        assert metadata["top_semiconductor_termination"].startswith(
+            "carbon" if top == "C" else "silicon"
+        )
+        assert metadata["bulk_structure_reference"]["doi"] == "10.1107/S0021889812049151"
+        assert metadata["surface_scaffold_reference"]["doi"] == "10.1016/S0039-6028(99)00463-X"
+
+    contact_cases = (
+        (
+            "Build an Au/3C-SiC(001) Si-face Schottky contact.",
+            "metal_silicon_carbide_3c_001_si_face_schottky_contact",
+            "Au",
+            2.4,
+            "Si-face",
+        ),
+        (
+            "\u6784\u5efa Pt/3C-\u78b3\u5316\u7845(00-1)\u78b3\u9762\u8096\u7279\u57fa\u63a5\u89e6\uff0c\u754c\u9762\u95f4\u8ddd 3.0 \u57c3\u3002",
+            "metal_silicon_carbide_3c_00m1_c_face_schottky_contact",
+            "Pt",
+            3.0,
+            "C-face",
+        ),
+    )
+    for request, template_id, metal, interface_gap, surface_face in contact_cases:
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "spec"
+        assert plan.template_id == template_id
+        assert plan.payload is not None
+        assert len(plan.payload["model"]["basis_atoms"]) == 24
+        assert Counter(atom["element"] for atom in plan.payload["model"]["basis_atoms"]) == {
+            "C": 8,
+            "H": 4,
+            "Si": 8,
+            metal: 4,
+        }
+        metadata = plan.payload["metadata"]
+        assert metadata["metal_contact_material"] == metal
+        assert metadata["interface_gap_angstrom"] == interface_gap
+        assert metadata["surface_face"] == surface_face
+        assert metadata["stack_sequence"] == ["3C-SiC", metal]
+        assert metadata["interface_reference"]["face_specific_sbh_ev"] is None
+
+    for request in (
+        "Build a 3C-SiC surface.",
+        "Build an Au/3C-SiC Schottky contact.",
+        "Build a 3C-SiC(001) Si-face and (00-1) C-face slab.",
+        "Build an Au/3C-SiC(001) Si-face and (00-1) C-face Schottky contact.",
+        "Build a 3C-SiC MOS capacitor.",
+        "Build a GaN/3C-SiC heterostructure.",
+    ):
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "unsupported"
+        assert plan.template_id is None
+        assert any("3C-SiC" in note for note in plan.notes)
+
+    rejected_live = server.material_studio_live_modeling_request(
+        "Build an Au/3C-SiC Schottky contact and hot-load it in Materials Studio.",
+        working_dir=str(tmp_path),
+    )
+    assert rejected_live["ok"] is False
+    assert rejected_live["nl_plan"]["kind"] == "unsupported"
+    assert not list(tmp_path.rglob("current.json"))
+
+    bulk = infer_modeling_plan("Build 3C-SiC bulk crystal.")
+    assert bulk.kind == "spec"
+    assert bulk.template_id == "silicon_carbide_3c_zincblende"
+    assert bulk.payload is not None
+    assert len(bulk.payload["model"]["basis_atoms"]) == 8
+
+
+def test_live_modeling_request_previews_and_single_window_hotloads_3c_sic_polar_models(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    for orientation, template_id, bottom, top, plane in (
+        (
+            "3C-SiC(001) Si-face",
+            "silicon_carbide_3c_001_si_face_slab",
+            "C",
+            "Si",
+            [0, 0, 1],
+        ),
+        (
+            "3C-SiC(00-1) C-face",
+            "silicon_carbide_3c_00m1_c_face_slab",
+            "Si",
+            "C",
+            [0, 0, -1],
+        ),
+    ):
+        slab = server.material_studio_live_modeling_request(
+            f"Build a {orientation} slab and export all view and surface diagnostics.",
+            execution_mode="preview",
+            open_in_gui=False,
+            take_snapshot=False,
+            working_dir=str(tmp_path / template_id),
+        )
+        assert slab["ok"] is True
+        assert slab["execution_mode"] == "preview"
+        assert slab["nl_plan"]["template_id"] == template_id
+        assert slab["semiconductor_virtual_template_id"] == template_id
+        assert slab["view_audit"]["model"]["elements"] == {"C": 8, "H": 4, "Si": 8}
+        metadata = slab["view_audit"]["metadata"]
+        assert metadata["template_supercell"] == [1, 1, 2]
+        assert metadata["back_surface_hydrogen_bonds_per_surface_atom"] == 2
+        health = slab["modeling_report"]["inspection"]["semiconductor_health"]
+        termination = health["surface_termination_summary"]
+        assert termination["surfaces"]["bottom"]["element_counts"] == {bottom: 2}
+        assert termination["surfaces"]["bottom"]["passivant_bond_count"] == 4
+        assert termination["surfaces"]["bottom"]["dangling_bond_estimate"] == 0
+        assert termination["surfaces"]["top"]["element_counts"] == {top: 2}
+        assert termination["surfaces"]["top"]["dangling_bond_estimate"] == 4
+        assert health["surface_orientation_summary"]["surface_plane_indices"] == plane
+        assert health["surface_polarity_summary"]["surface_polarity_status"] == "asymmetric_expected"
+        assert slab["view_bundle_row_counts"]["atoms"] == 20
+        assert slab["view_bundle_row_counts"]["view_summary"] == 7
+        assert slab["view_bundle_row_counts"]["view_projections"] == 140
+        assert slab["modeling_report"]["semiconductor_normality_diagnosis"]["status"] == "blocked"
+        assert not backend.opened
+
+    contact = server.material_studio_live_modeling_request(
+        "Build an Au/3C-SiC(00-1) C-face Schottky contact and export all view and contact diagnostics.",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "contact_preview"),
+    )
+    assert contact["ok"] is True
+    assert contact["nl_plan"]["template_id"] == (
+        "metal_silicon_carbide_3c_00m1_c_face_schottky_contact"
+    )
+    assert contact["view_audit"]["model"]["elements"] == {"Au": 4, "C": 8, "H": 4, "Si": 8}
+    contact_health = contact["modeling_report"]["inspection"]["semiconductor_health"]
+    contact_summary = contact_health["metal_semiconductor_contact_summary"]
+    assert contact_summary["quality"] == "complete"
+    assert contact_summary["material_sequence"] == ["3C-SiC", "Au"]
+    assert contact_summary["contact_geometry_status"] == "matched"
+    assert contact_summary["actual_contact_gap_angstrom"] == pytest.approx(2.4)
+    assert contact_summary["barrier_preflight"]["ideal_n_type_barrier_ev"] == pytest.approx(1.1)
+    assert contact_summary["barrier_preflight"]["ideal_p_type_barrier_ev"] == pytest.approx(1.26)
+    assert contact_health["surface_polarity_summary"]["bottom"]["formula"] == "Si2"
+    assert contact_health["surface_polarity_summary"]["top"]["formula"] == "Au2"
+    assert contact["view_bundle_row_counts"]["atoms"] == 24
+    assert contact["view_bundle_row_counts"]["view_summary"] == 7
+    assert contact["view_bundle_row_counts"]["view_projections"] == 168
+    assert contact["modeling_report"]["semiconductor_normality_diagnosis"]["action_id"] == (
+        "review_unrelaxed_metal_semiconductor_contact"
+    )
+    assert not backend.opened
+
+    hotload = server.material_studio_live_modeling_request(
+        (
+            "Build an Au/3C-SiC(001) Si-face Schottky contact, hot-load it in the current "
+            "Materials Studio window, export all view parameters, and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path / "contact_hotload"),
+        take_snapshot=False,
+    )
+    assert hotload["ok"] is True
+    assert hotload["execution_mode"] == "execute"
+    assert hotload["execution_mode_source"] == "explicit_live_intent"
+    assert hotload["nl_plan"]["template_id"] == (
+        "metal_silicon_carbide_3c_001_si_face_schottky_contact"
+    )
+    assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotload["structure_artifact_validation"]["status"] == "matched"
+    assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert hotload["single_window_policy_ok"] is True
+    assert hotload["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[0].suffix == ".stp"
 
 
 def test_live_modeling_request_builds_and_hotloads_sic_6h_c_face_models(

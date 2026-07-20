@@ -13324,6 +13324,281 @@ def test_gui_apply_current_revision_execute_refuses_multiple_windows_before_runn
     assert "gui_single_window_policy_violation" in readiness["blocking_reasons"]
 
 
+def test_gui_apply_current_revision_execute_requires_activation_before_running(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    calls: list[str] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        calls.append(spec.project_id)
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("unexpected execution", encoding="utf-8")
+        return {"result": {"success": True, "created_files": [str(output)]}}
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+
+    project_id = "gui_execute_blocked_activation_proj"
+    created = server.material_studio_model_create_from_spec(
+        load_benzene(project_id),
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("prepared only", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=project_id,
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert executed["ok"] is False
+    assert executed["status"] == "gui_activation_required_before_execution"
+    assert executed["execution_started"] is False
+    assert executed["execution_deferred"] is True
+    assert executed["runner_invoked"] is False
+    assert executed["gui_input_started"] is False
+    assert executed["gui_process_launched"] is False
+    assert calls == []
+    assert backend.activated_handles == []
+    assert backend.opened == []
+    assert "result" not in executed
+    block = executed["gui_preexecution_block"]
+    assert block["reason"] == "target_window_activation_required"
+    assert block["target_window_is_minimized"] is True
+    assert block["target_window_is_foreground"] is False
+    assert block["activation_reasons"] == [
+        "target_window_minimized",
+        "target_window_not_foreground",
+    ]
+    assert executed["recommended_tool"] == "material_studio_gui_activate"
+    assert executed["gui_activation_retry_tool"] == "material_studio_gui_activate"
+    assert executed["gui_activation_retry_payload"] == {
+        "project_id": project_id,
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert executed["execution_retry_tool"] == "material_studio_gui_apply_current_revision"
+    assert executed["execution_retry_payload"] == {
+        "project_id": project_id,
+        "execution_mode": "execute",
+        "open_in_gui": True,
+        "take_snapshot": True,
+        "fit_to_view_after_open": False,
+        "prepare_view_replay_after_open": False,
+        "export_view_audit": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    output_dir = planned_structure.parent
+    assert not (output_dir / "result_metadata.json").exists()
+    assert not (output_dir / "execution_attempts.jsonl").exists()
+    persisted = json.loads(
+        Path(executed["report_json_path"]).read_text(encoding="utf-8")
+    )
+    persisted_report = persisted["modeling_report"]
+    assert persisted_report["execution_started"] is False
+    assert persisted_report["runner_invoked"] is False
+    assert persisted_report["gui_preexecution_block"]["reason"] == (
+        "target_window_activation_required"
+    )
+    assert persisted_report["next_action_plan"]["recommended_tool"] == (
+        "material_studio_gui_activate"
+    )
+
+    compact = server.material_studio_gui_apply_current_revision(
+        project_id,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    assert compact["status"] == "gui_activation_required_before_execution"
+    assert compact["execution_started"] is False
+    assert compact["runner_invoked"] is False
+    assert compact["gui_preexecution_block"]["reason"] == (
+        "target_window_activation_required"
+    )
+    assert compact["recommended_tool"] == "material_studio_gui_activate"
+    assert compact["next_action_plan"]["recommended_tool"] == (
+        "material_studio_gui_activate"
+    )
+    assert compact["next_action_plan"]["payload_hint"] == (
+        executed["gui_activation_retry_payload"]
+    )
+    deferred = compact["next_action_plan"]["deferred_hotload_action"]
+    assert deferred["recommended_tool"] == (
+        "material_studio_gui_apply_current_revision"
+    )
+    assert deferred["payload_hint"]["project_id"] == project_id
+    assert calls == []
+
+    activated = server.material_studio_gui_activate(
+        **executed["gui_activation_retry_payload"]
+    )
+    assert activated["ok"] is True
+    assert activated["activation_verified"] is True
+    assert activated["snapshot_after_activate"] is True
+    retried = server.material_studio_gui_apply_current_revision(
+        **executed["execution_retry_payload"]
+    )
+    assert retried["ok"] is True
+    assert retried["result"]["success"] is True
+    assert calls == [project_id]
+    assert backend.opened
+
+
+def test_live_modeling_create_execute_requires_activation_before_running(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    calls: list[str] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        calls.append(spec.project_id)
+        raise AssertionError("runner must not execute before GUI activation")
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+
+    project_id = "live_create_blocked_activation_proj"
+    result = server.material_studio_live_modeling_request(
+        "Build benzene and hot-load it in the existing Materials Studio window.",
+        spec=load_benzene(project_id),
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is False
+    assert result["workflow"] == "create"
+    assert result["revision"] == 0
+    assert result["status"] == "gui_activation_required_before_execution"
+    assert result["execution_started"] is False
+    assert result["execution_deferred"] is True
+    assert result["runner_invoked"] is False
+    assert result["gui_input_started"] is False
+    assert calls == []
+    assert backend.activated_handles == []
+    assert backend.opened == []
+    assert "result" not in result
+    assert result["gui_activation_retry_payload"] == {
+        "project_id": project_id,
+        "revision": 0,
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert result["execution_retry_tool"] == "material_studio_gui_apply_current_revision"
+    assert result["execution_retry_payload"]["project_id"] == project_id
+    assert result["execution_retry_payload"]["execution_mode"] == "execute"
+    current = server.material_studio_model_get_current(project_id, working_dir=str(tmp_path))
+    assert current["ok"] is True
+    assert current["revision"] == 0
+
+
+def test_live_patch_execute_requires_activation_before_running(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    calls: list[str] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        calls.append(spec.project_id)
+        raise AssertionError("runner must not execute before GUI activation")
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+
+    project_id = "live_patch_blocked_activation_proj"
+    created = server.material_studio_live_modeling_request(
+        "Build benzene for a later live edit.",
+        spec=load_benzene(project_id),
+        execution_mode="preview",
+        open_in_gui=False,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    planned_structure = Path(created["planned_outputs"]["structure"])
+    planned_structure.parent.mkdir(parents=True, exist_ok=True)
+    planned_structure.write_text("base revision", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        planned_structure.resolve(),
+        project_id=project_id,
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+
+    result = server.material_studio_live_update_with_patch(
+        project_id=project_id,
+        base_revision=created["revision"],
+        patch={
+            "operations": [
+                {
+                    "type": "set_atom_position",
+                    "atom_id": "H1",
+                    "xyz_angstrom": [2.6, 0.0, 0.0],
+                }
+            ]
+        },
+        user_text="Move H1 and hot-load the updated current revision.",
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is False
+    assert result["workflow"] == "live_patch"
+    assert result["new_revision"] == 1
+    assert result["status"] == "gui_activation_required_before_execution"
+    assert result["execution_started"] is False
+    assert result["execution_deferred"] is True
+    assert result["runner_invoked"] is False
+    assert calls == []
+    assert backend.activated_handles == []
+    assert backend.opened == []
+    assert "result" not in result
+    assert result["execution_retry_tool"] == "material_studio_gui_apply_current_revision"
+    assert result["execution_retry_payload"]["project_id"] == project_id
+    assert result["execution_retry_payload"]["execution_mode"] == "execute"
+    current = server.material_studio_model_get_current(project_id, working_dir=str(tmp_path))
+    assert current["ok"] is True
+    assert current["revision"] == 1
+
+
 def test_modeling_report_marks_stale_gui_open_for_previous_revision(tmp_path: Path) -> None:
     current_structure = tmp_path / "model_r001.xsd"
     old_structure = tmp_path / "model_r000.xsd"

@@ -22663,6 +22663,18 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "execution_transaction_error": response.get("execution_transaction_error"),
         "execution_retry_tool": response.get("execution_retry_tool"),
         "execution_retry_payload": response.get("execution_retry_payload"),
+        "runner_invoked": response.get("runner_invoked"),
+        "structure_materialization_started": response.get(
+            "structure_materialization_started"
+        ),
+        "gui_input_started": response.get("gui_input_started"),
+        "gui_process_launched": response.get("gui_process_launched"),
+        "prepared_revision_retained": response.get("prepared_revision_retained"),
+        "gui_preexecution_block": response.get("gui_preexecution_block"),
+        "gui_activation_retry_tool": response.get("gui_activation_retry_tool"),
+        "gui_activation_retry_payload": response.get(
+            "gui_activation_retry_payload"
+        ),
         "current_revision_execution_block": response.get(
             "current_revision_execution_block"
         ),
@@ -22910,6 +22922,18 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         "execution_transaction_error": response.get("execution_transaction_error"),
         "execution_retry_tool": response.get("execution_retry_tool"),
         "execution_retry_payload": response.get("execution_retry_payload"),
+        "runner_invoked": response.get("runner_invoked"),
+        "structure_materialization_started": response.get(
+            "structure_materialization_started"
+        ),
+        "gui_input_started": response.get("gui_input_started"),
+        "gui_process_launched": response.get("gui_process_launched"),
+        "prepared_revision_retained": response.get("prepared_revision_retained"),
+        "gui_preexecution_block": response.get("gui_preexecution_block"),
+        "gui_activation_retry_tool": response.get("gui_activation_retry_tool"),
+        "gui_activation_retry_payload": response.get(
+            "gui_activation_retry_payload"
+        ),
         "current_revision_execution_block": response.get(
             "current_revision_execution_block"
         ),
@@ -23422,6 +23446,195 @@ def _with_single_window_hotload_block(
         "error": block["message"],
         "gui_open_warning": block["message"],
         "single_window_hotload_block": block,
+    }
+
+
+def _gui_apply_current_execution_retry_payload(
+    *,
+    project_id: str,
+    open_in_gui: bool,
+    take_snapshot: bool,
+    fit_to_view_after_open: bool,
+    prepare_view_replay_after_open: bool,
+    export_view_audit: bool,
+    views: list[str] | None,
+    working_dir: str | Path,
+    timeout_seconds: int | None,
+    response_mode: McpResponseMode | str,
+) -> dict[str, Any]:
+    """Build the exact current-revision continuation after GUI activation."""
+
+    payload: dict[str, Any] = {
+        "project_id": project_id,
+        "execution_mode": ExecutionMode.EXECUTE.value,
+        "open_in_gui": open_in_gui,
+        "take_snapshot": take_snapshot,
+        "fit_to_view_after_open": fit_to_view_after_open,
+        "prepare_view_replay_after_open": prepare_view_replay_after_open,
+        "export_view_audit": export_view_audit,
+    }
+    if views is not None:
+        payload["views"] = list(views)
+    if timeout_seconds is not None:
+        payload["timeout_seconds"] = timeout_seconds
+    response_mode_value = (
+        response_mode.value
+        if isinstance(response_mode, McpResponseMode)
+        else str(response_mode)
+    )
+    if response_mode_value == McpResponseMode.COMPACT.value:
+        payload["response_mode"] = response_mode_value
+    return _workspace_bound_payload_hint(
+        "material_studio_gui_apply_current_revision",
+        payload,
+        working_dir,
+    )
+
+
+def _gui_activation_preexecution_block(
+    gui_status: dict[str, Any] | None,
+    *,
+    project_id: str,
+    revision: int,
+    working_dir: str | Path,
+    views: list[str] | None,
+    execution_retry_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a no-input block when the existing target must be activated first."""
+
+    status = gui_status if isinstance(gui_status, dict) else {}
+    window_management = (
+        status.get("window_management")
+        if isinstance(status.get("window_management"), dict)
+        else {}
+    )
+    activation_required = bool(
+        status.get("activation_required_before_capture_or_input") is True
+        or status.get("needs_activation") is True
+        or window_management.get("activation_required_before_capture_or_input") is True
+        or window_management.get("needs_activation") is True
+    )
+    if not activation_required:
+        return None
+
+    activation_reasons = _dedupe_strings(
+        [
+            *list(window_management.get("interaction_activation_reasons") or []),
+            *list(status.get("activation_reasons") or []),
+            *list(window_management.get("activation_reasons") or []),
+        ]
+    )
+    target_window = (
+        status.get("target_window")
+        if isinstance(status.get("target_window"), dict)
+        else status.get("window")
+        if isinstance(status.get("window"), dict)
+        else {}
+    )
+    activation_payload: dict[str, Any] = {
+        "project_id": project_id,
+        "revision": revision,
+        "take_snapshot": True,
+    }
+    if views is not None:
+        activation_payload["views"] = list(views)
+    activation_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_activate",
+        activation_payload,
+        working_dir,
+    )
+    return {
+        "blocked": True,
+        "reason": "target_window_activation_required",
+        "message": (
+            "Refusing to execute or materialize the current revision while the existing "
+            "Materials Studio target window is minimized, hidden, or not the verified "
+            "foreground window. Activate that same window, then apply the already prepared "
+            "current revision."
+        ),
+        "project_id": project_id,
+        "revision": revision,
+        "target_window_handle": (
+            window_management.get("target_window_handle")
+            or target_window.get("handle")
+        ),
+        "target_window_title": (
+            window_management.get("target_window_title")
+            or target_window.get("title")
+        ),
+        "target_window_is_visible": window_management.get(
+            "target_window_is_visible"
+        ),
+        "target_window_is_minimized": window_management.get(
+            "target_window_is_minimized"
+        ),
+        "target_window_is_foreground": window_management.get(
+            "target_window_is_foreground"
+        ),
+        "activation_reasons": activation_reasons,
+        "recommended_tool": "material_studio_gui_activate",
+        "recommended_action": "activate_exact_existing_window_before_revision_execution",
+        "activation_payload": activation_payload,
+        "execution_retry_tool": "material_studio_gui_apply_current_revision",
+        "execution_retry_payload": execution_retry_payload,
+        "same_window_required": True,
+        "reuse_existing_window_only": True,
+        "gui_process_launch_allowed": False,
+    }
+
+
+def _with_gui_preexecution_hotload_block(
+    response: dict[str, Any],
+    gui_status: dict[str, Any] | None,
+    *,
+    project_id: str,
+    revision: int,
+    working_dir: str | Path,
+    views: list[str] | None,
+    execution_retry_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Fail closed before revision execution when GUI interaction is not ready."""
+
+    single_window_response = _with_single_window_hotload_block(response, gui_status)
+    if single_window_response is not response:
+        return single_window_response
+    block = _gui_activation_preexecution_block(
+        gui_status,
+        project_id=project_id,
+        revision=revision,
+        working_dir=working_dir,
+        views=views,
+        execution_retry_payload=execution_retry_payload,
+    )
+    if block is None:
+        return response
+    activation_payload = dict(block["activation_payload"])
+    retry_payload = dict(block["execution_retry_payload"])
+    return {
+        **response,
+        "ok": False,
+        "status": "gui_activation_required_before_execution",
+        "error": block["message"],
+        "required_next_step": (
+            "Activate the exact existing Materials Studio window with the returned payload, "
+            "then execute the returned apply-current payload without recreating the revision."
+        ),
+        "execution_started": False,
+        "execution_deferred": True,
+        "runner_invoked": False,
+        "structure_materialization_started": False,
+        "gui_input_started": False,
+        "gui_process_launched": False,
+        "structure_reopened": False,
+        "prepared_revision_retained": True,
+        "recommended_tool": "material_studio_gui_activate",
+        "recommended_action": block["recommended_action"],
+        "gui_preexecution_block": block,
+        "gui_activation_retry_tool": "material_studio_gui_activate",
+        "gui_activation_retry_payload": activation_payload,
+        "execution_retry_tool": "material_studio_gui_apply_current_revision",
+        "execution_retry_payload": retry_payload,
+        "gui_open_warning": block["message"],
     }
 
 
@@ -28501,6 +28714,11 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     fit_to_view_preview = _gui_fit_to_view_preview_plan(report)
+    gui_preexecution_block = (
+        report.get("gui_preexecution_block")
+        if isinstance(report.get("gui_preexecution_block"), dict)
+        else {}
+    )
     state = readiness.get("state") or "unknown"
     recommended_tool = readiness.get("recommended_tool") or "material_studio_live_project_status"
     needs_user_confirmation = bool(readiness.get("needs_user_confirmation"))
@@ -28519,7 +28737,37 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
     )
     deferred_hotload_action: dict[str, Any] = {}
 
-    if readiness.get("gui_single_window_policy_ok") is False:
+    if gui_preexecution_block.get("blocked") is True:
+        action_id = "activate_current_revision_before_execution"
+        recommended_tool = str(
+            gui_preexecution_block.get("recommended_tool")
+            or "material_studio_gui_activate"
+        )
+        recommended_action_override = str(
+            gui_preexecution_block.get("recommended_action")
+            or "activate_exact_existing_window_before_revision_execution"
+        )
+        needs_user_confirmation = False
+        payload_hint = dict(
+            gui_preexecution_block.get("activation_payload") or {}
+        )
+        deferred_hotload_action = _drop_none_values(
+            {
+                "action_id": "execute_and_hotload_prepared_current_revision",
+                "recommended_tool": gui_preexecution_block.get(
+                    "execution_retry_tool"
+                ),
+                "recommended_action": (
+                    "apply_already_prepared_current_revision_after_activation"
+                ),
+                "needs_user_confirmation": False,
+                "safe_to_call_without_confirmation": True,
+                "payload_hint": gui_preexecution_block.get(
+                    "execution_retry_payload"
+                ),
+            }
+        )
+    elif readiness.get("gui_single_window_policy_ok") is False:
         action_id = "resolve_single_window_materials_studio_session"
         recommended_tool = "material_studio_gui_status"
         recommended_action_override = (
@@ -39287,6 +39535,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "report_persistence_deferred",
             "execution_completed_before_gui_transaction",
             "structure_ready_for_gui_retry",
+            "runner_invoked",
+            "structure_materialization_started",
+            "gui_input_started",
+            "gui_process_launched",
+            "structure_reopened",
+            "prepared_revision_retained",
+            "gui_preexecution_block",
+            "gui_activation_retry_tool",
+            "gui_activation_retry_payload",
             "current_revision_hotload_block",
             "gui_open_retry_tool",
             "gui_open_retry_payload",
@@ -39504,6 +39761,15 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "report_persistence_deferred",
             "execution_completed_before_gui_transaction",
             "structure_ready_for_gui_retry",
+            "runner_invoked",
+            "structure_materialization_started",
+            "gui_input_started",
+            "gui_process_launched",
+            "structure_reopened",
+            "prepared_revision_retained",
+            "gui_preexecution_block",
+            "gui_activation_retry_tool",
+            "gui_activation_retry_payload",
             "current_revision_hotload_block",
             "gui_open_retry_tool",
             "gui_open_retry_payload",
@@ -40025,6 +40291,15 @@ def _compact_live_response(
             "report_persistence_deferred",
             "execution_completed_before_gui_transaction",
             "structure_ready_for_gui_retry",
+            "runner_invoked",
+            "structure_materialization_started",
+            "gui_input_started",
+            "gui_process_launched",
+            "structure_reopened",
+            "prepared_revision_retained",
+            "gui_preexecution_block",
+            "gui_activation_retry_tool",
+            "gui_activation_retry_payload",
             "current_revision_hotload_block",
             "gui_open_retry_tool",
             "gui_open_retry_payload",
@@ -44755,7 +45030,28 @@ def material_studio_live_update_with_patch(
                 response_mode,
             )
         if open_in_gui:
-            blocked_response = _with_single_window_hotload_block(response, gui_status)
+            blocked_response = _with_gui_preexecution_hotload_block(
+                response,
+                gui_status,
+                project_id=project_id,
+                revision=info.revision,
+                working_dir=store.workspace_root,
+                views=views,
+                execution_retry_payload=_gui_apply_current_execution_retry_payload(
+                    project_id=project_id,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    fit_to_view_after_open=fit_to_view_requested_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    export_view_audit=effective_export_view_audit,
+                    views=views,
+                    working_dir=store.workspace_root,
+                    timeout_seconds=timeout_seconds,
+                    response_mode=response_mode,
+                ),
+            )
             if blocked_response is not response:
                 attached = _attach_modeling_health(
                     blocked_response,
@@ -48774,7 +49070,28 @@ def material_studio_live_modeling_request(
                 _attach_modeling_health(response, execution_mode=mode, store=store, spec=model_spec, gui_artifacts=audit_artifacts)
             )
         if open_in_gui:
-            blocked_response = _with_single_window_hotload_block(response, gui_status)
+            blocked_response = _with_gui_preexecution_hotload_block(
+                response,
+                gui_status,
+                project_id=model_spec.project_id,
+                revision=info.revision,
+                working_dir=store.workspace_root,
+                views=views,
+                execution_retry_payload=_gui_apply_current_execution_retry_payload(
+                    project_id=model_spec.project_id,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    fit_to_view_after_open=fit_to_view_requested_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    export_view_audit=export_view_audit,
+                    views=views,
+                    working_dir=store.workspace_root,
+                    timeout_seconds=timeout_seconds,
+                    response_mode=response_mode,
+                ),
+            )
             if blocked_response is not response:
                 return finish(
                     _attach_modeling_health(
@@ -52081,7 +52398,28 @@ def material_studio_gui_apply_current_revision(
             )
 
         if open_in_gui:
-            blocked_response = _with_single_window_hotload_block(response, response.get("gui_status"))
+            blocked_response = _with_gui_preexecution_hotload_block(
+                response,
+                response.get("gui_status"),
+                project_id=project_id,
+                revision=spec.revision,
+                working_dir=store.workspace_root,
+                views=views,
+                execution_retry_payload=_gui_apply_current_execution_retry_payload(
+                    project_id=project_id,
+                    open_in_gui=open_in_gui,
+                    take_snapshot=take_snapshot,
+                    fit_to_view_after_open=fit_to_view_requested_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_requested_after_open
+                    ),
+                    export_view_audit=export_view_audit,
+                    views=views,
+                    working_dir=store.workspace_root,
+                    timeout_seconds=timeout_seconds,
+                    response_mode=response_mode,
+                ),
+            )
             if blocked_response is not response:
                 return finish(
                     _attach_modeling_health(

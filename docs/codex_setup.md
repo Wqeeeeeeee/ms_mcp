@@ -710,6 +710,20 @@ compact JSON receipt with `project_id`, `execution_mode`, normality gate fields,
 GUI current-revision fields, recommended semiconductor diagnostic focuses,
 `report_json_path`, and `view_bundle_manifest_path`.
 
+For the narrow pre-execution
+`gui_activation_required_before_execution` state, use
+`--execution-mode execute --resume-deferred-execution`. Both arguments are
+required: `auto` is not an explicit authorization to resume execution. The
+smoke runner validates the exact server-issued activation and apply-current
+payloads, verifies the workspace/project/revision binding, reads the current
+revision before and after activation, and then calls
+`material_studio_gui_apply_current_revision` exactly once. It does not recreate
+the revision and does not automatically retry a busy, stale, failed, or
+identity-mismatched execution. Inspect
+`preexecution_execution_continuation_status`,
+`preexecution_execution_continuation_apply_call_count`, and
+`preexecution_execution_continuation_failures` in the compact receipt.
+
 For an explicit execute/hot-load smoke run, add
 `--resume-deferred-hotload` when the command should recover from the narrow
 `execution_completed_gui_activation_required` state. The smoke runner then
@@ -724,6 +738,10 @@ forwarded unchanged in the artifact-only open payload. The flag is disabled by
 default and has no GUI effect on preview responses. Inspect
 `postexecution_hotload_continuation_status` and
 `postexecution_hotload_continuation_failures` in the compact receipt.
+When a resumed pre-execution apply itself loses GUI focus after successful
+execution, pass both continuation flags. The apply still runs only once; the
+existing post-execution continuation consumes only the returned activation and
+artifact-open payload and never reruns MaterialsScript.
 The receipt keeps `gui_window_identity_verification` as the raw observed-window
 value for audit. Use `current_revision_gui_evidence_applicable`,
 `current_revision_gui_evidence_status`, and

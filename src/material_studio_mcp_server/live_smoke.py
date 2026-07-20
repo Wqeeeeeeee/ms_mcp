@@ -1219,6 +1219,21 @@ _POSTEXECUTION_OPEN_PAYLOAD_KEYS = frozenset(
         "prepare_view_replay_after_open",
     }
 )
+_PREEXECUTION_APPLY_PAYLOAD_KEYS = frozenset(
+    {
+        "project_id",
+        "execution_mode",
+        "open_in_gui",
+        "take_snapshot",
+        "fit_to_view_after_open",
+        "prepare_view_replay_after_open",
+        "export_view_audit",
+        "views",
+        "working_dir",
+        "timeout_seconds",
+        "response_mode",
+    }
+)
 
 
 def _path_identity(value: Any) -> str | None:
@@ -1244,6 +1259,285 @@ def _revision_identity(value: Any) -> int | None:
 
 def _continuation_failure(reason: str, **details: Any) -> dict[str, Any]:
     return {"type": reason, **details}
+
+
+def _validate_preexecution_execution_block(
+    response: dict[str, Any],
+    *,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Validate one exact server-issued activate/apply continuation contract."""
+
+    failures: list[dict[str, Any]] = []
+
+    def require(condition: bool, reason: str, **details: Any) -> None:
+        if not condition:
+            failures.append(_continuation_failure(reason, **details))
+
+    project_id = response.get("project_id")
+    project_id = project_id if isinstance(project_id, str) and project_id else None
+    response_revisions = {
+        key: _revision_identity(response.get(key))
+        for key in ("revision", "new_revision")
+        if response.get(key) is not None
+    }
+    revision_values = {value for value in response_revisions.values() if value is not None}
+    revision = next(iter(revision_values)) if len(revision_values) == 1 else None
+    require(project_id is not None, "response_project_id_missing")
+    require(bool(response_revisions), "response_revision_missing")
+    require(
+        len(revision_values) == 1 and all(value is not None for value in response_revisions.values()),
+        "response_revision_identity_invalid",
+        observed=response_revisions,
+    )
+
+    expected_response_fields = {
+        "ok": False,
+        "status": "gui_activation_required_before_execution",
+        "execution_started": False,
+        "execution_deferred": True,
+        "runner_invoked": False,
+        "structure_materialization_started": False,
+        "gui_input_started": False,
+        "gui_process_launched": False,
+        "structure_reopened": False,
+        "prepared_revision_retained": True,
+        "gui_activation_retry_tool": "material_studio_gui_activate",
+        "execution_retry_tool": "material_studio_gui_apply_current_revision",
+    }
+    for field, expected in expected_response_fields.items():
+        observed = response.get(field)
+        require(
+            observed == expected and type(observed) is type(expected),
+            "preexecution_response_field_mismatch",
+            field=field,
+            expected=expected,
+            observed=observed,
+        )
+
+    execution_mode = response.get("execution_mode") or _dict(
+        response.get("modeling_report")
+    ).get("execution_mode")
+    execution_mode = getattr(execution_mode, "value", execution_mode)
+    require(
+        execution_mode == ExecutionMode.EXECUTE.value,
+        "preexecution_response_not_execute",
+        observed=execution_mode,
+    )
+    require(
+        response.get("result") is None or response.get("result") == {},
+        "preexecution_result_already_present",
+    )
+    execution_transaction = _dict(response.get("execution_transaction"))
+    require(
+        execution_transaction.get("execution_started") is not True
+        and execution_transaction.get("execution_completed") is not True,
+        "preexecution_transaction_already_started",
+    )
+    require(
+        not _dict(response.get("execution_attempt")),
+        "preexecution_attempt_already_present",
+    )
+
+    block = _dict(response.get("gui_preexecution_block"))
+    require(bool(block), "preexecution_block_missing")
+    expected_block_fields = {
+        "blocked": True,
+        "reason": "target_window_activation_required",
+        "recommended_tool": "material_studio_gui_activate",
+        "recommended_action": "activate_exact_existing_window_before_revision_execution",
+        "execution_retry_tool": "material_studio_gui_apply_current_revision",
+        "same_window_required": True,
+        "reuse_existing_window_only": True,
+        "gui_process_launch_allowed": False,
+    }
+    for field, expected in expected_block_fields.items():
+        observed = block.get(field)
+        require(
+            observed == expected and type(observed) is type(expected),
+            "preexecution_block_field_mismatch",
+            field=field,
+            expected=expected,
+            observed=observed,
+        )
+    require(
+        block.get("project_id") == project_id,
+        "preexecution_block_project_mismatch",
+        expected=project_id,
+        observed=block.get("project_id"),
+    )
+    require(
+        _revision_identity(block.get("revision")) == revision,
+        "preexecution_block_revision_mismatch",
+        expected=revision,
+        observed=block.get("revision"),
+    )
+
+    activation_payload = _dict(response.get("gui_activation_retry_payload"))
+    execution_payload = _dict(response.get("execution_retry_payload"))
+    require(bool(activation_payload), "activation_payload_missing")
+    require(bool(execution_payload), "execution_payload_missing")
+    require(
+        not (set(activation_payload) - _POSTEXECUTION_ACTIVATE_PAYLOAD_KEYS),
+        "activation_payload_has_unexpected_fields",
+        fields=sorted(set(activation_payload) - _POSTEXECUTION_ACTIVATE_PAYLOAD_KEYS),
+    )
+    require(
+        not (set(execution_payload) - _PREEXECUTION_APPLY_PAYLOAD_KEYS),
+        "execution_payload_has_unexpected_fields",
+        fields=sorted(set(execution_payload) - _PREEXECUTION_APPLY_PAYLOAD_KEYS),
+    )
+    require(
+        activation_payload == _dict(block.get("activation_payload")),
+        "activation_payload_not_exact_block_payload",
+    )
+    require(
+        execution_payload == _dict(block.get("execution_retry_payload")),
+        "execution_payload_not_exact_block_payload",
+    )
+    require(
+        activation_payload.get("project_id") == project_id,
+        "activation_payload_project_mismatch",
+        expected=project_id,
+        observed=activation_payload.get("project_id"),
+    )
+    require(
+        _revision_identity(activation_payload.get("revision")) == revision,
+        "activation_payload_revision_mismatch",
+        expected=revision,
+        observed=activation_payload.get("revision"),
+    )
+    require(
+        activation_payload.get("take_snapshot") is True,
+        "activation_payload_snapshot_gate_missing",
+    )
+    require(
+        execution_payload.get("project_id") == project_id,
+        "execution_payload_project_mismatch",
+        expected=project_id,
+        observed=execution_payload.get("project_id"),
+    )
+    require(
+        execution_payload.get("execution_mode") == ExecutionMode.EXECUTE.value,
+        "execution_payload_not_execute",
+        observed=execution_payload.get("execution_mode"),
+    )
+    require(
+        execution_payload.get("open_in_gui") is True,
+        "execution_payload_gui_open_gate_missing",
+    )
+    for field in (
+        "take_snapshot",
+        "fit_to_view_after_open",
+        "prepare_view_replay_after_open",
+        "export_view_audit",
+    ):
+        require(
+            type(execution_payload.get(field)) is bool,
+            "execution_payload_boolean_field_invalid",
+            field=field,
+            observed=execution_payload.get(field),
+        )
+    if "timeout_seconds" in execution_payload:
+        timeout_seconds = execution_payload.get("timeout_seconds")
+        require(
+            isinstance(timeout_seconds, int)
+            and not isinstance(timeout_seconds, bool)
+            and timeout_seconds > 0,
+            "execution_payload_timeout_invalid",
+            observed=timeout_seconds,
+        )
+    if "response_mode" in execution_payload:
+        require(
+            execution_payload.get("response_mode") == "compact",
+            "execution_payload_response_mode_invalid",
+            observed=execution_payload.get("response_mode"),
+        )
+
+    activation_views = activation_payload.get("views")
+    execution_views = execution_payload.get("views")
+    require(
+        activation_views == execution_views,
+        "continuation_payload_views_mismatch",
+        activation_views=activation_views,
+        execution_views=execution_views,
+    )
+
+    activation_has_workspace = "working_dir" in activation_payload
+    execution_has_workspace = "working_dir" in execution_payload
+    require(
+        activation_has_workspace and execution_has_workspace,
+        "continuation_payload_workspace_missing",
+    )
+    activation_workspace = _path_identity(activation_payload.get("working_dir"))
+    execution_workspace = _path_identity(execution_payload.get("working_dir"))
+    workspace_identity = activation_workspace or execution_workspace
+    require(
+        activation_workspace is not None
+        and activation_workspace == execution_workspace,
+        "continuation_payload_workspace_mismatch",
+        activation_workspace=activation_workspace,
+        execution_workspace=execution_workspace,
+    )
+    requested_workspace = _path_identity(working_dir) if working_dir is not None else None
+    if requested_workspace is not None:
+        require(
+            workspace_identity == requested_workspace,
+            "continuation_payload_requested_workspace_mismatch",
+            expected=requested_workspace,
+            observed=workspace_identity,
+        )
+    response_workspace = _path_identity(response.get("working_dir"))
+    if response_workspace is not None:
+        require(
+            workspace_identity == response_workspace,
+            "continuation_payload_response_workspace_mismatch",
+            expected=response_workspace,
+            observed=workspace_identity,
+        )
+
+    planned_structure = _dict(response.get("planned_outputs")).get("structure")
+    require(
+        _path_identity(planned_structure) is not None,
+        "preexecution_planned_structure_missing",
+    )
+
+    return {
+        "ok": not failures,
+        "project_id": project_id,
+        "revision": revision,
+        "workspace_identity": workspace_identity or requested_workspace,
+        "activation_payload": activation_payload,
+        "execution_payload": execution_payload,
+        "failures": failures,
+    }
+
+
+def _validate_current_revision_continuation_receipt(
+    current: dict[str, Any],
+    *,
+    project_id: str,
+    revision: int,
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    spec = _dict(current.get("spec"))
+    checks = (
+        (current.get("ok") is True, "current_revision_lookup_failed"),
+        (current.get("project_id") == project_id, "current_revision_project_mismatch"),
+        (
+            _revision_identity(current.get("revision")) == revision,
+            "current_revision_mismatch",
+        ),
+        (spec.get("project_id") == project_id, "current_spec_project_mismatch"),
+        (
+            _revision_identity(spec.get("revision")) == revision,
+            "current_spec_revision_mismatch",
+        ),
+    )
+    for condition, reason in checks:
+        if not condition:
+            failures.append(_continuation_failure(reason))
+    return failures
 
 
 def _validate_postexecution_hotload_block(
@@ -1817,6 +2111,414 @@ def _resume_postexecution_hotload(
     return effective, receipt
 
 
+def _merge_preexecution_execution_response(
+    blocked: dict[str, Any],
+    applied: dict[str, Any],
+    *,
+    completed: bool,
+    failure_status: str | None = None,
+) -> dict[str, Any]:
+    """Preserve the prepared revision while making the one-shot apply authoritative."""
+
+    merged = {**blocked, **applied}
+    for field in (
+        "status",
+        "error",
+        "required_next_step",
+        "recommended_tool",
+        "recommended_action",
+        "gui_open_warning",
+        "gui_activation_retry_tool",
+        "gui_activation_retry_payload",
+        "execution_retry_tool",
+        "execution_retry_payload",
+    ):
+        if field not in applied:
+            merged.pop(field, None)
+    for field in (
+        "runner_invoked",
+        "structure_materialization_started",
+        "gui_input_started",
+        "gui_process_launched",
+        "structure_reopened",
+    ):
+        if field not in applied:
+            merged.pop(field, None)
+    merged["gui_preexecution_block"] = None
+    merged["preexecution_execution_continuation_completed"] = completed
+    merged["execution_repeated"] = False
+    merged["modeling_request_reinvoked"] = False
+    if completed:
+        merged["execution_deferred"] = False
+    else:
+        merged["ok"] = False
+        if failure_status:
+            merged["status"] = failure_status
+    return merged
+
+
+def _resume_preexecution_execution(
+    response: dict[str, Any],
+    *,
+    enabled: bool,
+    execution_authorized: bool,
+    phase: str,
+    working_dir: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Consume one exact activate/apply continuation without creating a revision."""
+
+    receipt: dict[str, Any] = {
+        "phase": phase,
+        "requested": bool(enabled),
+        "explicit_execute_authorized": bool(execution_authorized),
+        "eligible": False,
+        "attempted": False,
+        "completed": False,
+        "status": "disabled" if not enabled else "not_required",
+        "failures": [],
+        "modeling_request_reinvoked": False,
+        "revision_created": False,
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "apply_current_revision_invoked": False,
+        "apply_current_revision_call_count": 0,
+        "gui_process_launch_allowed": False,
+    }
+    if not enabled:
+        return response, receipt
+    if response.get("status") != "gui_activation_required_before_execution":
+        if response.get("ok") is not True:
+            receipt["status"] = "not_applicable_failed_response"
+        return response, receipt
+
+    receipt["original_response_status"] = response.get("status")
+    receipt["original_block"] = _dict(response.get("gui_preexecution_block"))
+    if not execution_authorized:
+        receipt["status"] = "explicit_execute_required"
+        receipt["failures"].append(
+            _continuation_failure(
+                "explicit_execute_authorization_missing",
+                required_execution_mode=ExecutionMode.EXECUTE.value,
+            )
+        )
+        return response, receipt
+
+    contract = _validate_preexecution_execution_block(
+        response,
+        working_dir=working_dir,
+    )
+    receipt["contract"] = contract
+    receipt["failures"] = list(contract["failures"])
+    if not contract["ok"]:
+        receipt["status"] = "contract_rejected"
+        return response, receipt
+
+    project_id = str(contract["project_id"])
+    revision = int(contract["revision"])
+    activation_payload = dict(contract["activation_payload"])
+    execution_payload = dict(contract["execution_payload"])
+    current_payload = {
+        "project_id": project_id,
+        "working_dir": execution_payload["working_dir"],
+    }
+    receipt.update(
+        {
+            "eligible": True,
+            "status": "current_revision_check_started",
+            "project_id": project_id,
+            "revision": revision,
+            "workspace_identity": contract.get("workspace_identity"),
+            "activation_payload": activation_payload,
+            "execution_payload": execution_payload,
+            "current_revision_payload": current_payload,
+        }
+    )
+
+    try:
+        current_before = server.material_studio_model_get_current(**current_payload)
+    except Exception as exc:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].append(
+            _continuation_failure("current_revision_lookup_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["current_revision_before_activation"] = current_before
+    current_failures = _validate_current_revision_continuation_receipt(
+        current_before,
+        project_id=project_id,
+        revision=revision,
+    )
+    if current_failures:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].extend(current_failures)
+        return response, receipt
+
+    receipt["attempted"] = True
+    receipt["current_revision_verified_before_activation"] = True
+    receipt["status"] = "activation_started"
+    try:
+        activation = server.material_studio_gui_activate(**activation_payload)
+    except Exception as exc:
+        receipt["status"] = "activation_failed"
+        receipt["failures"].append(
+            _continuation_failure("activation_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["activation_receipt"] = activation
+    activation_failures = _validate_activation_continuation_receipt(
+        activation,
+        project_id=project_id,
+        revision=revision,
+    )
+    if activation_failures:
+        receipt["status"] = "activation_failed"
+        receipt["failures"].extend(activation_failures)
+        return response, receipt
+
+    receipt["activation_completed"] = True
+    receipt["status"] = "current_revision_recheck_started"
+    try:
+        current_after_activation = server.material_studio_model_get_current(
+            **current_payload
+        )
+    except Exception as exc:
+        receipt["status"] = "current_revision_recheck_failed"
+        receipt["failures"].append(
+            _continuation_failure("current_revision_recheck_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["current_revision_after_activation"] = current_after_activation
+    current_failures = _validate_current_revision_continuation_receipt(
+        current_after_activation,
+        project_id=project_id,
+        revision=revision,
+    )
+    if current_failures:
+        receipt["status"] = "current_revision_recheck_failed"
+        receipt["failures"].extend(current_failures)
+        return response, receipt
+
+    receipt["current_revision_verified_after_activation"] = True
+    receipt["status"] = "apply_started"
+    receipt["apply_current_revision_invoked"] = True
+    receipt["apply_current_revision_call_count"] = 1
+    try:
+        applied = server.material_studio_gui_apply_current_revision(
+            **execution_payload
+        )
+    except Exception as exc:
+        receipt["status"] = "apply_failed"
+        receipt["failures"].append(
+            _continuation_failure("apply_current_revision_call_error", error=str(exc))
+        )
+        failed = {
+            "ok": False,
+            "project_id": project_id,
+            "revision": revision,
+            "status": "preexecution_execution_continuation_apply_failed",
+            "error": str(exc),
+            "execution_started": False,
+            "execution_deferred": True,
+            "recommended_tool": "material_studio_live_project_status",
+        }
+        return (
+            _merge_preexecution_execution_response(
+                response,
+                failed,
+                completed=False,
+                failure_status=failed["status"],
+            ),
+            receipt,
+        )
+    receipt["apply_current_revision_receipt"] = applied
+
+    applied_project = applied.get("project_id")
+    applied_revisions = {
+        value
+        for value in (
+            _revision_identity(applied.get("revision")),
+            _revision_identity(applied.get("new_revision")),
+        )
+        if value is not None
+    }
+    if applied_project != project_id:
+        receipt["failures"].append(
+            _continuation_failure(
+                "apply_response_project_mismatch",
+                expected=project_id,
+                observed=applied_project,
+            )
+        )
+    if applied_revisions != {revision}:
+        receipt["failures"].append(
+            _continuation_failure(
+                "apply_response_revision_mismatch",
+                expected=revision,
+                observed=sorted(applied_revisions),
+            )
+        )
+
+    applied_mode = applied.get("execution_mode") or _dict(
+        applied.get("modeling_report")
+    ).get("execution_mode")
+    applied_mode = getattr(applied_mode, "value", applied_mode)
+    if applied_mode != ExecutionMode.EXECUTE.value:
+        receipt["failures"].append(
+            _continuation_failure(
+                "apply_response_not_execute",
+                observed=applied_mode,
+            )
+        )
+
+    postexecution_deferred = (
+        applied.get("status") == "execution_completed_gui_activation_required"
+    )
+    if postexecution_deferred:
+        postexecution_contract = _validate_postexecution_hotload_block(
+            applied,
+            working_dir=str(execution_payload["working_dir"]),
+        )
+        receipt["postexecution_contract"] = postexecution_contract
+        receipt["failures"].extend(postexecution_contract["failures"])
+    elif applied.get("ok") is True:
+        if applied.get("execution_started") is not True:
+            receipt["failures"].append(
+                _continuation_failure(
+                    "apply_response_execution_not_started",
+                    observed=applied.get("execution_started"),
+                )
+            )
+        if _dict(applied.get("result")).get("success") is not True:
+            receipt["failures"].append(
+                _continuation_failure("apply_response_result_not_successful")
+            )
+    else:
+        receipt["status"] = "apply_failed"
+        receipt["failures"].append(
+            _continuation_failure(
+                "apply_current_revision_failed",
+                observed_status=applied.get("status"),
+                error=applied.get("error"),
+            )
+        )
+        return (
+            _merge_preexecution_execution_response(
+                response,
+                applied,
+                completed=False,
+                failure_status=(
+                    str(applied.get("status"))
+                    if applied.get("status")
+                    else "preexecution_execution_continuation_apply_failed"
+                ),
+            ),
+            receipt,
+        )
+
+    if receipt["failures"]:
+        receipt["status"] = "apply_verification_failed"
+        return (
+            _merge_preexecution_execution_response(
+                response,
+                applied,
+                completed=False,
+                failure_status="preexecution_execution_continuation_verification_failed",
+            ),
+            receipt,
+        )
+
+    receipt.update(
+        {
+            "status": (
+                "execution_completed_gui_activation_required"
+                if postexecution_deferred
+                else "completed"
+            ),
+            "completed": True,
+            "exact_payloads_used": True,
+            "execution_started_by_apply": True,
+            "postexecution_hotload_deferred": postexecution_deferred,
+            "fit_to_view_after_open": (
+                execution_payload.get("fit_to_view_after_open") is True
+            ),
+            "prepare_view_replay_after_open": (
+                execution_payload.get("prepare_view_replay_after_open") is True
+            ),
+        }
+    )
+    effective = _merge_preexecution_execution_response(
+        response,
+        applied,
+        completed=True,
+    )
+    return effective, receipt
+
+
+def _skipped_followup_preexecution_continuation_receipt(
+    *,
+    enabled: bool,
+    execution_authorized: bool,
+) -> dict[str, Any]:
+    return {
+        "phase": "followup",
+        "requested": bool(enabled),
+        "explicit_execute_authorized": bool(execution_authorized),
+        "eligible": False,
+        "attempted": False,
+        "completed": False,
+        "status": "base_request_not_ready",
+        "failures": [],
+        "modeling_request_reinvoked": False,
+        "revision_created": False,
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "apply_current_revision_invoked": False,
+        "apply_current_revision_call_count": 0,
+        "gui_process_launch_allowed": False,
+    }
+
+
+def _preexecution_execution_continuation_summary(
+    base: dict[str, Any] | None,
+    followup: dict[str, Any] | None,
+) -> dict[str, Any]:
+    receipts = [item for item in (base, followup) if isinstance(item, dict)]
+    failures: list[dict[str, Any]] = []
+    for item in receipts:
+        for failure in item.get("failures") or []:
+            failures.append({"phase": item.get("phase"), **_dict(failure)})
+    required = [item for item in receipts if item.get("original_response_status")]
+    requested = any(item.get("requested") is True for item in receipts)
+    attempted = any(item.get("attempted") is True for item in receipts)
+    completed = bool(required) and all(item.get("completed") is True for item in required)
+    if failures:
+        status = "failed"
+    elif completed:
+        status = "completed"
+    elif requested:
+        status = "not_required"
+    else:
+        status = "disabled"
+    return {
+        "requested": requested,
+        "attempted": attempted,
+        "completed": completed,
+        "status": status,
+        "required_phase_count": len(required),
+        "completed_phase_count": sum(item.get("completed") is True for item in required),
+        "failures": failures,
+        "base_status": (base or {}).get("status"),
+        "followup_status": (followup or {}).get("status"),
+        "apply_current_revision_call_count": sum(
+            int(item.get("apply_current_revision_call_count") or 0)
+            for item in receipts
+        ),
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "gui_process_launch_allowed": False,
+    }
+
+
 def _skipped_followup_continuation_receipt(*, enabled: bool) -> dict[str, Any]:
     return {
         "phase": "followup",
@@ -1884,6 +2586,7 @@ def run_live_smoke(
     export_bundle: bool = True,
     views: list[str] | None = None,
     timeout_seconds: int | None = None,
+    resume_deferred_execution: bool = False,
     resume_deferred_hotload: bool = False,
 ) -> dict[str, Any]:
     """Run preflight -> live request -> safe continuation -> status -> bundle."""
@@ -1898,6 +2601,7 @@ def run_live_smoke(
             raise ValueError("follow_up_preset requires an explicit scenario when request is supplied directly.")
         resolved_follow_up_request = default_follow_up_request_for_scenario(resolved_scenario, follow_up_preset)
     mode = _execution_mode_arg(execution_mode)
+    explicit_execution_authorized = execution_mode == ExecutionMode.EXECUTE.value
     preflight = server.material_studio_live_session_preflight(
         working_dir=working_dir,
         include_latest_project=True,
@@ -1913,14 +2617,24 @@ def run_live_smoke(
         working_dir=working_dir,
         timeout_seconds=timeout_seconds,
     )
+    live, base_preexecution_execution_continuation = (
+        _resume_preexecution_execution(
+            initial_base_live,
+            enabled=resume_deferred_execution,
+            execution_authorized=explicit_execution_authorized,
+            phase="base",
+            working_dir=working_dir,
+        )
+    )
     live, base_hotload_continuation = _resume_postexecution_hotload(
-        initial_base_live,
+        live,
         enabled=resume_deferred_hotload,
         phase="base",
         working_dir=working_dir,
     )
     base_live = live
     followup_live: dict[str, Any] | None = None
+    followup_preexecution_execution_continuation: dict[str, Any] | None = None
     followup_hotload_continuation: dict[str, Any] | None = None
     if resolved_follow_up_request and live.get("ok") and live.get("project_id"):
         initial_followup_live = server.material_studio_live_modeling_request(
@@ -1934,14 +2648,29 @@ def run_live_smoke(
             working_dir=working_dir,
             timeout_seconds=timeout_seconds,
         )
+        followup_live, followup_preexecution_execution_continuation = (
+            _resume_preexecution_execution(
+                initial_followup_live,
+                enabled=resume_deferred_execution,
+                execution_authorized=explicit_execution_authorized,
+                phase="followup",
+                working_dir=working_dir,
+            )
+        )
         followup_live, followup_hotload_continuation = _resume_postexecution_hotload(
-            initial_followup_live,
+            followup_live,
             enabled=resume_deferred_hotload,
             phase="followup",
             working_dir=working_dir,
         )
         live = followup_live
     elif resolved_follow_up_request:
+        followup_preexecution_execution_continuation = (
+            _skipped_followup_preexecution_continuation_receipt(
+                enabled=resume_deferred_execution,
+                execution_authorized=explicit_execution_authorized,
+            )
+        )
         followup_hotload_continuation = _skipped_followup_continuation_receipt(
             enabled=resume_deferred_hotload,
         )
@@ -1982,6 +2711,12 @@ def run_live_smoke(
         follow_up_preset=follow_up_preset,
         hotload_expected=bool((hotload or resolved_follow_up_request) and mode_value != ExecutionMode.PREVIEW.value),
         snapshot_expected=bool(take_snapshot),
+        base_preexecution_execution_continuation=(
+            base_preexecution_execution_continuation
+        ),
+        followup_preexecution_execution_continuation=(
+            followup_preexecution_execution_continuation
+        ),
         base_hotload_continuation=base_hotload_continuation,
         followup_hotload_continuation=followup_hotload_continuation,
     )
@@ -1994,6 +2729,7 @@ def run_live_smoke(
         "available_follow_up_presets": sorted(FOLLOW_UP_REQUESTS.get(resolved_scenario, {})) if scenario is not None else [],
         "scenario": scenario_for_summary,
         "hotload_requested": bool(hotload),
+        "resume_deferred_execution_requested": bool(resume_deferred_execution),
         "resume_deferred_hotload_requested": bool(resume_deferred_hotload),
         "execution_mode_argument": execution_mode,
         "working_dir": str(Path(working_dir).expanduser()) if working_dir else None,
@@ -2003,6 +2739,12 @@ def run_live_smoke(
         "base_live": base_live if resolved_follow_up_request else None,
         "live": live,
         "followup_live": followup_live,
+        "base_preexecution_execution_continuation": (
+            base_preexecution_execution_continuation
+        ),
+        "followup_preexecution_execution_continuation": (
+            followup_preexecution_execution_continuation
+        ),
         "base_hotload_continuation": base_hotload_continuation,
         "followup_hotload_continuation": followup_hotload_continuation,
         "status": status,
@@ -2022,11 +2764,19 @@ def build_live_smoke_summary(
     follow_up_preset: str | None = None,
     hotload_expected: bool = False,
     snapshot_expected: bool = True,
+    base_preexecution_execution_continuation: dict[str, Any] | None = None,
+    followup_preexecution_execution_continuation: dict[str, Any] | None = None,
     base_hotload_continuation: dict[str, Any] | None = None,
     followup_hotload_continuation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a compact, stable acceptance summary for a live smoke run."""
 
+    preexecution_continuation_summary = (
+        _preexecution_execution_continuation_summary(
+            base_preexecution_execution_continuation,
+            followup_preexecution_execution_continuation,
+        )
+    )
     continuation_summary = _postexecution_hotload_continuation_summary(
         base_hotload_continuation,
         followup_hotload_continuation,
@@ -2318,6 +3068,33 @@ def build_live_smoke_summary(
         "live_request_ok": bool(live.get("ok")),
         "status_ok": None if status is None else bool(status.get("ok")),
         "bundle_ok": None if bundle is None else bool(bundle.get("ok")),
+        "preexecution_execution_continuation": preexecution_continuation_summary,
+        "preexecution_execution_continuation_requested": (
+            preexecution_continuation_summary["requested"]
+        ),
+        "preexecution_execution_continuation_attempted": (
+            preexecution_continuation_summary["attempted"]
+        ),
+        "preexecution_execution_continuation_completed": (
+            preexecution_continuation_summary["completed"]
+        ),
+        "preexecution_execution_continuation_status": (
+            preexecution_continuation_summary["status"]
+        ),
+        "preexecution_execution_continuation_failures": (
+            preexecution_continuation_summary["failures"]
+        ),
+        "preexecution_execution_continuation_apply_call_count": (
+            preexecution_continuation_summary[
+                "apply_current_revision_call_count"
+            ]
+        ),
+        "base_preexecution_execution_continuation_status": (
+            preexecution_continuation_summary["base_status"]
+        ),
+        "followup_preexecution_execution_continuation_status": (
+            preexecution_continuation_summary["followup_status"]
+        ),
         "postexecution_hotload_continuation": continuation_summary,
         "postexecution_hotload_continuation_requested": continuation_summary[
             "requested"
@@ -2530,6 +3307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         export_bundle=args.export_bundle,
         views=args.views,
         timeout_seconds=args.timeout_seconds,
+        resume_deferred_execution=args.resume_deferred_execution,
         resume_deferred_hotload=args.resume_deferred_hotload,
     )
     payload = result if args.include_raw else {"ok": result["ok"], **result["summary"]}
@@ -2578,6 +3356,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--timeout-seconds", type=int, help="Optional execution timeout.")
+    parser.add_argument(
+        "--resume-deferred-execution",
+        action="store_true",
+        help=(
+            "With explicit --execution-mode execute, consume one exact pre-execution "
+            "activate/apply continuation after verifying the current revision twice; "
+            "never recreate the revision or retry apply automatically."
+        ),
+    )
     parser.add_argument(
         "--resume-deferred-hotload",
         action="store_true",

@@ -6473,6 +6473,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "can_claim_live_gui_normal",
                 "current_revision_loaded_in_gui",
                 "loaded_current_revision",
+                "gui_current_revision_gui_evidence_applicable",
+                "gui_current_revision_gui_evidence_status",
+                "gui_current_revision_gui_evidence_sources",
                 "normality_gate_next_action",
                 "normality_gate_reasons",
                 "normality_gate_live_gui_reasons",
@@ -22805,6 +22808,29 @@ def _with_single_window_hotload_block(
     }
 
 
+def _current_revision_gui_evidence_scope(
+    *,
+    gui_open: dict[str, Any] | None,
+    persisted_gui: dict[str, Any],
+    revision_consistency: dict[str, Any],
+    external_visual_confirmation_ok: bool,
+) -> tuple[bool, list[str]]:
+    """Return whether GUI evidence is actually bound to this project revision."""
+
+    sources: list[str] = []
+    if isinstance(gui_open, dict):
+        sources.append("current_request_gui_open_artifact")
+    if external_visual_confirmation_ok:
+        sources.append("current_request_visual_confirmation")
+    if persisted_gui.get("hot_loaded") is True:
+        sources.append("persisted_current_revision_gui_report")
+    if revision_consistency.get("target_window_matched_project_window") is True:
+        sources.append("live_target_window_current_revision_match")
+    if int(revision_consistency.get("matching_window_count") or 0) > 0:
+        sources.append("live_matching_window_current_revision_match")
+    return bool(sources), sources
+
+
 def _gui_report_summary(
     response: dict[str, Any],
     *,
@@ -22862,6 +22888,14 @@ def _gui_report_summary(
         ):
             if revision_consistency.get(key) is None and persisted_gui.get(key) is not None:
                 revision_consistency[key] = persisted_gui[key]
+    current_revision_gui_evidence_applicable, current_revision_gui_evidence_sources = (
+        _current_revision_gui_evidence_scope(
+            gui_open=gui_open,
+            persisted_gui=persisted_gui,
+            revision_consistency=revision_consistency,
+            external_visual_confirmation_ok=external_visual_confirmation_ok,
+        )
+    )
     open_identity = _gui_open_identity_verification(
         response=response,
         gui_open=gui_open,
@@ -22959,6 +22993,13 @@ def _gui_report_summary(
         "post_open_window_management_payload_hint": post_open_window_management.get("payload_hint") or {},
         "post_open_window_management_warnings": post_open_window_management.get("warnings") or [],
         "window_identity_verification": _window_identity_verification(revision_consistency),
+        "current_revision_gui_evidence_applicable": current_revision_gui_evidence_applicable,
+        "current_revision_gui_evidence_status": (
+            "bound_to_current_revision"
+            if current_revision_gui_evidence_applicable
+            else "not_bound_to_current_revision"
+        ),
+        "current_revision_gui_evidence_sources": current_revision_gui_evidence_sources,
         "activated_existing_window": (gui_open or {}).get("activated_existing_window") if gui_open else None,
         "activated_opened_window": (gui_open or {}).get("activated_opened_window") if gui_open else None,
         "pre_open_launch_attempted": pre_open_launch.get("attempted") if gui_open else None,
@@ -23834,6 +23875,9 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
     review_reasons.extend(calculation_result_review_reasons)
 
     gui = report.get("gui") or {}
+    gui_evidence_applicable = (
+        gui.get("current_revision_gui_evidence_applicable") is not False
+    )
     single_window = _single_window_policy_summary(gui)
     gui_single_window_policy_ok = single_window.get("single_window_policy_ok")
     gui_single_window_violation_reasons = single_window.get("single_window_violation_reasons") or []
@@ -23862,14 +23906,15 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
             visual_review_reasons.append("gui:viewport_capture_limitation_possible")
     elif report.get("execution_mode") == ExecutionMode.EXECUTE.value:
         review_reasons.append("execute_mode_without_gui_hotload")
-    if gui.get("selected_window_matches_current") is False:
-        review_reasons.append("gui:selected_window_stale")
-    if gui.get("foreground_window_matches_current") is False:
-        review_reasons.append("gui:foreground_window_stale")
-    if gui.get("window_identity_verification") == "unverified":
-        review_reasons.append("gui:window_identity_unverified")
-    elif gui.get("window_identity_verification") == "mismatched":
-        blocking_reasons.append("gui_window_identity_mismatched")
+    if gui_evidence_applicable:
+        if gui.get("selected_window_matches_current") is False:
+            review_reasons.append("gui:selected_window_stale")
+        if gui.get("foreground_window_matches_current") is False:
+            review_reasons.append("gui:foreground_window_stale")
+        if gui.get("window_identity_verification") == "unverified":
+            review_reasons.append("gui:window_identity_unverified")
+        elif gui.get("window_identity_verification") == "mismatched":
+            blocking_reasons.append("gui_window_identity_mismatched")
 
     normality = report.get("normality")
     execution_mode = report.get("execution_mode")
@@ -25648,6 +25693,16 @@ def _view_parameter_summary(report: dict[str, Any]) -> dict[str, Any]:
             "total_overlap_candidate_count": view_review.get("total_overlap_candidate_count"),
             "view_warning_count": view_review.get("view_warning_count"),
             "expected_atom_projection_count": view_review.get("expected_atom_projection_count"),
+            "current_revision_gui_evidence_applicable": view_review.get(
+                "current_revision_gui_evidence_applicable"
+            ),
+            "current_revision_gui_evidence_status": view_review.get(
+                "current_revision_gui_evidence_status"
+            ),
+            "current_revision_gui_evidence_sources": view_review.get(
+                "current_revision_gui_evidence_sources"
+            )
+            or [],
             "view_selection": view_selection,
             "recommended_view": recommended_view,
             "views": views,
@@ -31357,6 +31412,16 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
 
     return {
         "available": True,
+        "current_revision_gui_evidence_applicable": gui.get(
+            "current_revision_gui_evidence_applicable"
+        ),
+        "current_revision_gui_evidence_status": gui.get(
+            "current_revision_gui_evidence_status"
+        ),
+        "current_revision_gui_evidence_sources": gui.get(
+            "current_revision_gui_evidence_sources"
+        )
+        or [],
         "status": status,
         "hot_loaded": hot_loaded,
         "loaded_current_revision": loaded_current,
@@ -31433,6 +31498,16 @@ def _gui_current_revision_live_summary(gui_current_revision: dict[str, Any]) -> 
             "gui_current_revision_needs_reload": gui_current_revision.get("needs_reload"),
             "gui_current_revision_needs_activation": gui_current_revision.get("needs_activation"),
             "gui_current_revision_needs_snapshot": gui_current_revision.get("needs_snapshot"),
+            "gui_current_revision_gui_evidence_applicable": gui_current_revision.get(
+                "current_revision_gui_evidence_applicable"
+            ),
+            "gui_current_revision_gui_evidence_status": gui_current_revision.get(
+                "current_revision_gui_evidence_status"
+            ),
+            "gui_current_revision_gui_evidence_sources": gui_current_revision.get(
+                "current_revision_gui_evidence_sources"
+            )
+            or [],
             "gui_current_revision_fit_to_view_preview_recommended": gui_current_revision.get(
                 "fit_to_view_preview_recommended"
             ),
@@ -32354,32 +32429,38 @@ def _view_review_from_audit(audit: dict[str, Any] | None, gui_summary: dict[str,
         critical_flags.append("projection_atom_count_mismatch")
 
     visual_validation = gui_summary.get("visual_validation")
-    if visual_validation in {"failed", "warning", "snapshot_missing"}:
-        risk_flags.append(f"gui_visual_validation_{visual_validation}")
-    if visual_validation == "failed":
-        critical_flags.append("gui_visual_validation_failed")
-    if gui_summary.get("snapshot_likely_nonblank") is False:
-        risk_flags.append("gui_snapshot_blank")
-        critical_flags.append("gui_snapshot_blank")
-    if gui_summary.get("loaded_current_revision") is False and gui_summary.get("hot_loaded"):
-        risk_flags.append("gui_loaded_revision_stale")
-        critical_flags.append("gui_loaded_revision_stale")
-    if (
-        gui_summary.get("activated_opened_window") is False
-        and gui_summary.get("hot_loaded")
-        and not _gui_foreground_current_revision_verified(gui_summary)
-    ):
-        risk_flags.append("gui_opened_window_activation_failed")
-    if gui_summary.get("selected_window_matches_current") is False:
-        risk_flags.append("gui_selected_window_stale")
-    if gui_summary.get("foreground_window_matches_current") is False:
-        risk_flags.append("gui_foreground_window_stale")
-    identity_verification = gui_summary.get("window_identity_verification")
-    if identity_verification == "unverified":
-        risk_flags.append("gui_window_identity_unverified")
-    elif identity_verification == "mismatched":
-        risk_flags.append("gui_window_identity_mismatched")
-        critical_flags.append("gui_window_identity_mismatched")
+    gui_evidence_applicable = (
+        gui_summary.get("current_revision_gui_evidence_applicable") is not False
+    )
+    if gui_evidence_applicable:
+        if visual_validation in {"failed", "warning", "snapshot_missing"}:
+            risk_flags.append(f"gui_visual_validation_{visual_validation}")
+        if visual_validation == "failed":
+            critical_flags.append("gui_visual_validation_failed")
+        if gui_summary.get("snapshot_likely_nonblank") is False:
+            risk_flags.append("gui_snapshot_blank")
+            critical_flags.append("gui_snapshot_blank")
+        if gui_summary.get("loaded_current_revision") is False and gui_summary.get("hot_loaded"):
+            risk_flags.append("gui_loaded_revision_stale")
+            critical_flags.append("gui_loaded_revision_stale")
+        if (
+            gui_summary.get("activated_opened_window") is False
+            and gui_summary.get("hot_loaded")
+            and not _gui_foreground_current_revision_verified(gui_summary)
+        ):
+            risk_flags.append("gui_opened_window_activation_failed")
+        if gui_summary.get("selected_window_matches_current") is False:
+            risk_flags.append("gui_selected_window_stale")
+        if gui_summary.get("foreground_window_matches_current") is False:
+            risk_flags.append("gui_foreground_window_stale")
+        identity_verification = gui_summary.get("window_identity_verification")
+        if identity_verification == "unverified":
+            risk_flags.append("gui_window_identity_unverified")
+        elif identity_verification == "mismatched":
+            risk_flags.append("gui_window_identity_mismatched")
+            critical_flags.append("gui_window_identity_mismatched")
+    else:
+        identity_verification = gui_summary.get("window_identity_verification")
 
     nonblocking_visual_flags: list[str] = []
     if _projection_risks_are_nonblocking_visual_notes(
@@ -32450,6 +32531,13 @@ def _view_review_from_audit(audit: dict[str, Any] | None, gui_summary: dict[str,
         "recommended_view_orthographic_width_angstrom": recommended_view.get("orthographic_width_angstrom"),
         "recommended_view_orthographic_height_angstrom": recommended_view.get("orthographic_height_angstrom"),
         "gui_visual_validation": visual_validation,
+        "current_revision_gui_evidence_applicable": gui_evidence_applicable,
+        "current_revision_gui_evidence_status": gui_summary.get(
+            "current_revision_gui_evidence_status"
+        ),
+        "current_revision_gui_evidence_sources": gui_summary.get(
+            "current_revision_gui_evidence_sources"
+        ) or [],
         "gui_window_identity_verification": identity_verification,
         "gui_snapshot_likely_nonblank": gui_summary.get("snapshot_likely_nonblank"),
         "risk_flags": sorted(set(risk_flags)),
@@ -35588,6 +35676,9 @@ def _compact_view_parameter_summary(value: Any) -> dict[str, Any] | None:
             "total_overlap_candidate_count",
             "view_warning_count",
             "expected_atom_projection_count",
+            "current_revision_gui_evidence_applicable",
+            "current_revision_gui_evidence_status",
+            "current_revision_gui_evidence_sources",
             "exported_row_counts_match_summary",
             "export_status",
             "export_needs_refresh",
@@ -35672,6 +35763,9 @@ def _compact_gui_current_revision(value: Any) -> dict[str, Any] | None:
             "needs_activation",
             "needs_snapshot",
             "needs_single_window_resolution",
+            "current_revision_gui_evidence_applicable",
+            "current_revision_gui_evidence_status",
+            "current_revision_gui_evidence_sources",
             "fit_to_view_preview_recommended",
             "fit_to_view_preview_status",
             "fit_to_view_preview_blocking_reasons",
@@ -39604,6 +39698,9 @@ def _compact_live_response(
             "gui_hot_loaded",
             "gui_loaded_current_revision",
             "gui_current_revision_status",
+            "gui_current_revision_gui_evidence_applicable",
+            "gui_current_revision_gui_evidence_status",
+            "gui_current_revision_gui_evidence_sources",
             "gui_window_identity_verification",
             "gui_single_window_policy_ok",
             "view_status",
@@ -39666,6 +39763,18 @@ def _compact_live_response(
     if isinstance(gui_current, dict):
         for key, source_key in (
             ("gui_current_revision_status", "status"),
+            (
+                "gui_current_revision_gui_evidence_applicable",
+                "current_revision_gui_evidence_applicable",
+            ),
+            (
+                "gui_current_revision_gui_evidence_status",
+                "current_revision_gui_evidence_status",
+            ),
+            (
+                "gui_current_revision_gui_evidence_sources",
+                "current_revision_gui_evidence_sources",
+            ),
             ("gui_current_revision_needs_snapshot", "needs_snapshot"),
             ("gui_current_revision_single_window_policy_ok", "single_window_policy_ok"),
             ("gui_current_revision_recommended_tool", "recommended_tool"),

@@ -1538,3 +1538,15 @@ Use `diagnostic_export_manifest.contract_status` and
 `diagnostic_focus_plan.diagnostic_export_contract_status` before treating a
 persisted export as complete. Existing files remain listed for audit, but only
 `contract_status=current` satisfies the current diagnostic delivery contract.
+
+## Preview GUI Evidence Scope
+
+Preview and GUI-disabled requests may still observe an already open Materials
+Studio process for single-window safety, but an unrelated window is not
+evidence for the new project revision. View-parameter review and live
+readiness ignore selected, foreground, and window-identity mismatches unless
+the current revision is bound by a same-request GUI-open artifact, a persisted
+current-revision GUI report, a matching live wrapper window, or a validated
+visual confirmation. This keeps deterministic spec diagnostics useful during
+preview while retaining every identity gate for execute/hot-load and persisted
+current-revision GUI status.

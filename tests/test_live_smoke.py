@@ -1641,6 +1641,83 @@ def test_live_smoke_accepts_current_revision_loaded_alias_from_live_summary() ->
     assert summary["hotload_acceptance_failures"] == []
 
 
+def test_live_smoke_summary_scopes_observed_gui_identity_to_current_revision() -> None:
+    unbound = live_smoke.build_live_smoke_summary(
+        preflight={"ok": True, "state": "ready_for_new_model"},
+        live={
+            "ok": True,
+            "workflow": "create",
+            "project_id": "preview_scope",
+            "revision": 0,
+            "execution_mode": "preview",
+            "modeling_report": {
+                "normality": "preview_ready",
+                "normality_gate": {"status": "preview_only"},
+                "gui": {
+                    "hot_loaded": False,
+                    "loaded_current_revision": False,
+                    "window_identity_verification": "mismatched",
+                    "current_revision_gui_evidence_applicable": False,
+                    "current_revision_gui_evidence_status": (
+                        "not_bound_to_current_revision"
+                    ),
+                    "current_revision_gui_evidence_sources": [],
+                },
+            },
+        },
+        scenario="gaas",
+    )
+
+    assert unbound["gui_window_identity_verification"] == "mismatched"
+    assert unbound["current_revision_gui_evidence_applicable"] is False
+    assert unbound["current_revision_gui_evidence_status"] == (
+        "not_bound_to_current_revision"
+    )
+    assert unbound["current_revision_gui_evidence_sources"] == []
+    assert unbound["current_revision_gui_window_identity_verification"] == (
+        "not_applicable_to_current_revision"
+    )
+
+    bound = live_smoke.build_live_smoke_summary(
+        preflight={"ok": True, "state": "ready_for_new_model"},
+        live={
+            "ok": True,
+            "workflow": "create",
+            "project_id": "execute_scope",
+            "revision": 0,
+            "execution_mode": "execute",
+            "modeling_report": {
+                "normality": "review_warnings",
+                "normality_gate": {"status": "review_required"},
+                "gui": {
+                    "hot_loaded": True,
+                    "loaded_current_revision": True,
+                    "window_identity_verification": "mismatched",
+                    "current_revision_gui_evidence_applicable": True,
+                    "current_revision_gui_evidence_status": (
+                        "bound_to_current_revision"
+                    ),
+                    "current_revision_gui_evidence_sources": [
+                        "current_request_gui_open_artifact"
+                    ],
+                },
+            },
+        },
+        scenario="gaas",
+    )
+
+    assert bound["current_revision_gui_evidence_applicable"] is True
+    assert bound["current_revision_gui_evidence_status"] == (
+        "bound_to_current_revision"
+    )
+    assert bound["current_revision_gui_evidence_sources"] == [
+        "current_request_gui_open_artifact"
+    ]
+    assert bound["current_revision_gui_window_identity_verification"] == (
+        "mismatched"
+    )
+
+
 def test_live_smoke_hotload_acceptance_fails_single_window_violation() -> None:
     summary = live_smoke.build_live_smoke_summary(
         preflight={"ok": True, "state": "ready_for_new_model", "blocking_reasons": [], "review_reasons": []},

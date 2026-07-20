@@ -709,6 +709,15 @@ modeling request, live project status, and view-bundle export, then prints a
 compact JSON receipt with `project_id`, `execution_mode`, normality gate fields,
 GUI current-revision fields, recommended semiconductor diagnostic focuses,
 `report_json_path`, and `view_bundle_manifest_path`.
+The receipt keeps `gui_window_identity_verification` as the raw observed-window
+value for audit. Use `current_revision_gui_evidence_applicable`,
+`current_revision_gui_evidence_status`, and
+`current_revision_gui_window_identity_verification` for decisions about the
+new revision. A value of `not_applicable_to_current_revision` means the visible
+window was observed for single-window safety but is not evidence about the
+previewed revision; it must not fail deterministic view or semiconductor
+diagnostics. Execute/hot-load acceptance still requires bound, verified GUI
+identity evidence.
 For GUI evidence, treat `gui_hot_loaded=true` and
 `gui_loaded_current_revision=true` as window/revision evidence, then separately
 check `snapshot_viewport_likely_visible_model`. If that field is false, the

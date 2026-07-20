@@ -1370,6 +1370,9 @@ def build_live_smoke_summary(
     live_gui_acceptance = _dict(live.get("live_gui_acceptance")) or _dict(report.get("live_gui_acceptance"))
     diagnostics = _dict(report.get("diagnostics"))
     gui = _dict(report.get("gui"))
+    gui_current_revision = _dict(report.get("gui_current_revision")) or _dict(
+        live.get("gui_current_revision")
+    )
     health = _dict((status or {}).get("modeling_health")) or _dict(live.get("modeling_health"))
     template_profile = _dict(live.get("semiconductor_template_profile")) or _dict(
         report.get("semiconductor_template_profile")
@@ -1451,6 +1454,32 @@ def build_live_smoke_summary(
         summary.get("snapshot_viewport_capture_limitation_possible"),
     )
     gui_window_identity_verification = gui.get("window_identity_verification")
+    current_revision_gui_evidence_applicable = _first_not_none(
+        summary.get("gui_current_revision_gui_evidence_applicable"),
+        gui_current_revision.get("current_revision_gui_evidence_applicable"),
+        gui.get("current_revision_gui_evidence_applicable"),
+    )
+    current_revision_gui_evidence_status = _first_not_none(
+        summary.get("gui_current_revision_gui_evidence_status"),
+        gui_current_revision.get("current_revision_gui_evidence_status"),
+        gui.get("current_revision_gui_evidence_status"),
+    )
+    if current_revision_gui_evidence_status is None and current_revision_gui_evidence_applicable is not None:
+        current_revision_gui_evidence_status = (
+            "bound_to_current_revision"
+            if current_revision_gui_evidence_applicable
+            else "not_bound_to_current_revision"
+        )
+    current_revision_gui_evidence_sources = _first_not_none(
+        summary.get("gui_current_revision_gui_evidence_sources"),
+        gui_current_revision.get("current_revision_gui_evidence_sources"),
+        gui.get("current_revision_gui_evidence_sources"),
+    ) or []
+    current_revision_gui_window_identity_verification = (
+        "not_applicable_to_current_revision"
+        if current_revision_gui_evidence_applicable is False
+        else gui_window_identity_verification
+    )
     single_window_policy_ok = _first_not_none(
         gui.get("single_window_policy_ok"),
         summary.get("gui_single_window_policy_ok"),
@@ -1715,6 +1744,12 @@ def build_live_smoke_summary(
         "snapshot_viewport_capture_diagnostic": _first_not_none(
             gui.get("snapshot_viewport_capture_diagnostic"),
             summary.get("snapshot_viewport_capture_diagnostic"),
+        ),
+        "current_revision_gui_evidence_applicable": current_revision_gui_evidence_applicable,
+        "current_revision_gui_evidence_status": current_revision_gui_evidence_status,
+        "current_revision_gui_evidence_sources": current_revision_gui_evidence_sources,
+        "current_revision_gui_window_identity_verification": (
+            current_revision_gui_window_identity_verification
         ),
         "gui_window_identity_verification": gui_window_identity_verification,
         "hotload_acceptance": hotload_acceptance,

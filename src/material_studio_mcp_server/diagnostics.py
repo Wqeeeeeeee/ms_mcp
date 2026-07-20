@@ -7,6 +7,7 @@ import csv
 import hashlib
 import math
 import re
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Sequence
@@ -148,6 +149,38 @@ ORIENTED_FRAME_VIEW_SPECS: dict[str, tuple[str, str]] = {
 }
 MAX_PROJECTED_ATOMS = 500
 MAX_HEALTH_DETAIL_ROWS = 1000
+VIEW_REFERENCE_SCHEMA_VERSION = "ms_mcp_view_reference_v1"
+MAX_VIEW_REFERENCE_PANELS = 32
+VIEW_REFERENCE_PANEL_WIDTH = 420
+VIEW_REFERENCE_PANEL_HEIGHT = 360
+VIEW_REFERENCE_COLUMNS = 3
+VIEW_REFERENCE_HEADER_HEIGHT = 72
+VIEW_REFERENCE_ELEMENT_COLORS = {
+    "H": "#f5f5f5",
+    "B": "#ffb5b5",
+    "C": "#6f7680",
+    "N": "#4f6bed",
+    "O": "#e34b4b",
+    "F": "#68c96b",
+    "Mg": "#78c850",
+    "Al": "#b7bdc8",
+    "Si": "#e0b589",
+    "P": "#e59b45",
+    "S": "#e5d84b",
+    "Cl": "#55b95c",
+    "Ti": "#9aa4af",
+    "Zn": "#8aa7c7",
+    "Ga": "#a97ac8",
+    "Ge": "#7f8f9f",
+    "As": "#a56cc1",
+    "Se": "#d48b45",
+    "Mo": "#4c9a9a",
+    "Cd": "#c77f96",
+    "In": "#a66f6f",
+    "Te": "#a36a45",
+    "Hf": "#5da39a",
+    "W": "#466f8a",
+}
 OXIDE_INTERFACE_SHORT_CONTACT_THRESHOLD_FRACTION = 0.55
 OXIDE_INTERFACE_SPACING_TOLERANCE_ANGSTROM = 0.05
 ANGSTROM3_TO_CM3 = 1.0e-24
@@ -2659,6 +2692,10 @@ def write_view_audit_bundle(
         view_quality,
     )
 
+    view_reference = _write_view_reference_artifacts(bundle_dir, spec, audit)
+    files.update(view_reference["files"])
+    row_counts["view_reference_views"] = view_reference["view_count"]
+
     health_summary_path = bundle_dir / "health_summary.json"
     health_summary_path.write_text(
         json.dumps(
@@ -2826,6 +2863,572 @@ def write_view_audit_bundle(
     manifest_path = bundle_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return {**manifest, "manifest_path": str(manifest_path)}
+
+
+def _write_view_reference_artifacts(
+    bundle_dir: Path,
+    spec: ModelSpec,
+    audit: dict[str, Any],
+) -> dict[str, Any]:
+    """Write a deterministic, review-only visual atlas for the selected views.
+
+    The atlas is derived from the same projection rows as the CSV export. It is
+    intentionally separate from GUI evidence: a spec projection cannot prove
+    what Materials Studio currently renders.
+    """
+
+    requested_views = list(audit.get("views", []) or [])
+    rendered_views = requested_views[:MAX_VIEW_REFERENCE_PANELS]
+    atlas_bytes, view_entries, render_profile = _render_view_reference_atlas(
+        spec,
+        audit,
+        rendered_views,
+    )
+    atlas_path = bundle_dir / "view_reference_atlas.svg"
+    atlas_path.write_bytes(atlas_bytes)
+    atlas_sha256 = hashlib.sha256(atlas_bytes).hexdigest()
+
+    index_rows = []
+    for entry in view_entries:
+        index_rows.append(
+            {
+                "view": entry.get("view"),
+                "supported": entry.get("supported"),
+                "panel_index": entry.get("panel_index"),
+                "atom_projection_count": entry.get("atom_projection_count"),
+                "rendered_atom_count": entry.get("rendered_atom_count"),
+                "projection_complete": entry.get("projection_complete"),
+                "projection_truncated": entry.get("projection_truncated"),
+                "camera_direction": _join_vector(entry.get("camera_direction")),
+                "camera_up": _join_vector(entry.get("camera_up")),
+                "span_x_angstrom": (entry.get("projection_span_angstrom") or {}).get("x"),
+                "span_y_angstrom": (entry.get("projection_span_angstrom") or {}).get("y"),
+                "span_depth_angstrom": (entry.get("projection_span_angstrom") or {}).get("depth"),
+                "overlap_candidate_count": entry.get("overlap_candidate_count"),
+                "health_ok": entry.get("health_ok"),
+                "warning": entry.get("warning"),
+                "counts_as_visual_confirmation": False,
+                "atlas_sha256": atlas_sha256,
+            }
+        )
+    index_path = bundle_dir / "view_reference_index.csv"
+    _write_csv(
+        index_path,
+        [
+            "view",
+            "supported",
+            "panel_index",
+            "atom_projection_count",
+            "rendered_atom_count",
+            "projection_complete",
+            "projection_truncated",
+            "camera_direction",
+            "camera_up",
+            "span_x_angstrom",
+            "span_y_angstrom",
+            "span_depth_angstrom",
+            "overlap_candidate_count",
+            "health_ok",
+            "warning",
+            "counts_as_visual_confirmation",
+            "atlas_sha256",
+        ],
+        index_rows,
+    )
+
+    supported_entries = [entry for entry in view_entries if entry.get("supported")]
+    reference_limitations: list[str] = []
+    if any(entry.get("projection_truncated") for entry in supported_entries):
+        reference_limitations.append(
+            "one_or_more_supported_views_use_truncated_atom_projection_data"
+        )
+    if len(rendered_views) < len(requested_views):
+        reference_limitations.append("view_reference_panel_limit_exceeded")
+    manifest = {
+        "schema_version": VIEW_REFERENCE_SCHEMA_VERSION,
+        "artifact_role": "deterministic_spec_projection_reference",
+        "project_id": spec.project_id,
+        "revision": spec.revision,
+        "model_type": spec.model_type.value,
+        "spec_fingerprint": audit.get("spec_fingerprint"),
+        "atlas_path": str(atlas_path),
+        "atlas_sha256": atlas_sha256,
+        "atlas_size_bytes": len(atlas_bytes),
+        "view_count": len(requested_views),
+        "rendered_view_count": len(rendered_views),
+        "supported_view_count": sum(1 for entry in view_entries if entry.get("supported")),
+        "unsupported_view_count": sum(1 for entry in view_entries if not entry.get("supported")),
+        "atlas_truncated": len(rendered_views) < len(requested_views),
+        "all_requested_views_rendered": len(rendered_views) == len(requested_views),
+        "all_supported_projections_complete": bool(supported_entries)
+        and all(entry.get("projection_complete") is True for entry in supported_entries),
+        "reference_limitations": reference_limitations,
+        "gui_evidence_policy": {
+            "counts_as_gui_screenshot": False,
+            "counts_as_visual_confirmation": False,
+            "requires_fresh_materials_studio_screenshot_for_acceptance": True,
+        },
+        "render_profile": render_profile,
+        "views": [
+            {
+                **entry,
+                "atlas_path": str(atlas_path),
+                "atlas_sha256": atlas_sha256,
+            }
+            for entry in view_entries
+        ],
+    }
+    manifest_path = bundle_dir / "view_reference_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    return {
+        "files": {
+            "view_reference_atlas_svg": str(atlas_path),
+            "view_reference_manifest_json": str(manifest_path),
+            "view_reference_index_csv": str(index_path),
+        },
+        "view_count": len(requested_views),
+        "manifest": manifest,
+    }
+
+
+def _render_view_reference_atlas(
+    spec: ModelSpec,
+    audit: dict[str, Any],
+    views: list[dict[str, Any]],
+) -> tuple[bytes, list[dict[str, Any]], dict[str, Any]]:
+    """Render selected projection rows into a deterministic SVG contact sheet."""
+
+    panel_count = max(len(views), 1)
+    columns = min(VIEW_REFERENCE_COLUMNS, panel_count)
+    rows = int(math.ceil(panel_count / columns))
+    width = VIEW_REFERENCE_PANEL_WIDTH * columns
+    height = VIEW_REFERENCE_HEADER_HEIGHT + VIEW_REFERENCE_PANEL_HEIGHT * rows
+
+    root = ET.Element(
+        "svg",
+        {
+            "xmlns": "http://www.w3.org/2000/svg",
+            "version": "1.1",
+            "width": str(width),
+            "height": str(height),
+            "viewBox": f"0 0 {width} {height}",
+            "role": "img",
+            "data-artifact-role": "deterministic_spec_projection_reference",
+            "data-project-id": str(spec.project_id),
+            "data-revision": str(spec.revision),
+            "data-spec-fingerprint": str(audit.get("spec_fingerprint") or ""),
+        },
+    )
+    ET.SubElement(root, "title").text = (
+        f"Materials Studio spec projection reference, {spec.project_id}, revision {spec.revision}"
+    )
+    ET.SubElement(root, "desc").text = (
+        "Deterministic atom projections derived from the stored model specification; "
+        "not GUI evidence and not a Materials Studio screenshot."
+    )
+    ET.SubElement(root, "style").text = (
+        ".panel{fill:#151515;stroke:#68717a;stroke-width:1}"
+        ".plot{fill:#050505;stroke:#87919a;stroke-width:1}"
+        ".axis{stroke:#46515b;stroke-width:1;stroke-dasharray:3 3}"
+        ".label{fill:#f0f3f5;font-family:Arial,sans-serif;font-size:14px}"
+        ".small{fill:#b9c1c8;font-family:Arial,sans-serif;font-size:10px}"
+        ".warning{fill:#f1bb5b;font-family:Arial,sans-serif;font-size:10px}"
+    )
+    ET.SubElement(root, "rect", {"x": "0", "y": "0", "width": str(width), "height": str(height), "fill": "#0b0b0b"})
+    ET.SubElement(
+        root,
+        "text",
+        {"x": "18", "y": "26", "class": "label"},
+    ).text = "Spec projection reference atlas"
+    ET.SubElement(
+        root,
+        "text",
+        {"x": "18", "y": "48", "class": "small"},
+    ).text = (
+        f"{spec.project_id} | revision {spec.revision} | "
+        "deterministic reference only; not GUI evidence"
+    )
+
+    entries: list[dict[str, Any]] = []
+    for panel_index, view in enumerate(views):
+        panel_column = panel_index % columns
+        panel_row = panel_index // columns
+        panel_x = panel_column * VIEW_REFERENCE_PANEL_WIDTH + 10
+        panel_y = VIEW_REFERENCE_HEADER_HEIGHT + panel_row * VIEW_REFERENCE_PANEL_HEIGHT + 8
+        entry = _render_view_reference_panel(
+            root,
+            view,
+            panel_index=panel_index,
+            panel_x=panel_x,
+            panel_y=panel_y,
+        )
+        entries.append(entry)
+
+    if not views:
+        ET.SubElement(
+            root,
+            "text",
+            {
+                "x": str(width // 2),
+                "y": str(VIEW_REFERENCE_HEADER_HEIGHT + 80),
+                "text-anchor": "middle",
+                "class": "warning",
+            },
+        ).text = "No selected view projections"
+
+    return (
+        ET.tostring(root, encoding="utf-8", xml_declaration=True),
+        entries,
+        {
+            "canvas_width_px": width,
+            "canvas_height_px": height,
+            "panel_width_px": VIEW_REFERENCE_PANEL_WIDTH,
+            "panel_height_px": VIEW_REFERENCE_PANEL_HEIGHT,
+            "columns": columns,
+            "rows": rows,
+            "max_panels": MAX_VIEW_REFERENCE_PANELS,
+            "projection_source": "view_audit.atom_projections",
+            "projection_units": "angstrom_relative_to_target",
+        },
+    )
+
+
+def _render_view_reference_panel(
+    root: ET.Element,
+    view: dict[str, Any],
+    *,
+    panel_index: int,
+    panel_x: int,
+    panel_y: int,
+) -> dict[str, Any]:
+    """Render one view panel and return its review metadata."""
+
+    view_name = str(view.get("name") or f"view_{panel_index + 1}")
+    supported = bool(view.get("supported"))
+    projections = [
+        item for item in (view.get("atom_projections") or []) if isinstance(item, dict)
+    ]
+    projections = sorted(
+        projections,
+        key=lambda item: (
+            _float_or_zero(item.get("depth")),
+            str(item.get("atom_id") or ""),
+        ),
+    )
+    projection_count = _safe_nonnegative_int(view.get("atom_projection_count"), len(projections))
+    projection_truncated = bool(view.get("atom_projections_truncated")) or (
+        projection_count > len(projections)
+    )
+    projection_complete = bool(supported and not projection_truncated and projection_count == len(projections))
+    health = view.get("health") if isinstance(view.get("health"), dict) else {}
+    warnings = [str(item) for item in health.get("warnings", []) or [] if item]
+    warning = str(view.get("warning") or (warnings[0] if warnings else "")) or None
+    overlap_candidate_count = len(view.get("overlap_candidates") or [])
+
+    panel_width = VIEW_REFERENCE_PANEL_WIDTH - 20
+    panel_height = VIEW_REFERENCE_PANEL_HEIGHT - 16
+    ET.SubElement(
+        root,
+        "rect",
+        {
+            "x": str(panel_x),
+            "y": str(panel_y),
+            "width": str(panel_width),
+            "height": str(panel_height),
+            "rx": "3",
+            "class": "panel",
+            "data-view-name": view_name,
+            "data-view-index": str(panel_index),
+        },
+    )
+    ET.SubElement(
+        root,
+        "text",
+        {
+            "x": str(panel_x + 12),
+            "y": str(panel_y + 22),
+            "class": "label",
+            "data-view-label": view_name,
+        },
+    ).text = _view_reference_short_label(view_name, 43)
+
+    camera_direction = view.get("camera_direction")
+    camera_text = "cam=" + _join_vector(camera_direction) if camera_direction else "cam=unknown"
+    ET.SubElement(
+        root,
+        "text",
+        {"x": str(panel_x + 12), "y": str(panel_y + 39), "class": "small"},
+    ).text = camera_text
+
+    plot_x = panel_x + 18
+    plot_y = panel_y + 52
+    plot_width = panel_width - 36
+    plot_height = 236
+    ET.SubElement(
+        root,
+        "rect",
+        {
+            "x": str(plot_x),
+            "y": str(plot_y),
+            "width": str(plot_width),
+            "height": str(plot_height),
+            "class": "plot",
+            "data-view-name": view_name,
+        },
+    )
+
+    transform = _view_reference_transform(projections, plot_x, plot_y, plot_width, plot_height)
+    if supported and projections:
+        center_x = transform["center_x_px"]
+        center_y = transform["center_y_px"]
+        ET.SubElement(
+            root,
+            "line",
+            {
+                "x1": _svg_number(plot_x),
+                "y1": _svg_number(center_y),
+                "x2": _svg_number(plot_x + plot_width),
+                "y2": _svg_number(center_y),
+                "class": "axis",
+            },
+        )
+        ET.SubElement(
+            root,
+            "line",
+            {
+                "x1": _svg_number(center_x),
+                "y1": _svg_number(plot_y),
+                "x2": _svg_number(center_x),
+                "y2": _svg_number(plot_y + plot_height),
+                "class": "axis",
+            },
+        )
+        radius = max(2.0, min(6.0, 28.0 / math.sqrt(max(len(projections), 1))))
+        show_labels = len(projections) <= 48 and overlap_candidate_count == 0
+        for projection in projections:
+            element = str(projection.get("element") or "?")
+            atom_id = str(projection.get("atom_id") or "")
+            point_x, point_y = _view_reference_project_point(projection, transform)
+            ET.SubElement(
+                root,
+                "circle",
+                {
+                    "cx": _svg_number(point_x),
+                    "cy": _svg_number(point_y),
+                    "r": _svg_number(radius),
+                    "fill": VIEW_REFERENCE_ELEMENT_COLORS.get(element, "#c0c7ce"),
+                    "stroke": "#ffffff",
+                    "stroke-width": "0.65",
+                    "data-atom-id": atom_id,
+                    "data-element": element,
+                    "data-depth-angstrom": _svg_number(projection.get("depth")),
+                },
+            )
+            if show_labels:
+                ET.SubElement(
+                    root,
+                    "text",
+                    {
+                        "x": _svg_number(point_x + radius + 1),
+                        "y": _svg_number(point_y - radius - 1),
+                        "class": "small",
+                        "data-atom-label": atom_id,
+                    },
+                ).text = _view_reference_short_label(atom_id, 16)
+    elif supported:
+        ET.SubElement(
+            root,
+            "text",
+            {
+                "x": str(plot_x + plot_width // 2),
+                "y": str(plot_y + plot_height // 2),
+                "text-anchor": "middle",
+                "class": "warning",
+            },
+        ).text = "No atom projection data"
+    else:
+        ET.SubElement(
+            root,
+            "text",
+            {
+                "x": str(plot_x + plot_width // 2),
+                "y": str(plot_y + plot_height // 2 - 8),
+                "text-anchor": "middle",
+                "class": "warning",
+            },
+        ).text = "Unsupported view"
+        if warning:
+            ET.SubElement(
+                root,
+                "text",
+                {
+                    "x": str(plot_x + plot_width // 2),
+                    "y": str(plot_y + plot_height // 2 + 12),
+                    "text-anchor": "middle",
+                    "class": "small",
+                },
+            ).text = _view_reference_short_label(warning, 51)
+
+    element_counts = Counter(str(item.get("element") or "?") for item in projections)
+    legend_x = panel_x + 14
+    legend_y = panel_y + panel_height - 28
+    for index, element in enumerate(sorted(element_counts)):
+        if index >= 7:
+            break
+        offset = index * 48
+        ET.SubElement(
+            root,
+            "circle",
+            {
+                "cx": str(legend_x + offset),
+                "cy": str(legend_y),
+                "r": "4",
+                "fill": VIEW_REFERENCE_ELEMENT_COLORS.get(element, "#c0c7ce"),
+                "stroke": "#ffffff",
+                "stroke-width": "0.5",
+                "aria-label": element,
+            },
+        )
+        ET.SubElement(
+            root,
+            "text",
+            {"x": str(legend_x + offset + 8), "y": str(legend_y + 3), "class": "small"},
+        ).text = f"{element} {element_counts[element]}"
+
+    status_text = "projection complete; overlap review" if overlap_candidate_count else (
+        "projection complete" if projection_complete else (
+        "projection truncated" if projection_truncated else "review required"
+        )
+    )
+    ET.SubElement(
+        root,
+        "text",
+        {
+            "x": str(panel_x + panel_width - 12),
+            "y": str(panel_y + panel_height - 10),
+            "text-anchor": "end",
+            "class": "warning"
+            if (not projection_complete or overlap_candidate_count)
+            else "small",
+        },
+    ).text = status_text
+
+    projection_span = view.get("projection_span_angstrom") or {}
+    return {
+        "view": view_name,
+        "supported": supported,
+        "panel_index": panel_index,
+        "panel_box_px": {
+            "x": panel_x,
+            "y": panel_y,
+            "width": panel_width,
+            "height": panel_height,
+        },
+        "atom_projection_count": projection_count,
+        "rendered_atom_count": len(projections),
+        "projection_complete": projection_complete,
+        "projection_truncated": projection_truncated,
+        "projection_bbox_angstrom": view.get("projection_bbox_angstrom"),
+        "projection_span_angstrom": projection_span,
+        "camera_direction": view.get("camera_direction"),
+        "camera_up": view.get("camera_up"),
+        "camera_right": view.get("camera_right"),
+        "target": view.get("target"),
+        "coordinate_system": view.get("coordinate_system"),
+        "crystal_direction_label": view.get("crystal_direction_label"),
+        "crystal_plane_label": view.get("crystal_plane_label"),
+        "overlap_candidate_count": overlap_candidate_count,
+        "labels_suppressed_for_overlap": bool(overlap_candidate_count),
+        "health_ok": health.get("ok"),
+        "warning": warning,
+        "warnings": warnings,
+        "element_counts": dict(sorted(element_counts.items())),
+        "plot_transform": transform,
+        "counts_as_visual_confirmation": False,
+    }
+
+
+def _view_reference_transform(
+    projections: list[dict[str, Any]],
+    plot_x: int,
+    plot_y: int,
+    plot_width: int,
+    plot_height: int,
+) -> dict[str, Any]:
+    xs = [_float_or_zero(item.get("x")) for item in projections]
+    ys = [_float_or_zero(item.get("y")) for item in projections]
+    min_x = min(xs) if xs else -0.5
+    max_x = max(xs) if xs else 0.5
+    min_y = min(ys) if ys else -0.5
+    max_y = max(ys) if ys else 0.5
+    span_x = max(max_x - min_x, 1.0)
+    span_y = max(max_y - min_y, 1.0)
+    scale = min((plot_width - 24) / span_x, (plot_height - 24) / span_y)
+    center_x = plot_x + plot_width / 2.0
+    center_y = plot_y + plot_height / 2.0
+    return {
+        "min_x_angstrom": _round(min_x),
+        "max_x_angstrom": _round(max_x),
+        "min_y_angstrom": _round(min_y),
+        "max_y_angstrom": _round(max_y),
+        "scale_px_per_angstrom": _round(scale),
+        "center_x_px": _round(center_x),
+        "center_y_px": _round(center_y),
+        "plot_x_px": plot_x,
+        "plot_y_px": plot_y,
+        "plot_width_px": plot_width,
+        "plot_height_px": plot_height,
+        "y_axis_inverted": True,
+    }
+
+
+def _view_reference_project_point(
+    projection: dict[str, Any],
+    transform: dict[str, Any],
+) -> tuple[float, float]:
+    scale = float(transform.get("scale_px_per_angstrom") or 1.0)
+    x = float(transform.get("center_x_px") or 0.0) + (
+        _float_or_zero(projection.get("x"))
+        - (float(transform.get("min_x_angstrom") or 0.0) + float(transform.get("max_x_angstrom") or 0.0))
+        / 2.0
+    ) * scale
+    y = float(transform.get("center_y_px") or 0.0) - (
+        _float_or_zero(projection.get("y"))
+        - (float(transform.get("min_y_angstrom") or 0.0) + float(transform.get("max_y_angstrom") or 0.0))
+        / 2.0
+    ) * scale
+    return x, y
+
+
+def _view_reference_short_label(value: Any, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 1)] + "..."
+
+
+def _svg_number(value: Any) -> str:
+    number = _float_or_zero(value)
+    return f"{number:.4f}".rstrip("0").rstrip(".") or "0"
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def _safe_nonnegative_int(value: Any, fallback: int = 0) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = fallback
+    return max(number, 0)
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> int:

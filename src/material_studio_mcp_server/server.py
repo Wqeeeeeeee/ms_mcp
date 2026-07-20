@@ -3194,6 +3194,9 @@ _TOP_LEVEL_ARTIFACT_SHORTCUT_FIELDS = (
     "view_projections_csv",
     "view_overlaps_csv",
     "view_quality_csv",
+    "view_reference_atlas_svg",
+    "view_reference_manifest_json",
+    "view_reference_index_csv",
     "structure_artifact_validation_json",
     "structure_artifact_validation_csv",
     "semiconductor_lattice_csv",
@@ -3880,6 +3883,10 @@ _TOP_LEVEL_MCP_DIAGNOSTIC_DELIVERY_FIELDS = (
     "mcp_view_summary_csv",
     "mcp_view_projections_csv",
     "mcp_view_quality_csv",
+    "mcp_view_reference_atlas_svg",
+    "mcp_view_reference_manifest_json",
+    "mcp_view_reference_index_csv",
+    "mcp_view_reference_row_count",
     "mcp_view_count",
     "mcp_view_summary_row_count",
     "mcp_view_projection_row_count",
@@ -6964,6 +6971,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "mcp_view_summary_csv",
                 "mcp_view_projections_csv",
                 "mcp_view_quality_csv",
+                "mcp_view_reference_atlas_svg",
+                "mcp_view_reference_manifest_json",
+                "mcp_view_reference_index_csv",
+                "mcp_view_reference_row_count",
                 "mcp_view_count",
                 "mcp_view_projection_row_count",
                 "diagnostic_acceptance",
@@ -19690,6 +19701,19 @@ def _promote_response_mcp_diagnostic_delivery(response: dict[str, Any]) -> None:
                 artifact_value("view_projections_csv"),
             ),
             "mcp_view_quality_csv": _first_not_none(live_summary.get("mcp_view_quality_csv"), artifact_value("view_quality_csv")),
+            "mcp_view_reference_atlas_svg": _first_not_none(
+                live_summary.get("mcp_view_reference_atlas_svg"),
+                artifact_value("view_reference_atlas_svg"),
+            ),
+            "mcp_view_reference_manifest_json": _first_not_none(
+                live_summary.get("mcp_view_reference_manifest_json"),
+                artifact_value("view_reference_manifest_json"),
+            ),
+            "mcp_view_reference_index_csv": _first_not_none(
+                live_summary.get("mcp_view_reference_index_csv"),
+                artifact_value("view_reference_index_csv"),
+            ),
+            "mcp_view_reference_row_count": row_counts.get("view_reference_views"),
             "mcp_view_count": _first_not_none(live_summary.get("mcp_view_count"), response.get("view_count")),
             "mcp_view_summary_row_count": row_counts.get("view_summary"),
             "mcp_view_projection_row_count": _first_not_none(
@@ -21012,6 +21036,9 @@ _DIAGNOSTIC_EXPORT_CATEGORIES: dict[str, tuple[tuple[str, str], ...]] = {
         ("view_projections_csv", "view_projections"),
         ("view_overlaps_csv", "view_overlaps"),
         ("view_quality_csv", "view_quality"),
+        ("view_reference_atlas_svg", "view_reference_views"),
+        ("view_reference_manifest_json", "view_reference_views"),
+        ("view_reference_index_csv", "view_reference_views"),
     ),
     "structure_geometry": (
         ("atoms_csv", "atoms"),
@@ -22169,6 +22196,9 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "view_projections_csv": bundle_files.get("view_projections_csv"),
             "view_overlaps_csv": bundle_files.get("view_overlaps_csv"),
             "view_quality_csv": bundle_files.get("view_quality_csv"),
+            "view_reference_atlas_svg": bundle_files.get("view_reference_atlas_svg"),
+            "view_reference_manifest_json": bundle_files.get("view_reference_manifest_json"),
+            "view_reference_index_csv": bundle_files.get("view_reference_index_csv"),
             "structure_artifact_validation_json": bundle_files.get("structure_artifact_validation_json"),
             "structure_artifact_validation_csv": bundle_files.get("structure_artifact_validation_csv"),
         },
@@ -26804,6 +26834,9 @@ def _live_contract_diagnostic_artifacts_summary(report: dict[str, Any]) -> dict[
         "view_summary_csv",
         "view_projections_csv",
         "view_quality_csv",
+        "view_reference_atlas_svg",
+        "view_reference_manifest_json",
+        "view_reference_index_csv",
         "atoms_csv",
         "crystal_coordination_csv",
         "semiconductor_composition_csv",
@@ -26822,6 +26855,7 @@ def _live_contract_diagnostic_artifacts_summary(report: dict[str, Any]) -> dict[
         "view_summary",
         "view_projections",
         "view_quality",
+        "view_reference_views",
         "atoms",
         "crystal_coordination",
         "semiconductor_composition",
@@ -29588,6 +29622,18 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
     view_summary_csv = artifacts.get("view_summary_csv") or diagnostics.get("view_summary_csv")
     view_projections_csv = artifacts.get("view_projections_csv") or diagnostics.get("view_projections_csv")
     view_quality_csv = artifacts.get("view_quality_csv") or diagnostics.get("view_quality_csv")
+    view_reference_atlas_svg = (
+        artifacts.get("view_reference_atlas_svg")
+        or diagnostics.get("view_reference_atlas_svg")
+    )
+    view_reference_manifest_json = (
+        artifacts.get("view_reference_manifest_json")
+        or diagnostics.get("view_reference_manifest_json")
+    )
+    view_reference_index_csv = (
+        artifacts.get("view_reference_index_csv")
+        or diagnostics.get("view_reference_index_csv")
+    )
     substrate_epitaxy_preflight_csv = (
         artifacts.get("semiconductor_substrate_epitaxy_preflight_csv")
         or diagnostics.get("semiconductor_substrate_epitaxy_preflight_csv")
@@ -30014,6 +30060,10 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "mcp_view_summary_csv": view_summary_csv,
             "mcp_view_projections_csv": view_projections_csv,
             "mcp_view_quality_csv": view_quality_csv,
+            "mcp_view_reference_atlas_svg": view_reference_atlas_svg,
+            "mcp_view_reference_manifest_json": view_reference_manifest_json,
+            "mcp_view_reference_index_csv": view_reference_index_csv,
+            "mcp_view_reference_row_count": diagnostic_row_counts.get("view_reference_views"),
             "mcp_view_count": view_count,
             "mcp_view_projection_row_count": view_projection_row_count,
             "mcp_diagnostic_acceptance_status": diagnostic_acceptance.get("status"),
@@ -31529,6 +31579,9 @@ def _change_receipt_artifacts(
             "view_projections_csv": diagnostics.get("view_projections_csv"),
             "view_overlaps_csv": diagnostics.get("view_overlaps_csv"),
             "view_quality_csv": diagnostics.get("view_quality_csv"),
+            "view_reference_atlas_svg": diagnostics.get("view_reference_atlas_svg"),
+            "view_reference_manifest_json": diagnostics.get("view_reference_manifest_json"),
+            "view_reference_index_csv": diagnostics.get("view_reference_index_csv"),
             "semiconductor_composition_csv": diagnostics.get("semiconductor_composition_csv"),
             "semiconductor_lattice_csv": diagnostics.get("semiconductor_lattice_csv"),
             "semiconductor_neighbor_pairs_csv": diagnostics.get("semiconductor_neighbor_pairs_csv"),
@@ -31612,6 +31665,7 @@ def _change_receipt_row_counts(diagnostics: dict[str, Any]) -> dict[str, int]:
         "view_projections",
         "view_overlaps",
         "view_quality",
+        "view_reference_views",
         "semiconductor_lattice",
         "semiconductor_composition",
         "semiconductor_charge_balance",
@@ -34783,6 +34837,7 @@ def _compact_diagnostic_row_counts(value: Any) -> dict[str, Any]:
             "view_summary",
             "view_projections",
             "view_quality",
+            "view_reference_views",
             "modeling_report_summary",
             "modeling_issue_index",
             "requested_diagnostic_focus_status",
@@ -37883,12 +37938,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
         semantic_core_fields=semantic_core_fields,
     )
     bounded["response_compaction"] = receipt
+    bounded = _finalize_live_compact_response(
+        bounded,
+        receipt,
+        semantic_core_fields,
+    )
     if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
-        return _finalize_live_compact_response(
-            bounded,
-            receipt,
-            semantic_core_fields,
-        )
+        return bounded
 
     receipt["hard_budget_applied"] = True
     omitted_fields = receipt["omitted_fields"]
@@ -38712,6 +38768,8 @@ def _compact_artifacts(response: dict[str, Any], report: dict[str, Any]) -> dict
             "report_json_path",
             "view_summary_csv",
             "view_projections_csv",
+            "view_reference_atlas_svg",
+            "view_reference_manifest_json",
         ),
     )
 

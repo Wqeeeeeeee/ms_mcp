@@ -608,6 +608,11 @@ inspect CSV tables after a live update or GUI apply.
 The bundle includes `modeling_health_summary.csv`, a one-row machine-readable
 receipt with the verdict, error/warning counts, GUI open/window identity,
 GUI snapshot checks, and key semiconductor checks for fast external validation.
+It also includes the review-only `view_reference_atlas.svg`,
+`view_reference_manifest.json`, and `view_reference_index.csv` artifacts. They
+are deterministic projections from the current `ModelSpec` and are useful for
+comparing expected views, but they never count as a Materials Studio screenshot
+or as visual confirmation; acceptance still requires fresh GUI evidence.
 It also includes `modeling_report_summary.csv`, a one-row client receipt for
 `normality`, readiness booleans, blocking/review reasons, GUI trust state,
 acceptance pass/fail state, view status, basic geometry/view counts, key

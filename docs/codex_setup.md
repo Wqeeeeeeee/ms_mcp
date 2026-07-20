@@ -844,6 +844,14 @@ file-based inspection tables. It writes `view_audit.json`, `manifest.json`,
 contacts, crystal nearest neighbors, crystal coordination, semiconductor
 lattice volume/density, neighbor-pair distances, local environments, interface profiles, interface quality, composition, nominal charge-balance/valence-electron summaries, calculation-preflight summaries, sublattice balance, layer profiles, dopants, dopant fractions, alloy fractions, finite-size/dilution preflight, vacancy/defect summaries, heterostructure strain, surface termination, surface polarity/asymmetry,
 view summaries, per-view atom projections, and projection overlaps.
+For quick side-by-side review, the same bundle also writes
+`view_reference_atlas.svg`, `view_reference_manifest.json`, and
+`view_reference_index.csv`. These are deterministic projections of the stored
+specification, not Materials Studio screenshots and not visual-confirmation
+evidence. Full responses expose all three paths through `artifacts`,
+`modeling_report.diagnostics`, `change_receipt.artifacts`, and
+`live_summary.mcp_view_reference_*`. Compact responses promote the atlas and
+manifest in `artifacts`; use the manifest for the complete file index.
 Read `modeling_health_summary.csv` first when another script needs a one-row
 normality receipt with verdict, counts, GUI snapshot checks, and promoted
 semiconductor checks.

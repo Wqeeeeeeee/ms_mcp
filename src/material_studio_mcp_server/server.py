@@ -52,6 +52,14 @@ from .diagnostics import (
     write_view_audit_bundle,
     write_view_audit_report,
 )
+from .diagnostic_contract import (
+    DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
+    DIAGNOSTIC_EXPORT_SCHEMA_VERSION,
+    REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS,
+    REQUIRED_DIAGNOSTIC_ROW_COUNTS,
+    VIEW_BUNDLE_SCHEMA_VERSION,
+    assess_diagnostic_export_contract,
+)
 from .gui import (
     GuiError,
     GuiSnapshotBlockedError,
@@ -3873,6 +3881,12 @@ _TOP_LEVEL_MCP_DIAGNOSTIC_DELIVERY_FIELDS = (
     "mcp_diagnostics_exported",
     "mcp_diagnostic_export_manifest_status",
     "mcp_diagnostic_export_manifest_ok",
+    "mcp_diagnostic_export_contract_version",
+    "mcp_diagnostic_export_contract_status",
+    "mcp_diagnostic_export_contract_current",
+    "mcp_diagnostic_export_contract_refresh_required",
+    "mcp_diagnostic_export_contract_missing_required_artifact_keys",
+    "mcp_diagnostic_export_contract_missing_required_row_count_keys",
     "mcp_diagnostic_export_manifest_json",
     "mcp_diagnostic_export_manifest_total_file_count",
     "mcp_diagnostic_export_manifest_total_row_count",
@@ -5805,6 +5819,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "ok",
                 "status",
                 "export_needed",
+                "diagnostic_export_contract_status",
+                "diagnostic_export_contract_current",
+                "diagnostic_export_contract_refresh_required",
+                "diagnostic_export_contract_missing_artifact_keys",
+                "diagnostic_export_contract_missing_row_count_keys",
                 "diagnostic_export_requested",
                 "normality_check_requested",
                 "requested_focuses",
@@ -5848,8 +5867,38 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "exported_file_keys",
                 "categories",
                 "missing_requested_focuses",
+                "schema_version",
+                "contract_version",
+                "contract",
+                "contract_status",
+                "contract_current",
+                "contract_refresh_required",
+                "contract_refresh_allowed",
+                "observed_contract_version",
+                "view_bundle_schema_version",
+                "missing_required_artifact_keys",
+                "missing_required_row_count_keys",
+                "refresh",
                 "next_action",
             ],
+            "diagnostic_export_contract": {
+                "schema_version": DIAGNOSTIC_EXPORT_SCHEMA_VERSION,
+                "current_contract_version": DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
+                "current_view_bundle_schema_version": VIEW_BUNDLE_SCHEMA_VERSION,
+                "required_artifact_keys": list(REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS),
+                "required_row_counts": dict(REQUIRED_DIAGNOSTIC_ROW_COUNTS),
+                "statuses": [
+                    "not_exported",
+                    "legacy_unversioned",
+                    "invalid_version",
+                    "outdated",
+                    "incomplete",
+                    "current",
+                    "newer_than_runtime",
+                ],
+                "newer_than_runtime_policy": "read_only_status_and_runtime_upgrade_required",
+                "refresh_policy": "include_gui_snapshot=false; creates_no_revision; sends_no_gui_input",
+            },
             "modeling_issue_index_issue_fields": [
                 "category",
                 "severity",
@@ -6963,6 +7012,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "mcp_diagnostics_exported",
                 "mcp_diagnostic_export_manifest_status",
                 "mcp_diagnostic_export_manifest_ok",
+                "mcp_diagnostic_export_contract_version",
+                "mcp_diagnostic_export_contract_status",
+                "mcp_diagnostic_export_contract_current",
+                "mcp_diagnostic_export_contract_refresh_required",
                 "mcp_diagnostic_export_manifest_json",
                 "mcp_diagnostic_export_manifest_total_file_count",
                 "mcp_report_json_path",
@@ -15899,6 +15952,8 @@ def _attach_modeling_health(
         response["view_bundle_manifest_path"] = bundle["manifest_path"]
         response["view_bundle_files"] = bundle["files"]
         response["view_bundle_row_counts"] = bundle["row_counts"]
+        response["view_bundle_schema_version"] = bundle.get("schema_version")
+        response["view_bundle_contract_version"] = bundle.get("contract_version")
     response["modeling_report"] = _build_modeling_report(response)
     _write_modeling_report_summary(response)
     response["modeling_report"] = _build_modeling_report(response)
@@ -19672,6 +19727,28 @@ def _promote_response_mcp_diagnostic_delivery(response: dict[str, Any]) -> None:
                 live_summary.get("mcp_diagnostic_export_manifest_ok"),
                 diagnostic_export_manifest.get("ok"),
             ),
+            "mcp_diagnostic_export_contract_version": _first_not_none(
+                live_summary.get("mcp_diagnostic_export_contract_version"),
+                diagnostic_export_manifest.get("contract_version"),
+            ),
+            "mcp_diagnostic_export_contract_status": _first_not_none(
+                live_summary.get("mcp_diagnostic_export_contract_status"),
+                diagnostic_export_manifest.get("contract_status"),
+            ),
+            "mcp_diagnostic_export_contract_current": _first_not_none(
+                live_summary.get("mcp_diagnostic_export_contract_current"),
+                diagnostic_export_manifest.get("contract_current"),
+            ),
+            "mcp_diagnostic_export_contract_refresh_required": _first_not_none(
+                live_summary.get("mcp_diagnostic_export_contract_refresh_required"),
+                diagnostic_export_manifest.get("contract_refresh_required"),
+            ),
+            "mcp_diagnostic_export_contract_missing_required_artifact_keys": (
+                diagnostic_export_manifest.get("missing_required_artifact_keys") or []
+            ),
+            "mcp_diagnostic_export_contract_missing_required_row_count_keys": (
+                diagnostic_export_manifest.get("missing_required_row_count_keys") or []
+            ),
             "mcp_diagnostic_export_manifest_json": _first_not_none(
                 live_summary.get("mcp_diagnostic_export_manifest_json"),
                 artifact_value("diagnostic_export_manifest_json"),
@@ -20473,6 +20550,22 @@ def _requested_diagnostic_focus_status(report: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _diagnostic_export_contract(report: dict[str, Any]) -> dict[str, Any]:
+    """Return the current-runtime compatibility of persisted diagnostic artifacts."""
+
+    diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
+    requested_focuses = report.get("requested_diagnostic_focuses")
+    diagnostic_requested = bool(
+        report.get("diagnostic_export_requested")
+        or report.get("normality_check_requested")
+        or (isinstance(requested_focuses, list) and requested_focuses)
+    )
+    return assess_diagnostic_export_contract(
+        diagnostics,
+        diagnostic_requested=diagnostic_requested,
+    )
+
+
 def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
     """Summarize requested and recommended diagnostic exports into one safe next action."""
 
@@ -20561,8 +20654,29 @@ def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
         or requested_focuses
         or template_default_focuses
     )
+    export_contract = _diagnostic_export_contract(report)
+    has_any_export = bool(export_contract.get("has_any_export"))
+    newer_contract = export_contract.get("status") == "newer_than_runtime"
+    contract_missing_artifact_keys = (
+        export_contract.get("missing_required_artifact_keys") or []
+        if has_any_export
+        else []
+    )
+    contract_missing_row_count_keys = (
+        export_contract.get("missing_required_row_count_keys") or []
+        if has_any_export
+        else []
+    )
 
-    if focus_status.get("ok") is False:
+    if newer_contract:
+        status = "diagnostic_export_contract_newer_than_runtime"
+        recommended_action = "restart_with_runtime_supporting_newer_diagnostic_export_contract"
+        export_needed = False
+    elif export_contract.get("refresh_required") and has_any_export:
+        status = "diagnostic_export_contract_refresh_required"
+        recommended_action = "refresh_current_revision_diagnostic_export_contract"
+        export_needed = True
+    elif focus_status.get("ok") is False:
         status = "requested_focus_incomplete"
         recommended_action = "export_view_bundle_for_missing_requested_diagnostic_focuses"
         export_needed = True
@@ -20602,7 +20716,7 @@ def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
         export_needed = False
     ok = (
         False
-        if focus_status.get("ok") is False or export_needed
+        if newer_contract or focus_status.get("ok") is False or export_needed
         else True
         if diagnostic_requested
         else None
@@ -20610,7 +20724,7 @@ def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
 
     return _drop_none_values(
         {
-            "available": diagnostic_requested,
+            "available": bool(diagnostic_requested or has_any_export),
             "ok": ok,
             "status": status,
             "export_needed": export_needed,
@@ -20633,8 +20747,18 @@ def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
             "missing_requested_focuses": _dedupe_strings(missing_focuses),
             "missing_csv_keys": missing_csv_keys,
             "missing_summary_keys": missing_summary_keys,
+            "diagnostic_export_contract_status": export_contract.get("status"),
+            "diagnostic_export_contract_current": export_contract.get("current"),
+            "diagnostic_export_contract_refresh_required": export_contract.get("refresh_required"),
+            "diagnostic_export_contract_refresh_allowed": export_contract.get("refresh_allowed"),
+            "diagnostic_export_contract_missing_artifact_keys": contract_missing_artifact_keys,
+            "diagnostic_export_contract_missing_row_count_keys": contract_missing_row_count_keys,
             "action_id": recommended_action,
-            "recommended_tool": "material_studio_model_export_view_bundle",
+            "recommended_tool": (
+                "material_studio_live_capabilities"
+                if newer_contract
+                else "material_studio_model_export_view_bundle"
+            ),
             "recommended_action": recommended_action,
             "needs_user_confirmation": False,
             "safe_to_call_without_confirmation": True,
@@ -20642,11 +20766,19 @@ def _diagnostic_focus_plan(report: dict[str, Any]) -> dict[str, Any]:
                 {
                     "project_id": report.get("project_id"),
                     "revision": report.get("revision"),
-                    "include_gui_snapshot": True,
+                    "include_gui_snapshot": (
+                        False
+                        if export_contract.get("refresh_required")
+                        and export_contract.get("has_any_export")
+                        else True
+                    ),
                     "recommended_focuses": recommended_focuses,
                     "auto_completed_focuses": auto_completed_focuses,
+                    "working_dir": report.get("working_dir"),
                 }
-            ),
+            )
+            if not newer_contract
+            else {},
         }
     )
 
@@ -20903,6 +21035,11 @@ def _diagnostic_acceptance_summary(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("diagnostic_export_manifest"), dict)
         else {}
     )
+    export_contract = (
+        diagnostic_export_manifest.get("contract")
+        if isinstance(diagnostic_export_manifest.get("contract"), dict)
+        else _diagnostic_export_contract(report)
+    )
     exported = bool(
         row_counts
         or diagnostic_export_manifest.get("ok")
@@ -20911,7 +21048,35 @@ def _diagnostic_acceptance_summary(report: dict[str, Any]) -> dict[str, Any]:
         or diagnostics.get("diagnostic_export_manifest_json")
     )
     view_parameter_failures = [view_parameter_export_failure] if view_parameter_export_failure else []
-    failures = [*basic_failures, *semiconductor_failures, *view_parameter_failures]
+    contract_failure = (
+        {
+            "type": "diagnostic_export_contract_not_current",
+            "status": export_contract.get("status"),
+            "observed_contract_version": export_contract.get("observed_contract_version"),
+            "current_contract_version": export_contract.get("current_contract_version"),
+            "missing_required_artifact_keys": export_contract.get(
+                "missing_required_artifact_keys"
+            )
+            or [],
+            "missing_required_row_count_keys": export_contract.get(
+                "missing_required_row_count_keys"
+            )
+            or [],
+        }
+        if (
+            exported
+            and export_contract.get("current") is not True
+            and not view_parameter_export_needs_refresh
+        )
+        else None
+    )
+    contract_failures = [contract_failure] if contract_failure else []
+    failures = [
+        *basic_failures,
+        *semiconductor_failures,
+        *view_parameter_failures,
+        *contract_failures,
+    ]
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
     visual_normality = (
         report.get("visual_normality_summary")
@@ -20927,7 +21092,9 @@ def _diagnostic_acceptance_summary(report: dict[str, Any]) -> dict[str, Any]:
     if not exported:
         ok = False
         status = "diagnostics_not_exported"
-    elif view_parameter_export_needs_refresh and not basic_failures and not semiconductor_failures:
+    elif (
+        view_parameter_export_needs_refresh or contract_failure
+    ) and not basic_failures and not semiconductor_failures:
         ok = False
         status = "diagnostics_stale_or_partial"
     elif failures:
@@ -20937,7 +21104,13 @@ def _diagnostic_acceptance_summary(report: dict[str, Any]) -> dict[str, Any]:
         ok = True
         status = "diagnostics_ready"
 
-    if view_parameter_export_needs_refresh:
+    if contract_failure:
+        recommended_action = (
+            "restart_with_runtime_supporting_newer_diagnostic_export_contract"
+            if export_contract.get("status") == "newer_than_runtime"
+            else "refresh_current_revision_diagnostic_export_contract"
+        )
+    elif view_parameter_export_needs_refresh:
         recommended_action = (
             view_parameter_summary.get("export_recommended_action")
             or "regenerate_view_bundle_for_current_view_parameter_summary"
@@ -20956,6 +21129,10 @@ def _diagnostic_acceptance_summary(report: dict[str, Any]) -> dict[str, Any]:
         "manifest_path": diagnostics.get("view_bundle_manifest_path"),
         "manifest_exists": _artifact_path_exists(diagnostics.get("view_bundle_manifest_path")),
         "diagnostic_export_manifest_ok": diagnostic_export_manifest.get("ok"),
+        "diagnostic_export_contract_status": export_contract.get("status"),
+        "diagnostic_export_contract_current": export_contract.get("current"),
+        "diagnostic_export_contract_refresh_required": export_contract.get("refresh_required"),
+        "diagnostic_export_contract_failure": contract_failure,
         "file_count": diagnostic_export_manifest.get("total_file_count")
         or diagnostic_export_manifest.get("total_exported_file_count"),
         "row_count_total": _row_count_total(row_counts),
@@ -21218,17 +21395,57 @@ def _diagnostic_export_manifest(report: dict[str, Any]) -> dict[str, Any]:
         or report.get("normality_check_requested")
         or requested_focuses
     )
+    export_contract = assess_diagnostic_export_contract(
+        diagnostics,
+        diagnostic_requested=diagnostic_requested,
+    )
     total_exported_file_count = len(exported_file_keys)
     has_any_export = bool(total_exported_file_count or total_row_count)
-    if has_any_export:
+    contract_missing_artifact_keys = (
+        export_contract.get("missing_required_artifact_keys") or []
+        if has_any_export or diagnostic_requested
+        else []
+    )
+    contract_missing_row_count_keys = (
+        export_contract.get("missing_required_row_count_keys") or []
+        if has_any_export or diagnostic_requested
+        else []
+    )
+    if export_contract.get("status") == "newer_than_runtime":
+        status = "unsupported_newer_contract"
+    elif has_any_export and export_contract.get("current") is not True:
+        status = "stale_contract"
+    elif has_any_export:
         status = "exported_with_requested_focus_gaps" if focus_status.get("ok") is False else "exported"
     else:
         status = "missing" if diagnostic_requested else "not_requested"
     ok = status in {"exported", "not_requested"}
+    refresh_payload = _drop_none_values(
+        {
+            "project_id": report.get("project_id"),
+            "revision": report.get("revision"),
+            "include_gui_snapshot": False,
+            "working_dir": report.get("working_dir"),
+            "response_mode": McpResponseMode.COMPACT.value,
+        }
+    )
     return {
+        "schema_version": DIAGNOSTIC_EXPORT_SCHEMA_VERSION,
+        "contract_version": DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
         "available": has_any_export,
         "ok": ok,
         "status": status,
+        "contract": export_contract,
+        "contract_status": export_contract.get("status"),
+        "contract_current": export_contract.get("current"),
+        "contract_refresh_required": export_contract.get("refresh_required"),
+        "contract_refresh_allowed": export_contract.get("refresh_allowed"),
+        "observed_contract_version": export_contract.get("observed_contract_version"),
+        "view_bundle_schema_version": export_contract.get(
+            "observed_view_bundle_schema_version"
+        ),
+        "missing_required_artifact_keys": contract_missing_artifact_keys,
+        "missing_required_row_count_keys": contract_missing_row_count_keys,
         "diagnostic_export_requested": bool(report.get("diagnostic_export_requested")),
         "normality_check_requested": bool(report.get("normality_check_requested")),
         "requested_diagnostic_focus_count": len(requested_focuses),
@@ -21252,7 +21469,28 @@ def _diagnostic_export_manifest(report: dict[str, Any]) -> dict[str, Any]:
         "categories_with_files": categories_with_files,
         "exported_file_keys": sorted(exported_file_keys),
         "categories": categories,
+        "refresh": {
+            "recommended_tool": (
+                "material_studio_model_export_view_bundle"
+                if export_contract.get("refresh_allowed")
+                else "material_studio_live_capabilities"
+            ),
+            "recommended_action": (
+                "refresh_current_revision_diagnostic_export_contract"
+                if export_contract.get("refresh_allowed")
+                else "restart_with_runtime_supporting_newer_diagnostic_export_contract"
+            ),
+            "payload_hint": refresh_payload if export_contract.get("refresh_allowed") else {},
+            "safe_to_call_without_confirmation": bool(export_contract.get("refresh_allowed")),
+            "changes_gui": False,
+            "creates_revision": False,
+        },
         "next_action": (
+            "restart_with_runtime_supporting_newer_diagnostic_export_contract"
+            if status == "unsupported_newer_contract"
+            else "refresh_current_revision_diagnostic_export_contract"
+            if status == "stale_contract"
+            else
             "review_missing_requested_diagnostic_focus_exports"
             if status == "exported_with_requested_focus_gaps"
             else "export_view_bundle_for_current_revision"
@@ -21929,6 +22167,23 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     bundle_files = response.get("view_bundle_files") or response.get("files") or {}
+    bundle_payload = response.get("view_bundle") if isinstance(response.get("view_bundle"), dict) else {}
+    prior_report = response.get("modeling_report") if isinstance(response.get("modeling_report"), dict) else {}
+    prior_diagnostics = (
+        prior_report.get("diagnostics")
+        if isinstance(prior_report.get("diagnostics"), dict)
+        else {}
+    )
+    view_bundle_schema_version = _first_not_none(
+        response.get("view_bundle_schema_version"),
+        bundle_payload.get("schema_version"),
+        prior_diagnostics.get("view_bundle_schema_version"),
+    )
+    view_bundle_contract_version = _first_not_none(
+        response.get("view_bundle_contract_version"),
+        bundle_payload.get("contract_version"),
+        prior_diagnostics.get("view_bundle_contract_version"),
+    )
     audit = response.get("view_audit") if isinstance(response.get("view_audit"), dict) else None
     view_selection = (
         audit.get("view_selection")
@@ -22099,6 +22354,8 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         },
         "gui": gui_summary,
         "diagnostics": {
+            "view_bundle_schema_version": view_bundle_schema_version,
+            "view_bundle_contract_version": view_bundle_contract_version,
             "report_json_path": response.get("report_json_path"),
             "view_audit_report_path": response.get("view_audit_report_path"),
             "view_bundle_manifest_path": response.get("view_bundle_manifest_path"),
@@ -30050,6 +30307,24 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "mcp_diagnostics_exported": mcp_diagnostics_exported,
             "mcp_diagnostic_export_manifest_status": diagnostic_export_manifest.get("status"),
             "mcp_diagnostic_export_manifest_ok": diagnostic_export_manifest.get("ok"),
+            "mcp_diagnostic_export_contract_version": diagnostic_export_manifest.get(
+                "contract_version"
+            ),
+            "mcp_diagnostic_export_contract_status": diagnostic_export_manifest.get(
+                "contract_status"
+            ),
+            "mcp_diagnostic_export_contract_current": diagnostic_export_manifest.get(
+                "contract_current"
+            ),
+            "mcp_diagnostic_export_contract_refresh_required": diagnostic_export_manifest.get(
+                "contract_refresh_required"
+            ),
+            "mcp_diagnostic_export_contract_missing_required_artifact_keys": (
+                diagnostic_export_manifest.get("missing_required_artifact_keys") or []
+            ),
+            "mcp_diagnostic_export_contract_missing_required_row_count_keys": (
+                diagnostic_export_manifest.get("missing_required_row_count_keys") or []
+            ),
             "mcp_diagnostic_export_manifest_json": diagnostic_export_manifest_json,
             "mcp_diagnostic_export_manifest_total_file_count": diagnostic_export_manifest.get(
                 "total_exported_file_count"
@@ -30455,6 +30730,24 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "diagnostic_export_manifest": diagnostic_export_manifest,
             "diagnostic_export_manifest_status": diagnostic_export_manifest.get("status"),
             "diagnostic_export_manifest_ok": diagnostic_export_manifest.get("ok"),
+            "diagnostic_export_contract_version": diagnostic_export_manifest.get(
+                "contract_version"
+            ),
+            "diagnostic_export_contract_status": diagnostic_export_manifest.get(
+                "contract_status"
+            ),
+            "diagnostic_export_contract_current": diagnostic_export_manifest.get(
+                "contract_current"
+            ),
+            "diagnostic_export_contract_refresh_required": diagnostic_export_manifest.get(
+                "contract_refresh_required"
+            ),
+            "diagnostic_export_contract_missing_required_artifact_keys": (
+                diagnostic_export_manifest.get("missing_required_artifact_keys") or []
+            ),
+            "diagnostic_export_contract_missing_required_row_count_keys": (
+                diagnostic_export_manifest.get("missing_required_row_count_keys") or []
+            ),
             "diagnostic_export_manifest_total_file_count": diagnostic_export_manifest.get(
                 "total_exported_file_count"
             ),
@@ -34866,15 +35159,18 @@ def _compact_view_bundle_files(value: Any) -> dict[str, Any]:
 
 
 def _view_bundle_artifact_availability(value: Any) -> dict[str, Any]:
-    """Check whether every persisted path listed by a view bundle exists."""
+    """Check listed paths plus artifacts required by the current bundle contract."""
 
     if not isinstance(value, dict) or not value:
         return {
             "available": False,
             "status": "not_available",
             "complete": False,
-            "scope": "all_listed_persisted_paths_exist",
+            "scope": "listed_paths_and_current_contract_required_artifacts",
             "content_integrity_validated": False,
+            "contract_version": None,
+            "required_artifact_keys": list(REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS),
+            "missing_required_artifact_keys": [],
             "total_file_count": 0,
             "existing_file_count": 0,
             "missing_file_count": 0,
@@ -34899,21 +35195,63 @@ def _view_bundle_artifact_availability(value: Any) -> dict[str, Any]:
         else:
             missing_keys.append(str(key))
 
-    total_count = len(value)
+    contract_metadata_present = bool(
+        any(
+            key in value
+            for key in (
+                "view_reference_atlas_svg",
+                "view_reference_manifest_json",
+                "view_reference_index_csv",
+            )
+        )
+        or "view_bundle_contract_version" in value
+        or "view_bundle_schema_version" in value
+    )
+    required_missing_keys = (
+        [
+            key
+            for key in REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS
+            if key not in value or key in missing_keys or key in invalid_keys
+        ]
+        if contract_metadata_present
+        else []
+    )
+    missing_keys = sorted(set(missing_keys + required_missing_keys))
+    expected_keys = set(str(key) for key in value)
+    if contract_metadata_present:
+        expected_keys |= set(REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS)
+    total_count = len(expected_keys)
     complete = bool(
         total_count
-        and len(existing_keys) == total_count
+        and len(set(existing_keys)) == total_count
         and not missing_keys
         and not invalid_keys
     )
     return {
         "available": True,
-        "status": "complete" if complete else "missing_or_invalid_files",
+        "status": (
+            "current_contract_complete"
+            if contract_metadata_present and complete
+            else "missing_or_invalid_current_contract_files"
+            if contract_metadata_present
+            else "complete"
+            if complete
+            else "missing_or_invalid_files"
+        ),
         "complete": complete,
-        "scope": "all_listed_persisted_paths_exist",
+        "scope": (
+            "listed_paths_and_current_contract_required_artifacts"
+            if contract_metadata_present
+            else "all_listed_persisted_paths_exist"
+        ),
         "content_integrity_validated": False,
+        "contract_version": (
+            DIAGNOSTIC_EXPORT_CONTRACT_VERSION if contract_metadata_present else None
+        ),
+        "required_artifact_keys": list(REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS),
+        "missing_required_artifact_keys": required_missing_keys,
         "total_file_count": total_count,
-        "existing_file_count": len(existing_keys),
+        "existing_file_count": len(set(existing_keys)),
         "missing_file_count": len(missing_keys),
         "invalid_entry_count": len(invalid_keys),
         "missing_file_keys": sorted(missing_keys),
@@ -35169,6 +35507,10 @@ def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
             "requested_focus_count",
             "recommended_focus_status_ok",
             "recommended_focuses_ready",
+            "diagnostic_export_contract_status",
+            "diagnostic_export_contract_current",
+            "diagnostic_export_contract_refresh_required",
+            "diagnostic_export_contract_refresh_allowed",
             "action_id",
             "recommended_tool",
             "recommended_action",
@@ -35176,6 +35518,10 @@ def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
             "safe_to_call_without_confirmation",
         )
     )
+    if compact.get("diagnostic_export_contract_status") == "current":
+        compact.pop("diagnostic_export_contract_current", None)
+        compact.pop("diagnostic_export_contract_refresh_required", None)
+        compact.pop("diagnostic_export_contract_refresh_allowed", None)
     requested_focuses = value.get("requested_focuses") or []
     recommended_focuses = value.get("recommended_focuses") or []
     if recommended_focuses == requested_focuses:
@@ -35190,6 +35536,8 @@ def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
         "missing_requested_focuses",
         "missing_csv_keys",
         "missing_summary_keys",
+        "diagnostic_export_contract_missing_artifact_keys",
+        "diagnostic_export_contract_missing_row_count_keys",
     ):
         items = value.get(key)
         if items:
@@ -35200,13 +35548,16 @@ def _compact_diagnostic_focus_plan(value: Any) -> dict[str, Any] | None:
         compact["recommended_focus_count"] = value.get("recommended_focus_count")
     payload_hint = value.get("payload_hint")
     if isinstance(payload_hint, dict):
+        payload_fields = [
+            "project_id",
+            "revision",
+            "include_gui_snapshot",
+        ]
+        if value.get("diagnostic_export_contract_refresh_required") is True:
+            payload_fields.append("working_dir")
         compact_payload = _mapping_subset(
             payload_hint,
-            (
-                "project_id",
-                "revision",
-                "include_gui_snapshot",
-            ),
+            tuple(payload_fields),
         )
         if compact_payload:
             compact["payload_hint"] = compact_payload
@@ -39274,6 +39625,10 @@ def _compact_live_response(
             "unresolved_visual_review_reasons",
             "requested_diagnostic_focus_ok",
             "diagnostic_export_manifest_status",
+            "diagnostic_export_contract_version",
+            "diagnostic_export_contract_status",
+            "diagnostic_export_contract_current",
+            "diagnostic_export_contract_refresh_required",
             "change_verification_ok",
             "change_verification_status",
             "next_action_id",
@@ -39286,6 +39641,9 @@ def _compact_live_response(
     compact_next_action_resolution = _compact_next_action_resolution(
         live.get("next_action_resolution")
     )
+    if compact_live.get("diagnostic_export_contract_status") == "current":
+        compact_live.pop("diagnostic_export_contract_current", None)
+        compact_live.pop("diagnostic_export_contract_refresh_required", None)
     if compact_next_action_resolution:
         compact_live["next_action_resolution"] = compact_next_action_resolution
     else:
@@ -39375,6 +39733,24 @@ def _compact_live_response(
             compact_value = projector(value) if projector is not None else value
             if compact_value:
                 compact[key] = compact_value
+    compact_focus_plan = compact.get("diagnostic_focus_plan")
+    if isinstance(compact_focus_plan, dict):
+        compact_focus_plan = dict(compact_focus_plan)
+        if compact_focus_plan.get("requested_focuses") == compact.get(
+            "requested_diagnostic_focuses"
+        ):
+            compact_focus_plan.pop("requested_focuses", None)
+            compact_focus_plan["requested_focuses_ref"] = (
+                "requested_diagnostic_focuses"
+            )
+        if compact_focus_plan.get("auto_completed_focuses") == compact.get(
+            "auto_completed_diagnostic_focuses"
+        ):
+            compact_focus_plan.pop("auto_completed_focuses", None)
+            compact_focus_plan["auto_completed_focuses_ref"] = (
+                "auto_completed_diagnostic_focuses"
+            )
+        compact["diagnostic_focus_plan"] = compact_focus_plan
     visual_action_value = response.get("visual_diagnostics_next_action_plan")
     if isinstance(visual_action_value, dict):
         compact_value = _compact_visual_diagnostics_action_plan(
@@ -39527,6 +39903,32 @@ def _compact_live_response(
     if isinstance(bundle_files, dict):
         compact_bundle_files = _compact_view_bundle_files(bundle_files)
         artifact_availability = _view_bundle_artifact_availability(bundle_files)
+        compact_artifact_availability = _mapping_subset(
+            artifact_availability,
+            (
+                "available",
+                "status",
+                "complete",
+                "content_integrity_validated",
+                "contract_version",
+                "total_file_count",
+                "existing_file_count",
+                "missing_file_count",
+            ),
+        )
+        if artifact_availability.get("complete") is not True:
+            compact_artifact_availability.update(
+                _mapping_subset(
+                    artifact_availability,
+                    (
+                        "scope",
+                        "invalid_entry_count",
+                        "missing_file_keys",
+                        "invalid_entry_keys",
+                        "missing_required_artifact_keys",
+                    ),
+                )
+            )
         index_complete = len(compact_bundle_files) == len(bundle_files)
         compact["view_bundle_files"] = compact_bundle_files
         compact["view_bundle_files_complete"] = artifact_availability[
@@ -39544,13 +39946,23 @@ def _compact_live_response(
         compact["view_bundle_files_missing_keys"] = artifact_availability[
             "missing_file_keys"
         ]
+        if artifact_availability.get("contract_version") is not None:
+            compact["view_bundle_contract_version"] = artifact_availability[
+                "contract_version"
+            ]
+        if artifact_availability.get("missing_required_artifact_keys"):
+            compact["view_bundle_contract_missing_required_artifact_keys"] = (
+                artifact_availability["missing_required_artifact_keys"]
+            )
         compact["view_bundle_file_index_entry_count_in_response"] = len(
             compact_bundle_files
         )
         compact["view_bundle_file_index_complete_in_response"] = index_complete
         compact["view_bundle_file_index_compacted"] = not index_complete
-        compact["view_bundle_artifact_availability"] = artifact_availability
-        compact["view_bundle_files_total_count"] = len(bundle_files)
+        compact["view_bundle_artifact_availability"] = compact_artifact_availability
+        compact["view_bundle_files_total_count"] = artifact_availability[
+            "total_file_count"
+        ]
         compact_live_summary = compact.get("live_summary")
         if isinstance(compact_live_summary, dict):
             compact_live_summary["view_bundle_files_complete"] = (
@@ -39559,6 +39971,10 @@ def _compact_live_response(
             compact_live_summary["view_bundle_files_missing_count"] = (
                 artifact_availability["missing_file_count"]
             )
+            if artifact_availability.get("missing_required_artifact_keys"):
+                compact_live_summary[
+                    "view_bundle_contract_missing_required_artifact_keys"
+                ] = artifact_availability["missing_required_artifact_keys"]
             compact_live_summary["view_bundle_file_index_compacted"] = (
                 not index_complete
             )
@@ -41135,6 +41551,8 @@ def material_studio_live_project_status(
             "view_bundle_manifest_path": view_bundle["manifest_path"],
             "view_bundle_files": view_bundle["files"],
             "view_bundle_row_counts": view_bundle["row_counts"],
+            "view_bundle_schema_version": view_bundle["schema_version"],
+            "view_bundle_contract_version": view_bundle["contract_version"],
             "result_metadata": result_metadata,
             "result_metadata_read_error": result_error,
             "gui_view_replay": view_replay_summary,
@@ -41251,7 +41669,12 @@ def _status_view_bundle_from_report(
             for key, value in diagnostics.items()
             if isinstance(key, str)
             and isinstance(value, str)
-            and (key.endswith("_csv") or key.endswith("_json") or key in {"view_audit_json"})
+            and (
+                key.endswith("_csv")
+                or key.endswith("_json")
+                or key.endswith("_svg")
+                or key in {"view_audit_json"}
+            )
         }
     row_counts = report_payload.get("view_bundle_row_counts")
     if not isinstance(row_counts, dict):
@@ -41263,6 +41686,10 @@ def _status_view_bundle_from_report(
         "manifest_path": str(manifest_path) if manifest_path else None,
         "files": files,
         "row_counts": row_counts,
+        "schema_version": report_payload.get("view_bundle_schema_version")
+        or diagnostics.get("view_bundle_schema_version"),
+        "contract_version": report_payload.get("view_bundle_contract_version")
+        or diagnostics.get("view_bundle_contract_version"),
     }
 
 

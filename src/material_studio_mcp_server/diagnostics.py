@@ -20,6 +20,10 @@ from .castep_relaxation import (
     CASTEP_RELAXATION_RECEIPT_SCHEMA,
     crystal_structure_sha256,
 )
+from .diagnostic_contract import (
+    DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
+    VIEW_BUNDLE_SCHEMA_VERSION,
+)
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     analyze_periodic_site_pair_distribution,
@@ -2850,6 +2854,8 @@ def write_view_audit_bundle(
     )
 
     manifest = {
+        "schema_version": VIEW_BUNDLE_SCHEMA_VERSION,
+        "contract_version": DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
         "project_id": spec.project_id,
         "revision": spec.revision,
         "model_type": spec.model_type.value,

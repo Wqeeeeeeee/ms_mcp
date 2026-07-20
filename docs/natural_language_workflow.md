@@ -1516,3 +1516,25 @@ the requested view bundle. `重做刚才撤销的修改并热加载到 Materials
 to `workflow=redo` when the latest history entry is a rollback. Explicit
 revision restores such as `恢复 r000 并热加载到 MS` use the same non-destructive
 rollback machinery with `nl_plan.template_id=restore_revision`.
+
+## Versioned Diagnostic Export Contract
+
+Every newly written view bundle carries `schema_version` and
+`contract_version`. Runtime contract v2 requires the standard view summary,
+projection, overlap, and quality tables together with
+`view_reference_atlas.svg`, `view_reference_manifest.json`,
+`view_reference_index.csv`, and a nonzero `view_reference_views` row count.
+
+`material_studio_live_project_status` classifies persisted bundles as
+`current`, `legacy_unversioned`, `outdated`, `incomplete`,
+`newer_than_runtime`, or `not_exported`. A legacy, outdated, or incomplete
+bundle returns an exact `material_studio_model_export_view_bundle` refresh
+payload with `include_gui_snapshot=false`. This refresh preserves the current
+revision, performs no GUI input, and does not launch or activate Materials
+Studio. A bundle created by a newer runtime is read-only to the current
+runtime; upgrade and restart the MCP runtime instead of overwriting it.
+
+Use `diagnostic_export_manifest.contract_status` and
+`diagnostic_focus_plan.diagnostic_export_contract_status` before treating a
+persisted export as complete. Existing files remain listed for audit, but only
+`contract_status=current` satisfies the current diagnostic delivery contract.

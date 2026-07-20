@@ -917,6 +917,23 @@ When a persisted `view_audit.json` contains an executed `modeling_health` result
 and a GUI-open artifact, `material_studio_live_project_status` reports that
 same hot-loaded state instead of downgrading the project to a preview summary.
 
+## GUI-Free Diagnostic Contract Refresh
+
+Diagnostic export compatibility is independent of GUI state. New view bundles
+record a versioned contract, and live status reports old or partial bundles as
+stale even when their historical files still exist. Follow the returned
+`material_studio_model_export_view_bundle` payload with
+`include_gui_snapshot=false` to rebuild diagnostic tables and deterministic
+view-reference artifacts for the same immutable revision.
+
+This refresh does not activate, open, resize, or send input to Materials
+Studio, does not run MaterialsScript, and does not create a model revision. It
+still uses the per-revision GUI artifact report transaction because it updates
+persisted diagnostics and `report.json`. If that transaction is busy, retry
+the exact deferred payload after the lock clears. A
+`newer_than_runtime` contract is never overwritten; update and restart the MCP
+runtime before reading it as current.
+
 ## Safe Workflow
 
 1. If the live session state is unclear, call `material_studio_live_session_preflight` first. It reports whether preview, execute, GUI hot-load, crystal CIF hot-load, and latest-project follow-ups are currently ready. If it recommends `material_studio_gui_launch`, call that tool before attempting a hot-load. If it reports `ready_for_live_edit_gui_review`, use the returned `material_studio_gui_open_structure` payload to reload the latest current revision into the GUI and capture a snapshot before continuing; keep the returned `project_id` and `revision` when present. If it reports `ready_for_live_edit_gui_activation`, call `material_studio_gui_activate` with the returned project/revision and `take_snapshot=true` to bring the already-loaded target revision window forward without re-hot-loading. `material_studio_gui_open_structure` can also write the GUI-open artifact back to the structured report when `project_id` is omitted, but only if the opened `structure_path` matches the latest current revision's planned structure.

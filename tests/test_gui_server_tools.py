@@ -15,6 +15,11 @@ from pydantic import ValidationError
 
 from material_studio_mcp_server import server
 from material_studio_mcp_server import gui as gui_module
+from material_studio_mcp_server.diagnostic_contract import (
+    DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
+    REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS,
+    VIEW_BUNDLE_SCHEMA_VERSION,
+)
 from material_studio_mcp_server.diagnostics import model_view_audit
 from material_studio_mcp_server.gui import MaterialsStudioGuiController, ProcessInfo, WindowInfo, WindowsGuiBackend
 from material_studio_mcp_server.health import build_modeling_health
@@ -22,6 +27,28 @@ from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import ModelSpec
 from material_studio_mcp_server.state import store as store_module
 from material_studio_mcp_server.state.execution import begin_execution_attempt
+
+
+def _write_current_diagnostic_contract_artifacts(
+    tmp_path: Path,
+    diagnostics: dict,
+) -> None:
+    row_counts = dict(diagnostics.get("view_bundle_row_counts") or {})
+    row_counts.setdefault(
+        "view_reference_views",
+        max(int(row_counts.get("view_summary", 1)), 1),
+    )
+    diagnostics["view_bundle_row_counts"] = row_counts
+    diagnostics["view_bundle_schema_version"] = VIEW_BUNDLE_SCHEMA_VERSION
+    diagnostics["view_bundle_contract_version"] = DIAGNOSTIC_EXPORT_CONTRACT_VERSION
+    manifest_path = tmp_path / "view_bundle_manifest.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    diagnostics["view_bundle_manifest_path"] = str(manifest_path)
+    for key in REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS:
+        path = Path(diagnostics.get(key) or (tmp_path / f"{key}.artifact"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{key}\n", encoding="utf-8")
+        diagnostics[key] = str(path)
 
 
 def _verified_view_command_evidence() -> dict:
@@ -22595,6 +22622,7 @@ def test_semiconductor_diagnostic_gate_treats_focus_status_json_as_optional_when
         path = tmp_path / f"{key}.csv"
         path.write_text("ok\n", encoding="utf-8")
         diagnostics[key] = str(path)
+    _write_current_diagnostic_contract_artifacts(tmp_path, diagnostics)
 
     report = {
         "project_id": "gaas_focus_status_optional",
@@ -34872,7 +34900,7 @@ def test_trusted_clean_view_replay_does_not_resolve_unknown_visual_reason() -> N
     ]
 
 
-def test_diagnostic_acceptance_promotes_model_normality_fields() -> None:
+def test_diagnostic_acceptance_promotes_model_normality_fields(tmp_path: Path) -> None:
     row_counts = {
         "view_summary": 3,
         "view_quality": 3,
@@ -34902,6 +34930,7 @@ def test_diagnostic_acceptance_promotes_model_normality_fields() -> None:
             "missing_artifacts": [],
         },
     }
+    _write_current_diagnostic_contract_artifacts(tmp_path, report["diagnostics"])
     diagnostic_acceptance = server._diagnostic_acceptance_summary(report)
     report["diagnostic_acceptance"] = diagnostic_acceptance
     live_summary = server._live_summary_from_report(report)
@@ -34913,7 +34942,7 @@ def test_diagnostic_acceptance_promotes_model_normality_fields() -> None:
     assert diagnostic_acceptance["ok"] is True
     assert diagnostic_acceptance["can_check_model_normality"] is True
     assert diagnostic_acceptance["basic_view_tables_ok"] is True
-    assert diagnostic_acceptance["row_count_total"] == 63
+    assert diagnostic_acceptance["row_count_total"] == sum(row_counts.values()) + 3
     assert live_summary["diagnostic_acceptance_status"] == "diagnostics_ready"
     assert live_summary["mcp_diagnostic_acceptance_ok"] is True
     assert live_summary["mcp_diagnostic_can_check_model_normality"] is True
@@ -34923,8 +34952,10 @@ def test_diagnostic_acceptance_promotes_model_normality_fields() -> None:
     assert summary_row["diagnostic_acceptance_status"] == "diagnostics_ready"
     assert summary_row["diagnostic_acceptance_ok"] is True
     assert summary_row["diagnostic_can_check_model_normality"] is True
-    assert summary_row["diagnostic_row_count_total"] == 63
-    assert json.loads(summary_row["diagnostic_row_count_keys"]) == sorted(row_counts)
+    assert summary_row["diagnostic_row_count_total"] == sum(row_counts.values()) + 3
+    assert json.loads(summary_row["diagnostic_row_count_keys"]) == sorted(
+        [*row_counts, "view_reference_views"]
+    )
 
 
 def test_diagnostic_acceptance_flags_missing_basic_view_tables() -> None:

@@ -8904,6 +8904,13 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["open_structure_policy"]["requires_existing_matstudio_window"] is True
     assert capabilities["gui"]["open_structure_policy"]["single_window_policy_enforced_before_open"] is True
     assert capabilities["gui"]["open_structure_policy"]["refuses_multiple_matstudio_windows"] is True
+    assert capabilities["gui"]["open_structure_policy"]["requires_explicit_activation_before_gui_input"] is True
+    assert capabilities["gui"]["open_structure_policy"]["refuses_automatic_activation_for_inactive_target"] is True
+    assert capabilities["gui"]["open_structure_policy"]["activation_retry_tool"] == "material_studio_gui_activate"
+    assert capabilities["gui"]["open_structure_policy"]["artifact_only_open_retry_tool"] == "material_studio_gui_open_structure"
+    assert capabilities["gui"]["open_structure_policy"]["postexecution_target_state_revalidated"] is True
+    assert capabilities["gui"]["open_structure_policy"]["postexecution_focus_loss_preserves_execution_result"] is True
+    assert capabilities["gui"]["open_structure_policy"]["postexecution_focus_loss_forbids_execution_retry"] is True
     assert capabilities["gui"]["open_structure_policy"]["auto_launch_before_open_when_window_missing"] is False
     assert capabilities["gui"]["open_structure_policy"]["launch_available_when_window_missing"] is False
     assert capabilities["gui"]["open_structure_policy"]["reuse_existing_window_default"] is True
@@ -11426,6 +11433,57 @@ def test_gui_open_structure_returns_single_window_block_for_multiple_windows(
     assert backend.opened == []
 
 
+def test_gui_open_structure_requires_explicit_activation_before_gui_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    structure = tmp_path / "activation-gated-model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+
+    blocked = server.material_studio_gui_open_structure(
+        str(structure),
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "gui_activation_required_before_open"
+    assert blocked["gui_input_started"] is False
+    assert blocked["structure_reopened"] is False
+    assert blocked["recommended_tool"] == "material_studio_gui_activate"
+    assert blocked["gui_activation_retry_payload"] == {
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert blocked["gui_open_retry_tool"] == "material_studio_gui_open_structure"
+    assert blocked["gui_open_retry_payload"] == {
+        "structure_path": str(structure.resolve()),
+        "take_snapshot": False,
+        "export_view_audit": False,
+        "reuse_existing_window_only": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert blocked["gui_open_activation_block"]["reason"] == (
+        "target_window_activation_required_before_open"
+    )
+    assert backend.activated_handles == []
+    assert backend.opened == []
+
+    activated = server.material_studio_gui_activate(
+        **blocked["gui_activation_retry_payload"]
+    )
+    assert activated["ok"] is True
+    opened = server.material_studio_gui_open_structure(
+        **blocked["gui_open_retry_payload"]
+    )
+    assert opened["ok"] is True
+    assert backend.opened == [structure.resolve()]
+
+
 def test_gui_open_structure_uses_current_revision_when_project_id_given_without_revision(
     monkeypatch,
     tmp_path: Path,
@@ -13470,6 +13528,141 @@ def test_gui_apply_current_revision_execute_requires_activation_before_running(
     assert retried["result"]["success"] is True
     assert calls == [project_id]
     assert backend.opened
+
+
+def test_gui_apply_current_revision_execute_requires_reactivation_after_runner_focus_loss(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = MinimizedGuiBackend()
+    backend.window = WindowInfo(
+        handle=101,
+        title="active-before-execution - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+    calls: list[str] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        calls.append(spec.project_id)
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("executed structure", encoding="utf-8")
+        backend.window = WindowInfo(
+            handle=101,
+            title="focus-lost-after-execution - Materials Studio",
+            pid=2222,
+            rect=(-32000, -32000, -31840, -31972),
+            is_visible=True,
+            is_minimized=True,
+            is_foreground=False,
+        )
+        return {"result": {"success": True, "created_files": [str(output)]}}
+
+    monkeypatch.setattr(server, "_execute_structured_script", fake_execute_structured_script)
+
+    project_id = "gui_postexecution_activation_proj"
+    created = server.material_studio_model_create_from_spec(
+        load_benzene(project_id),
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert executed["ok"] is False
+    assert executed["partial_success"] is True
+    assert executed["status"] == "execution_completed_gui_activation_required"
+    assert executed["result"]["success"] is True
+    assert executed["execution_completed_before_gui_activation"] is True
+    assert executed["execution_must_not_repeat"] is True
+    assert executed["gui_input_started"] is False
+    assert executed["structure_reopened"] is False
+    assert calls == [project_id]
+    assert backend.activated_handles == []
+    assert backend.opened == []
+
+    block = executed["gui_postexecution_block"]
+    assert block["reason"] == "target_window_activation_required_after_execution"
+    assert block["target_window_is_minimized"] is True
+    assert block["target_window_is_foreground"] is False
+    assert block["execution_already_completed"] is True
+    assert block["execution_retry_allowed"] is False
+    assert executed["recommended_tool"] == "material_studio_gui_activate"
+    assert executed["gui_activation_retry_payload"] == {
+        "project_id": project_id,
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert executed["gui_open_retry_tool"] == "material_studio_gui_open_structure"
+    assert executed["gui_open_retry_payload"] == {
+        "structure_path": executed["planned_outputs"]["structure"],
+        "project_id": project_id,
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert executed["next_action_plan"]["recommended_tool"] == (
+        "material_studio_gui_activate"
+    )
+    deferred = executed["next_action_plan"]["deferred_hotload_action"]
+    assert deferred["recommended_tool"] == "material_studio_gui_open_structure"
+    assert deferred["payload_hint"] == executed["gui_open_retry_payload"]
+
+    compact = server._compact_live_response(executed, "compact")
+    assert compact["status"] == "execution_completed_gui_activation_required"
+    assert compact["execution_completed_before_gui_activation"] is True
+    assert compact["execution_must_not_repeat"] is True
+    assert compact["gui_postexecution_block"]["execution_retry_allowed"] is False
+    assert compact["recommended_tool"] == "material_studio_gui_activate"
+    assert compact["next_action_plan"]["deferred_hotload_action"][
+        "recommended_tool"
+    ] == "material_studio_gui_open_structure"
+
+    persisted = json.loads(
+        Path(executed["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert persisted["execution_completed_before_gui_activation"] is True
+    assert persisted["execution_must_not_repeat"] is True
+    assert persisted["gui_postexecution_block"]["execution_already_completed"] is True
+    assert persisted["modeling_report"]["gui_postexecution_block"]["reason"] == (
+        "target_window_activation_required_after_execution"
+    )
+    assert persisted["modeling_report"]["next_action_plan"]["recommended_tool"] == (
+        "material_studio_gui_activate"
+    )
+
+    activated = server.material_studio_gui_activate(
+        **executed["gui_activation_retry_payload"]
+    )
+    assert activated["ok"] is True
+    opened = server.material_studio_gui_open_structure(
+        **executed["gui_open_retry_payload"]
+    )
+    assert opened["ok"] is True
+    assert calls == [project_id]
+    assert backend.opened
+    assert opened["modeling_report"]["gui_postexecution_block"] is None
+    assert opened["modeling_report"]["next_action_plan"]["action_id"] != (
+        "activate_current_revision_before_artifact_hotload"
+    )
 
 
 def test_live_modeling_create_execute_requires_activation_before_running(

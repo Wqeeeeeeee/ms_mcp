@@ -56,6 +56,12 @@ EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
 EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 28
+EXPECTED_RUNTIME_DEPLOYMENT_SCHEMA = (
+    "material_studio_mcp_runtime_deployment_binding_v1"
+)
+EXPECTED_RUNTIME_CODEX_CONFIG_SCHEMA = (
+    "material_studio_mcp_runtime_codex_config_status_v1"
+)
 
 _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_capabilities": {"readOnlyHint": True, "destructiveHint": False},
@@ -367,6 +373,7 @@ async def run_protocol_acceptance(
                     if not list_only and discovery["ok"]:
                         summary["calls"] = await _run_preview_calls(
                             session,
+                            repository_root=root,
                             workspace=workspace_path,
                             timeout=timeout,
                         )
@@ -492,6 +499,7 @@ def _resolve_object_schema(value: Any, root_schema: dict[str, Any]) -> dict[str,
 async def _run_preview_calls(
     session: ClientSession,
     *,
+    repository_root: Path,
     workspace: Path,
     timeout: timedelta,
 ) -> dict[str, Any]:
@@ -665,6 +673,14 @@ async def _run_preview_calls(
             "live_preflight_source_drift_blocks_continuation"
         ) is not True:
             validation_errors.append("capabilities_runtime_source_drift_gate_missing")
+        if runtime_contract.get("deployment_binding_schema") != (
+            EXPECTED_RUNTIME_DEPLOYMENT_SCHEMA
+        ):
+            validation_errors.append("capabilities_runtime_deployment_contract_missing")
+        if runtime_contract.get(
+            "deployment_binding_reports_source_checkout_and_git_identity"
+        ) is not True:
+            validation_errors.append("capabilities_runtime_git_identity_missing")
         if runtime_contract.get("direct_tool_runtime_guard") is not True:
             validation_errors.append("capabilities_direct_runtime_guard_missing")
         if runtime_contract.get("direct_tool_runtime_guard_fails_closed") is not True:
@@ -680,6 +696,18 @@ async def _run_preview_calls(
             )
         if runtime_contract.get("restart_is_never_automatic") is not True:
             validation_errors.append("capabilities_runtime_restart_policy_missing")
+        config_status_contract = capabilities.get("codex_config_status_contract")
+        if not isinstance(config_status_contract, dict):
+            validation_errors.append("capabilities_codex_config_contract_missing")
+            config_status_contract = {}
+        if config_status_contract.get("schema") != (
+            EXPECTED_RUNTIME_CODEX_CONFIG_SCHEMA
+        ):
+            validation_errors.append("capabilities_codex_config_schema_mismatch")
+        if config_status_contract.get("read_only") is not True:
+            validation_errors.append("capabilities_codex_config_read_only_missing")
+        if config_status_contract.get("advisory_only") is not True:
+            validation_errors.append("capabilities_codex_config_advisory_missing")
         runtime_provenance = capabilities.get("runtime_provenance")
         if not isinstance(runtime_provenance, dict):
             validation_errors.append("capabilities_runtime_provenance_missing")
@@ -1084,6 +1112,38 @@ async def _run_preview_calls(
             "runtime_instance_id"
         ):
             validation_errors.append("preflight_runtime_instance_mismatch")
+        preflight_deployment = preflight.get("runtime_deployment")
+        if not isinstance(preflight_deployment, dict):
+            validation_errors.append("preflight_runtime_deployment_missing")
+            preflight_deployment = {}
+        if preflight_deployment.get("schema") != EXPECTED_RUNTIME_DEPLOYMENT_SCHEMA:
+            validation_errors.append("preflight_runtime_deployment_schema_mismatch")
+        if preflight_deployment.get("repository_root") != str(repository_root):
+            validation_errors.append("preflight_runtime_repository_mismatch")
+        if preflight_deployment.get("entrypoint_binding") != (
+            "matched_source_run_server"
+        ):
+            validation_errors.append("preflight_runtime_entrypoint_binding_mismatch")
+        if preflight_deployment.get("diagnostic_only") is not True:
+            validation_errors.append("preflight_runtime_deployment_not_diagnostic")
+        if preflight_deployment.get("materials_studio_process_started") is not False:
+            validation_errors.append("preflight_runtime_deployment_started_gui")
+        preflight_config_status = preflight.get("codex_config_status")
+        if not isinstance(preflight_config_status, dict):
+            validation_errors.append("preflight_codex_config_status_missing")
+            preflight_config_status = {}
+        if preflight_config_status.get("schema") != (
+            EXPECTED_RUNTIME_CODEX_CONFIG_SCHEMA
+        ):
+            validation_errors.append("preflight_codex_config_status_schema_mismatch")
+        if preflight_config_status.get("read_only") is not True:
+            validation_errors.append("preflight_codex_config_status_not_read_only")
+        if preflight_config_status.get("active_config_modified") is not False:
+            validation_errors.append("preflight_codex_config_status_modified_config")
+        if preflight_config_status.get("advisory_only") is not True:
+            validation_errors.append("preflight_codex_config_status_not_advisory")
+        if preflight_config_status.get("execution_gate_changed") is not False:
+            validation_errors.append("preflight_codex_config_changed_execution_gate")
         preflight_readiness = preflight.get("mcp_client_readiness")
         if not isinstance(preflight_readiness, dict):
             validation_errors.append("preflight_mcp_client_readiness_missing")
@@ -1449,6 +1509,44 @@ async def _run_preview_calls(
                 "runtime_source_sha256_current": current_source.get("sha256")
                 if isinstance(current_source, dict)
                 else None,
+                "runtime_deployment_schema": preflight_deployment.get(
+                    "schema"
+                ),
+                "runtime_repository_root": preflight_deployment.get(
+                    "repository_root"
+                ),
+                "runtime_entrypoint_binding": preflight_deployment.get(
+                    "entrypoint_binding"
+                ),
+                "runtime_git_head": (
+                    preflight_deployment.get("git", {}).get("head_commit")
+                    if isinstance(preflight_deployment.get("git"), dict)
+                    else None
+                ),
+                "runtime_git_branch": (
+                    preflight_deployment.get("git", {}).get("branch")
+                    if isinstance(preflight_deployment.get("git"), dict)
+                    else None
+                ),
+                "codex_config_status_schema": preflight_config_status.get(
+                    "schema"
+                ),
+                "codex_config_status": preflight_config_status.get("status"),
+                "codex_config_ready": preflight_config_status.get(
+                    "config_ready"
+                ),
+                "codex_config_scope": preflight_config_status.get(
+                    "config_scope"
+                ),
+                "codex_config_resolution_status": preflight_config_status.get(
+                    "config_resolution_status"
+                ),
+                "codex_config_active_modified": preflight_config_status.get(
+                    "active_config_modified"
+                ),
+                "codex_config_advisory_only": preflight_config_status.get(
+                    "advisory_only"
+                ),
                 "preflight_runner_default_workspace": preflight_runner.get(
                     "default_workspace_root"
                 ),

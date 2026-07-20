@@ -5,9 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from material_studio_mcp_server import server
+from material_studio_mcp_server import codex_config
+from material_studio_mcp_server import runtime_provenance as runtime_module
+from material_studio_mcp_server.codex_config import build_codex_config_snippet
 from material_studio_mcp_server.runtime_provenance import (
+    RUNTIME_DEPLOYMENT_SCHEMA,
     RUNTIME_PROVENANCE_SCHEMA,
     RuntimeProvenanceTracker,
+    runtime_deployment_status,
     source_tree_snapshot,
 )
 
@@ -32,6 +37,130 @@ def test_source_tree_snapshot_is_deterministic_and_python_only(tmp_path: Path) -
         (package_root / name).stat().st_size for name in ("a.py", "b.py")
     )
     assert len(first["sha256"]) == 64
+
+
+def test_runtime_deployment_binds_source_checkout_entrypoint_and_git(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    package_root = root / "src" / "material_studio_mcp_server"
+    package_root.mkdir(parents=True)
+    run_server = root / "run_server.py"
+    run_server.write_text("print('server')\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_module,
+        "_git_metadata",
+        lambda repository_root: {
+            "status": "available",
+            "head_commit": "a" * 40,
+            "branch": "codex/runtime-binding-test",
+            "worktree_dirty": False,
+            "error": None,
+        },
+    )
+
+    result = runtime_deployment_status(
+        package_root,
+        entrypoint=run_server,
+        process_cwd=root,
+    )
+
+    assert result["schema"] == RUNTIME_DEPLOYMENT_SCHEMA
+    assert result["status"] == "source_checkout"
+    assert result["repository_root"] == str(root.resolve())
+    assert result["entrypoint_binding"] == "matched_source_run_server"
+    assert result["cwd_matches_repository"] is True
+    assert result["git"]["head_commit"] == "a" * 40
+    assert result["git"]["branch"] == "codex/runtime-binding-test"
+    assert result["diagnostic_only"] is True
+    assert result["materials_studio_process_started"] is False
+
+
+def test_runtime_deployment_reports_different_source_entrypoint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    package_root = root / "src" / "material_studio_mcp_server"
+    package_root.mkdir(parents=True)
+    (root / "run_server.py").write_text("print('server')\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_module,
+        "_git_metadata",
+        lambda repository_root: {
+            "status": "repository_root_unavailable",
+            "head_commit": None,
+            "branch": None,
+            "worktree_dirty": None,
+            "error": None,
+        },
+    )
+
+    result = runtime_deployment_status(
+        package_root,
+        entrypoint=tmp_path / "other" / "run_server.py",
+        process_cwd=tmp_path,
+    )
+
+    assert result["status"] == "source_checkout"
+    assert result["entrypoint_binding"] == "different_entrypoint"
+    assert result["cwd_matches_repository"] is False
+
+
+def test_runtime_codex_config_status_prefers_matching_repository_registration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    python = root / ".venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"python-placeholder")
+    (root / "run_server.py").write_text("print('server')\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    user_config = tmp_path / "codex-home" / "config.toml"
+    user_config.parent.mkdir(parents=True)
+    user_config.write_text("[projects]\n", encoding="utf-8")
+    repository_config = root / ".codex" / "config.toml"
+    repository_config.parent.mkdir(parents=True)
+    repository_config.write_text(
+        build_codex_config_snippet(root, python_command=python),
+        encoding="utf-8",
+    )
+    before_user = user_config.read_bytes()
+    before_repository = repository_config.read_bytes()
+    monkeypatch.setattr(
+        codex_config,
+        "default_active_config_path",
+        lambda: user_config.resolve(),
+    )
+
+    result = server._runtime_codex_config_status(
+        {
+            "repository_root": str(root.resolve()),
+            "python_executable": str(python.resolve()),
+        }
+    )
+
+    assert result["schema"] == server.RUNTIME_CODEX_CONFIG_SCHEMA
+    assert result["status"] == "ready"
+    assert result["config_ready"] is True
+    assert result["config_scope"] == "repository_local"
+    assert result["config_resolution_status"] == (
+        "matching_runtime_registration_found"
+    )
+    assert result["runtime_source_binding_matches_config"] is True
+    assert result["config_candidate_count"] == 2
+    assert result["config_candidates"][0]["config_scope"] == "codex_home"
+    assert result["config_candidates"][1]["config_scope"] == "repository_local"
+    assert result["read_only"] is True
+    assert result["active_config_modified"] is False
+    assert result["advisory_only"] is True
+    assert result["execution_gate_changed"] is False
+    assert user_config.read_bytes() == before_user
+    assert repository_config.read_bytes() == before_repository
 
 
 def test_runtime_provenance_detects_source_change_and_requires_restart(
@@ -108,8 +237,19 @@ def test_live_preflight_binds_runner_receipt_to_requested_workspace(
     runtime = result["runtime_provenance"]
     assert runtime["schema"] == RUNTIME_PROVENANCE_SCHEMA
     assert runtime["source_current"] is True
+    assert result["runtime_deployment"]["schema"] == RUNTIME_DEPLOYMENT_SCHEMA
+    assert result["runtime_deployment"]["diagnostic_only"] is True
+    assert result["codex_config_status"]["schema"] == (
+        server.RUNTIME_CODEX_CONFIG_SCHEMA
+    )
+    assert result["codex_config_status"]["read_only"] is True
+    assert result["codex_config_status"]["active_config_modified"] is False
     assert result["readiness"]["server_source_current"] is True
     assert result["readiness"]["server_restart_required"] is False
+    assert result["readiness"]["runtime_repository_root"]
+    assert "runtime_git_head" in result["readiness"]
+    assert "runtime_git_branch" in result["readiness"]
+    assert result["readiness"]["codex_config_advisory_only"] is True
     runner_status = result["runner_status"]
     assert runner_status["request_workspace_root"] == str(tmp_path.resolve())
     assert runner_status["default_workspace_root"] == runner_status["workspace_root"]
@@ -117,7 +257,43 @@ def test_live_preflight_binds_runner_receipt_to_requested_workspace(
         "explicit_tool_working_dir_overrides_runner_default"
     )
     assert result["mcp_client_readiness"]["server_source_current"] is True
+    assert result["mcp_client_readiness"]["runtime_repository_root"]
+    assert result["mcp_client_readiness"]["codex_config_advisory_only"] is True
     assert result["mcp_server_source_current"] is True
+
+
+def test_live_preflight_reports_config_drift_without_changing_modeling_gates(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        server,
+        "_runtime_codex_config_status",
+        lambda deployment: {
+            "schema": server.RUNTIME_CODEX_CONFIG_SCHEMA,
+            "status": "entrypoint_drift",
+            "config_ready": False,
+            "read_only": True,
+            "active_config_modified": False,
+            "advisory_only": True,
+            "execution_gate_changed": False,
+        },
+    )
+
+    result = server._live_session_preflight_payload(
+        working_dir=str(tmp_path),
+        include_latest_project=False,
+        include_gui_status=False,
+    )
+
+    assert result["readiness"]["codex_config_status"] == "entrypoint_drift"
+    assert result["readiness"]["codex_config_ready"] is False
+    assert result["readiness"]["codex_config_review_required"] is True
+    assert result["readiness"]["codex_config_advisory_only"] is True
+    assert result["readiness"]["preview_ready"] is True
+    assert result["mcp_client_readiness"]["can_accept_preview_request"] is True
+    assert result["mcp_client_readiness"]["codex_config_review_required"] is True
+    assert result["mcp_client_readiness"]["codex_config_advisory_only"] is True
 
 
 def test_live_preflight_blocks_stale_runtime_before_modeling_or_hotload(
@@ -206,9 +382,23 @@ def test_status_and_capabilities_expose_runtime_provenance_contract() -> None:
     status = server.material_studio_get_status()
     assert status["ok"] is True
     assert status["runtime_provenance"]["schema"] == RUNTIME_PROVENANCE_SCHEMA
+    assert status["runtime_deployment"]["schema"] == RUNTIME_DEPLOYMENT_SCHEMA
+    assert status["runtime_deployment"]["diagnostic_only"] is True
+    assert status["runtime_deployment"]["materials_studio_process_started"] is False
+    assert status["codex_config_status"]["schema"] == (
+        server.RUNTIME_CODEX_CONFIG_SCHEMA
+    )
+    assert status["codex_config_status"]["read_only"] is True
+    assert status["codex_config_status"]["active_config_modified"] is False
+    assert status["codex_config_status"]["advisory_only"] is True
+    assert status["codex_config_status"]["execution_gate_changed"] is False
     capabilities = server._live_capabilities_payload(include_status=False)
     contract = capabilities["runtime_provenance_contract"]
     assert contract["schema"] == RUNTIME_PROVENANCE_SCHEMA
+    assert contract["deployment_binding_schema"] == RUNTIME_DEPLOYMENT_SCHEMA
+    assert contract[
+        "deployment_binding_reports_source_checkout_and_git_identity"
+    ] is True
     assert contract["live_preflight_source_drift_blocks_continuation"] is True
     assert contract["direct_tool_runtime_guard"] is True
     assert (
@@ -224,6 +414,12 @@ def test_status_and_capabilities_expose_runtime_provenance_contract() -> None:
         server.RUNTIME_SOURCE_GUARDED_TOOL_NAMES
     )
     assert contract["restart_is_never_automatic"] is True
+    config_contract = capabilities["codex_config_status_contract"]
+    assert config_contract["schema"] == server.RUNTIME_CODEX_CONFIG_SCHEMA
+    assert config_contract["read_only"] is True
+    assert config_contract["active_config_is_never_modified"] is True
+    assert config_contract["advisory_only"] is True
+    assert config_contract["does_not_change_execution_or_hotload_gates"] is True
 
 
 def test_direct_runtime_guard_blocks_every_side_effect_capable_tool_before_body(

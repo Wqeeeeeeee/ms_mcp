@@ -99,6 +99,13 @@ def test_doctor_accepts_exact_safe_registration(tmp_path: Path) -> None:
     assert result["status"] == "ready"
     assert result["config_ready"] is True
     assert result["server_registered"] is True
+    assert result["observed_entrypoint"] == {
+        "server_name": "materials_studio",
+        "command": str(python.resolve()),
+        "args": [str((root / "run_server.py").resolve())],
+        "additional_arg_count": 0,
+        "cwd": str(root.resolve()),
+    }
     assert result["command_matches"] is True
     assert result["args_match"] is True
     assert result["cwd_matches"] is True

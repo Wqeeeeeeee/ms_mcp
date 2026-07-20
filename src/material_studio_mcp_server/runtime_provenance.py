@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from typing import Any
 
 
 RUNTIME_PROVENANCE_SCHEMA = "material_studio_mcp_runtime_provenance_v1"
+RUNTIME_DEPLOYMENT_SCHEMA = "material_studio_mcp_runtime_deployment_binding_v1"
 
 
 def _utc_now() -> datetime:
@@ -25,6 +27,176 @@ def _package_version() -> str | None:
         return version("materials-studio-mcp")
     except PackageNotFoundError:
         return None
+
+
+def _find_repository_root(package_root: Path) -> Path | None:
+    """Find the source checkout that owns a package, without scanning outside it."""
+
+    root = package_root.resolve()
+    for candidate in (root, *root.parents):
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "run_server.py"
+        ).is_file():
+            return candidate
+    return None
+
+
+def _git_metadata(repository_root: Path | None) -> dict[str, Any]:
+    """Return bounded local Git identity; failure never affects MCP startup."""
+
+    if repository_root is None:
+        return {
+            "status": "repository_root_unavailable",
+            "head_commit": None,
+            "branch": None,
+            "worktree_dirty": None,
+            "dirty_scope": "tracked_files_only",
+            "untracked_files_included": False,
+            "error": None,
+        }
+
+    command = [
+        "git",
+        "-C",
+        str(repository_root),
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "--untracked-files=no",
+        "--no-ahead-behind",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=2.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "status": "git_probe_failed",
+            "head_commit": None,
+            "branch": None,
+            "worktree_dirty": None,
+            "dirty_scope": "tracked_files_only",
+            "untracked_files_included": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "git status failed").strip()
+        return {
+            "status": "git_probe_failed",
+            "head_commit": None,
+            "branch": None,
+            "worktree_dirty": None,
+            "dirty_scope": "tracked_files_only",
+            "untracked_files_included": False,
+            "error": message[:500],
+        }
+
+    head_commit: str | None = None
+    branch: str | None = None
+    worktree_dirty = False
+    for line in completed.stdout.splitlines():
+        if line.startswith("# branch.oid "):
+            candidate = line.removeprefix("# branch.oid ").strip()
+            head_commit = candidate if candidate not in {"(initial)"} else None
+        elif line.startswith("# branch.head "):
+            candidate = line.removeprefix("# branch.head ").strip()
+            branch = candidate if candidate not in {"(detached)"} else None
+        elif line and not line.startswith("# "):
+            worktree_dirty = True
+
+    return {
+        "status": "available",
+        "head_commit": head_commit,
+        "branch": branch,
+        "worktree_dirty": worktree_dirty,
+        "dirty_scope": "tracked_files_only",
+        "untracked_files_included": False,
+        "error": None,
+    }
+
+
+def runtime_deployment_status(
+    package_root: str | Path | None = None,
+    *,
+    entrypoint: str | Path | None = None,
+    process_cwd: str | Path | None = None,
+) -> dict[str, Any]:
+    """Describe which local checkout and entrypoint this process is using.
+
+    This is diagnostic-only. It does not read or modify Codex configuration and
+    it never launches Materials Studio.
+    """
+
+    package = Path(package_root or Path(__file__).resolve().parent).resolve()
+    repository_root = _find_repository_root(package)
+    expected_entrypoint = (
+        (repository_root / "run_server.py") if repository_root else None
+    )
+    observed_entrypoint: Path | None = None
+    default_entrypoint = sys.argv[0] if sys.argv else ""
+    raw_entrypoint = str(
+        entrypoint if entrypoint is not None else default_entrypoint
+    )
+    if raw_entrypoint and not raw_entrypoint.startswith("-"):
+        try:
+            observed_entrypoint = Path(raw_entrypoint).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError):
+            observed_entrypoint = None
+
+    observed_cwd = Path(process_cwd or os.getcwd()).expanduser().resolve()
+    package_is_in_checkout = bool(
+        repository_root
+        and package == repository_root / "src" / "material_studio_mcp_server"
+    )
+    if repository_root is None:
+        deployment_status = "installed_or_unmanaged_package"
+    elif package_is_in_checkout:
+        deployment_status = "source_checkout"
+    else:
+        deployment_status = "nonstandard_source_layout"
+
+    if observed_entrypoint is None:
+        entrypoint_binding = "unobserved"
+    elif expected_entrypoint and observed_entrypoint == expected_entrypoint:
+        entrypoint_binding = "matched_source_run_server"
+    elif repository_root is None:
+        entrypoint_binding = "installed_or_external_entrypoint"
+    else:
+        entrypoint_binding = "different_entrypoint"
+
+    try:
+        cwd_matches_repository = bool(
+            repository_root
+            and observed_cwd == repository_root
+        )
+    except (OSError, RuntimeError):
+        cwd_matches_repository = False
+
+    return {
+        "schema": RUNTIME_DEPLOYMENT_SCHEMA,
+        "status": deployment_status,
+        "package_root": str(package),
+        "repository_root": str(repository_root) if repository_root else None,
+        "source_layout": "checkout_src_package" if package_is_in_checkout else None,
+        "entrypoint": str(observed_entrypoint) if observed_entrypoint else None,
+        "expected_source_entrypoint": (
+            str(expected_entrypoint) if expected_entrypoint else None
+        ),
+        "entrypoint_binding": entrypoint_binding,
+        "process_cwd": str(observed_cwd),
+        "cwd_matches_repository": cwd_matches_repository,
+        "python_executable": str(Path(sys.executable).resolve()),
+        "git": _git_metadata(repository_root),
+        "diagnostic_only": True,
+        "materials_studio_process_started": False,
+    }
 
 
 def source_tree_snapshot(package_root: str | Path) -> dict[str, Any]:
@@ -96,6 +268,7 @@ class RuntimeProvenanceTracker:
     loaded_at: datetime
     process_id: int
     initial_snapshot: dict[str, Any]
+    deployment_binding: dict[str, Any]
     instance_id: str
 
     @classmethod
@@ -112,12 +285,16 @@ class RuntimeProvenanceTracker:
             captured_at = captured_at.replace(tzinfo=timezone.utc)
         pid = os.getpid() if process_id is None else process_id
         snapshot = source_tree_snapshot(root)
+        deployment_binding = runtime_deployment_status(root)
+        git = deployment_binding.get("git")
+        git_head = git.get("head_commit") if isinstance(git, dict) else None
         instance_material = "\0".join(
             (
                 str(pid),
                 captured_at.isoformat(),
                 str(snapshot.get("sha256") or "unavailable"),
                 str(root),
+                str(git_head or "unavailable"),
             )
         ).encode("utf-8")
         instance_id = hashlib.sha256(instance_material).hexdigest()[:20]
@@ -126,6 +303,7 @@ class RuntimeProvenanceTracker:
             loaded_at=captured_at,
             process_id=pid,
             initial_snapshot=snapshot,
+            deployment_binding=deployment_binding,
             instance_id=instance_id,
         )
 
@@ -167,6 +345,7 @@ class RuntimeProvenanceTracker:
             "python_version": platform.python_version(),
             "python_executable": sys.executable,
             "package_root": str(self.package_root),
+            "deployment_binding": dict(self.deployment_binding),
             "source_snapshot_at_start": dict(self.initial_snapshot),
             "source_snapshot_current": dict(current),
             "restart_action": (
@@ -187,8 +366,10 @@ def runtime_provenance_status() -> dict[str, Any]:
 
 
 __all__ = [
+    "RUNTIME_DEPLOYMENT_SCHEMA",
     "RUNTIME_PROVENANCE_SCHEMA",
     "RuntimeProvenanceTracker",
+    "runtime_deployment_status",
     "runtime_provenance_status",
     "source_tree_snapshot",
 ]

@@ -1401,6 +1401,27 @@ ms-mcp-config-doctor --cwd .
 ms-mcp-protocol-smoke --cwd . --config .codex/config.toml.example
 ```
 
+`material_studio_get_status` and `material_studio_live_session_preflight` also
+publish a bounded runtime deployment receipt. `runtime_deployment` identifies
+the loaded package root, source checkout, expected `run_server.py`, observed
+entrypoint, process working directory, and the local Git HEAD/branch captured
+when the MCP process started. This makes an old checkout visible even when its
+source tree has not changed since startup. A direct `python -c` or pytest call
+may report `entrypoint_binding=unobserved`; a Codex stdio server started through
+the documented source entrypoint should report
+`entrypoint_binding=matched_source_run_server`.
+
+`codex_config_status` is advisory and read-only. It checks only the bounded
+user-level Codex config and the loaded checkout's `.codex/config.toml`, selects
+a matching registered entrypoint when present, and reports every candidate in
+`config_candidates`. It never returns unrelated TOML contents, changes an
+execution/hot-load gate, edits config, restarts Codex, launches Materials
+Studio, or searches other drives/worktrees. Compare the reported Git HEAD with
+the reviewed PR head outside the server; the local receipt deliberately does
+not infer the newest remote branch. After an approved config or checkout
+change, restart only the MCP session, keep the single Materials Studio window
+open, and rerun `material_studio_live_session_preflight`.
+
 The protocol smoke calls only the preview branch and asserts that CASTEP,
 revision creation, structure materialization, and GUI input did not occur.
 

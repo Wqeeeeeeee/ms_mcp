@@ -19,6 +19,7 @@ from .protocol_smoke import REQUIRED_PROTOCOL_TOOLS, audit_codex_config
 
 
 SERVER_NAME = "materials_studio"
+RUNTIME_CODEX_CONFIG_SCHEMA = "material_studio_mcp_runtime_codex_config_status_v1"
 DISABLED_TOOLS: tuple[str, ...] = ("material_studio_run_script",)
 SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_get_status",
@@ -255,6 +256,13 @@ def diagnose_codex_config(
             "config_ready": config_ready,
             "server_registered": True,
             "server_enabled": bool(server.get("enabled", True)),
+            "observed_entrypoint": {
+                "server_name": SERVER_NAME,
+                "command": str(server.get("command") or "") or None,
+                "args": [str(args[0])] if args else [],
+                "additional_arg_count": max(0, len(args) - 1),
+                "cwd": str(server.get("cwd") or "") or None,
+            },
             "command_matches": command_matches,
             "args_match": args_match,
             "cwd_matches": cwd_matches,
@@ -280,6 +288,109 @@ def diagnose_codex_config(
     )
     result["config_sha256_after"] = _file_sha256(config)
     result["active_config_modified"] = result["config_sha256_after"] != before_hash
+    return result
+
+
+def diagnose_runtime_codex_config(
+    *,
+    repository_root: str | Path,
+    python_command: str | Path | None = None,
+) -> dict[str, Any]:
+    """Compare bounded user/repository Codex configs with one source checkout."""
+
+    root = Path(repository_root).expanduser().resolve()
+    candidate_paths = [
+        ("codex_home", default_active_config_path()),
+        ("repository_local", root / ".codex" / "config.toml"),
+    ]
+    seen_paths: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    for scope, path in candidate_paths:
+        resolved_path = path.expanduser().resolve()
+        normalized = str(resolved_path).casefold()
+        if normalized in seen_paths:
+            continue
+        seen_paths.add(normalized)
+        candidate = diagnose_codex_config(
+            config_path=resolved_path,
+            repo_root=root,
+            python_command=python_command,
+            include_snippet=False,
+        )
+        candidate["config_scope"] = scope
+        candidate["runtime_source_binding_matches_config"] = bool(
+            candidate.get("command_matches")
+            and candidate.get("args_match")
+            and candidate.get("cwd_matches")
+        )
+        candidates.append(candidate)
+
+    matching = [
+        item
+        for item in candidates
+        if item.get("server_registered") is True
+        and item.get("runtime_source_binding_matches_config") is True
+    ]
+    registered = [
+        item for item in candidates if item.get("server_registered") is True
+    ]
+    ready_matching = [
+        item for item in matching if item.get("config_ready") is True
+    ]
+    ready_registered = [
+        item for item in registered if item.get("config_ready") is True
+    ]
+    if ready_matching:
+        selected = ready_matching[0]
+    elif matching:
+        selected = matching[0]
+    elif ready_registered:
+        selected = ready_registered[0]
+    elif registered:
+        selected = registered[0]
+    else:
+        selected = candidates[0]
+
+    result = dict(selected)
+    registration_candidates = result.get("registration_candidates")
+    result["registration_candidate_count"] = (
+        len(registration_candidates)
+        if isinstance(registration_candidates, list)
+        else 0
+    )
+    result.pop("registration_candidates", None)
+    if len(matching) > 1:
+        resolution_status = "multiple_matching_runtime_registrations"
+    elif len(matching) == 1:
+        resolution_status = "matching_runtime_registration_found"
+    elif registered:
+        resolution_status = "registered_entrypoint_drift"
+    else:
+        resolution_status = "materials_studio_registration_not_found"
+    result.update(
+        {
+            "schema": RUNTIME_CODEX_CONFIG_SCHEMA,
+            "config_resolution_status": resolution_status,
+            "config_source_ambiguous": len(registered) > 1,
+            "config_candidate_count": len(candidates),
+            "config_candidates": [
+                {
+                    "config_scope": item.get("config_scope"),
+                    "config_path": item.get("config_path"),
+                    "config_exists": item.get("config_exists"),
+                    "status": item.get("status"),
+                    "config_ready": item.get("config_ready"),
+                    "server_registered": item.get("server_registered"),
+                    "runtime_source_binding_matches_config": item.get(
+                        "runtime_source_binding_matches_config"
+                    ),
+                }
+                for item in candidates
+            ],
+            "advisory_only": True,
+            "execution_gate_changed": False,
+        }
+    )
     return result
 
 

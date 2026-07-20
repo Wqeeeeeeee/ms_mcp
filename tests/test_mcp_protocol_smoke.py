@@ -54,6 +54,16 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
         "unavailable",
     }
     assert calls["capabilities_replay_runtime_observed"] is True
+    assert calls["runtime_deployment_schema"] == (
+        "material_studio_mcp_runtime_deployment_binding_v1"
+    )
+    assert calls["runtime_repository_root"] == str(root)
+    assert calls["runtime_entrypoint_binding"] == "matched_source_run_server"
+    assert calls["codex_config_status_schema"] == (
+        "material_studio_mcp_runtime_codex_config_status_v1"
+    )
+    assert calls["codex_config_active_modified"] is False
+    assert calls["codex_config_advisory_only"] is True
     assert calls["capabilities_post_hotload_replay_prepare_parameter"] == (
         "prepare_view_replay_after_open"
     )

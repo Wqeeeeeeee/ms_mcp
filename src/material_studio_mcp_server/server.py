@@ -39,6 +39,10 @@ from .castep_relaxation import (
     build_relaxed_revision_spec,
     crystal_structure_sha256,
 )
+from .codex_config import (
+    RUNTIME_CODEX_CONFIG_SCHEMA,
+    diagnose_runtime_codex_config,
+)
 from .diagnostics import (
     CRYSTAL_DIRECTION_VIEW_INDICES,
     CRYSTAL_PLANE_VIEW_INDICES,
@@ -83,7 +87,9 @@ from .natural_language import (
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
 from .runtime_provenance import (
+    RUNTIME_DEPLOYMENT_SCHEMA,
     RUNTIME_PROVENANCE_SCHEMA,
+    runtime_deployment_status,
     runtime_provenance_status,
 )
 from .parsers.castep_log import (
@@ -1043,6 +1049,87 @@ def _runtime_source_guard_status() -> dict[str, Any]:
         }
 
 
+def _runtime_deployment_from_provenance(
+    runtime_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    deployment = runtime_provenance.get("deployment_binding")
+    if isinstance(deployment, dict):
+        return dict(deployment)
+    try:
+        return runtime_deployment_status()
+    except Exception as exc:
+        return {
+            "schema": RUNTIME_DEPLOYMENT_SCHEMA,
+            "status": "deployment_probe_failed",
+            "package_root": runtime_provenance.get("package_root"),
+            "repository_root": None,
+            "entrypoint_binding": "unobserved",
+            "diagnostic_only": True,
+            "materials_studio_process_started": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+
+
+def _runtime_codex_config_status(
+    runtime_deployment: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare the active Codex registration with this loaded source checkout."""
+
+    repository_root = runtime_deployment.get("repository_root")
+    if not repository_root:
+        return {
+            "schema": RUNTIME_CODEX_CONFIG_SCHEMA,
+            "status": "source_checkout_unavailable",
+            "config_ready": None,
+            "read_only": True,
+            "active_config_modified": False,
+            "advisory_only": True,
+            "execution_gate_changed": False,
+        }
+    try:
+        return diagnose_runtime_codex_config(
+            repository_root=str(repository_root),
+            python_command=runtime_deployment.get("python_executable"),
+        )
+    except Exception as exc:
+        return {
+            "schema": RUNTIME_CODEX_CONFIG_SCHEMA,
+            "status": "config_probe_failed",
+            "config_ready": None,
+            "read_only": True,
+            "active_config_modified": False,
+            "advisory_only": True,
+            "execution_gate_changed": False,
+            "error": f"{exc.__class__.__name__}: {exc}",
+        }
+
+
+def _runtime_deployment_readiness_fields(
+    runtime_provenance: dict[str, Any],
+    runtime_deployment: dict[str, Any],
+    codex_config_status: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the shared deployment/config fields for preflight receipts."""
+
+    git = runtime_deployment.get("git")
+    git = git if isinstance(git, dict) else {}
+    return {
+        "runtime_instance_id": runtime_provenance.get("runtime_instance_id"),
+        "runtime_repository_root": runtime_deployment.get("repository_root"),
+        "runtime_entrypoint_binding": runtime_deployment.get(
+            "entrypoint_binding"
+        ),
+        "runtime_git_head": git.get("head_commit"),
+        "runtime_git_branch": git.get("branch"),
+        "codex_config_status": codex_config_status.get("status"),
+        "codex_config_ready": codex_config_status.get("config_ready"),
+        "codex_config_review_required": (
+            codex_config_status.get("config_ready") is False
+        ),
+        "codex_config_advisory_only": True,
+    }
+
+
 def _stale_runtime_direct_tool_payload(
     *,
     tool_name: str,
@@ -1421,10 +1508,15 @@ def material_studio_get_status() -> dict[str, Any]:
             - workspace_root (str): base folder used for generated job folders
             - searched_candidates (list[str]): runner paths checked
             - runtime_provenance (dict): process identity and startup/current source hashes
+            - codex_config_status (dict): read-only active Codex registration comparison
     """
 
     status = dict(runner.status())
-    status["runtime_provenance"] = runtime_provenance_status()
+    runtime_provenance = runtime_provenance_status()
+    runtime_deployment = _runtime_deployment_from_provenance(runtime_provenance)
+    status["runtime_provenance"] = runtime_provenance
+    status["runtime_deployment"] = runtime_deployment
+    status["codex_config_status"] = _runtime_codex_config_status(runtime_deployment)
     return _ok(status)
 
 
@@ -4140,6 +4232,10 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "live_status_tool": "material_studio_live_project_status",
         "runtime_provenance_contract": {
             "schema": RUNTIME_PROVENANCE_SCHEMA,
+            "deployment_binding_schema": RUNTIME_DEPLOYMENT_SCHEMA,
+            "deployment_binding_field": "runtime_provenance.deployment_binding",
+            "deployment_binding_reports_source_checkout_and_git_identity": True,
+            "deployment_binding_does_not_launch_materials_studio": True,
             "status_tool": "material_studio_get_status",
             "available_on_live_capabilities_when_include_status": True,
             "available_on_live_session_preflight": True,
@@ -4168,6 +4264,17 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "source_snapshot_unavailable",
             ],
             "restart_action": "restart_mcp_server_then_retry_preflight",
+        },
+        "codex_config_status_contract": {
+            "schema": RUNTIME_CODEX_CONFIG_SCHEMA,
+            "status_tool": "material_studio_get_status",
+            "available_on_live_session_preflight": True,
+            "read_only": True,
+            "active_config_is_never_modified": True,
+            "compares_active_config_with_loaded_source_checkout": True,
+            "advisory_only": True,
+            "does_not_change_execution_or_hotload_gates": True,
+            "restart_required_after_config_change": True,
         },
         "live_status_project_id_optional": True,
         "live_update_tool": "material_studio_live_update_with_patch",
@@ -8342,6 +8449,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     if include_status:
         response["runner_status"] = runner.status()
         response["runtime_provenance"] = runtime_provenance_status()
+        runtime_deployment = _runtime_deployment_from_provenance(
+            response["runtime_provenance"]
+        )
+        response["runtime_deployment"] = runtime_deployment
+        response["codex_config_status"] = _runtime_codex_config_status(
+            runtime_deployment
+        )
         try:
             gui_status = _gui_controller(None).status()
         except Exception as exc:
@@ -8371,6 +8485,8 @@ def _stale_runtime_preflight_payload(
     store: ProjectStore,
     runner_status: dict[str, Any],
     runtime_provenance: dict[str, Any],
+    runtime_deployment: dict[str, Any],
+    codex_config_status: dict[str, Any],
     include_latest_project: bool,
     include_gui_status: bool,
 ) -> dict[str, Any]:
@@ -8386,6 +8502,8 @@ def _stale_runtime_preflight_payload(
         "working_dir": str(store.workspace_root),
         "runner_status": runner_status,
         "runtime_provenance": runtime_provenance,
+        "runtime_deployment": runtime_deployment,
+        "codex_config_status": codex_config_status,
         "gui_status": None,
         "latest_project": None,
         "latest_project_modeling": None,
@@ -8408,8 +8526,10 @@ def _stale_runtime_preflight_payload(
             "server_source_current": False,
             "server_restart_required": True,
             "server_source_blocking_reason": blocking_reason,
-            "runtime_instance_id": runtime_provenance.get(
-                "runtime_instance_id"
+            **_runtime_deployment_readiness_fields(
+                runtime_provenance,
+                runtime_deployment,
+                codex_config_status,
             ),
             "runner_ready": runner_ready,
             "execute_ready": False,
@@ -8460,11 +8580,17 @@ def _live_session_preflight_payload(
         "explicit_tool_working_dir_overrides_runner_default"
     )
     runtime_provenance = runtime_provenance_status()
+    runtime_deployment = _runtime_deployment_from_provenance(
+        runtime_provenance
+    )
+    codex_config_status = _runtime_codex_config_status(runtime_deployment)
     if runtime_provenance.get("restart_required") is True:
         return _stale_runtime_preflight_payload(
             store=store,
             runner_status=runner_status,
             runtime_provenance=runtime_provenance,
+            runtime_deployment=runtime_deployment,
+            codex_config_status=codex_config_status,
             include_latest_project=include_latest_project,
             include_gui_status=include_gui_status,
         )
@@ -8722,6 +8848,8 @@ def _live_session_preflight_payload(
         "working_dir": str(store.workspace_root),
         "runner_status": runner_status,
         "runtime_provenance": runtime_provenance,
+        "runtime_deployment": runtime_deployment,
+        "codex_config_status": codex_config_status,
         "gui_status": gui_status,
         "latest_project": latest_project,
         "latest_project_modeling": latest_project_modeling,
@@ -8739,7 +8867,11 @@ def _live_session_preflight_payload(
             "server_source_blocking_reason": (
                 server_source_blocking_reason if not server_source_current else None
             ),
-            "runtime_instance_id": runtime_provenance.get("runtime_instance_id"),
+            **_runtime_deployment_readiness_fields(
+                runtime_provenance,
+                runtime_deployment,
+                codex_config_status,
+            ),
             "runner_ready": runner_ready,
             "execute_ready": bool(server_source_current and runner_ready),
             "gui_supported": gui_supported,
@@ -8883,6 +9015,122 @@ def _compact_runtime_provenance(value: Any) -> dict[str, Any]:
     return compact
 
 
+def _compact_runtime_deployment(value: Any) -> dict[str, Any]:
+    """Keep the source checkout, entrypoint, and local Git identity."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "schema",
+            "status",
+            "package_root",
+            "repository_root",
+            "source_layout",
+            "entrypoint",
+            "expected_source_entrypoint",
+            "entrypoint_binding",
+            "process_cwd",
+            "cwd_matches_repository",
+            "python_executable",
+            "diagnostic_only",
+            "materials_studio_process_started",
+            "error",
+        ),
+    )
+    compact["git"] = _mapping_subset(
+        value.get("git"),
+        (
+            "status",
+            "head_commit",
+            "branch",
+            "worktree_dirty",
+            "dirty_scope",
+            "untracked_files_included",
+            "error",
+        ),
+    )
+    return compact
+
+
+def _compact_runtime_codex_config_status(value: Any) -> dict[str, Any]:
+    """Bound the active-config comparison without exposing unrelated TOML."""
+
+    if not isinstance(value, dict):
+        return {}
+    compact = _mapping_subset(
+        value,
+        (
+            "schema",
+            "ok",
+            "status",
+            "config_ready",
+            "read_only",
+            "active_config_modified",
+            "config_path",
+            "config_scope",
+            "config_exists",
+            "config_sha256_before",
+            "config_sha256_after",
+            "repo_root",
+            "server_registered",
+            "server_enabled",
+            "command_matches",
+            "args_match",
+            "cwd_matches",
+            "runtime_source_binding_matches_config",
+            "config_resolution_status",
+            "config_source_ambiguous",
+            "config_candidate_count",
+            "registration_candidate_count",
+            "missing_required_tools",
+            "missing_recommended_tools",
+            "unexpected_dangerous_enabled_tools",
+            "run_script_explicitly_disabled",
+            "restart_required_now",
+            "restart_required_after_config_change",
+            "advisory_only",
+            "execution_gate_changed",
+            "error",
+            "next_actions",
+        ),
+    )
+    for key in ("observed_entrypoint", "recommended_entrypoint"):
+        if isinstance(value.get(key), dict):
+            compact[key] = _mapping_subset(
+                value[key],
+                (
+                    "server_name",
+                    "command",
+                    "args",
+                    "additional_arg_count",
+                    "cwd",
+                    "python_exists",
+                    "run_server_exists",
+                ),
+            )
+    candidates = value.get("config_candidates")
+    if isinstance(candidates, list):
+        compact["config_candidates"] = [
+            _mapping_subset(
+                item,
+                (
+                    "config_scope",
+                    "config_path",
+                    "config_exists",
+                    "status",
+                    "config_ready",
+                    "server_registered",
+                    "runtime_source_binding_matches_config",
+                ),
+            )
+            for item in candidates
+            if isinstance(item, dict)
+        ]
+    return compact
+
+
 def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Deduplicate verbose probes after all preflight decisions have been derived."""
 
@@ -8918,6 +9166,18 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
         compact_runtime = _compact_runtime_provenance(runtime_provenance)
         compact_runtime["detail_tool"] = "material_studio_get_status"
         payload["runtime_provenance"] = compact_runtime
+
+    runtime_deployment = payload.get("runtime_deployment")
+    if isinstance(runtime_deployment, dict):
+        payload["runtime_deployment"] = _compact_runtime_deployment(
+            runtime_deployment
+        )
+
+    codex_config_status = payload.get("codex_config_status")
+    if isinstance(codex_config_status, dict):
+        payload["codex_config_status"] = (
+            _compact_runtime_codex_config_status(codex_config_status)
+        )
 
     gui_status = payload.get("gui_status")
     if isinstance(gui_status, dict):
@@ -9382,6 +9642,22 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
                 server_source_blocking_reason if not server_source_current else None
             ),
             "runtime_instance_id": readiness.get("runtime_instance_id"),
+            "runtime_repository_root": readiness.get(
+                "runtime_repository_root"
+            ),
+            "runtime_entrypoint_binding": readiness.get(
+                "runtime_entrypoint_binding"
+            ),
+            "runtime_git_head": readiness.get("runtime_git_head"),
+            "runtime_git_branch": readiness.get("runtime_git_branch"),
+            "codex_config_status": readiness.get("codex_config_status"),
+            "codex_config_ready": readiness.get("codex_config_ready"),
+            "codex_config_review_required": readiness.get(
+                "codex_config_review_required"
+            ),
+            "codex_config_advisory_only": readiness.get(
+                "codex_config_advisory_only"
+            ),
             "can_accept_modeling_request": preview_ready,
             "can_accept_preview_request": preview_ready,
             "can_accept_hotload_request_without_new_window": can_hotload_without_new_window,
@@ -38993,6 +39269,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_status_tool",
             "live_update_tool",
             "runtime_provenance_contract",
+            "codex_config_status_contract",
             "dopant_metadata_reconcile_tool",
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
@@ -40222,6 +40499,7 @@ def _compact_capabilities_response(
             "live_status_tool",
             "live_update_tool",
             "runtime_provenance_contract",
+            "codex_config_status_contract",
             "dopant_metadata_reconcile_tool",
             "recommended_kpoint_remediation_action_id",
             "recommended_calculation_settings_confirmation_field",
@@ -40249,6 +40527,9 @@ def _compact_capabilities_response(
             runtime_contract,
             (
                 "schema",
+                "deployment_binding_schema",
+                "deployment_binding_field",
+                "deployment_binding_reports_source_checkout_and_git_identity",
                 "live_preflight_source_drift_blocks_continuation",
                 "direct_tool_runtime_guard",
                 "direct_tool_runtime_guard_schema",

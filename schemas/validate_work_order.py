@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Iterable
@@ -10,13 +11,25 @@ from typing import Any, Iterable
 from jsonschema import Draft202012Validator, FormatChecker
 
 
-VALIDATOR_CONTRACT = "work_order_result_reconciliation_v1"
+VALIDATOR_CONTRACT_V1 = "work_order_result_reconciliation_v1"
+VALIDATOR_CONTRACT_V2 = "work_order_result_reconciliation_v2"
+VALIDATOR_CONTRACTS_BY_VERSION = {
+    "1.0.0": VALIDATOR_CONTRACT_V1,
+    "1.1.0": VALIDATOR_CONTRACT_V2,
+}
 SCHEMA_PATH = Path(__file__).with_name("work_order.schema.json")
+
+
+def _validator_contract_for(work_order: dict[str, Any]) -> str | None:
+    if not isinstance(work_order, dict):
+        return None
+    return VALIDATOR_CONTRACTS_BY_VERSION.get(work_order.get("contract_version"))
 
 
 def canonical_sha256(document: dict[str, Any]) -> str:
     payload = json.dumps(
         document,
+        allow_nan=False,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -92,6 +105,138 @@ def _schema_errors(document: dict[str, Any], schema: dict[str, Any]) -> list[str
     ]
 
 
+def _is_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
+
+
+def _non_finite_number_errors(value: Any, path: tuple[str, ...] = ()) -> list[str]:
+    if isinstance(value, float) and not math.isfinite(value):
+        location = "/".join(path) or "<root>"
+        return [f"semantic:{location}:non-finite JSON number is not allowed"]
+    if isinstance(value, dict):
+        errors: list[str] = []
+        for key, item in value.items():
+            errors.extend(_non_finite_number_errors(item, (*path, str(key))))
+        return errors
+    if isinstance(value, list):
+        errors = []
+        for index, item in enumerate(value):
+            errors.extend(_non_finite_number_errors(item, (*path, str(index))))
+        return errors
+    return []
+
+
+def _strict_equal(observed: Any, expected: Any, tolerance: float | None) -> bool:
+    if isinstance(observed, list) or isinstance(expected, list):
+        return (
+            tolerance is None
+            and isinstance(observed, list)
+            and isinstance(expected, list)
+            and len(observed) == len(expected)
+            and all(
+                _strict_equal(observed_item, expected_item, None)
+                for observed_item, expected_item in zip(observed, expected)
+            )
+        )
+    observed_is_number = _is_number(observed)
+    expected_is_number = _is_number(expected)
+    if tolerance is not None and not _is_number(tolerance):
+        return False
+    if observed_is_number and expected_is_number:
+        if tolerance is None:
+            return observed == expected
+        return abs(observed - expected) <= tolerance
+    if tolerance is not None:
+        return False
+    return type(observed) is type(expected) and observed == expected
+
+
+def _set_value_key(value: Any) -> tuple[str, Any]:
+    if _is_number(value):
+        return ("number", value)
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if isinstance(value, str):
+        return ("string", value)
+    if value is None:
+        return ("null", None)
+    return ("invalid", type(value).__name__)
+
+
+def _source_pin_identity_matches(pin: dict[str, Any]) -> bool:
+    if not isinstance(pin, dict):
+        return False
+    provider = pin.get("provider")
+    artifact_url = pin.get("artifact_url", "")
+    cod_url = re.match(
+        r"https?://(?:www\.)?crystallography\.net/cod/",
+        artifact_url,
+        flags=re.IGNORECASE,
+    )
+    if provider != "Crystallography Open Database" and not cod_url:
+        return True
+    match = re.fullmatch(
+        r"https://www\.crystallography\.net/cod/[0-9]+\.cif@([0-9]+)",
+        artifact_url,
+    )
+    return bool(
+        provider == "Crystallography Open Database"
+        and match
+        and match.group(1) == str(pin.get("provider_revision"))
+    )
+
+
+def _criterion_observation_matches(
+    criterion: dict[str, Any],
+    observed: Any,
+) -> bool:
+    operator = criterion.get("operator")
+    expected = criterion.get("expected")
+    tolerance = criterion.get("tolerance")
+
+    if operator == "eq":
+        return _strict_equal(observed, expected, tolerance)
+    if operator == "ne":
+        if tolerance is not None and not (_is_number(observed) and _is_number(expected)):
+            return False
+        return not _strict_equal(observed, expected, tolerance)
+    if operator in {"lt", "lte", "gt", "gte"}:
+        if tolerance is not None or not (_is_number(observed) and _is_number(expected)):
+            return False
+        if operator == "lt":
+            return observed < expected
+        if operator == "lte":
+            return observed <= expected
+        if operator == "gt":
+            return observed > expected
+        return observed >= expected
+    if operator == "contains":
+        if tolerance is not None:
+            return False
+        if isinstance(observed, str) and isinstance(expected, str):
+            return expected in observed
+        if isinstance(observed, list):
+            expected_items = expected if isinstance(expected, list) else [expected]
+            return all(
+                any(_strict_equal(item, wanted, None) for item in observed)
+                for wanted in expected_items
+            )
+        return False
+    if operator == "set_eq":
+        if tolerance is not None or not isinstance(observed, list) or not isinstance(expected, list):
+            return False
+        observed_set = {_set_value_key(item) for item in observed}
+        expected_set = {_set_value_key(item) for item in expected}
+        return observed_set == expected_set
+    if operator == "present":
+        return tolerance is None and expected is True and observed is not None
+    return False
+
+
 def reconcile_work_order(
     work_order: dict[str, Any],
     receipt: dict[str, Any],
@@ -99,6 +244,11 @@ def reconcile_work_order(
     binding = receipt.get("work_order_binding", {})
     checks: dict[str, bool] = {}
     errors: list[str] = []
+    contract_version = work_order.get("contract_version")
+    strict_evidence_contract = contract_version == "1.1.0"
+    expected_validator_contract = _validator_contract_for(work_order)
+    if expected_validator_contract is None:
+        errors.append(f"unsupported work-order contract version: {contract_version!r}")
 
     checks["goal_id_matches"] = receipt.get("goal_id") == work_order.get("goal_id")
     checks["contract_version_matches"] = receipt.get(
@@ -163,6 +313,34 @@ def reconcile_work_order(
     if criterion_duplicates:
         errors.append(f"duplicate acceptance criterion IDs: {sorted(set(criterion_duplicates))}")
 
+    if strict_evidence_contract:
+        checks["acceptance_observations_match"] = (
+            checks["acceptance_criterion_ids_complete"]
+            and all(
+                (
+                    result.get("status") == "NOT_RUN"
+                    and "observed" not in result
+                )
+                or (
+                    result.get("status") in {"PASS", "PASS_WITH_WARNINGS"}
+                    and "observed" in result
+                    and _criterion_observation_matches(
+                        criteria_by_id[criterion_id],
+                        result["observed"],
+                    )
+                )
+                or (
+                    result.get("status") == "FAIL"
+                    and "observed" in result
+                    and not _criterion_observation_matches(
+                        criteria_by_id[criterion_id],
+                        result["observed"],
+                    )
+                )
+                for criterion_id, result in results_by_id.items()
+            )
+        )
+
     changed_paths = receipt.get("changed_paths", [])
     allowed_paths = work_order.get("allowed_paths", [])
     forbidden_paths = work_order.get("forbidden_paths", [])
@@ -189,6 +367,49 @@ def reconcile_work_order(
     checks["reference_access_matches"] = (
         receipt_policy == reference_policy and source_authorization_matches
     )
+    if strict_evidence_contract:
+        raw_expected_source_pins = work_order.get("source_pins", [])
+        expected_source_pins = (
+            raw_expected_source_pins
+            if isinstance(raw_expected_source_pins, list)
+            else []
+        )
+        observed_source_pins = binding.get("source_pins", [])
+        source_pin_contract_applies = (
+            reference_policy == "reference_builder" or bool(expected_source_pins)
+        )
+        source_pin_ids = [
+            item.get("source_id", "") if isinstance(item, dict) else ""
+            for item in expected_source_pins
+        ]
+        source_pin_duplicates = _duplicates(source_pin_ids)
+        source_pin_urls = [
+            item.get("artifact_url", "")
+            if isinstance(item, dict) and isinstance(item.get("artifact_url"), str)
+            else ""
+            for item in expected_source_pins
+        ]
+        source_url_duplicates = _duplicates(source_pin_urls)
+        pinned_urls = set(source_pin_urls)
+        if source_pin_contract_applies:
+            checks["source_pins_reconciled"] = (
+                not source_pin_duplicates
+                and not source_url_duplicates
+                and all(_source_pin_identity_matches(item) for item in expected_source_pins)
+                and observed_source_pins == expected_source_pins
+                and pinned_urls == allowed_sources
+                and pinned_urls == receipt_sources
+            )
+            if source_pin_duplicates:
+                errors.append(f"duplicate source pin IDs: {source_pin_duplicates}")
+            if source_url_duplicates:
+                errors.append(f"duplicate source pin URLs: {source_url_duplicates}")
+            if not all(_source_pin_identity_matches(item) for item in expected_source_pins):
+                errors.append(
+                    "source pin provider revision does not match its canonical artifact URL"
+                )
+        else:
+            checks["source_pins_reconciled"] = observed_source_pins == []
 
     real_ms = receipt.get("real_materials_studio", {})
     real_castep = receipt.get("real_castep", {})
@@ -226,6 +447,8 @@ def reconcile_work_order(
 
     for criterion_id, criterion in criteria_by_id.items():
         result = results_by_id.get(criterion_id, {})
+        if strict_evidence_contract and result.get("status") == "NOT_RUN":
+            errors.append(f"acceptance criterion {criterion_id!r} was not run")
         if criterion.get("severity") == "hard_failure" and result.get("status") not in {
             "PASS",
             "PASS_WITH_WARNINGS",
@@ -263,7 +486,10 @@ def reconcile_work_order(
         errors.append("receipt overall status is not merge-eligible")
 
     expected_work_order_sha256 = canonical_sha256(work_order)
-    if binding.get("validator_contract") != VALIDATOR_CONTRACT:
+    if (
+        expected_validator_contract is None
+        or binding.get("validator_contract") != expected_validator_contract
+    ):
         errors.append("unexpected validator contract")
     if binding.get("work_order_sha256") != expected_work_order_sha256:
         errors.append("work-order SHA-256 mismatch")
@@ -277,7 +503,7 @@ def reconcile_work_order(
         errors.append("dependency binding does not match the Work Order")
 
     return {
-        "validator_contract": VALIDATOR_CONTRACT,
+        "validator_contract": expected_validator_contract,
         "ok": not errors,
         "work_order_sha256": expected_work_order_sha256,
         "checks": checks,
@@ -295,8 +521,28 @@ def validate_pair(
     schema_errors = [
         *[f"work_order:{message}" for message in _schema_errors(work_order, active_schema)],
         *[f"receipt:{message}" for message in _schema_errors(receipt, active_schema)],
+        *[
+            f"work_order:{message}"
+            for message in _non_finite_number_errors(work_order)
+        ],
+        *[
+            f"receipt:{message}"
+            for message in _non_finite_number_errors(receipt)
+        ],
     ]
-    reconciliation = reconcile_work_order(work_order, receipt)
+    try:
+        reconciliation = reconcile_work_order(work_order, receipt)
+    except (AttributeError, IndexError, KeyError, OverflowError, TypeError, ValueError) as exc:
+        return {
+            "validator_contract": _validator_contract_for(work_order),
+            "ok": False,
+            "work_order_sha256": None,
+            "checks": {},
+            "errors": [
+                *schema_errors,
+                f"semantic:reconciliation failed closed ({type(exc).__name__})",
+            ],
+        }
     errors = [*schema_errors, *reconciliation["errors"]]
     return {
         **reconciliation,

@@ -74,6 +74,7 @@ class _LiveGui:
         self.calls: list[tuple[str, dict]] = []
         self.fit_transaction: dict | None = None
         self.prepare_transaction: dict | None = None
+        self.inactive = False
 
     def _window(self, project_id: str, revision: int) -> dict:
         return {
@@ -81,9 +82,9 @@ class _LiveGui:
             "title": f"msmcp_r{revision:03d}_{project_id} - Materials Studio",
             "pid": 1701,
             "is_visible": True,
-            "is_minimized": False,
-            "is_selected": True,
-            "is_foreground": True,
+            "is_minimized": self.inactive,
+            "is_selected": not self.inactive,
+            "is_foreground": not self.inactive,
             "project_id": project_id,
             "revision": revision,
         }
@@ -112,13 +113,18 @@ class _LiveGui:
                 "single_window_violation_reasons": [],
                 "matched_project_window": True,
                 "matching_window_identity_verification": "verified",
-                "target_window_is_selected": True,
+                "target_window_is_selected": not self.inactive,
                 "target_window_is_visible": True,
-                "target_window_is_minimized": False,
+                "target_window_is_minimized": self.inactive,
                 "target_window_foreground_observed": True,
-                "target_window_is_foreground": True,
-                "activation_required_before_capture_or_input": False,
-                "can_apply_current_revision_without_new_window": True,
+                "target_window_is_foreground": not self.inactive,
+                "activation_required_before_capture_or_input": self.inactive,
+                "interaction_activation_reasons": (
+                    ["target_window_minimized", "target_window_not_foreground"]
+                    if self.inactive
+                    else []
+                ),
+                "can_apply_current_revision_without_new_window": not self.inactive,
             },
         }
 
@@ -157,6 +163,7 @@ class _LiveGui:
         project_id: str,
         revision: int,
         take_snapshot: bool,
+        reuse_existing_window_only: bool = True,
     ) -> dict:
         path = Path(structure_path)
         assert path.exists()
@@ -168,6 +175,7 @@ class _LiveGui:
                     "project_id": project_id,
                     "revision": revision,
                     "take_snapshot": take_snapshot,
+                    "reuse_existing_window_only": reuse_existing_window_only,
                 },
             )
         )
@@ -921,6 +929,265 @@ def test_post_hotload_view_replay_executes_open_fit_then_prepares_exact_views(
     assert compact_size == compact["response_compaction"]["response_bytes"]
     assert compact_size < server.COMPACT_RESPONSE_MAX_BYTES
     assert compact["response_compaction"]["semantic_core_preserved"] is True
+
+
+def test_postexecution_activation_retry_resumes_full_postopen_pipeline_without_rerun(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "postexecution_postopen_resume"
+    gui = _LiveGui(tmp_path)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    created = server.material_studio_model_create_from_spec(
+        _silicon_spec(project_id).model_dump(mode="json"),
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    original_execute = server._execute_or_materialize_structure
+    execution_revisions: list[int] = []
+
+    def execute_then_lose_focus(*args, **kwargs):
+        execution = original_execute(*args, **kwargs)
+        execution_revisions.append(int(kwargs["spec"].revision))
+        gui.inactive = True
+        return execution
+
+    monkeypatch.setattr(
+        server,
+        "_execute_or_materialize_structure",
+        execute_then_lose_focus,
+    )
+
+    blocked = server.material_studio_gui_apply_current_revision(
+        project_id=project_id,
+        execution_mode="execute",
+        open_in_gui=True,
+        take_snapshot=True,
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        views=["front", "top", "isometric"],
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "execution_completed_gui_activation_required"
+    assert blocked["execution_must_not_repeat"] is True
+    assert execution_revisions == [0]
+    assert not any(
+        name in {"open_structure", "fit_to_view", "snapshot", "prepare_view_replay"}
+        for name, _ in gui.calls
+    )
+    retry_payload = blocked["gui_open_retry_payload"]
+    assert retry_payload == {
+        "structure_path": blocked["planned_outputs"]["structure"],
+        "project_id": project_id,
+        "revision": 0,
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "fit_to_view_after_open": True,
+        "prepare_view_replay_after_open": True,
+        "views": ["front", "top", "isometric"],
+        "working_dir": str(tmp_path),
+    }
+    fit = blocked["post_hotload_fit_to_view"]
+    assert fit["status"] == "deferred_until_activation_and_open"
+    assert fit["completed"] is False
+    assert fit["followup_tool"] == "material_studio_gui_open_structure"
+    assert fit["followup_payload"] == retry_payload
+    prepare = blocked["post_hotload_view_replay_prepare"]
+    assert prepare["status"] == "deferred_until_activation_and_open"
+    assert prepare["prepared"] is False
+    assert prepare["followup_tool"] == "material_studio_gui_open_structure"
+    assert prepare["followup_payload"] == retry_payload
+    assert blocked["next_action_plan"]["deferred_hotload_action"][
+        "payload_hint"
+    ] == retry_payload
+
+    result_metadata_path = Path(blocked["result_metadata_path"])
+    result_metadata_before = result_metadata_path.read_bytes()
+    original_execution_transaction = blocked["execution_transaction"]
+    gui.inactive = False
+    resumed = server.material_studio_gui_open_structure(**retry_payload)
+
+    assert resumed["ok"] is True
+    assert execution_revisions == [0]
+    assert result_metadata_path.read_bytes() == result_metadata_before
+    assert resumed["execution_transaction"] == original_execution_transaction
+    assert resumed["post_hotload_fit_to_view"]["completed"] is True
+    assert resumed["post_hotload_fit_to_view"]["structure_unchanged"] is True
+    assert Path(
+        resumed["post_hotload_fit_to_view"]["after_snapshot_path"]
+    ).exists()
+    resumed_prepare = resumed["post_hotload_view_replay_prepare"]
+    assert resumed_prepare["status"] == "prepared"
+    assert resumed_prepare["prepared"] is True
+    assert resumed_prepare["view_names"] == ["front", "top", "isometric"]
+    assert resumed["view_replay_prepared"] is True
+    assert gui.fit_transaction is not None
+    assert gui.prepare_transaction is None
+    action_names = [name for name, _ in gui.calls]
+    assert action_names.index("open_structure") < action_names.index("fit_to_view")
+    assert action_names.index("fit_to_view") < action_names.index(
+        "prepare_view_replay"
+    )
+    final_snapshot_index = next(
+        index
+        for index, (name, call) in enumerate(gui.calls)
+        if name == "snapshot" and call.get("label") == "post_hotload_fit_to_view"
+    )
+    assert action_names.index("fit_to_view") < final_snapshot_index
+    assert final_snapshot_index < action_names.index("prepare_view_replay")
+    assert len(ProjectStore(tmp_path).list_history(project_id)) == 1
+
+    report = json.loads(
+        Path(resumed["report_json_path"]).read_text(encoding="utf-8")
+    )
+    assert report["execution_transaction"] == original_execution_transaction
+    assert report["modeling_report"]["post_hotload_fit_to_view"][
+        "completed"
+    ] is True
+    assert report["modeling_report"]["gui_postexecution_block"] is None
+
+
+def test_artifact_postopen_retry_preserves_full_payload_until_window_is_active(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "postexecution_postopen_still_inactive"
+    gui = _LiveGui(tmp_path)
+    gui.inactive = True
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    created = server.material_studio_model_create_from_spec(
+        _silicon_spec(project_id).model_dump(mode="json"),
+        working_dir=str(tmp_path),
+    )
+    structure_path = Path(created["planned_outputs"]["structure"])
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text("data_model\n", encoding="utf-8")
+
+    blocked = server.material_studio_gui_open_structure(
+        structure_path=str(structure_path),
+        project_id=project_id,
+        revision=0,
+        take_snapshot=True,
+        export_view_audit=True,
+        reuse_existing_window_only=True,
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        views=["front", "top"],
+        working_dir=str(tmp_path),
+    )
+
+    expected_retry = {
+        "structure_path": str(structure_path),
+        "project_id": project_id,
+        "revision": 0,
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "fit_to_view_after_open": True,
+        "prepare_view_replay_after_open": True,
+        "views": ["front", "top"],
+        "working_dir": str(tmp_path),
+    }
+    assert blocked["ok"] is False
+    assert blocked["status"] == "gui_activation_required_before_open"
+    assert blocked["gui_open_retry_payload"] == expected_retry
+    assert blocked["post_hotload_fit_to_view"]["followup_payload"] == (
+        expected_retry
+    )
+    assert blocked["post_hotload_view_replay_prepare"][
+        "followup_payload"
+    ] == expected_retry
+    assert not any(
+        name in {"open_structure", "fit_to_view", "snapshot", "prepare_view_replay"}
+        for name, _ in gui.calls
+    )
+
+
+def test_artifact_postopen_retry_refuses_superseded_revision_before_gui_input(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "postexecution_postopen_superseded"
+    gui = _LiveGui(tmp_path)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    created = server.material_studio_model_create_from_spec(
+        _silicon_spec(project_id).model_dump(mode="json"),
+        working_dir=str(tmp_path),
+    )
+    structure_path = Path(created["planned_outputs"]["structure"])
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text("data_model\n", encoding="utf-8")
+    initially_opened = server.material_studio_gui_open_structure(
+        structure_path=str(structure_path),
+        project_id=project_id,
+        revision=0,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    assert initially_opened["ok"] is True
+    report_path = Path(initially_opened["report_json_path"])
+    committed_report = report_path.read_bytes()
+    gui.calls.clear()
+    store = ProjectStore(tmp_path)
+    store.save_revision(
+        project_id,
+        store.load_current(project_id),
+        user_text="concurrent revision before artifact retry",
+        action="concurrent_test_revision",
+        expected_revision=0,
+    )
+
+    blocked = server.material_studio_gui_open_structure(
+        structure_path=str(structure_path),
+        project_id=project_id,
+        revision=0,
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "current_revision_hotload_block"
+    current_block = blocked["current_revision_hotload_block"]
+    assert current_block["target_revision"] == 0
+    assert current_block["current_revision"] == 1
+    assert "current_revision_advanced_before_artifact_retry" in current_block[
+        "blocking_reasons"
+    ]
+    assert blocked["gui_input_started"] is False
+    assert blocked["structure_reopened"] is False
+    assert gui.calls == []
+    assert report_path.read_bytes() == committed_report
+
+
+def test_combined_postopen_pipeline_requires_structured_report_context(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    structure_path = tmp_path / "unbound.cif"
+    structure_path.write_text("data_unbound\n", encoding="utf-8")
+
+    def unexpected_gui_controller(working_dir=None):
+        raise AssertionError("GUI must not be probed without structured context")
+
+    monkeypatch.setattr(server, "_gui_controller", unexpected_gui_controller)
+    blocked = server.material_studio_gui_open_structure(
+        structure_path=str(structure_path),
+        export_view_audit=False,
+        fit_to_view_after_open=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == (
+        "structured_context_required_for_postopen_pipeline"
+    )
+    assert blocked["gui_input_started"] is False
+    assert blocked["structure_reopened"] is False
 
 
 def test_post_hotload_view_replay_rejects_continuation_when_revision_advances_during_prepare(

@@ -9444,7 +9444,7 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
         },
     }
     payload["response_compaction"] = receipt
-    for _ in range(4):
+    for _ in range(16):
         response_bytes = len(
             json.dumps(
                 payload,
@@ -23610,6 +23610,8 @@ def _gui_open_structure_retry_payload(
     reuse_existing_window_only: bool,
     views: list[str] | None,
     working_dir: str | Path | None,
+    fit_to_view_after_open: bool = False,
+    prepare_view_replay_after_open: bool = False,
 ) -> dict[str, Any]:
     """Build an artifact-only same-window open continuation."""
 
@@ -23625,6 +23627,10 @@ def _gui_open_structure_retry_payload(
         payload["revision"] = revision
     if views is not None:
         payload["views"] = list(views)
+    if fit_to_view_after_open:
+        payload["fit_to_view_after_open"] = True
+    if prepare_view_replay_after_open:
+        payload["prepare_view_replay_after_open"] = True
     return _workspace_bound_payload_hint(
         "material_studio_gui_open_structure",
         payload,
@@ -23770,6 +23776,69 @@ def _with_gui_postexecution_hotload_block(
         "gui_open_retry_payload": dict(block["gui_open_retry_payload"]),
         "gui_open_warning": block["message"],
     }
+
+
+def _attach_postexecution_postopen_deferred_receipts(
+    response: dict[str, Any],
+    *,
+    fit_to_view_after_open: bool,
+    prepare_view_replay_after_open: bool,
+    view_replay_prepare_request_source: str,
+    gui_open_retry_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve exact post-open work when execution finished before activation."""
+
+    if fit_to_view_after_open:
+        fit_receipt = dict(response.get("post_hotload_fit_to_view") or {})
+        fit_receipt.update(
+            {
+                "requested": True,
+                "status": "deferred_until_activation_and_open",
+                "completed": False,
+                "gui_input_performed": False,
+                "gui_modified": False,
+                "structure_modified": False,
+                "automatic_after_hotload": False,
+                "execution_already_completed": True,
+                "execution_retry_allowed": False,
+                "required_next_step": (
+                    "Activate the exact existing Materials Studio window, then call "
+                    "the returned artifact-only open payload. That transaction will "
+                    "open the structure, execute Fit-to-View, and bind the final snapshot."
+                ),
+                "followup_tool": "material_studio_gui_open_structure",
+                "followup_payload": gui_open_retry_payload,
+            }
+        )
+        response["post_hotload_fit_to_view"] = fit_receipt
+    if prepare_view_replay_after_open:
+        replay_receipt = dict(
+            response.get("post_hotload_view_replay_prepare") or {}
+        )
+        replay_receipt.update(
+            {
+                "requested": True,
+                "request_source": view_replay_prepare_request_source,
+                "status": "deferred_until_activation_and_open",
+                "prepared": False,
+                "gui_input_performed": False,
+                "gui_modified": False,
+                "structure_modified": False,
+                "revision_created": False,
+                "automatic_after_hotload": False,
+                "execution_already_completed": True,
+                "execution_retry_allowed": False,
+                "required_next_step": (
+                    "Activate and open the exact current revision with the returned "
+                    "artifact-only payload. Replay preparation will run only after "
+                    "the GUI artifact report transaction is released."
+                ),
+                "followup_tool": "material_studio_gui_open_structure",
+                "followup_payload": gui_open_retry_payload,
+            }
+        )
+        response["post_hotload_view_replay_prepare"] = replay_receipt
+    return response
 
 
 def _with_gui_open_activation_block(
@@ -39476,7 +39545,7 @@ def _finalize_live_compact_response(
     ]
     receipt["semantic_core_preserved"] = not omitted_core_fields
     receipt["semantic_core_omitted_fields"] = omitted_core_fields
-    for _ in range(4):
+    for _ in range(16):
         response_bytes = _compact_json_size_bytes(payload)
         headroom_bytes = max(COMPACT_RESPONSE_MAX_BYTES - response_bytes, 0)
         target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
@@ -50072,6 +50141,9 @@ def _prepare_view_replay_after_high_level_hotload(
     if not requested:
         return response
 
+    activation_deferred = isinstance(
+        response.get("gui_postexecution_block"), dict
+    )
     receipt = dict(response.get("post_hotload_view_replay_prepare") or {})
     receipt.update(
         {
@@ -50082,22 +50154,38 @@ def _prepare_view_replay_after_high_level_hotload(
             "gui_modified": False,
             "structure_modified": False,
             "revision_created": False,
-            "automatic_after_hotload": True,
-            "prepared_after_gui_artifact_transaction": True,
+            "automatic_after_hotload": not activation_deferred,
+            "prepared_after_gui_artifact_transaction": not activation_deferred,
             "report_rewritten_after_prepare": False,
         }
     )
     gui_open = response.get("gui_open")
     if not isinstance(gui_open, dict):
-        receipt.update(
-            {
-                "status": "not_run_hotload_incomplete",
-                "required_next_step": (
-                    "Complete the exact current-revision same-window hot-load before "
-                    "preparing GUI view replay."
-                ),
-            }
-        )
+        if activation_deferred:
+            block = response["gui_postexecution_block"]
+            receipt.update(
+                {
+                    "status": "deferred_until_activation_and_open",
+                    "execution_already_completed": True,
+                    "execution_retry_allowed": False,
+                    "followup_tool": block.get("gui_open_retry_tool"),
+                    "followup_payload": block.get("gui_open_retry_payload"),
+                    "required_next_step": (
+                        "Activate and open the exact current revision with the "
+                        "artifact-only retry before preparing GUI view replay."
+                    ),
+                }
+            )
+        else:
+            receipt.update(
+                {
+                    "status": "not_run_hotload_incomplete",
+                    "required_next_step": (
+                        "Complete the exact current-revision same-window hot-load before "
+                        "preparing GUI view replay."
+                    ),
+                }
+            )
         response["post_hotload_view_replay_prepare"] = receipt
         return response
 
@@ -50273,6 +50361,163 @@ def _prepare_view_replay_after_high_level_hotload(
         return response
 
 
+def _execute_post_hotload_fit_to_view(
+    *,
+    response: dict[str, Any],
+    gui: MaterialsStudioGuiController,
+    project_id: str,
+    revision: int,
+    take_snapshot: bool,
+    audit_artifacts: list[dict[str, Any]],
+    working_dir: str | Path | None,
+) -> dict[str, Any]:
+    """Execute Fit-to-View and bind its final snapshot inside the GUI transaction."""
+
+    fit_source = str(
+        response.get("post_hotload_fit_to_view_request_source")
+        or "explicit_parameter"
+    )
+    fit_retry_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_fit_to_view",
+        {
+            "project_id": project_id,
+            "revision": revision,
+            "execution_mode": ExecutionMode.EXECUTE.value,
+            "take_snapshot": True,
+        },
+        working_dir,
+    )
+    try:
+        fit_result = gui.fit_to_view(
+            project_id=project_id,
+            revision=revision,
+            execution_mode=ExecutionMode.EXECUTE.value,
+            take_snapshot=False,
+        )
+        fit_action_completed = bool(
+            fit_result.get("status") == "executed"
+            and fit_result.get("structure_unchanged") is True
+            and fit_result.get("structure_modified") is not True
+            and fit_result.get("gui_input_performed") is True
+        )
+        fit_result.update(
+            {
+                "requested": True,
+                "request_source": fit_source,
+                "action_completed": fit_action_completed,
+                "completed": False,
+                "automatic_after_hotload": True,
+                "pre_action_snapshot_path": _snapshot_path(
+                    (response.get("gui_open") or {}).get("snapshot")
+                ),
+            }
+        )
+        final_snapshot_bound = False
+        if take_snapshot and fit_action_completed:
+            try:
+                final_snapshot = gui.snapshot(
+                    label="post_hotload_fit_to_view",
+                    project_id=project_id,
+                    revision=revision,
+                )
+                final_snapshot_path = _snapshot_path(final_snapshot)
+                fit_result["after_snapshot"] = final_snapshot
+                fit_result["after_snapshot_path"] = final_snapshot_path
+                final_snapshot_bound = bool(
+                    final_snapshot_path and Path(final_snapshot_path).is_file()
+                )
+                audit_artifacts.append(
+                    {
+                        "type": "post_hotload_fit_to_view_snapshot",
+                        **final_snapshot,
+                    }
+                )
+            except Exception as snapshot_exc:
+                fit_result["snapshot_warning"] = str(snapshot_exc)
+        elif fit_action_completed:
+            fit_result["snapshot_warning"] = (
+                "The final post-Fit-to-View snapshot was disabled; completion "
+                "evidence is not bound."
+            )
+        fit_completed = bool(fit_action_completed and final_snapshot_bound)
+        fit_result["final_snapshot_bound"] = final_snapshot_bound
+        fit_result["completed"] = fit_completed
+        if fit_action_completed and not final_snapshot_bound:
+            fit_result["action_status"] = fit_result.get("status")
+            fit_result["status"] = "executed_evidence_incomplete"
+        response["post_hotload_fit_to_view"] = fit_result
+        audit_artifacts.append({"type": "gui_fit_to_view", "result": fit_result})
+        if not fit_completed:
+            fit_result.update(
+                {
+                    "retry_tool": "material_studio_gui_fit_to_view",
+                    "retry_payload": fit_retry_payload,
+                }
+            )
+            if fit_action_completed:
+                message = (
+                    "The structure was hot-loaded and Fit-to-View executed without "
+                    "changing the structure, but the final snapshot evidence was not bound."
+                )
+                response_status = (
+                    "hotload_completed_fit_to_view_evidence_incomplete"
+                )
+            else:
+                message = (
+                    "The structure was hot-loaded, but the explicitly requested "
+                    "Fit-to-View action did not complete "
+                    f"({fit_result.get('status')})."
+                )
+                response_status = "hotload_completed_fit_to_view_incomplete"
+            response.update(
+                {
+                    "ok": False,
+                    "partial_success": True,
+                    "status": response_status,
+                    "error": message,
+                    "post_hotload_fit_to_view_warning": message,
+                    "post_hotload_fit_to_view_retry_tool": (
+                        "material_studio_gui_fit_to_view"
+                    ),
+                    "post_hotload_fit_to_view_retry_payload": fit_retry_payload,
+                }
+            )
+    except Exception as fit_exc:
+        message = (
+            "The structure was hot-loaded, but the explicitly requested "
+            f"Fit-to-View action failed: {fit_exc}"
+        )
+        fit_receipt = dict(response.get("post_hotload_fit_to_view") or {})
+        fit_receipt.update(
+            {
+                "requested": True,
+                "request_source": fit_source,
+                "status": "execution_error",
+                "completed": False,
+                "automatic_after_hotload": True,
+                "error": str(fit_exc),
+                "retry_tool": "material_studio_gui_fit_to_view",
+                "retry_payload": fit_retry_payload,
+            }
+        )
+        response.update(
+            {
+                "ok": False,
+                "partial_success": True,
+                "status": "hotload_completed_fit_to_view_failed",
+                "error": message,
+                "post_hotload_fit_to_view": fit_receipt,
+                "post_hotload_fit_to_view_warning": message,
+                "post_hotload_fit_to_view_retry_tool": (
+                    "material_studio_gui_fit_to_view"
+                ),
+                "post_hotload_fit_to_view_retry_payload": fit_retry_payload,
+            }
+        )
+        audit_artifacts.append({"type": "gui_fit_to_view", "result": fit_receipt})
+    return response
+
+
 def _finalize_high_level_gui_hotload(
     *,
     response: dict[str, Any],
@@ -50294,13 +50539,6 @@ def _finalize_high_level_gui_hotload(
 ) -> dict[str, Any]:
     """Revalidate, hot-load, and publish one high-level response under the GUI lock."""
 
-    retry_payload = {
-        "structure_path": str(structure_path),
-        "project_id": spec.project_id,
-        "revision": spec.revision,
-        "take_snapshot": take_snapshot,
-        "working_dir": working_dir,
-    }
     artifact_open_retry_payload = _gui_open_structure_retry_payload(
         structure_path=structure_path,
         project_id=spec.project_id,
@@ -50310,7 +50548,10 @@ def _finalize_high_level_gui_hotload(
         reuse_existing_window_only=True,
         views=views,
         working_dir=working_dir,
+        fit_to_view_after_open=fit_to_view_after_open,
+        prepare_view_replay_after_open=prepare_view_replay_after_open,
     )
+    retry_payload = artifact_open_retry_payload
     coverage = [
         "high_level_hotload",
         f"workflow:{workflow}",
@@ -50373,6 +50614,20 @@ def _finalize_high_level_gui_hotload(
                     )
                 if blocked_response is not response:
                     response = blocked_response
+                    if isinstance(
+                        response.get("gui_postexecution_block"), dict
+                    ):
+                        response = _attach_postexecution_postopen_deferred_receipts(
+                            response,
+                            fit_to_view_after_open=fit_to_view_after_open,
+                            prepare_view_replay_after_open=(
+                                prepare_view_replay_after_open
+                            ),
+                            view_replay_prepare_request_source=(
+                                view_replay_prepare_request_source
+                            ),
+                            gui_open_retry_payload=artifact_open_retry_payload,
+                        )
                 else:
                     try:
                         response["gui_open"] = gui.open_structure(
@@ -50384,164 +50639,15 @@ def _finalize_high_level_gui_hotload(
                         if record_gui_open_artifact:
                             audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
                         if fit_to_view_after_open:
-                            fit_source = str(
-                                response.get("post_hotload_fit_to_view_request_source")
-                                or "explicit_parameter"
+                            response = _execute_post_hotload_fit_to_view(
+                                response=response,
+                                gui=gui,
+                                project_id=spec.project_id,
+                                revision=spec.revision,
+                                take_snapshot=take_snapshot,
+                                audit_artifacts=audit_artifacts,
+                                working_dir=working_dir,
                             )
-                            fit_retry_payload = _workspace_bound_payload_hint(
-                                "material_studio_gui_fit_to_view",
-                                {
-                                    "project_id": spec.project_id,
-                                    "revision": spec.revision,
-                                    "execution_mode": ExecutionMode.EXECUTE.value,
-                                    "take_snapshot": True,
-                                },
-                                working_dir,
-                            )
-                            try:
-                                fit_result = gui.fit_to_view(
-                                    project_id=spec.project_id,
-                                    revision=spec.revision,
-                                    execution_mode=ExecutionMode.EXECUTE.value,
-                                    take_snapshot=False,
-                                )
-                                fit_action_completed = bool(
-                                    fit_result.get("status") == "executed"
-                                    and fit_result.get("structure_unchanged") is True
-                                    and fit_result.get("structure_modified") is not True
-                                    and fit_result.get("gui_input_performed") is True
-                                )
-                                fit_result.update(
-                                    {
-                                        "requested": True,
-                                        "request_source": fit_source,
-                                        "action_completed": fit_action_completed,
-                                        "completed": False,
-                                        "automatic_after_hotload": True,
-                                        "pre_action_snapshot_path": _snapshot_path(
-                                            response["gui_open"].get("snapshot")
-                                        ),
-                                    }
-                                )
-                                final_snapshot_bound = False
-                                if take_snapshot and fit_action_completed:
-                                    try:
-                                        final_snapshot = gui.snapshot(
-                                            label="post_hotload_fit_to_view",
-                                            project_id=spec.project_id,
-                                            revision=spec.revision,
-                                        )
-                                        final_snapshot_path = _snapshot_path(final_snapshot)
-                                        fit_result["after_snapshot"] = final_snapshot
-                                        fit_result["after_snapshot_path"] = final_snapshot_path
-                                        final_snapshot_bound = bool(
-                                            final_snapshot_path
-                                            and Path(final_snapshot_path).is_file()
-                                        )
-                                        audit_artifacts.append(
-                                            {
-                                                "type": "post_hotload_fit_to_view_snapshot",
-                                                **final_snapshot,
-                                            }
-                                        )
-                                    except Exception as snapshot_exc:
-                                        fit_result["snapshot_warning"] = str(snapshot_exc)
-                                elif fit_action_completed:
-                                    fit_result["snapshot_warning"] = (
-                                        "The final post-Fit-to-View snapshot was disabled; "
-                                        "completion evidence is not bound."
-                                    )
-                                fit_completed = bool(
-                                    fit_action_completed and final_snapshot_bound
-                                )
-                                fit_result["final_snapshot_bound"] = final_snapshot_bound
-                                fit_result["completed"] = fit_completed
-                                if fit_action_completed and not final_snapshot_bound:
-                                    fit_result["action_status"] = fit_result.get("status")
-                                    fit_result["status"] = "executed_evidence_incomplete"
-                                response["post_hotload_fit_to_view"] = fit_result
-                                audit_artifacts.append(
-                                    {"type": "gui_fit_to_view", "result": fit_result}
-                                )
-                                if not fit_completed:
-                                    fit_result.update(
-                                        {
-                                            "retry_tool": "material_studio_gui_fit_to_view",
-                                            "retry_payload": fit_retry_payload,
-                                        }
-                                    )
-                                    if fit_action_completed:
-                                        message = (
-                                            "The structure was hot-loaded and Fit-to-View executed "
-                                            "without changing the structure, but the final snapshot "
-                                            "evidence was not bound."
-                                        )
-                                        response_status = (
-                                            "hotload_completed_fit_to_view_evidence_incomplete"
-                                        )
-                                    else:
-                                        message = (
-                                            "The structure was hot-loaded, but the explicitly requested "
-                                            "Fit-to-View action did not complete "
-                                            f"({fit_result.get('status')})."
-                                        )
-                                        response_status = (
-                                            "hotload_completed_fit_to_view_incomplete"
-                                        )
-                                    response.update(
-                                        {
-                                            "ok": False,
-                                            "partial_success": True,
-                                            "status": response_status,
-                                            "error": message,
-                                            "post_hotload_fit_to_view_warning": message,
-                                            "post_hotload_fit_to_view_retry_tool": (
-                                                "material_studio_gui_fit_to_view"
-                                            ),
-                                            "post_hotload_fit_to_view_retry_payload": (
-                                                fit_retry_payload
-                                            ),
-                                        }
-                                    )
-                            except Exception as fit_exc:
-                                message = (
-                                    "The structure was hot-loaded, but the explicitly requested "
-                                    f"Fit-to-View action failed: {fit_exc}"
-                                )
-                                fit_receipt = dict(
-                                    response.get("post_hotload_fit_to_view") or {}
-                                )
-                                fit_receipt.update(
-                                    {
-                                        "requested": True,
-                                        "request_source": fit_source,
-                                        "status": "execution_error",
-                                        "completed": False,
-                                        "automatic_after_hotload": True,
-                                        "error": str(fit_exc),
-                                        "retry_tool": "material_studio_gui_fit_to_view",
-                                        "retry_payload": fit_retry_payload,
-                                    }
-                                )
-                                response.update(
-                                    {
-                                        "ok": False,
-                                        "partial_success": True,
-                                        "status": "hotload_completed_fit_to_view_failed",
-                                        "error": message,
-                                        "post_hotload_fit_to_view": fit_receipt,
-                                        "post_hotload_fit_to_view_warning": message,
-                                        "post_hotload_fit_to_view_retry_tool": (
-                                            "material_studio_gui_fit_to_view"
-                                        ),
-                                        "post_hotload_fit_to_view_retry_payload": (
-                                            fit_retry_payload
-                                        ),
-                                    }
-                                )
-                                audit_artifacts.append(
-                                    {"type": "gui_fit_to_view", "result": fit_receipt}
-                                )
                         try:
                             response["gui_status"] = gui.status(
                                 project_id=spec.project_id,
@@ -50609,20 +50715,11 @@ def _finalize_high_level_gui_hotload(
                 "completed": False,
                 "automatic_after_hotload": True,
                 "required_next_step": (
-                    "Retry the same-window structure open, then execute Fit-to-View "
-                    "for the exact current revision."
+                    "Retry the returned artifact-only same-window open payload; it "
+                    "will execute Fit-to-View for the exact current revision."
                 ),
-                "followup_tool": "material_studio_gui_fit_to_view",
-                "followup_payload": _workspace_bound_payload_hint(
-                    "material_studio_gui_fit_to_view",
-                    {
-                        "project_id": spec.project_id,
-                        "revision": spec.revision,
-                        "execution_mode": ExecutionMode.EXECUTE.value,
-                        "take_snapshot": True,
-                    },
-                    working_dir,
-                ),
+                "followup_tool": "material_studio_gui_open_structure",
+                "followup_payload": retry_payload,
             }
         if prepare_view_replay_after_open:
             deferred["post_hotload_view_replay_prepare"] = {
@@ -50639,19 +50736,11 @@ def _finalize_high_level_gui_hotload(
                 "structure_modified": False,
                 "revision_created": False,
                 "required_next_step": (
-                    "Retry the exact same-window structure open, then prepare replay "
-                    "for that current revision without rerunning the structure."
+                    "Retry the returned exact same-window artifact open; replay "
+                    "preparation will follow without rerunning the structure."
                 ),
-                "followup_tool": "material_studio_gui_prepare_view_replay",
-                "followup_payload": _workspace_bound_payload_hint(
-                    "material_studio_gui_prepare_view_replay",
-                    {
-                        "project_id": spec.project_id,
-                        "revision": spec.revision,
-                        "views": list(views or []),
-                    },
-                    working_dir,
-                ),
+                "followup_tool": "material_studio_gui_open_structure",
+                "followup_payload": retry_payload,
             }
         deferred = _attach_modeling_health(
             deferred,
@@ -50708,6 +50797,15 @@ def _persist_gui_open_structure_report(
     working_dir: str | None,
     views: list[str] | None,
     project_resolution: dict[str, Any] | None = None,
+    gui_artifacts: list[dict[str, Any]] | None = None,
+    post_hotload_fit_to_view: dict[str, Any] | None = None,
+    post_hotload_view_replay_prepare: dict[str, Any] | None = None,
+    fit_to_view_after_open: bool = False,
+    prepare_view_replay_after_open: bool = False,
+    post_open_ok: bool = True,
+    post_open_status: str | None = None,
+    post_open_error: str | None = None,
+    partial_success: bool = False,
 ) -> dict[str, Any]:
     """Persist revision diagnostics after directly reopening a structure in the GUI."""
 
@@ -50716,35 +50814,155 @@ def _persist_gui_open_structure_report(
     generated = _generate_structured_script(spec, store)
     output_dir = store.outputs_dir(project_id, revision)
     report_payload, _ = _read_json_file(output_dir / "view_audit.json")
+    report_json_payload, _ = _read_json_file(output_dir / "report.json")
     view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
         spec,
         views=views,
         persisted_audit=report_payload,
     )
-    audit_artifacts = [{"type": "gui_open", "result": gui_open}]
+    previous_modeling_report = (
+        report_json_payload.get("modeling_report")
+        if isinstance(report_json_payload, dict)
+        and isinstance(report_json_payload.get("modeling_report"), dict)
+        else {}
+    )
+    current_artifacts = [
+        item for item in (gui_artifacts or []) if isinstance(item, dict)
+    ]
+    if not any(
+        item.get("type") == "gui_open" and item.get("result") is gui_open
+        for item in current_artifacts
+    ):
+        current_artifacts.insert(0, {"type": "gui_open", "result": gui_open})
+    audit_artifacts = current_artifacts
+
+    def prior_value(name: str) -> Any:
+        if isinstance(report_json_payload, dict):
+            value = report_json_payload.get(name)
+            if value is not None:
+                return value
+        return previous_modeling_report.get(name)
+
+    execution_transaction = prior_value("execution_transaction")
+    result_metadata_path = prior_value("result_metadata_path")
+    execution_attempt = prior_value("execution_attempt")
+    prior_result = (
+        report_json_payload.get("result")
+        if isinstance(report_json_payload, dict)
+        and isinstance(report_json_payload.get("result"), dict)
+        else None
+    )
+    has_prior_execution = bool(
+        execution_transaction
+        or execution_attempt
+        or result_metadata_path
+        or prior_value("execution_started") is True
+    )
+    gui_sync_result = {
+        "success": True,
+        "execution_backend": "gui_open_structure_existing_file",
+        "created_files": [],
+        "opened_structure_path": gui_open.get("structure_path"),
+    }
+    response_context = dict(previous_modeling_report)
+    for name in (
+        "diagnostic_export_requested",
+        "normality_check_requested",
+        "requested_diagnostic_focuses",
+        "state_write_transaction",
+        "state_write_deferred",
+        "project_state_transaction_error",
+        "execution_transaction",
+        "execution_attempt",
+        "execution_runtime",
+        "execution_continuation",
+        "execution_attempt_state_path",
+        "execution_attempt_events_path",
+        "execution_started",
+        "execution_deferred",
+        "execution_completed_before_gui_activation",
+        "execution_must_not_repeat",
+        "execution_retry_allowed",
+        "runner_invoked",
+        "structure_materialization_started",
+        "prepared_revision_retained",
+        "result_metadata_path",
+    ):
+        value = prior_value(name)
+        if value is not None:
+            response_context[name] = value
+
+    fit_request_source = (
+        prior_value("post_hotload_fit_to_view_request_source")
+        or "artifact_only_postexecution_continuation"
+    )
+    replay_request_source = (
+        prior_value("post_hotload_view_replay_prepare_request_source")
+        or "artifact_only_postexecution_continuation"
+    )
     response: dict[str, Any] = {
+        **response_context,
         "ok": True,
-        "workflow": "gui_open_structure",
+        "workflow": (
+            previous_modeling_report.get("workflow")
+            if has_prior_execution
+            else "gui_open_structure"
+        ),
         "project_id": project_id,
         "project_resolution": project_resolution or _explicit_project_resolution(spec),
         "revision": revision,
-        "execution_mode": ExecutionMode.EXECUTE.value,
-        "execution_mode_source": "gui_open_structure",
+        "execution_mode": (
+            prior_value("execution_mode")
+            if has_prior_execution
+            else ExecutionMode.EXECUTE.value
+        ),
+        "execution_mode_source": (
+            prior_value("execution_mode_source")
+            if has_prior_execution
+            else "gui_open_structure"
+        ),
         "validation": generated["script_validation"],
         "warnings": generated["warnings"],
         "planned_outputs": generated["planned_outputs"],
-        "result": {
-            "success": True,
-            "execution_backend": "gui_open_structure_existing_file",
-            "created_files": [],
-            "opened_structure_path": gui_open.get("structure_path"),
-        },
+        "result": prior_result if has_prior_execution and prior_result else gui_sync_result,
+        "gui_sync_result": gui_sync_result,
         "gui_status": gui.status(project_id=project_id, revision=revision),
         "gui_open": gui_open,
         "gui_artifacts": audit_artifacts,
         "view_audit": view_audit,
         "view_selection_resolution": view_selection_resolution,
+        "post_hotload_fit_to_view_requested": fit_to_view_after_open,
+        "post_hotload_fit_to_view_request_source": (
+            fit_request_source if fit_to_view_after_open else "default_disabled"
+        ),
+        "post_hotload_fit_to_view": (
+            post_hotload_fit_to_view if fit_to_view_after_open else None
+        ),
+        "post_hotload_view_replay_prepare_requested": (
+            prepare_view_replay_after_open
+        ),
+        "post_hotload_view_replay_prepare_request_source": (
+            replay_request_source
+            if prepare_view_replay_after_open
+            else "default_disabled"
+        ),
+        "post_hotload_view_replay_prepare": (
+            post_hotload_view_replay_prepare
+            if prepare_view_replay_after_open
+            else None
+        ),
+        "gui_postexecution_block": None,
+        "gui_open_activation_block": None,
+        "gui_activation_retry_tool": None,
+        "gui_activation_retry_payload": None,
+        "gui_open_retry_tool": None,
+        "gui_open_retry_payload": None,
+        "current_revision_hotload_block": None,
+        "status": post_open_status,
+        "error": post_open_error,
+        "partial_success": partial_success,
     }
+    response["ok"] = post_open_ok
     response = _attach_modeling_health(
         response,
         execution_mode=ExecutionMode.EXECUTE,
@@ -50766,12 +50984,47 @@ def _persist_gui_open_structure_report(
         "project_resolution": response.get("project_resolution"),
         "execution_mode": response.get("execution_mode"),
         "execution_mode_source": response.get("execution_mode_source"),
+        "execution_transaction": response.get("execution_transaction"),
+        "execution_attempt": response.get("execution_attempt"),
+        "execution_runtime": response.get("execution_runtime"),
+        "execution_continuation": response.get("execution_continuation"),
+        "execution_attempt_state_path": response.get(
+            "execution_attempt_state_path"
+        ),
+        "execution_attempt_events_path": response.get(
+            "execution_attempt_events_path"
+        ),
+        "execution_started": response.get("execution_started"),
+        "execution_completed_before_gui_activation": response.get(
+            "execution_completed_before_gui_activation"
+        ),
+        "execution_must_not_repeat": response.get("execution_must_not_repeat"),
+        "execution_retry_allowed": response.get("execution_retry_allowed"),
+        "result_metadata_path": response.get("result_metadata_path"),
         "result": response.get("result"),
+        "gui_sync_result": response.get("gui_sync_result"),
         "validation": response.get("validation"),
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
         "view_selection_resolution": response.get("view_selection_resolution"),
+        "gui_artifacts": response.get("gui_artifacts"),
+        "post_hotload_fit_to_view_requested": response.get(
+            "post_hotload_fit_to_view_requested"
+        ),
+        "post_hotload_fit_to_view_request_source": response.get(
+            "post_hotload_fit_to_view_request_source"
+        ),
+        "post_hotload_fit_to_view": response.get("post_hotload_fit_to_view"),
+        "post_hotload_view_replay_prepare_requested": response.get(
+            "post_hotload_view_replay_prepare_requested"
+        ),
+        "post_hotload_view_replay_prepare_request_source": response.get(
+            "post_hotload_view_replay_prepare_request_source"
+        ),
+        "post_hotload_view_replay_prepare": response.get(
+            "post_hotload_view_replay_prepare"
+        ),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),
@@ -51746,6 +51999,8 @@ def _open_gui_structure_action(
     take_snapshot: bool,
     export_view_audit: bool,
     reuse_existing_window_only: bool,
+    fit_to_view_after_open: bool,
+    prepare_view_replay_after_open: bool,
     views: list[str] | None,
     working_dir: str | None,
     transaction: dict[str, Any] | None,
@@ -51754,15 +52009,78 @@ def _open_gui_structure_action(
 
     log_project_id = sync_context.get("project_id") if sync_context.get("available") else project_id
     log_revision = sync_context.get("revision") if sync_context.get("available") else revision
-    gui_status = gui.status(project_id=log_project_id, revision=log_revision)
     response_base: dict[str, Any] = {
         "structured_sync_context": sync_context,
-        "gui_status": gui_status,
+        "post_hotload_fit_to_view_requested": fit_to_view_after_open,
+        "post_hotload_fit_to_view_request_source": (
+            "artifact_only_postexecution_continuation"
+            if fit_to_view_after_open
+            else "default_disabled"
+        ),
+        "post_hotload_view_replay_prepare_requested": (
+            prepare_view_replay_after_open
+        ),
+        "post_hotload_view_replay_prepare_request_source": (
+            "artifact_only_postexecution_continuation"
+            if prepare_view_replay_after_open
+            else "default_disabled"
+        ),
     }
     if transaction is not None:
         response_base["gui_action_transaction"] = transaction
     if isinstance(sync_context.get("project_resolution"), dict):
         response_base["project_resolution"] = sync_context["project_resolution"]
+
+    combined_postopen_requested = bool(
+        fit_to_view_after_open or prepare_view_replay_after_open
+    )
+    if combined_postopen_requested:
+        store = _structured_store(working_dir)
+        target_spec = store.get_revision(str(log_project_id), int(log_revision))
+        current_spec, current_pointer = store.resolve_current(target_spec.project_id)
+        generated = _generate_structured_script(target_spec, store)
+        expected_structure = (generated.get("planned_outputs") or {}).get(
+            "structure"
+        )
+        hotload_block_reasons: list[str] = []
+        if current_spec.revision != target_spec.revision:
+            hotload_block_reasons.append("current_revision_advanced_before_artifact_retry")
+        if not expected_structure or not _same_path(expected_structure, structure_path):
+            hotload_block_reasons.append(
+                "structure_path_not_exact_current_revision_artifact"
+            )
+        if hotload_block_reasons:
+            message = (
+                "Refusing the combined post-open continuation because its structure "
+                "artifact is not bound to the exact current revision."
+            )
+            return {
+                **response_base,
+                "ok": False,
+                "status": "current_revision_hotload_block",
+                "error": message,
+                "gui_open_warning": message,
+                "gui_input_started": False,
+                "structure_reopened": False,
+                "current_revision_hotload_block": {
+                    "blocked": True,
+                    "reason": hotload_block_reasons[0],
+                    "blocking_reasons": hotload_block_reasons,
+                    "project_id": target_spec.project_id,
+                    "target_revision": target_spec.revision,
+                    "current_revision": current_spec.revision,
+                    "current_pointer": current_pointer,
+                    "requested_structure_path": str(Path(structure_path).expanduser()),
+                    "expected_structure_path": expected_structure,
+                    "recommended_tool": "material_studio_live_project_status",
+                    "recommended_action": (
+                        "refresh_current_revision_before_retrying_artifact_hotload"
+                    ),
+                },
+            }
+
+    gui_status = gui.status(project_id=log_project_id, revision=log_revision)
+    response_base["gui_status"] = gui_status
     blocked_response = _with_single_window_hotload_block(response_base, gui_status)
     if blocked_response is not response_base:
         return blocked_response
@@ -51775,6 +52093,8 @@ def _open_gui_structure_action(
         reuse_existing_window_only=reuse_existing_window_only,
         views=views,
         working_dir=working_dir,
+        fit_to_view_after_open=fit_to_view_after_open,
+        prepare_view_replay_after_open=prepare_view_replay_after_open,
     )
     activation_blocked_response = _with_gui_open_activation_block(
         response_base,
@@ -51786,6 +52106,20 @@ def _open_gui_structure_action(
         gui_open_retry_payload=gui_open_retry_payload,
     )
     if activation_blocked_response is not response_base:
+        if combined_postopen_requested:
+            activation_blocked_response = (
+                _attach_postexecution_postopen_deferred_receipts(
+                    activation_blocked_response,
+                    fit_to_view_after_open=fit_to_view_after_open,
+                    prepare_view_replay_after_open=(
+                        prepare_view_replay_after_open
+                    ),
+                    view_replay_prepare_request_source=(
+                        "artifact_only_postexecution_continuation"
+                    ),
+                    gui_open_retry_payload=gui_open_retry_payload,
+                )
+            )
         return activation_blocked_response
 
     opened = gui.open_structure(
@@ -51798,6 +52132,48 @@ def _open_gui_structure_action(
     response: dict[str, Any] = {**opened}
     response["gui_open"] = opened
     response["structured_sync_context"] = sync_context
+    response["post_hotload_fit_to_view_requested"] = fit_to_view_after_open
+    response["post_hotload_fit_to_view_request_source"] = (
+        "artifact_only_postexecution_continuation"
+        if fit_to_view_after_open
+        else "default_disabled"
+    )
+    response["post_hotload_view_replay_prepare_requested"] = (
+        prepare_view_replay_after_open
+    )
+    response["post_hotload_view_replay_prepare_request_source"] = (
+        "artifact_only_postexecution_continuation"
+        if prepare_view_replay_after_open
+        else "default_disabled"
+    )
+    audit_artifacts: list[dict[str, Any]] = [
+        {"type": "gui_open", "result": opened}
+    ]
+    if prepare_view_replay_after_open:
+        response["post_hotload_view_replay_prepare"] = {
+            "requested": True,
+            "request_source": response[
+                "post_hotload_view_replay_prepare_request_source"
+            ],
+            "status": "deferred_until_gui_artifact_transaction_released",
+            "prepared": False,
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "revision_created": False,
+            "prepared_after_gui_artifact_transaction": False,
+            "report_rewritten_after_prepare": False,
+        }
+    if fit_to_view_after_open:
+        response = _execute_post_hotload_fit_to_view(
+            response=response,
+            gui=gui,
+            project_id=str(log_project_id),
+            revision=int(log_revision),
+            take_snapshot=take_snapshot,
+            audit_artifacts=audit_artifacts,
+            working_dir=working_dir,
+        )
     if transaction is not None:
         response["gui_action_transaction"] = transaction
     try:
@@ -51816,6 +52192,19 @@ def _open_gui_structure_action(
                 working_dir=working_dir,
                 views=views,
                 project_resolution=sync_context.get("project_resolution"),
+                gui_artifacts=audit_artifacts,
+                post_hotload_fit_to_view=response.get(
+                    "post_hotload_fit_to_view"
+                ),
+                post_hotload_view_replay_prepare=response.get(
+                    "post_hotload_view_replay_prepare"
+                ),
+                fit_to_view_after_open=fit_to_view_after_open,
+                prepare_view_replay_after_open=prepare_view_replay_after_open,
+                post_open_ok=response.get("ok", True) is True,
+                post_open_status=response.get("status"),
+                post_open_error=response.get("error"),
+                partial_success=response.get("partial_success") is True,
             )
             response.update(structured)
         except Exception as exc:
@@ -51843,6 +52232,8 @@ def material_studio_gui_open_structure(
     reuse_existing_window_only: Annotated[bool, Field(description="If true, refuse file-open paths that may spawn another MatStudio.exe instance.")] = True,
     views: Annotated[list[str] | None, Field(description="Optional standard view names for persisted diagnostics.")] = None,
     working_dir: Annotated[str | None, Field(description="可选的 GUI 工作区根目录。")] = None,
+    fit_to_view_after_open: Annotated[bool, Field(description="After opening the exact current structured artifact, execute Fit-to-View and bind a final snapshot in the same GUI artifact transaction.")] = False,
+    prepare_view_replay_after_open: Annotated[bool, Field(description="After the exact artifact is opened and its report transaction is released, prepare the current revision's view-replay manifest without GUI input.")] = False,
 ) -> dict[str, Any]:
     """在正在运行的 Materials Studio GUI 中打开现有的结构文件。"""
 
@@ -51864,7 +52255,30 @@ def material_studio_gui_open_structure(
         else:
             sync_context = {"available": False, "reason": "export_view_audit_disabled"}
 
+        combined_postopen_requested = bool(
+            fit_to_view_after_open or prepare_view_replay_after_open
+        )
+        if combined_postopen_requested and not sync_context.get("available"):
+            return {
+                "ok": False,
+                "status": "structured_context_required_for_postopen_pipeline",
+                "error": (
+                    "Fit-to-View or replay preparation after open requires an exact "
+                    "structured project/revision context and persisted GUI report transaction."
+                ),
+                "structured_sync_context": sync_context,
+                "gui_input_started": False,
+                "structure_reopened": False,
+                "fit_to_view_after_open": fit_to_view_after_open,
+                "prepare_view_replay_after_open": prepare_view_replay_after_open,
+                "required_next_step": (
+                    "Retry with export_view_audit=true and an exact current structured "
+                    "project/revision artifact."
+                ),
+            }
+
         gui = _gui_controller(working_dir)
+        opened_response: dict[str, Any]
         if sync_context.get("available"):
             coverage = [
                 "target_window_revalidation",
@@ -51873,13 +52287,17 @@ def material_studio_gui_open_structure(
             ]
             if take_snapshot:
                 coverage.append("gui_snapshot")
+            if fit_to_view_after_open:
+                coverage.append("gui_fit_to_view")
+            if prepare_view_replay_after_open:
+                coverage.append("post_transaction_view_replay_prepare_handoff")
             with _gui_artifact_report_transaction(
                 project_id=str(sync_context["project_id"]),
                 revision=int(sync_context["revision"]),
                 working_dir=working_dir,
                 coverage=coverage,
             ) as transaction:
-                return _open_gui_structure_action(
+                opened_response = _open_gui_structure_action(
                     gui=gui,
                     structure_path=structure_path,
                     sync_context=sync_context,
@@ -51888,23 +52306,54 @@ def material_studio_gui_open_structure(
                     take_snapshot=take_snapshot,
                     export_view_audit=export_view_audit,
                     reuse_existing_window_only=reuse_existing_window_only,
+                    fit_to_view_after_open=fit_to_view_after_open,
+                    prepare_view_replay_after_open=prepare_view_replay_after_open,
                     views=views,
                     working_dir=working_dir,
                     transaction=transaction,
                 )
-        return _open_gui_structure_action(
-            gui=gui,
-            structure_path=structure_path,
-            sync_context=sync_context,
-            project_id=project_id,
-            revision=revision,
-            take_snapshot=take_snapshot,
-            export_view_audit=export_view_audit,
-            reuse_existing_window_only=reuse_existing_window_only,
-            views=views,
-            working_dir=working_dir,
-            transaction=None,
-        )
+        else:
+            opened_response = _open_gui_structure_action(
+                gui=gui,
+                structure_path=structure_path,
+                sync_context=sync_context,
+                project_id=project_id,
+                revision=revision,
+                take_snapshot=take_snapshot,
+                export_view_audit=export_view_audit,
+                reuse_existing_window_only=reuse_existing_window_only,
+                fit_to_view_after_open=fit_to_view_after_open,
+                prepare_view_replay_after_open=prepare_view_replay_after_open,
+                views=views,
+                working_dir=working_dir,
+                transaction=None,
+            )
+        if (
+            prepare_view_replay_after_open
+            and sync_context.get("available")
+            and isinstance(opened_response.get("gui_open"), dict)
+        ):
+            store = _structured_store(working_dir)
+            target_spec = store.get_revision(
+                str(sync_context["project_id"]),
+                int(sync_context["revision"]),
+            )
+            opened_response = _prepare_view_replay_after_high_level_hotload(
+                response=opened_response,
+                store=store,
+                spec=target_spec,
+                gui=gui,
+                requested=True,
+                request_source=str(
+                    opened_response.get(
+                        "post_hotload_view_replay_prepare_request_source"
+                    )
+                    or "artifact_only_postexecution_continuation"
+                ),
+                views=views,
+                working_dir=working_dir,
+            )
+        return opened_response
     except Exception as exc:
         return _error(exc)
 

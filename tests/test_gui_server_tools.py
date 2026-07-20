@@ -9281,6 +9281,136 @@ def test_live_session_preflight_reports_ready_new_session(monkeypatch, tmp_path:
     assert "material_studio_model_export_view_bundle" in result["recommended_tools"]
 
 
+def test_live_session_preflight_requires_read_only_gui_probe_when_omitted(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(server, "runner", FakeRunner())
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("GUI must not be probed when include_gui_status is false")
+        ),
+    )
+
+    result = server.material_studio_live_session_preflight(
+        working_dir=str(tmp_path),
+        include_latest_project=False,
+        include_gui_status=False,
+    )
+
+    assert result["ok"] is True
+    assert result["state"] == "preview_ready_gui_preflight_required"
+    readiness = result["readiness"]
+    assert readiness["preview_ready"] is True
+    assert readiness["gui_status_was_probed"] is False
+    assert readiness["gui_preflight_verified"] is False
+    assert readiness["gui_preflight_required"] is True
+    assert readiness["gui_preflight_reasons"] == [
+        "gui_status_not_probed",
+        "single_window_policy_not_verified",
+    ]
+    assert readiness["live_hotload_ready"] is False
+    assert readiness["crystal_cif_hotload_ready"] is False
+
+    action = result["next_action_plan"]
+    assert action["action_id"] == "verify_single_window_gui_preflight"
+    assert action["recommended_tool"] == "material_studio_gui_status"
+    assert action["read_only"] is True
+    assert action["payload_hint_is_directly_callable"] is True
+    assert action["safe_to_call_without_confirmation"] is True
+    assert action["payload_hint"] == {"working_dir": str(tmp_path.resolve())}
+    assert "deferred_hotload_action" not in action
+
+    client = result["mcp_client_readiness"]
+    assert client["status"] == "gui_preflight_required_for_live_hotload"
+    assert client["can_accept_preview_request"] is True
+    assert client["can_accept_hotload_request_without_new_window"] is False
+    assert client["can_apply_current_revision_without_new_window"] is False
+    assert client["same_window_hotload_ready"] is False
+    assert client["same_window_hotload_status"] == "gui_preflight_required"
+    assert client["gui_preflight_required"] is True
+    assert client["gui_preflight_payload_hint"] == {
+        "working_dir": str(tmp_path.resolve())
+    }
+
+
+@pytest.mark.parametrize(
+    ("example_name", "model_type"),
+    [
+        ("benzene_spec.json", "molecule"),
+        ("graphene_vacancy_spec.json", "crystal"),
+    ],
+)
+def test_live_session_preflight_preserves_deferred_current_revision_hotload(
+    monkeypatch,
+    tmp_path: Path,
+    example_name: str,
+    model_type: str,
+) -> None:
+    monkeypatch.setattr(server, "runner", FakeRunner())
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("GUI must not be probed when include_gui_status is false")
+        ),
+    )
+    spec = json.loads(
+        Path("src/material_studio_mcp_server/examples", example_name).read_text(
+            encoding="utf-8"
+        )
+    )
+    spec["project_id"] = f"unprobed_{model_type}_project"
+    created = server.material_studio_model_create_from_spec(
+        spec,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+
+    result = server.material_studio_live_session_preflight(
+        working_dir=str(tmp_path),
+        include_latest_project=True,
+        include_gui_status=False,
+    )
+
+    assert result["state"] == "preview_ready_gui_preflight_required"
+    assert result["latest_project"]["model_type"] == model_type
+    assert result["readiness"]["live_hotload_ready"] is False
+    action = result["next_action_plan"]
+    assert action["recommended_tool"] == "material_studio_gui_status"
+    assert action["payload_hint"] == {
+        "project_id": spec["project_id"],
+        "revision": created["revision"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    deferred = action["deferred_hotload_action"]
+    assert deferred["action_id"] == "execute_and_hotload_current_revision"
+    assert deferred["recommended_tool"] == (
+        "material_studio_gui_apply_current_revision"
+    )
+    assert deferred["needs_user_confirmation"] is True
+    assert deferred["payload_hint"] == {
+        "project_id": spec["project_id"],
+        "execution_mode": "execute",
+        "open_in_gui": True,
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+
+    client = result["mcp_client_readiness"]
+    assert client["can_accept_preview_request"] is True
+    assert client["can_accept_hotload_request_without_new_window"] is False
+    assert client["can_apply_current_revision_without_new_window"] is False
+    assert client["same_window_hotload_ready"] is False
+    assert client["same_window_hotload_status"] == "gui_preflight_required"
+    assert client["gui_preflight_required"] is True
+    assert client["visible_followup_status"] == "gui_preflight_required"
+    assert client["deferred_hotload_action"] == deferred
+
+
 def test_live_session_preflight_recommends_gui_launch_when_window_missing(monkeypatch, tmp_path: Path) -> None:
     backend = LaunchingFakeGuiBackend()
     fake_matstudio = tmp_path / "MatStudio.exe"

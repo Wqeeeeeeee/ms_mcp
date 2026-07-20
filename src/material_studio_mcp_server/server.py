@@ -4931,6 +4931,18 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "requery_after_each_completed_step": True,
             "session_action_never_clears_deferred_project_actions": True,
             "visual_diagnostics_action_never_clears_modeling_action": True,
+            "omitted_gui_status_policy": {
+                "gui_preflight_required": True,
+                "live_hotload_ready": False,
+                "same_window_hotload_ready": False,
+                "apply_current_revision_ready": False,
+                "preview_remains_available": True,
+                "preflight_tool": "material_studio_gui_status",
+                "preflight_is_read_only": True,
+                "preflight_payload_is_directly_callable": True,
+                "deferred_hotload_action_is_preserved": True,
+                "never_launches_materials_studio": True,
+            },
             "response_compaction": {
                 "schema": "material_studio_live_session_preflight_compact_v1",
                 "target_bytes": COMPACT_RESPONSE_TARGET_BYTES,
@@ -4958,6 +4970,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             },
             "states": [
                 "runner_setup_required",
+                "preview_ready_gui_preflight_required",
                 "preview_ready_gui_not_open",
                 "preview_ready_gui_process_without_window",
                 "preview_ready_gui_single_window_policy_review",
@@ -8535,6 +8548,10 @@ def _stale_runtime_preflight_payload(
             "execute_ready": False,
             "live_hotload_ready": False,
             "crystal_cif_hotload_ready": False,
+            "gui_status_was_probed": False,
+            "gui_preflight_verified": False,
+            "gui_preflight_required": False,
+            "gui_preflight_reasons": [blocking_reason],
             "latest_project_available": None,
             "gui_probe_deferred_due_to_stale_runtime": bool(include_gui_status),
         },
@@ -8609,6 +8626,20 @@ def _live_session_preflight_payload(
             "visual_diagnostics",
             None,
         )
+    latest_project_session_action = (
+        latest_project_modeling.get("status_next_action")
+        if isinstance(latest_project_modeling, dict)
+        and isinstance(latest_project_modeling.get("status_next_action"), dict)
+        else {}
+    )
+    deferred_hotload_action = (
+        _workspace_bound_action_plan(
+            latest_project_session_action.get("deferred_hotload_action"),
+            store.workspace_root,
+        )
+        if not include_gui_status
+        else {}
+    )
     gui_status: dict[str, Any] | None = None
     if include_gui_status:
         try:
@@ -8698,23 +8729,37 @@ def _live_session_preflight_payload(
     latest_available = bool(latest_project and latest_project.get("available"))
     preview_ready = server_source_current
     semiconductor_template_ready = bool(supported_semiconductor_template_ids())
-    single_window_ready = gui_single_window_policy_ok is not False
-    gui_workspace_context_ready = not gui_workspace_context_mismatch
-    live_hotload_ready = (
-        bool(
-            server_source_current
-            and runner_ready
-            and gui_can_open
-            and single_window_ready
-            and gui_workspace_context_ready
-        )
-        if include_gui_status
-        else bool(server_source_current and runner_ready)
+    gui_status_was_probed = bool(include_gui_status)
+    single_window_ready = gui_single_window_policy_ok is True
+    gui_workspace_context_ready = (
+        not gui_workspace_context_mismatch if include_gui_status else None
     )
-    crystal_cif_hotload_ready = (
-        bool(server_source_current and gui_can_open and single_window_ready)
-        if include_gui_status
-        else None
+    gui_preflight_verified = bool(
+        gui_status_was_probed
+        and gui_supported
+        and gui_window_found
+        and gui_can_open
+        and single_window_ready
+        and gui_workspace_context_ready
+    )
+    gui_preflight_reasons: list[str] = []
+    if not gui_status_was_probed:
+        gui_preflight_reasons.append("gui_status_not_probed")
+    elif gui_window_found is not True:
+        gui_preflight_reasons.append("gui_window_not_verified")
+    elif gui_can_open is not True:
+        gui_preflight_reasons.append("same_window_structure_open_not_verified")
+    if gui_single_window_policy_ok is not True:
+        gui_preflight_reasons.append("single_window_policy_not_verified")
+    if gui_workspace_context_mismatch:
+        gui_preflight_reasons.append("gui_wrapper_workspace_context_mismatch")
+    gui_preflight_reasons = _dedupe_strings(gui_preflight_reasons)
+    gui_preflight_required = not gui_status_was_probed
+    live_hotload_ready = bool(
+        server_source_current and runner_ready and gui_preflight_verified
+    )
+    crystal_cif_hotload_ready = bool(
+        server_source_current and gui_preflight_verified
     )
     if include_gui_status and latest_available and isinstance(latest_project, dict):
         latest_project_gui = _latest_project_gui_preflight_summary(latest_project, gui_status)
@@ -8800,6 +8845,12 @@ def _live_session_preflight_payload(
         state = "runner_setup_required"
         recommended_tool = "material_studio_get_status"
         recommended_action = "configure_material_studio_runner_before_execute_mode"
+    elif gui_preflight_required:
+        state = "preview_ready_gui_preflight_required"
+        recommended_tool = "material_studio_gui_status"
+        recommended_action = (
+            "verify_single_existing_materials_studio_window_before_hotload"
+        )
     elif include_gui_status and not gui_window_found and gui_process_found:
         state = "preview_ready_gui_process_without_window"
         recommended_tool = "material_studio_gui_status"
@@ -8855,6 +8906,7 @@ def _live_session_preflight_payload(
         "latest_project_modeling": latest_project_modeling,
         "latest_project_visual_diagnostics": latest_project_visual_diagnostics,
         "latest_project_gui": latest_project_gui,
+        "deferred_hotload_action": deferred_hotload_action,
         "workspace_context": gui_workspace_context or None,
         "workspace_context_mismatch": gui_workspace_context_mismatch,
         "recommended_working_dir": gui_recommended_working_dir,
@@ -8874,6 +8926,10 @@ def _live_session_preflight_payload(
             ),
             "runner_ready": runner_ready,
             "execute_ready": bool(server_source_current and runner_ready),
+            "gui_status_was_probed": gui_status_was_probed,
+            "gui_preflight_verified": gui_preflight_verified,
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": gui_preflight_reasons,
             "gui_supported": gui_supported,
             "gui_process_found": gui_process_found,
             "gui_process_count": gui_process_count,
@@ -8883,7 +8939,9 @@ def _live_session_preflight_payload(
             "gui_can_open_structure": gui_can_open,
             "gui_same_window_open_supported": gui_status.get("same_window_open_supported") if gui_status else None,
             "gui_open_strategy_may_launch_new_instance": gui_status.get("open_strategy_may_launch_new_instance") if gui_status else None,
-            "gui_target_window_found": gui_target_window_handle is not None,
+            "gui_target_window_found": (
+                gui_target_window_handle is not None if include_gui_status else None
+            ),
             "gui_target_window_handle": gui_target_window_handle,
             "gui_target_window_title": gui_target_window_title,
             "gui_target_window_is_selected": gui_target_window_is_selected,
@@ -9393,6 +9451,20 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
             "latest_project_available": client.get("latest_project_available"),
             "current_revision_materialized": client.get("current_revision_materialized"),
             "current_revision_loaded_in_gui": client.get("current_revision_loaded_in_gui"),
+            "gui_preflight_verified": client.get("gui_preflight_verified"),
+            "gui_preflight_required": client.get("gui_preflight_required"),
+            "gui_preflight_reasons": client.get("gui_preflight_reasons") or [],
+            "gui_preflight_recommended_tool": client.get(
+                "gui_preflight_recommended_tool"
+            ),
+            "gui_preflight_recommended_action": client.get(
+                "gui_preflight_recommended_action"
+            ),
+            "gui_preflight_payload_hint": client.get("gui_preflight_payload_hint")
+            or {},
+            "same_window_hotload_ready": client.get("same_window_hotload_ready"),
+            "same_window_hotload_status": client.get("same_window_hotload_status"),
+            "deferred_hotload_action": client.get("deferred_hotload_action") or {},
             "visible_followup_ready": client.get("visible_followup_ready"),
             "visible_followup_status": client.get("visible_followup_status"),
             "visible_followup_blocking_reasons": client.get("visible_followup_blocking_reasons") or [],
@@ -9433,6 +9505,36 @@ def _promote_session_preflight_visible_followup(payload: dict[str, Any]) -> None
                     "server_source_blocking_reason"
                 ),
                 "mcp_runtime_instance_id": contract.get("runtime_instance_id"),
+                "mcp_gui_preflight_verified": contract.get(
+                    "gui_preflight_verified"
+                ),
+                "mcp_gui_preflight_required": contract.get(
+                    "gui_preflight_required"
+                ),
+                "mcp_gui_preflight_reasons": contract.get(
+                    "gui_preflight_reasons"
+                )
+                or [],
+                "mcp_gui_preflight_recommended_tool": contract.get(
+                    "gui_preflight_recommended_tool"
+                ),
+                "mcp_gui_preflight_recommended_action": contract.get(
+                    "gui_preflight_recommended_action"
+                ),
+                "mcp_gui_preflight_payload_hint": contract.get(
+                    "gui_preflight_payload_hint"
+                )
+                or {},
+                "mcp_same_window_hotload_ready": contract.get(
+                    "same_window_hotload_ready"
+                ),
+                "mcp_same_window_hotload_status": contract.get(
+                    "same_window_hotload_status"
+                ),
+                "mcp_deferred_hotload_action": contract.get(
+                    "deferred_hotload_action"
+                )
+                or {},
                 "mcp_must_reuse_existing_gui_window": contract.get("must_reuse_existing_gui_window"),
                 "mcp_auto_launch_during_hotload_allowed": contract.get("auto_launch_during_hotload_allowed"),
                 "mcp_single_window_policy_ok": contract.get("single_window_policy_ok"),
@@ -9487,6 +9589,11 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         and readiness.get("semiconductor_templates_ready")
     )
     live_hotload_ready = bool(readiness.get("live_hotload_ready"))
+    gui_preflight_verified = readiness.get("gui_preflight_verified") is True
+    gui_preflight_required = readiness.get("gui_preflight_required") is True
+    gui_preflight_reasons = _dedupe_strings(
+        readiness.get("gui_preflight_reasons") or []
+    )
     single_window_policy_ok = readiness.get("gui_single_window_policy_ok")
     gui_window_found = readiness.get("gui_window_found")
     gui_process_found = readiness.get("gui_process_found")
@@ -9500,22 +9607,36 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
     if not server_source_current:
         hotload_blocking_reasons.append(server_source_blocking_reason)
     else:
-        if gui_process_found and not gui_window_found:
-            hotload_blocking_reasons.append("matstudio_process_without_usable_window")
-        elif not gui_window_found:
-            hotload_blocking_reasons.append("gui_window_not_found")
-        if single_window_policy_ok is False:
-            hotload_blocking_reasons.append("single_window_policy_violation")
+        if gui_preflight_required:
             hotload_blocking_reasons.extend(
-                f"single_window:{reason}"
-                for reason in readiness.get("gui_single_window_violation_reasons") or []
+                ["gui_preflight_not_verified", *gui_preflight_reasons]
             )
-        if readiness.get("gui_workspace_context_mismatch") is True:
-            hotload_blocking_reasons.append("gui_wrapper_workspace_context_mismatch")
+        else:
+            if gui_process_found and not gui_window_found:
+                hotload_blocking_reasons.append(
+                    "matstudio_process_without_usable_window"
+                )
+            elif not gui_window_found:
+                hotload_blocking_reasons.append("gui_window_not_found")
+            if single_window_policy_ok is False:
+                hotload_blocking_reasons.append("single_window_policy_violation")
+                hotload_blocking_reasons.extend(
+                    f"single_window:{reason}"
+                    for reason in readiness.get(
+                        "gui_single_window_violation_reasons"
+                    )
+                    or []
+                )
+            if readiness.get("gui_workspace_context_mismatch") is True:
+                hotload_blocking_reasons.append(
+                    "gui_wrapper_workspace_context_mismatch"
+                )
+            if not readiness.get("gui_can_open_structure"):
+                hotload_blocking_reasons.append(
+                    "same_window_structure_open_not_ready"
+                )
         if not readiness.get("runner_ready"):
             hotload_blocking_reasons.append("materials_script_runner_missing")
-        if not readiness.get("gui_can_open_structure"):
-            hotload_blocking_reasons.append("same_window_structure_open_not_ready")
 
     can_hotload_without_new_window = bool(live_hotload_ready and not hotload_blocking_reasons)
     can_apply_current_revision = bool(
@@ -9546,6 +9667,10 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         visible_followup_blocking_reasons.append(server_source_blocking_reason)
     elif not latest_available:
         visible_followup_blocking_reasons.append("no_current_project")
+    elif gui_preflight_required:
+        visible_followup_blocking_reasons.extend(
+            ["gui_preflight_not_verified", *gui_preflight_reasons]
+        )
     elif not current_revision_materialized:
         visible_followup_blocking_reasons.append("current_revision_not_materialized")
     elif not can_hotload_without_new_window:
@@ -9576,6 +9701,16 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         visible_followup_recommended_tool = "material_studio_live_modeling_request"
         visible_followup_recommended_action = "create_new_live_model_from_template_or_model_spec"
         visible_followup_payload_hint = {}
+    elif gui_preflight_required:
+        visible_followup_status = "gui_preflight_required"
+        visible_followup_recommended_tool = "material_studio_gui_status"
+        visible_followup_recommended_action = (
+            "verify_single_existing_materials_studio_window_before_hotload"
+        )
+        visible_followup_payload_hint = next_action.get("payload_hint") or {
+            "project_id": latest_project.get("project_id"),
+            "revision": latest_project.get("revision"),
+        }
     elif not current_revision_materialized:
         visible_followup_status = "current_revision_not_materialized"
         visible_followup_recommended_tool = "material_studio_gui_apply_current_revision"
@@ -9624,12 +9759,36 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         payload.get("working_dir"),
     )
 
-    if can_hotload_without_new_window:
+    if gui_preflight_required:
+        status = "gui_preflight_required_for_live_hotload"
+    elif can_hotload_without_new_window:
         status = "ready_for_live_modeling"
     elif preview_ready:
         status = "preview_only_until_gui_ready"
     else:
         status = "setup_required"
+
+    deferred_hotload_action = (
+        next_action.get("deferred_hotload_action")
+        if isinstance(next_action.get("deferred_hotload_action"), dict)
+        else payload.get("deferred_hotload_action")
+        if isinstance(payload.get("deferred_hotload_action"), dict)
+        else {}
+    )
+    gui_preflight_payload_hint = (
+        next_action.get("payload_hint")
+        if gui_preflight_required
+        and next_action.get("recommended_tool") == "material_studio_gui_status"
+        and isinstance(next_action.get("payload_hint"), dict)
+        else {}
+    )
+    same_window_hotload_status = (
+        "gui_preflight_required"
+        if gui_preflight_required
+        else "ready"
+        if can_hotload_without_new_window
+        else "blocked"
+    )
 
     return _drop_none_values(
         {
@@ -9662,6 +9821,21 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "can_accept_preview_request": preview_ready,
             "can_accept_hotload_request_without_new_window": can_hotload_without_new_window,
             "can_apply_current_revision_without_new_window": can_apply_current_revision,
+            "same_window_hotload_ready": can_hotload_without_new_window,
+            "same_window_hotload_status": same_window_hotload_status,
+            "gui_preflight_verified": gui_preflight_verified,
+            "gui_preflight_required": gui_preflight_required,
+            "gui_preflight_reasons": gui_preflight_reasons,
+            "gui_preflight_recommended_tool": (
+                "material_studio_gui_status" if gui_preflight_required else None
+            ),
+            "gui_preflight_recommended_action": (
+                "verify_single_existing_materials_studio_window_before_hotload"
+                if gui_preflight_required
+                else None
+            ),
+            "gui_preflight_payload_hint": gui_preflight_payload_hint,
+            "deferred_hotload_action": deferred_hotload_action,
             "ready_for_live_edit": ready_for_live_edit,
             "ready_for_live_hotload": ready_for_live_edit,
             "live_edit_blocking_reasons": _dedupe_strings(live_edit_blocking_reasons),
@@ -10282,6 +10456,16 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
 
     recommended_tool = payload.get("recommended_tool")
     state = payload.get("state")
+    readiness = (
+        payload.get("readiness")
+        if isinstance(payload.get("readiness"), dict)
+        else {}
+    )
+    latest = (
+        payload.get("latest_project")
+        if isinstance(payload.get("latest_project"), dict)
+        else {}
+    )
     action_id = "inspect_live_session"
     payload_hint: dict[str, Any] = {}
     needs_user_confirmation = False
@@ -10308,16 +10492,20 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
     elif recommended_tool == "material_studio_get_status":
         action_id = "configure_or_verify_materials_script_runner"
     elif recommended_tool == "material_studio_gui_status":
-        if state == "preview_ready_gui_single_window_policy_review":
+        if state == "preview_ready_gui_preflight_required":
+            action_id = "verify_single_window_gui_preflight"
+            payload_hint = {
+                "project_id": latest.get("project_id"),
+                "revision": latest.get("revision"),
+            }
+        elif state == "preview_ready_gui_single_window_policy_review":
             action_id = "resolve_single_window_materials_studio_session"
-            readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
             payload_hint = {
                 "single_window_violation_reasons": readiness.get("gui_single_window_violation_reasons") or [],
             }
             needs_user_confirmation = True
         elif state == "preview_ready_gui_process_without_window":
             action_id = "recover_existing_materials_studio_process"
-            readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
             payload_hint = {
                 "gui_process_count": readiness.get("gui_process_count"),
                 "do_not_launch_new_instance": True,
@@ -10376,7 +10564,7 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
         payload.get("working_dir"),
     )
 
-    return {
+    result = {
         "action_id": action_id,
         "state": state,
         "recommended_tool": recommended_tool,
@@ -10389,6 +10577,21 @@ def _session_preflight_next_action_plan(payload: dict[str, Any]) -> dict[str, An
         "blocking_reasons": payload.get("blocking_reasons") or [],
         "review_reasons": payload.get("review_reasons") or [],
     }
+    if state == "preview_ready_gui_preflight_required":
+        result.update(
+            {
+                "read_only": True,
+                "payload_hint_is_directly_callable": True,
+                "gui_preflight_verified": False,
+                "gui_preflight_required": True,
+                "gui_preflight_reasons": readiness.get("gui_preflight_reasons")
+                or [],
+            }
+        )
+        deferred_hotload_action = payload.get("deferred_hotload_action")
+        if isinstance(deferred_hotload_action, dict) and deferred_hotload_action:
+            result["deferred_hotload_action"] = deferred_hotload_action
+    return result
 
 
 def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
@@ -10427,6 +10630,11 @@ def _session_preflight_action_plan_summary(value: Any) -> dict[str, Any]:
             "record_call_ready",
             "requires_requery_after_call",
             "requires_requery_after_record",
+            "read_only",
+            "gui_preflight_verified",
+            "gui_preflight_required",
+            "gui_preflight_reasons",
+            "deferred_hotload_action",
             "payload_hint",
             "blocking_reasons",
             "review_reasons",
@@ -10890,6 +11098,9 @@ def _latest_project_modeling_preflight_summary(
             "recommended_action",
             "needs_user_confirmation",
             "safe_to_call_without_confirmation",
+            "gui_preflight_verified",
+            "gui_preflight_required",
+            "deferred_hotload_action",
         ),
     )
     status_next_action_track = _session_preflight_action_track(

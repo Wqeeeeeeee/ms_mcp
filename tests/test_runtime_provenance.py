@@ -250,6 +250,15 @@ def test_live_preflight_binds_runner_receipt_to_requested_workspace(
     assert "runtime_git_head" in result["readiness"]
     assert "runtime_git_branch" in result["readiness"]
     assert result["readiness"]["codex_config_advisory_only"] is True
+    assert result["readiness"]["gui_status_was_probed"] is False
+    assert result["readiness"]["gui_preflight_verified"] is False
+    assert result["readiness"]["gui_preflight_required"] is True
+    assert result["readiness"]["gui_preflight_reasons"] == [
+        "gui_status_not_probed",
+        "single_window_policy_not_verified",
+    ]
+    assert result["readiness"]["live_hotload_ready"] is False
+    assert result["readiness"]["crystal_cif_hotload_ready"] is False
     runner_status = result["runner_status"]
     assert runner_status["request_workspace_root"] == str(tmp_path.resolve())
     assert runner_status["default_workspace_root"] == runner_status["workspace_root"]
@@ -259,6 +268,14 @@ def test_live_preflight_binds_runner_receipt_to_requested_workspace(
     assert result["mcp_client_readiness"]["server_source_current"] is True
     assert result["mcp_client_readiness"]["runtime_repository_root"]
     assert result["mcp_client_readiness"]["codex_config_advisory_only"] is True
+    assert result["mcp_client_readiness"]["gui_preflight_required"] is True
+    assert (
+        result["mcp_client_readiness"][
+            "can_accept_hotload_request_without_new_window"
+        ]
+        is False
+    )
+    assert result["mcp_client_readiness"]["same_window_hotload_ready"] is False
     assert result["mcp_server_source_current"] is True
 
 

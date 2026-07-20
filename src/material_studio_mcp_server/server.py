@@ -5065,6 +5065,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_target_window_is_foreground",
                 "gui_activation_required_before_capture_or_input",
                 "gui_target_window_needs_activation",
+                "gui_interaction_ready",
                 "gui_must_reuse_existing_window",
                 "gui_auto_launch_during_hotload_allowed",
                 "gui_single_window_policy_ok",
@@ -5122,6 +5123,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_target_window_is_foreground",
                 "gui_activation_required_before_capture_or_input",
                 "gui_target_window_needs_activation",
+                "gui_interaction_ready",
                 "recommended_tool",
                 "next_action_id",
                 "needs_user_confirmation",
@@ -5171,6 +5173,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "gui_target_window_is_foreground",
                 "gui_activation_required_before_capture_or_input",
                 "gui_target_window_needs_activation",
+                "gui_interaction_ready",
             ],
         },
         "structured_source_of_truth": ["ModelSpec", "SemanticPatch", "generated MaterialsScript"],
@@ -8726,6 +8729,16 @@ def _live_session_preflight_payload(
     gui_activation_required_before_capture_or_input = gui_window_management.get(
         "activation_required_before_capture_or_input"
     )
+    gui_target_window_needs_activation = bool(
+        gui_target_window_is_selected is False
+        or gui_target_window_is_minimized is True
+        or gui_target_window_is_visible is False
+        or (
+            gui_target_window_foreground_observed is True
+            and gui_target_window_is_foreground is False
+        )
+        or gui_activation_required_before_capture_or_input is True
+    )
     latest_available = bool(latest_project and latest_project.get("available"))
     preview_ready = server_source_current
     semiconductor_template_ready = bool(supported_semiconductor_template_ids())
@@ -8755,12 +8768,6 @@ def _live_session_preflight_payload(
         gui_preflight_reasons.append("gui_wrapper_workspace_context_mismatch")
     gui_preflight_reasons = _dedupe_strings(gui_preflight_reasons)
     gui_preflight_required = not gui_status_was_probed
-    live_hotload_ready = bool(
-        server_source_current and runner_ready and gui_preflight_verified
-    )
-    crystal_cif_hotload_ready = bool(
-        server_source_current and gui_preflight_verified
-    )
     if include_gui_status and latest_available and isinstance(latest_project, dict):
         latest_project_gui = _latest_project_gui_preflight_summary(latest_project, gui_status)
     latest_gui_target_loaded = bool(
@@ -8800,6 +8807,21 @@ def _live_session_preflight_payload(
             ) is True
         )
     )
+    gui_target_window_needs_activation = bool(
+        gui_preflight_verified
+        and (gui_target_window_needs_activation or latest_gui_needs_activation)
+    )
+    live_hotload_ready = bool(
+        server_source_current
+        and runner_ready
+        and gui_preflight_verified
+        and not gui_target_window_needs_activation
+    )
+    crystal_cif_hotload_ready = bool(
+        server_source_current
+        and gui_preflight_verified
+        and not gui_target_window_needs_activation
+    )
 
     blocking_reasons: list[str] = []
     review_reasons: list[str] = []
@@ -8836,6 +8858,8 @@ def _live_session_preflight_payload(
             review_reasons.append("latest_project_selected_window_stale")
         if latest_project_gui.get("foreground_window_matches_current") is False and not latest_gui_needs_activation:
             review_reasons.append("latest_project_foreground_window_stale")
+    if gui_target_window_needs_activation:
+        review_reasons.append("gui_target_window_needs_activation")
 
     if server_restart_required:
         state = "mcp_server_restart_required"
@@ -8876,7 +8900,11 @@ def _live_session_preflight_payload(
         recommended_tool = "material_studio_gui_copy_script_assist"
         recommended_action = "use_existing_materials_studio_window_file_open_or_computer_use_then_snapshot"
     elif latest_available:
-        if latest_gui_needs_reload:
+        if gui_target_window_needs_activation:
+            state = "ready_for_live_edit_gui_activation"
+            recommended_tool = "material_studio_gui_activate"
+            recommended_action = "activate_latest_project_window_before_visual_review"
+        elif latest_gui_needs_reload:
             state = "ready_for_live_edit_gui_review"
             recommended_tool = "material_studio_gui_open_structure"
             recommended_action = "reload_latest_project_structure_in_gui_and_snapshot"
@@ -8951,6 +8979,10 @@ def _live_session_preflight_payload(
             "gui_target_window_is_foreground": gui_target_window_is_foreground,
             "gui_activation_required_before_capture_or_input": (
                 gui_activation_required_before_capture_or_input
+            ),
+            "gui_target_window_needs_activation": gui_target_window_needs_activation,
+            "gui_interaction_ready": bool(
+                gui_preflight_verified and not gui_target_window_needs_activation
             ),
             "gui_must_reuse_existing_window": True,
             "gui_auto_launch_during_hotload_allowed": False,
@@ -9602,6 +9634,32 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
     latest_available = bool(readiness.get("latest_project_available") or latest_project.get("available"))
     current_revision_materialized = bool(latest_project.get("planned_structure_exists"))
     current_script_ready = bool(latest_project.get("script_exists") and latest_project.get("script_valid") is not False)
+    gui_target_window_needs_activation = bool(
+        gui_preflight_verified
+        and (
+            readiness.get("gui_target_window_needs_activation") is True
+            or readiness.get("gui_activation_required_before_capture_or_input") is True
+            or readiness.get("gui_target_window_is_selected") is False
+            or readiness.get("gui_target_window_is_minimized") is True
+            or readiness.get("gui_target_window_is_visible") is False
+            or (
+                readiness.get("gui_target_window_foreground_observed") is True
+                and readiness.get("gui_target_window_is_foreground") is False
+            )
+            or latest_project_gui.get("needs_activation") is True
+            or latest_project_gui.get("window_management_needs_activation") is True
+            or latest_project_gui.get("window_management_target_window_is_selected") is False
+            or latest_project_gui.get(
+                "window_management_activation_required_before_capture_or_input"
+            ) is True
+            or latest_project_gui.get("window_management_target_window_is_minimized") is True
+            or latest_project_gui.get("window_management_target_window_is_visible") is False
+            or (
+                latest_project_gui.get("window_management_target_window_foreground_observed") is True
+                and latest_project_gui.get("window_management_target_window_is_foreground") is False
+            )
+        )
+    )
 
     hotload_blocking_reasons: list[str] = []
     if not server_source_current:
@@ -9631,6 +9689,8 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
                 hotload_blocking_reasons.append(
                     "gui_wrapper_workspace_context_mismatch"
                 )
+            if gui_target_window_needs_activation:
+                hotload_blocking_reasons.append("gui_target_window_needs_activation")
             if not readiness.get("gui_can_open_structure"):
                 hotload_blocking_reasons.append(
                     "same_window_structure_open_not_ready"
@@ -9671,6 +9731,8 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         visible_followup_blocking_reasons.extend(
             ["gui_preflight_not_verified", *gui_preflight_reasons]
         )
+    elif gui_target_window_needs_activation:
+        visible_followup_blocking_reasons.append("current_revision_window_not_active")
     elif not current_revision_materialized:
         visible_followup_blocking_reasons.append("current_revision_not_materialized")
     elif not can_hotload_without_new_window:
@@ -9711,6 +9773,20 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "project_id": latest_project.get("project_id"),
             "revision": latest_project.get("revision"),
         }
+    elif gui_target_window_needs_activation:
+        visible_followup_status = "needs_current_revision_activation"
+        visible_followup_recommended_tool = "material_studio_gui_activate"
+        visible_followup_recommended_action = (
+            "restore_and_activate_current_revision_window"
+            if readiness.get("gui_target_window_is_minimized") is True
+            or latest_project_gui.get("window_management_target_window_is_minimized") is True
+            else "activate_current_revision_window"
+        )
+        visible_followup_payload_hint = {
+            "project_id": latest_project.get("project_id"),
+            "revision": latest_project.get("revision"),
+            "take_snapshot": True,
+        }
     elif not current_revision_materialized:
         visible_followup_status = "current_revision_not_materialized"
         visible_followup_recommended_tool = "material_studio_gui_apply_current_revision"
@@ -9739,14 +9815,6 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "take_snapshot": True,
             "export_view_audit": True,
         }
-    elif target_window_selected is False:
-        visible_followup_status = "needs_current_revision_activation"
-        visible_followup_recommended_tool = "material_studio_gui_activate"
-        visible_followup_recommended_action = "activate_current_revision_window"
-        visible_followup_payload_hint = {
-            "project_id": latest_project.get("project_id"),
-            "revision": latest_project.get("revision"),
-        }
     else:
         visible_followup_status = "review_required"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or payload.get("recommended_tool")
@@ -9759,7 +9827,9 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         payload.get("working_dir"),
     )
 
-    if gui_preflight_required:
+    if gui_target_window_needs_activation:
+        status = "gui_activation_required_for_live_hotload"
+    elif gui_preflight_required:
         status = "gui_preflight_required_for_live_hotload"
     elif can_hotload_without_new_window:
         status = "ready_for_live_modeling"
@@ -9783,7 +9853,9 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
         else {}
     )
     same_window_hotload_status = (
-        "gui_preflight_required"
+        "activation_required"
+        if gui_target_window_needs_activation
+        else "gui_preflight_required"
         if gui_preflight_required
         else "ready"
         if can_hotload_without_new_window
@@ -9861,6 +9933,21 @@ def _session_preflight_mcp_client_readiness(payload: dict[str, Any]) -> dict[str
             "gui_target_window_handle": readiness.get("gui_target_window_handle"),
             "gui_target_window_title": readiness.get("gui_target_window_title"),
             "gui_target_window_is_selected": readiness.get("gui_target_window_is_selected"),
+            "gui_target_window_is_visible": readiness.get("gui_target_window_is_visible"),
+            "gui_target_window_is_minimized": readiness.get("gui_target_window_is_minimized"),
+            "gui_target_window_foreground_observed": readiness.get(
+                "gui_target_window_foreground_observed"
+            ),
+            "gui_target_window_is_foreground": readiness.get(
+                "gui_target_window_is_foreground"
+            ),
+            "gui_activation_required_before_capture_or_input": readiness.get(
+                "gui_activation_required_before_capture_or_input"
+            ),
+            "gui_target_window_needs_activation": gui_target_window_needs_activation,
+            "gui_interaction_ready": bool(
+                gui_preflight_verified and not gui_target_window_needs_activation
+            ),
             "latest_project_available": latest_available,
             "recommended_tool": payload.get("recommended_tool"),
             "recommended_action": payload.get("recommended_action"),
@@ -10070,11 +10157,24 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         gui.get("window_management_activation_required_before_capture_or_input"),
     )
     gui_target_window_needs_activation = bool(
-        gui_current.get("needs_activation") is True
-        or gui_window_management.get("needs_activation") is True
-        or gui_activation_required_before_capture_or_input is True
-        or gui_target_window_is_selected is False
+        gui_preflight_verified
+        and (
+            gui_current.get("needs_activation") is True
+            or gui_window_management.get("needs_activation") is True
+            or gui_activation_required_before_capture_or_input is True
+            or gui_target_window_is_selected is False
+            or gui_target_window_is_visible is False
+            or gui_target_window_is_minimized is True
+            or (
+                gui_target_window_foreground_observed is True
+                and gui_target_window_is_foreground is False
+            )
+        )
     )
+    if gui_target_window_needs_activation:
+        hotload_blocking_reasons = _dedupe_strings(
+            ["gui_target_window_needs_activation", *hotload_blocking_reasons]
+        )
     gui_current_can_apply_same_window = _first_not_none(
         gui_current.get("window_management_can_apply_current_revision_without_new_window"),
         gui_current_window_management.get("can_apply_current_revision_without_new_window"),
@@ -10083,15 +10183,19 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         gui_post_open_window_management.get("can_apply_current_revision_without_new_window"),
     )
     can_apply_current = bool(
-        hotload.get("safe_to_attempt_hotload")
-        or (
-            current_loaded
-            and gui_current_can_apply_same_window is True
-            and single_window_policy_ok is not False
+        not gui_target_window_needs_activation
+        and (
+            hotload.get("safe_to_attempt_hotload")
+            or (
+                current_loaded
+                and gui_current_can_apply_same_window is True
+                and single_window_policy_ok is not False
+            )
         )
     )
     can_hotload_without_new_window = bool(
-        (can_apply_current or current_loaded)
+        not gui_target_window_needs_activation
+        and (can_apply_current or current_loaded)
         and single_window_policy_ok is not False
         and "gui_window_not_found" not in hotload_blocking_reasons
         and "single_window_policy_violation" not in hotload_blocking_reasons
@@ -10140,6 +10244,7 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     can_reload_current_revision_without_new_window = bool(
         project_id
         and not current_loaded
+        and not gui_target_window_needs_activation
         and single_window_policy_ok is not False
         and "single_window_policy_violation" not in hotload_blocking_reasons
         and reload_payload_hint
@@ -10159,19 +10264,19 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
     visible_followup_blocking_reasons: list[str] = []
     if not project_id:
         visible_followup_blocking_reasons.append("project_id_missing")
-    elif current_revision_reload_available or current_revision_apply_available:
-        visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
     elif report.get("ok") is False:
         visible_followup_blocking_reasons.append("modeling_report_blocked")
+    elif gui_target_window_needs_activation:
+        visible_followup_blocking_reasons.append("current_revision_window_not_active")
+    elif current_revision_reload_available or current_revision_apply_available:
+        visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
     elif not can_accept_followup:
         visible_followup_blocking_reasons.append("current_revision_not_ready_for_next_edit")
     elif not can_hotload_without_new_window:
         visible_followup_blocking_reasons.extend(hotload_blocking_reasons)
     elif not current_loaded:
         visible_followup_blocking_reasons.append("current_revision_not_loaded_in_gui")
-    elif gui_target_window_needs_activation:
-        visible_followup_blocking_reasons.append("current_revision_window_not_active")
-    if fit_to_view_preview_recommended:
+    if fit_to_view_preview_recommended and not gui_target_window_needs_activation:
         visible_followup_blocking_reasons.append("current_revision_view_not_fit_to_view")
     visible_followup_ready = bool(
         ready_for_live_edit
@@ -10179,7 +10284,30 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         and not gui_target_window_needs_activation
         and not fit_to_view_preview_recommended
     )
-    if fit_to_view_preview_recommended:
+    if not project_id:
+        visible_followup_status = "no_current_project"
+        visible_followup_recommended_tool = "material_studio_live_modeling_request"
+        visible_followup_recommended_action = "create_new_live_model_from_template_or_model_spec"
+        visible_followup_payload_hint = {}
+    elif report.get("ok") is False:
+        visible_followup_status = "blocked"
+        visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
+        visible_followup_recommended_action = next_action.get("recommended_action") or readiness.get("recommended_action")
+        visible_followup_payload_hint = next_action.get("payload_hint") or {"project_id": project_id}
+    elif gui_target_window_needs_activation:
+        visible_followup_status = "needs_current_revision_activation"
+        visible_followup_recommended_tool = "material_studio_gui_activate"
+        visible_followup_recommended_action = (
+            "restore_and_activate_current_revision_window"
+            if gui_target_window_is_minimized is True
+            else "activate_current_revision_window"
+        )
+        visible_followup_payload_hint = {
+            "project_id": project_id,
+            "revision": report.get("revision"),
+            "take_snapshot": True,
+        }
+    elif fit_to_view_preview_recommended:
         visible_followup_status = "fit_to_view_preview_recommended"
         visible_followup_recommended_tool = "material_studio_gui_fit_to_view"
         visible_followup_recommended_action = "preview_fit_to_view_for_current_revision"
@@ -10189,11 +10317,6 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         visible_followup_recommended_tool = "material_studio_live_modeling_request"
         visible_followup_recommended_action = "continue_next_visible_model_edit"
         visible_followup_payload_hint = {"project_id": project_id}
-    elif not project_id:
-        visible_followup_status = "no_current_project"
-        visible_followup_recommended_tool = "material_studio_live_modeling_request"
-        visible_followup_recommended_action = "create_new_live_model_from_template_or_model_spec"
-        visible_followup_payload_hint = {}
     elif current_revision_reload_available:
         visible_followup_status = "needs_current_revision_reload"
         visible_followup_recommended_tool = "material_studio_gui_open_structure"
@@ -10212,11 +10335,6 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "project_id": project_id,
             "revision": report.get("revision"),
         }
-    elif report.get("ok") is False:
-        visible_followup_status = "blocked"
-        visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
-        visible_followup_recommended_action = next_action.get("recommended_action") or readiness.get("recommended_action")
-        visible_followup_payload_hint = next_action.get("payload_hint") or {"project_id": project_id}
     elif not can_accept_followup:
         visible_followup_status = "not_ready_for_followup"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
@@ -10234,19 +10352,6 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             next_action.get("recommended_action") or "execute_or_open_current_revision_in_gui"
         )
         visible_followup_payload_hint = next_action.get("payload_hint") or {"project_id": project_id}
-    elif gui_target_window_needs_activation:
-        visible_followup_status = "needs_current_revision_activation"
-        visible_followup_recommended_tool = "material_studio_gui_activate"
-        visible_followup_recommended_action = (
-            "restore_and_activate_current_revision_window"
-            if gui_target_window_is_minimized is True
-            else "activate_current_revision_window"
-        )
-        visible_followup_payload_hint = {
-            "project_id": project_id,
-            "revision": report.get("revision"),
-            "take_snapshot": True,
-        }
     else:
         visible_followup_status = "review_required"
         visible_followup_recommended_tool = next_action.get("recommended_tool") or readiness.get("recommended_tool")
@@ -10293,6 +10398,24 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         hotload.get("safe_to_call_without_confirmation"),
         next_action.get("safe_to_call_without_confirmation"),
     )
+    if gui_target_window_needs_activation:
+        same_window_hotload_tool = "material_studio_gui_activate"
+        same_window_hotload_action = (
+            "restore_and_activate_current_revision_window"
+            if gui_target_window_is_minimized is True
+            else "activate_current_revision_window"
+        )
+        same_window_hotload_payload_hint = _workspace_bound_payload_hint(
+            same_window_hotload_tool,
+            {
+                "project_id": project_id,
+                "revision": report.get("revision"),
+                "take_snapshot": True,
+            },
+            report.get("working_dir"),
+        )
+        same_window_hotload_needs_confirmation = False
+        same_window_hotload_safe_without_confirmation = True
     same_window_hotload_blocking_reasons = _dedupe_strings(hotload_blocking_reasons)
     if not project_id:
         same_window_hotload_blocking_reasons.append("project_id_missing")
@@ -10300,12 +10423,17 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         same_window_hotload_blocking_reasons.append("single_window_policy_violation")
 
     same_window_hotload_action_ready = bool(
-        current_loaded
-        or hotload.get("safe_to_attempt_hotload")
-        or current_revision_reload_available
-        or current_revision_apply_available
+        not gui_target_window_needs_activation
+        and (
+            current_loaded
+            or hotload.get("safe_to_attempt_hotload")
+            or current_revision_reload_available
+            or current_revision_apply_available
+        )
     )
-    if current_loaded:
+    if gui_target_window_needs_activation:
+        same_window_hotload_status = "activation_required"
+    elif current_loaded:
         same_window_hotload_status = "current_revision_loaded"
     elif single_window_policy_ok is False:
         same_window_hotload_status = "single_window_policy_violation"
@@ -10330,6 +10458,8 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
 
     if report.get("ok") is False:
         status = "blocked"
+    elif gui_target_window_needs_activation:
+        status = "gui_activation_required_for_live_hotload"
     elif fit_to_view_preview_recommended:
         status = "live_gui_fit_to_view_preview_recommended"
     elif current_loaded and normality_gate.get("can_claim_live_gui_normal") is True and calculation_review_required:

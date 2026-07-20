@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from material_studio_mcp_server import server
 
 
@@ -183,6 +185,62 @@ def test_minimized_target_requires_activation_before_fit_preview() -> None:
     assert current["recommended_action"] == (
         "restore_and_activate_current_revision_window"
     )
+
+
+@pytest.mark.parametrize(
+    "window_state",
+    [
+        {"target_window_is_minimized": True},
+        {"target_window_is_visible": False},
+        {
+            "target_window_foreground_observed": True,
+            "target_window_is_foreground": False,
+        },
+    ],
+    ids=["minimized", "not-visible", "not-foreground"],
+)
+def test_project_mcp_readiness_requires_activation_before_same_window_input(
+    window_state: dict,
+) -> None:
+    report = _low_contrast_current_revision_report()
+    report["working_dir"] = "C:\\ms\\workspace"
+    report["gui"]["window_management"].update(window_state)
+
+    report = _derive_live_routing(report)
+
+    current = report["gui_current_revision"]
+    assert current["loaded_current_revision"] is True
+    assert current["needs_activation"] is True
+    assert (
+        current["window_management_can_apply_current_revision_without_new_window"]
+        is True
+    )
+
+    client = report["mcp_client_readiness"]
+    assert client["status"] == "gui_activation_required_for_live_hotload"
+    assert client["current_revision_loaded_in_gui"] is True
+    assert client["can_accept_hotload_request_without_new_window"] is False
+    assert client["can_apply_current_revision_without_new_window"] is False
+    assert client["ready_for_live_hotload"] is False
+    assert client["visible_followup_ready"] is False
+    assert client["visible_followup_status"] == "needs_current_revision_activation"
+    assert client["visible_followup_recommended_tool"] == "material_studio_gui_activate"
+    assert client["visible_followup_payload_hint"] == {
+        "project_id": "fit_status_project",
+        "revision": 4,
+        "take_snapshot": True,
+        "working_dir": "C:\\ms\\workspace",
+    }
+    assert client["same_window_hotload_ready"] is False
+    assert client["same_window_hotload_status"] == "activation_required"
+    assert client["same_window_hotload_tool"] == "material_studio_gui_activate"
+    assert client["same_window_hotload_payload_hint"] == {
+        "project_id": "fit_status_project",
+        "revision": 4,
+        "take_snapshot": True,
+        "working_dir": "C:\\ms\\workspace",
+    }
+    assert "gui_target_window_needs_activation" in client["hotload_blocking_reasons"]
 
 
 def test_stale_revision_requires_reload_before_fit_preview() -> None:

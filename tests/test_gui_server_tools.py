@@ -6014,6 +6014,11 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
         "gui_target_window_needs_activation"
         in capabilities["session_preflight"]["mcp_client_readiness_fields"]
     )
+    assert "gui_interaction_ready" in capabilities["session_preflight"]["readiness_fields"]
+    assert (
+        "gui_interaction_ready"
+        in capabilities["session_preflight"]["mcp_client_readiness_fields"]
+    )
     assert (
         "gui_target_window_is_minimized"
         in capabilities["session_preflight"]["visible_followup_contract_fields"]
@@ -10553,8 +10558,29 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     assert preflight["readiness"]["gui_target_window_is_minimized"] is True
     assert preflight["readiness"]["gui_target_window_is_foreground"] is False
     assert preflight["readiness"]["gui_activation_required_before_capture_or_input"] is True
+    assert preflight["readiness"]["gui_preflight_verified"] is True
+    assert preflight["readiness"]["gui_target_window_needs_activation"] is True
+    assert preflight["readiness"]["gui_interaction_ready"] is False
+    assert preflight["readiness"]["live_hotload_ready"] is False
+    assert preflight["readiness"]["crystal_cif_hotload_ready"] is False
     assert preflight["latest_project_gui"]["window_management_target_window_is_minimized"] is True
     assert preflight["latest_project_gui"]["window_management_needs_activation"] is True
+    client = preflight["mcp_client_readiness"]
+    assert client["status"] == "gui_activation_required_for_live_hotload"
+    assert client["can_accept_hotload_request_without_new_window"] is False
+    assert client["can_apply_current_revision_without_new_window"] is False
+    assert client["same_window_hotload_ready"] is False
+    assert client["same_window_hotload_status"] == "activation_required"
+    assert client["current_revision_loaded_in_gui"] is True
+    assert client["visible_followup_ready"] is False
+    assert client["visible_followup_status"] == "needs_current_revision_activation"
+    assert client["visible_followup_recommended_tool"] == "material_studio_gui_activate"
+    assert client["visible_followup_payload_hint"] == {
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "take_snapshot": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
 
     activated = server.material_studio_gui_activate(
         project_id=created["project_id"],
@@ -10570,6 +10596,21 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     assert activated["snapshot"]["window"]["is_foreground"] is True
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert backend.captured_handles == [101]
+
+    rechecked = server.material_studio_live_session_preflight(working_dir=str(tmp_path))
+    assert rechecked["readiness"]["gui_preflight_verified"] is True
+    assert rechecked["readiness"]["gui_target_window_needs_activation"] is False
+    assert rechecked["readiness"]["gui_interaction_ready"] is True
+    assert rechecked["readiness"]["live_hotload_ready"] is True
+    assert rechecked["readiness"]["crystal_cif_hotload_ready"] is True
+    rechecked_client = rechecked["mcp_client_readiness"]
+    assert rechecked_client["status"] == "ready_for_live_modeling"
+    assert rechecked_client["can_accept_hotload_request_without_new_window"] is True
+    assert rechecked_client["can_apply_current_revision_without_new_window"] is True
+    assert rechecked_client["same_window_hotload_ready"] is True
+    assert rechecked_client["same_window_hotload_status"] == "ready"
+    assert rechecked_client["visible_followup_ready"] is True
+    assert rechecked_client["visible_followup_status"] == "ready"
 
 
 def test_gui_activate_returns_bound_retry_when_focus_is_lost_before_snapshot(

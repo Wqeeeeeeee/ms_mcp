@@ -397,8 +397,16 @@ class RuntimePluginReceipt(FrozenContractModel):
 
     def _validate_repeated_bindings(self) -> None:
         if self.selected_plugin_id is None:
-            if self.stage_receipts or self.shadow_comparison is not None:
-                raise ValueError("unselected routing decision cannot bind plugin stages")
+            if (
+                self.plan_digest is not None
+                or self.emitted_artifact is not None
+                or self.stage_receipts
+                or self.shadow_comparison is not None
+            ):
+                raise ValueError(
+                    "unselected routing decision cannot bind plugin stages, "
+                    "plan, or emitted artifacts"
+                )
             return
 
         for stage in self.stage_receipts:

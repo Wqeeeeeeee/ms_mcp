@@ -33,6 +33,8 @@ from material_studio_mcp_server.runtime import (
     ModelingQuestion,
     NoMatchEvidence,
     PlanStep,
+    PluginReferencePolicy,
+    PluginRouting,
     ReferenceAccess,
     ReferenceAccessMode,
     ResolvedAssumption,
@@ -969,6 +971,93 @@ def test_manifest_pydantic_matches_repository_schema_rejections(mutator) -> None
     assert list(validator.iter_errors(invalid))
     with pytest.raises(ValidationError):
         DomainPluginManifest.model_validate_json(json.dumps(invalid))
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda value: value.update({"plugin_id": "sic_surface\n"}),
+        lambda value: value.update({"contract_version": "1.0.0\n"}),
+        lambda value: value.update({"implementation_version": "1.2.0\n"}),
+        lambda value: value["capabilities"].update(
+            {"scenarios": ["surface_slab\n"]}
+        ),
+        lambda value: value["contracts"]["match"].update(
+            {"callable": "sic_surface.match\n"}
+        ),
+        lambda value: value.update(
+            {
+                "dependencies": [
+                    {
+                        "dependency_id": "runtime_contracts\n",
+                        "kind": "shared_contract",
+                        "version_constraint": ">=1.0.0",
+                        "required": True,
+                    }
+                ]
+            }
+        ),
+    ],
+)
+def test_manifest_pattern_semantics_match_repository_schema_for_final_newline(
+    mutator,
+) -> None:
+    schema = json.loads(
+        (ROOT / "schemas" / "domain_plugin.schema.json").read_text(encoding="utf-8")
+    )
+    validator = Draft202012Validator(schema)
+    payload = _manifest_payload()
+    mutator(payload)
+
+    assert not list(validator.iter_errors(payload))
+    manifest = DomainPluginManifest.model_validate_json(json.dumps(payload))
+    assert manifest.model_dump(mode="json", by_alias=True) == payload
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (
+            PluginRouting,
+            {
+                "priority": 100,
+                "ambiguity_policy": "fail_closed",
+                "forced_selection_requires_capability_match": 1,
+            },
+        ),
+        (
+            PluginReferencePolicy,
+            {
+                "allowed_access_modes": ["none"],
+                "hidden_holdout_access": 0,
+                "final_reference_coordinate_access": 0,
+            },
+        ),
+        (
+            AmbiguityEvidence,
+            {
+                "tied_plugin_ids": ["sic_alpha", "sic_beta"],
+                "match_kind": "exact",
+                "specificity": 500,
+                "priority": 100,
+                "fail_closed": 1,
+            },
+        ),
+    ],
+)
+def test_boolean_literal_contracts_reject_integer_lookalikes(model, payload) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate_json(json.dumps(payload))
+
+
+def test_contract_digest_uses_repository_pattern_semantics() -> None:
+    digest = contract_digest(
+        {"marker": "newline"},
+        contract_name="Demo.Contract\n",
+        contract_version="1.0.0\n",
+    )
+    assert digest.contract_name == "Demo.Contract\n"
+    assert digest.contract_version == "1.0.0\n"
 
 
 def test_manifest_adds_only_declared_cross_field_checks() -> None:

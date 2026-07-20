@@ -10,10 +10,13 @@ from enum import Enum
 from typing import Annotated, Any, Literal, Mapping, Protocol, TypeAlias
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     ValidationInfo,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
@@ -37,16 +40,58 @@ MANIFEST_NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
 MANIFEST_CALLABLE_PATTERN = r"^[A-Za-z_][A-Za-z0-9_.:]*$"
 DEPENDENCY_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$"
 
+
+def _validate_schema_pattern(
+    value: str,
+    *,
+    pattern: str,
+    label: str,
+) -> str:
+    if re.search(pattern, value) is None:
+        raise ValueError(f"invalid {label}: {value!r}")
+    return value
+
+
+def _schema_pattern_validator(pattern: str, label: str) -> AfterValidator:
+    def validate(value: str) -> str:
+        return _validate_schema_pattern(value, pattern=pattern, label=label)
+
+    return AfterValidator(validate)
+
+
+def _strict_boolean_literal(expected: bool) -> BeforeValidator:
+    def validate(value: Any) -> bool:
+        if type(value) is not bool or value is not expected:
+            raise ValueError(f"value must be the boolean literal {expected!r}")
+        return value
+
+    return BeforeValidator(validate)
+
+
 Identifier = Annotated[str, Field(pattern=IDENTIFIER_PATTERN)]
-PluginId = Annotated[str, Field(pattern=PLUGIN_ID_PATTERN)]
-SemanticVersion = Annotated[str, Field(pattern=SEMANTIC_VERSION_PATTERN)]
-ContractName = Annotated[str, Field(pattern=CONTRACT_NAME_PATTERN)]
+PluginId = Annotated[
+    str,
+    _schema_pattern_validator(PLUGIN_ID_PATTERN, "plugin ID"),
+    WithJsonSchema({"type": "string", "pattern": PLUGIN_ID_PATTERN}),
+]
+SemanticVersion = Annotated[
+    str,
+    _schema_pattern_validator(SEMANTIC_VERSION_PATTERN, "semantic version"),
+    WithJsonSchema({"type": "string", "pattern": SEMANTIC_VERSION_PATTERN}),
+]
+ContractName = Annotated[
+    str,
+    _schema_pattern_validator(CONTRACT_NAME_PATTERN, "contract name"),
+    WithJsonSchema({"type": "string", "pattern": CONTRACT_NAME_PATTERN}),
+]
 Sha256 = Annotated[str, Field(pattern=SHA256_PATTERN)]
 ProjectId = Annotated[
     str,
     Field(min_length=1, max_length=120, pattern=PROJECT_ID_PATTERN),
 ]
 StrictScalar: TypeAlias = str | bool | int | float
+StrictTrue = Annotated[Literal[True], _strict_boolean_literal(True)]
+StrictFalse = Annotated[Literal[False], _strict_boolean_literal(False)]
 
 
 def _preflight_json_value(
@@ -273,10 +318,16 @@ def contract_digest(
 ) -> ContractDigest:
     """Hash a payload in the exact named/versioned runtime envelope."""
 
-    if re.fullmatch(CONTRACT_NAME_PATTERN, contract_name) is None:
-        raise ValueError(f"invalid contract name: {contract_name!r}")
-    if re.fullmatch(SEMANTIC_VERSION_PATTERN, contract_version) is None:
-        raise ValueError(f"invalid semantic contract version: {contract_version!r}")
+    _validate_schema_pattern(
+        contract_name,
+        pattern=CONTRACT_NAME_PATTERN,
+        label="contract name",
+    )
+    _validate_schema_pattern(
+        contract_version,
+        pattern=SEMANTIC_VERSION_PATTERN,
+        label="semantic contract version",
+    )
     envelope = {
         "hash_profile": HASH_PROFILE,
         "contract_name": contract_name,
@@ -343,9 +394,9 @@ class SemanticParameter(FrozenContractModel):
 class ReferenceAccess(FrozenContractModel):
     mode: ReferenceAccessMode
     source_ids: tuple[Identifier, ...]
-    raw_structure_access: Literal[False]
-    final_coordinate_access: Literal[False]
-    hidden_holdout_access: Literal[False]
+    raw_structure_access: StrictFalse
+    final_coordinate_access: StrictFalse
+    hidden_holdout_access: StrictFalse
 
     @model_validator(mode="after")
     def validate_none_mode(self) -> "ReferenceAccess":
@@ -390,8 +441,8 @@ class ModelState(FrozenContractModel):
     model_kind: ModelKind
     canonical_model_spec_json: str
     model_spec_digest: ContractDigest
-    immutable: Literal[True]
-    observed_as_current: Literal[True]
+    immutable: StrictTrue
+    observed_as_current: StrictTrue
 
     @classmethod
     def from_model_spec(cls, spec: ModelSpec) -> "ModelState":
@@ -520,7 +571,7 @@ class RevisionIdentity(FrozenContractModel):
 
 class ForcedSelectionEvidence(FrozenContractModel):
     requested_plugin_id: PluginId
-    capability_match: Literal[True]
+    capability_match: StrictTrue
     reason: str = Field(min_length=1)
 
 
@@ -528,7 +579,7 @@ class FallbackEvidence(FrozenContractModel):
     from_plugin_id: PluginId
     to_plugin_id: PluginId
     reason_code: Identifier
-    target_independently_matched: Literal[True]
+    target_independently_matched: StrictTrue
 
 
 class AmbiguityEvidence(FrozenContractModel):
@@ -536,7 +587,7 @@ class AmbiguityEvidence(FrozenContractModel):
     match_kind: MatchKind
     specificity: int = Field(ge=1, le=1000)
     priority: int = Field(ge=-1000, le=1000)
-    fail_closed: Literal[True]
+    fail_closed: StrictTrue
 
     @model_validator(mode="after")
     def validate_lexical_order(self) -> "AmbiguityEvidence":
@@ -550,7 +601,7 @@ class AmbiguityEvidence(FrozenContractModel):
 class NoMatchEvidence(FrozenContractModel):
     evaluated_plugin_ids: tuple[PluginId, ...]
     reason_codes: tuple[Identifier, ...] = Field(min_length=1)
-    fail_closed: Literal[True]
+    fail_closed: StrictTrue
 
     @model_validator(mode="after")
     def validate_lexical_order(self) -> "NoMatchEvidence":
@@ -646,10 +697,22 @@ class DomainValidationReport(FrozenContractModel):
 
 
 ManifestMaterial = Annotated[str, Field(min_length=1, max_length=128)]
-ManifestName = Annotated[str, Field(pattern=MANIFEST_NAME_PATTERN)]
+ManifestName = Annotated[
+    str,
+    _schema_pattern_validator(MANIFEST_NAME_PATTERN, "manifest name"),
+    WithJsonSchema({"type": "string", "pattern": MANIFEST_NAME_PATTERN}),
+]
 ManifestCapability = Annotated[str, Field(min_length=1)]
-ManifestCallable = Annotated[str, Field(pattern=MANIFEST_CALLABLE_PATTERN)]
-DependencyId = Annotated[str, Field(pattern=DEPENDENCY_ID_PATTERN)]
+ManifestCallable = Annotated[
+    str,
+    _schema_pattern_validator(MANIFEST_CALLABLE_PATTERN, "manifest callable"),
+    WithJsonSchema({"type": "string", "pattern": MANIFEST_CALLABLE_PATTERN}),
+]
+DependencyId = Annotated[
+    str,
+    _schema_pattern_validator(DEPENDENCY_ID_PATTERN, "dependency ID"),
+    WithJsonSchema({"type": "string", "pattern": DEPENDENCY_ID_PATTERN}),
+]
 
 
 class PluginCapabilities(FrozenContractModel):
@@ -715,7 +778,7 @@ class PluginLimits(FrozenContractModel):
 class PluginRouting(FrozenContractModel):
     priority: int = Field(ge=-1000, le=1000)
     ambiguity_policy: Literal["fail_closed"]
-    forced_selection_requires_capability_match: Literal[True]
+    forced_selection_requires_capability_match: StrictTrue
 
     @field_validator("priority", mode="before")
     @classmethod
@@ -732,30 +795,30 @@ class PluginRouting(FrozenContractModel):
 
 class PluginReferencePolicy(FrozenContractModel):
     allowed_access_modes: tuple[ReferenceAccessMode, ...] = Field(min_length=1)
-    hidden_holdout_access: Literal[False]
-    final_reference_coordinate_access: Literal[False]
+    hidden_holdout_access: StrictFalse
+    final_reference_coordinate_access: StrictFalse
 
 
 class PluginRuntimeBehavior(FrozenContractModel):
-    deterministic: Literal[True]
-    preview_first: Literal[True]
-    mutates_input_model: Literal[False]
-    owns_revision_state: Literal[False]
-    executes_backend_directly: Literal[False]
-    registers_public_mcp_tools: Literal[False]
-    owns_gui_session: Literal[False]
-    network_access_during_match_plan_build_validate: Literal[False]
+    deterministic: StrictTrue
+    preview_first: StrictTrue
+    mutates_input_model: StrictFalse
+    owns_revision_state: StrictFalse
+    executes_backend_directly: StrictFalse
+    registers_public_mcp_tools: StrictFalse
+    owns_gui_session: StrictFalse
+    network_access_during_match_plan_build_validate: StrictFalse
 
 
 class PluginStageContract(FrozenContractModel):
     callable: ManifestCallable
     input_contracts: tuple[ContractName, ...] = Field(min_length=1)
     output_contracts: tuple[ContractName, ...] = Field(min_length=1)
-    deterministic: Literal[True]
-    filesystem_side_effects: Literal[False]
-    process_side_effects: Literal[False]
-    network_access: Literal[False]
-    gui_access: Literal[False]
+    deterministic: StrictTrue
+    filesystem_side_effects: StrictFalse
+    process_side_effects: StrictFalse
+    network_access: StrictFalse
+    gui_access: StrictFalse
 
 
 class PluginContracts(FrozenContractModel):

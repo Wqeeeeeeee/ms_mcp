@@ -638,6 +638,27 @@ def test_runtime_mode_truth_tables_accept_valid_receipts() -> None:
         assert restored == receipt
 
 
+@pytest.mark.parametrize("claimed_field", ("plan_digest", "emitted_artifact"))
+@pytest.mark.parametrize("evidence_key", ("ambiguity", "no_match"))
+def test_unselected_routing_cannot_claim_plan_or_emitted_artifact(
+    claimed_field: str,
+    evidence_key: str,
+) -> None:
+    evidence = _ambiguity() if evidence_key == "ambiguity" else _no_match()
+    payload = _routing_blocked(
+        migration_mode=MigrationMode.ACTIVE,
+        **{evidence_key: evidence},
+    ).model_dump(mode="json")
+    payload[claimed_field] = (
+        _plan_digest("orphan").model_dump(mode="json")
+        if claimed_field == "plan_digest"
+        else _artifact().model_dump(mode="json")
+    )
+
+    with pytest.raises(ValidationError, match="unselected routing decision"):
+        RuntimePluginReceipt.model_validate_json(json.dumps(payload))
+
+
 @pytest.mark.parametrize(
     ("outcome", "issues"),
     (

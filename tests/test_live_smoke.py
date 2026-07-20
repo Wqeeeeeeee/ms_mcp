@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from material_studio_mcp_server import live_smoke
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.server import _explicit_live_gui_open_requested, _explicit_live_hotload_requested
@@ -2490,6 +2492,644 @@ def test_collect_warnings_deduplicates_across_sources() -> None:
     )
 
     assert warnings == ["duplicate", "unique", "second", "third"]
+
+
+def _deferred_postexecution_live(
+    tmp_path: Path,
+    *,
+    project_id: str,
+    revision: int,
+    workflow: str,
+    views: list[str] | None = None,
+    fit_to_view_after_open: bool = False,
+    prepare_view_replay_after_open: bool = False,
+) -> dict[str, object]:
+    workspace = str(tmp_path.resolve())
+    structure = tmp_path / project_id / "outputs" / f"r{revision:03d}" / "model.cif"
+    structure.parent.mkdir(parents=True, exist_ok=True)
+    structure.write_text("data_model\n", encoding="utf-8")
+    activation_payload: dict[str, object] = {
+        "project_id": project_id,
+        "revision": revision,
+        "take_snapshot": True,
+        "working_dir": workspace,
+    }
+    open_payload: dict[str, object] = {
+        "structure_path": str(structure.resolve()),
+        "project_id": project_id,
+        "revision": revision,
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "working_dir": workspace,
+    }
+    if views is not None:
+        activation_payload["views"] = list(views)
+        open_payload["views"] = list(views)
+    if fit_to_view_after_open:
+        open_payload["fit_to_view_after_open"] = True
+    if prepare_view_replay_after_open:
+        open_payload["prepare_view_replay_after_open"] = True
+    block = {
+        "blocked": True,
+        "reason": "target_window_activation_required_after_execution",
+        "project_id": project_id,
+        "revision": revision,
+        "execution_already_completed": True,
+        "execution_retry_allowed": False,
+        "result_artifacts_preserved": True,
+        "recommended_tool": "material_studio_gui_activate",
+        "gui_open_retry_tool": "material_studio_gui_open_structure",
+        "activation_payload": dict(activation_payload),
+        "gui_open_retry_payload": dict(open_payload),
+        "same_window_required": True,
+        "reuse_existing_window_only": True,
+        "gui_process_launch_allowed": False,
+    }
+    return {
+        "ok": False,
+        "partial_success": True,
+        "status": "execution_completed_gui_activation_required",
+        "error": "focus lost after execution",
+        "workflow": workflow,
+        "project_id": project_id,
+        "revision": revision,
+        "new_revision": revision,
+        "working_dir": workspace,
+        "execution_mode": "execute",
+        "execution_mode_source": "explicit_argument",
+        "execution_completed_before_gui_activation": True,
+        "execution_must_not_repeat": True,
+        "execution_retry_allowed": False,
+        "gui_input_started": False,
+        "gui_process_launched": False,
+        "structure_reopened": False,
+        "planned_outputs": {"structure": str(structure.resolve())},
+        "result": {"success": True, "execution_backend": "fake_materialsscript"},
+        "execution_transaction": {"attempt_id": f"{project_id}-r{revision:03d}"},
+        "gui_postexecution_block": block,
+        "gui_activation_retry_tool": "material_studio_gui_activate",
+        "gui_activation_retry_payload": activation_payload,
+        "gui_open_retry_tool": "material_studio_gui_open_structure",
+        "gui_open_retry_payload": open_payload,
+        "modeling_report": {
+            "workflow": workflow,
+            "execution_mode": "execute",
+            "normality": "execution_complete_gui_deferred",
+            "normality_gate": {"status": "visual_review_required"},
+            "gui": {"hot_loaded": False, "loaded_current_revision": False},
+        },
+    }
+
+
+def _hotloaded_report(project_id: str, revision: int) -> dict[str, object]:
+    return {
+        "project_id": project_id,
+        "revision": revision,
+        "normality": "hot_loaded_and_passed",
+        "execution_mode": "execute",
+        "normality_gate": {
+            "status": "visual_review_required",
+            "can_claim_model_normal": False,
+            "can_claim_live_gui_normal": False,
+        },
+        "next_action_plan": {
+            "recommended_tool": "material_studio_live_project_status",
+            "recommended_action": "inspect_current_revision",
+        },
+        "gui": {
+            "hot_loaded": True,
+            "loaded_current_revision": True,
+            "window_identity_verification": "verified",
+            "single_window_policy_ok": True,
+            "single_window_violation_reasons": [],
+            "snapshot_viewport_likely_visible_model": True,
+            "snapshot_viewport_capture_limitation_possible": False,
+        },
+        "live_summary": {
+            "hot_loaded": True,
+            "current_revision_loaded_in_gui": True,
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+        },
+    }
+
+
+def _successful_activation(project_id: str, revision: int) -> dict[str, object]:
+    return {
+        "ok": True,
+        "activated": True,
+        "activation_verified": True,
+        "window_identity_stable_after_activation": True,
+        "single_window_policy_ok": True,
+        "gui_action_context": {"project_id": project_id, "revision": revision},
+        "window_management": {
+            "activation_required_before_capture_or_input": False,
+            "single_window_policy_ok": True,
+        },
+    }
+
+
+def _successful_open_continuation(
+    *,
+    project_id: str,
+    revision: int,
+    open_payload: dict[str, object],
+) -> dict[str, object]:
+    gui_open = {
+        "project_id": project_id,
+        "revision": revision,
+        "structure_path": open_payload["structure_path"],
+        "reuse_existing_window_only": True,
+        "same_window_open_used": True,
+        "single_window_policy_ok": True,
+        "post_open_single_window_policy_ok": True,
+        "open_result": {"spawned_process_ids": []},
+    }
+    response: dict[str, object] = {
+        "ok": True,
+        **gui_open,
+        "gui_open": dict(gui_open),
+        "structured_sync_context": {
+            "available": True,
+            "project_id": project_id,
+            "revision": revision,
+        },
+        "modeling_report": _hotloaded_report(project_id, revision),
+        "live_summary": {
+            "hot_loaded": True,
+            "current_revision_loaded_in_gui": True,
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+        },
+        "live_request_summary": {
+            "state": "current_revision_loaded",
+            "explicit_hotload_requested": True,
+            "hotload_safe_to_attempt": False,
+        },
+        "live_hotload_preflight": {
+            "status": "current_revision_loaded",
+            "safe_to_attempt_hotload": False,
+            "gui_preflight_verified": True,
+            "current_revision_loaded": True,
+            "blocking_reasons": [],
+        },
+    }
+    if open_payload.get("fit_to_view_after_open") is True:
+        response["post_hotload_fit_to_view"] = {
+            "completed": True,
+            "structure_unchanged": True,
+            "final_snapshot_bound": True,
+        }
+    if open_payload.get("prepare_view_replay_after_open") is True:
+        response["post_hotload_view_replay_prepare"] = {
+            "status": "prepared",
+            "prepared": True,
+            "prepared_revision": revision,
+            "view_names": list(open_payload.get("views") or []),
+        }
+    return response
+
+
+def _successful_live_status(project_id: str, revision: int) -> dict[str, object]:
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "revision": revision,
+        "modeling_report": _hotloaded_report(project_id, revision),
+        "live_summary": {
+            "hot_loaded": True,
+            "current_revision_loaded_in_gui": True,
+            "ready_for_next_edit": True,
+            "ready_for_calculation": False,
+        },
+        "live_request_summary": {
+            "state": "current_revision_loaded",
+            "explicit_hotload_requested": True,
+            "hotload_safe_to_attempt": False,
+        },
+        "live_hotload_preflight": {
+            "status": "current_revision_loaded",
+            "safe_to_attempt_hotload": False,
+            "gui_preflight_verified": True,
+            "current_revision_loaded": True,
+            "blocking_reasons": [],
+        },
+    }
+
+
+def test_live_smoke_resumes_base_postexecution_hotload_without_rerun(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_resume_base"
+    views = ["front", "top", "isometric"]
+    blocked = _deferred_postexecution_live(
+        tmp_path,
+        project_id=project_id,
+        revision=0,
+        workflow="create",
+        views=views,
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+    )
+    modeling_calls: list[str] = []
+    activation_calls: list[dict[str, object]] = []
+    open_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {
+            "ok": True,
+            "state": "ready_for_new_model",
+            "blocking_reasons": [],
+            "review_reasons": [],
+        },
+    )
+
+    def fake_live(user_request, **kwargs):
+        modeling_calls.append(user_request)
+        assert len(modeling_calls) == 1
+        return blocked
+
+    def fake_activate(**kwargs):
+        activation_calls.append(kwargs)
+        return _successful_activation(project_id, 0)
+
+    def fake_open(**kwargs):
+        open_calls.append(kwargs)
+        return _successful_open_continuation(
+            project_id=project_id,
+            revision=0,
+            open_payload=kwargs,
+        )
+
+    monkeypatch.setattr(live_smoke.server, "material_studio_live_modeling_request", fake_live)
+    monkeypatch.setattr(live_smoke.server, "material_studio_gui_activate", fake_activate)
+    monkeypatch.setattr(live_smoke.server, "material_studio_gui_open_structure", fake_open)
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda project_id, **kwargs: _successful_live_status(project_id, 0),
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Build silicon, hot-load it, fit it, and prepare standard views.",
+        hotload=True,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        export_bundle=False,
+        views=views,
+        resume_deferred_hotload=True,
+    )
+
+    assert result["ok"] is True
+    assert len(modeling_calls) == 1
+    assert activation_calls == [blocked["gui_activation_retry_payload"]]
+    assert open_calls == [blocked["gui_open_retry_payload"]]
+    assert open_calls[0]["fit_to_view_after_open"] is True
+    assert open_calls[0]["prepare_view_replay_after_open"] is True
+    assert open_calls[0]["views"] == views
+    continuation = result["base_hotload_continuation"]
+    assert continuation["status"] == "completed"
+    assert continuation["completed"] is True
+    assert continuation["original_block"] == blocked["gui_postexecution_block"]
+    assert continuation["activation_receipt"]["activation_verified"] is True
+    assert continuation["open_continuation_receipt"]["ok"] is True
+    assert continuation["runner_reinvoked"] is False
+    assert continuation["execution_repeated"] is False
+    assert result["live"]["execution_transaction"] == blocked["execution_transaction"]
+    assert result["live"]["execution_must_not_repeat"] is True
+    assert result["live"]["structure_reopened"] is True
+    assert result["live"]["gui_postexecution_block"] is None
+    assert "gui_activation_retry_payload" not in result["live"]
+    assert "gui_open_retry_payload" not in result["live"]
+    assert result["live"]["next_action_plan"]["recommended_tool"] == (
+        "material_studio_live_project_status"
+    )
+    summary = result["summary"]
+    assert summary["postexecution_hotload_continuation_status"] == "completed"
+    assert summary["postexecution_hotload_continuation_attempted"] is True
+    assert summary["postexecution_hotload_continuation_completed"] is True
+    assert summary["postexecution_hotload_continuation_failures"] == []
+
+
+def test_live_smoke_resumes_followup_postexecution_hotload_without_third_modeling_call(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_resume_followup"
+    base = _successful_open_continuation(
+        project_id=project_id,
+        revision=0,
+        open_payload={"structure_path": str(tmp_path / "base.cif")},
+    )
+    base.update(
+        {
+            "workflow": "create",
+            "new_revision": 0,
+            "execution_mode": "execute",
+            "result": {"success": True},
+            "planned_outputs": {"structure": str(tmp_path / "base.cif")},
+        }
+    )
+    followup_block = _deferred_postexecution_live(
+        tmp_path,
+        project_id=project_id,
+        revision=1,
+        workflow="patch",
+        views=["front", "top"],
+    )
+    modeling_calls: list[str] = []
+    gui_calls: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {
+            "ok": True,
+            "state": "ready_for_new_model",
+            "blocking_reasons": [],
+            "review_reasons": [],
+        },
+    )
+
+    def fake_live(user_request, **kwargs):
+        modeling_calls.append(user_request)
+        if len(modeling_calls) == 1:
+            return base
+        if len(modeling_calls) == 2:
+            assert kwargs["project_id"] == project_id
+            return followup_block
+        raise AssertionError("post-execution continuation must not invoke modeling again")
+
+    def fake_activate(**kwargs):
+        gui_calls.append(("activate", kwargs))
+        return _successful_activation(project_id, 1)
+
+    def fake_open(**kwargs):
+        gui_calls.append(("open", kwargs))
+        return _successful_open_continuation(
+            project_id=project_id,
+            revision=1,
+            open_payload=kwargs,
+        )
+
+    monkeypatch.setattr(live_smoke.server, "material_studio_live_modeling_request", fake_live)
+    monkeypatch.setattr(live_smoke.server, "material_studio_gui_activate", fake_activate)
+    monkeypatch.setattr(live_smoke.server, "material_studio_gui_open_structure", fake_open)
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda project_id, **kwargs: _successful_live_status(project_id, 1),
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Build silicon and hot-load it.",
+        follow_up_request="Move one atom and hot-load the current revision.",
+        scenario=None,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        export_bundle=False,
+        views=["front", "top"],
+        resume_deferred_hotload=True,
+    )
+
+    assert result["ok"] is True
+    assert len(modeling_calls) == 2
+    assert [name for name, _ in gui_calls] == ["activate", "open"]
+    assert result["base_hotload_continuation"]["status"] == "not_required"
+    assert result["followup_hotload_continuation"]["status"] == "completed"
+    assert result["followup_live"]["workflow"] == "patch"
+    assert result["followup_live"]["new_revision"] == 1
+    assert result["summary"]["followup_postexecution_hotload_continuation_status"] == (
+        "completed"
+    )
+
+
+def test_live_smoke_activation_failure_does_not_open_or_run_followup(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_resume_activation_failure"
+    blocked = _deferred_postexecution_live(
+        tmp_path,
+        project_id=project_id,
+        revision=0,
+        workflow="create",
+    )
+    modeling_calls: list[str] = []
+    open_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {
+            "ok": True,
+            "state": "ready_for_new_model",
+            "blocking_reasons": [],
+            "review_reasons": [],
+        },
+    )
+
+    def fake_live(user_request, **kwargs):
+        modeling_calls.append(user_request)
+        if len(modeling_calls) > 1:
+            raise AssertionError("follow-up must remain blocked after activation failure")
+        return blocked
+
+    monkeypatch.setattr(live_smoke.server, "material_studio_live_modeling_request", fake_live)
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_gui_activate",
+        lambda **kwargs: {
+            "ok": True,
+            "activation_verified": True,
+            "window_identity_stable_after_activation": True,
+            "single_window_policy_ok": True,
+            "snapshot_status": "deferred_before_capture",
+            "snapshot_deferred": True,
+            "snapshot_focus_lost_after_activation": True,
+            "gui_action_context": {"project_id": project_id, "revision": 0},
+            "window_management": {
+                "activation_required_before_capture_or_input": False,
+                "single_window_policy_ok": True,
+            },
+        },
+    )
+
+    def fail_open(**kwargs):
+        open_calls.append(kwargs)
+        raise AssertionError("open must not run after failed activation")
+
+    monkeypatch.setattr(live_smoke.server, "material_studio_gui_open_structure", fail_open)
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda project_id, **kwargs: _successful_live_status(project_id, 0),
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Build silicon and hot-load it.",
+        follow_up_request="Apply one more live edit.",
+        scenario=None,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+        export_bundle=False,
+        resume_deferred_hotload=True,
+    )
+
+    assert result["ok"] is False
+    assert len(modeling_calls) == 1
+    assert open_calls == []
+    continuation = result["base_hotload_continuation"]
+    assert continuation["status"] == "activation_failed"
+    assert continuation["attempted"] is True
+    assert continuation["completed"] is False
+    assert any(
+        item["type"] == "activation_snapshot_deferred_before_capture"
+        for item in continuation["failures"]
+    )
+    assert result["followup_hotload_continuation"]["status"] == "base_request_not_ready"
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "expected_failure"),
+    [
+        ("project", "activation_payload_project_mismatch"),
+        ("revision", "open_payload_revision_mismatch"),
+        ("workspace", "continuation_payload_requested_workspace_mismatch"),
+    ],
+)
+def test_postexecution_hotload_contract_rejects_payload_identity_mismatch_before_gui(
+    monkeypatch,
+    tmp_path: Path,
+    mismatch: str,
+    expected_failure: str,
+) -> None:
+    response = _deferred_postexecution_live(
+        tmp_path,
+        project_id="smoke_payload_binding",
+        revision=2,
+        workflow="patch",
+    )
+    activation_payload = response["gui_activation_retry_payload"]
+    open_payload = response["gui_open_retry_payload"]
+    block = response["gui_postexecution_block"]
+    if mismatch == "project":
+        activation_payload["project_id"] = "wrong_project"
+        block["activation_payload"] = dict(activation_payload)
+    elif mismatch == "revision":
+        open_payload["revision"] = 3
+        block["gui_open_retry_payload"] = dict(open_payload)
+    else:
+        wrong_workspace = str((tmp_path / "other_workspace").resolve())
+        activation_payload["working_dir"] = wrong_workspace
+        open_payload["working_dir"] = wrong_workspace
+        block["activation_payload"] = dict(activation_payload)
+        block["gui_open_retry_payload"] = dict(open_payload)
+
+    gui_calls: list[str] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_gui_activate",
+        lambda **kwargs: gui_calls.append("activate"),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_gui_open_structure",
+        lambda **kwargs: gui_calls.append("open"),
+    )
+
+    effective, receipt = live_smoke._resume_postexecution_hotload(
+        response,
+        enabled=True,
+        phase="base",
+        working_dir=str(tmp_path),
+    )
+
+    assert effective is response
+    assert receipt["status"] == "contract_rejected"
+    assert receipt["eligible"] is False
+    assert receipt["attempted"] is False
+    assert expected_failure in {item["type"] for item in receipt["failures"]}
+    assert gui_calls == []
+
+
+def test_live_smoke_resume_flag_is_explicit_and_preview_does_not_touch_gui(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    parser = live_smoke._build_parser()
+    assert parser.parse_args([]).resume_deferred_hotload is False
+    assert parser.parse_args(["--resume-deferred-hotload"]).resume_deferred_hotload is True
+
+    live = {
+        "ok": True,
+        "workflow": "create",
+        "project_id": "preview_no_gui_resume",
+        "revision": 0,
+        "new_revision": 0,
+        "execution_mode": "preview",
+        "planned_outputs": {"structure": str(tmp_path / "preview.cif")},
+        "modeling_report": {
+            "normality": "preview_ready",
+            "execution_mode": "preview",
+            "normality_gate": {"status": "preview_only"},
+            "gui": {"hot_loaded": False, "loaded_current_revision": False},
+        },
+    }
+    gui_calls: list[str] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {
+            "ok": True,
+            "state": "ready_for_new_model",
+            "blocking_reasons": [],
+            "review_reasons": [],
+        },
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_modeling_request",
+        lambda *args, **kwargs: live,
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_gui_activate",
+        lambda **kwargs: gui_calls.append("activate"),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_gui_open_structure",
+        lambda **kwargs: gui_calls.append("open"),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda project_id, **kwargs: {
+            "ok": True,
+            "project_id": project_id,
+            "revision": 0,
+            "modeling_report": live["modeling_report"],
+        },
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Preview silicon.",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        export_bundle=False,
+        take_snapshot=False,
+        resume_deferred_hotload=True,
+    )
+
+    assert result["ok"] is True
+    assert gui_calls == []
+    assert result["base_hotload_continuation"]["status"] == "not_required"
+    assert result["summary"]["postexecution_hotload_continuation_status"] == "not_required"
 
 
 def test_same_window_hotload_alias_is_recognized() -> None:

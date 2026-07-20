@@ -241,6 +241,145 @@ def _agent_result_receipt() -> dict[str, Any]:
     }
 
 
+def _source_pin() -> dict[str, Any]:
+    return {
+        "source_id": "cod-1010995",
+        "provider": "Crystallography Open Database",
+        "artifact_url": "https://www.crystallography.net/cod/1010995.cif@278158",
+        "provider_revision": "278158",
+        "expected_sha256": "7bf61ff721dae3b8fa263506aa85e0de5a83bca822744d58e9d30670200eafbb",
+        "expected_byte_count": 3387,
+        "media_type": "chemical/x-cif",
+        "license_spdx_id": "CC0-1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "redistributable": True,
+    }
+
+
+def _reference_work_order_v11() -> dict[str, Any]:
+    work_order = _work_order()
+    work_order.update(
+        {
+            "contract_version": "1.1.0",
+            "work_order_id": "WO-REFERENCE-001",
+            "role": "reference_data_agent",
+            "expected_branch": "agent/reference-ingestion-v1",
+            "allowed_paths": [
+                "src/material_studio_mcp_server/reference_data/**",
+                "tests/reference_data/**",
+            ],
+            "forbidden_paths": [
+                "src/material_studio_mcp_server/server.py",
+                "src/material_studio_mcp_server/state/**",
+            ],
+            "source_pins": [_source_pin()],
+        }
+    )
+    work_order["reference_access"].update(
+        {
+            "policy": "reference_builder",
+            "allowed_sources": [_source_pin()["artifact_url"]],
+            "raw_reference_structure_access": True,
+        }
+    )
+    work_order["acceptance"]["criteria"] = [
+        {
+            "criterion_id": "source-pin-bound",
+            "acceptance_domain": "artifact_provenance",
+            "validity_state": None,
+            "metric": "reference.source_pin_bound",
+            "operator": "eq",
+            "expected": True,
+            "severity": "hard_failure",
+            "evidence_required": True,
+            "real_environment_required": False,
+            "required_real_environment": None,
+        }
+    ]
+    return work_order
+
+
+def _reference_receipt_v11() -> dict[str, Any]:
+    work_order = _reference_work_order_v11()
+    receipt = _agent_result_receipt()
+    receipt.update(
+        {
+            "contract_version": "1.1.0",
+            "work_order_id": "WO-REFERENCE-001",
+            "role": "reference_data_agent",
+            "branch": "agent/reference-ingestion-v1",
+            "changed_paths": [
+                "src/material_studio_mcp_server/reference_data/contracts.py"
+            ],
+            "new_capabilities": ["Pinned immutable reference ingestion."],
+            "unsupported_capabilities": ["Reference canonicalization."],
+            "reference_sources": [_source_pin()["artifact_url"]],
+            "acceptance_results": [
+                {
+                    "criterion_id": "source-pin-bound",
+                    "severity": "hard_failure",
+                    "status": "PASS",
+                    "observed": True,
+                    "evidence_paths": ["artifacts/source-pin.json"],
+                    "notes": [],
+                }
+            ],
+        }
+    )
+    receipt["reference_isolation"].update(
+        {
+            "policy": "reference_builder",
+            "hidden_reference_read": False,
+        }
+    )
+    receipt["work_order_binding"].update(
+        {
+            "validator_contract": "work_order_result_reconciliation_v2",
+            "work_order_sha256": canonical_sha256(work_order),
+            "source_pins": work_order["source_pins"],
+            "source_pins_reconciled": True,
+            "acceptance_observations_match": True,
+        }
+    )
+    return receipt
+
+
+def _unpinned_work_order_v11(policy: str) -> dict[str, Any]:
+    work_order = _work_order()
+    work_order["contract_version"] = "1.1.0"
+    work_order["reference_access"].update(
+        {
+            "policy": policy,
+            "allowed_sources": ["https://example.invalid/authorized-metadata.json"],
+        }
+    )
+    work_order["acceptance"]["criteria"][0].update(
+        {
+            "acceptance_domain": "contract_infrastructure",
+            "validity_state": None,
+        }
+    )
+    return work_order
+
+
+def _unpinned_receipt_v11(policy: str) -> dict[str, Any]:
+    work_order = _unpinned_work_order_v11(policy)
+    receipt = _agent_result_receipt()
+    receipt["contract_version"] = "1.1.0"
+    receipt["reference_sources"] = work_order["reference_access"]["allowed_sources"]
+    receipt["reference_isolation"]["policy"] = policy
+    receipt["work_order_binding"].update(
+        {
+            "validator_contract": "work_order_result_reconciliation_v2",
+            "work_order_sha256": canonical_sha256(work_order),
+            "acceptance_observations_match": True,
+            "source_pins_reconciled": True,
+            "source_pins": [],
+        }
+    )
+    return receipt
+
+
 def _stage(callable_name: str, inputs: list[str], outputs: list[str]) -> dict[str, Any]:
     return {
         "callable": callable_name,
@@ -534,6 +673,541 @@ def test_runtime_work_order_and_receipt_are_valid() -> None:
     _assert_valid(validator, _agent_result_receipt())
 
 
+def test_v10_compatibility_keeps_legacy_observed_and_validity_rules() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _work_order()
+    receipt = _agent_result_receipt()
+    del receipt["acceptance_results"][0]["observed"]
+
+    _assert_valid(validator, work_order)
+    _assert_valid(validator, receipt)
+    assert validate_pair(work_order, receipt)["ok"] is True
+
+    invalid_work_order = copy.deepcopy(work_order)
+    invalid_work_order["acceptance"]["criteria"][0]["validity_state"] = None
+    _assert_invalid(validator, invalid_work_order)
+
+    invalid_work_order = copy.deepcopy(work_order)
+    invalid_work_order["acceptance"]["criteria"][0]["acceptance_domain"] = "artifact_provenance"
+    _assert_invalid(validator, invalid_work_order)
+
+    invalid_work_order = copy.deepcopy(work_order)
+    invalid_work_order["source_pins"] = [_source_pin()]
+    _assert_invalid(validator, invalid_work_order)
+
+    for field, value in (
+        ("acceptance_observations_match", True),
+        ("source_pins_reconciled", True),
+        ("source_pins", [_source_pin()]),
+    ):
+        invalid_receipt = copy.deepcopy(receipt)
+        invalid_receipt["work_order_binding"][field] = value
+        _assert_invalid(validator, invalid_receipt)
+
+    invalid_receipt = _agent_result_receipt()
+    invalid_receipt["acceptance_results"][0]["observed"] = None
+    _assert_invalid(validator, invalid_receipt)
+
+    for empty_observation in ("", []):
+        invalid_receipt = _agent_result_receipt()
+        invalid_receipt["acceptance_results"][0]["observed"] = empty_observation
+        _assert_invalid(validator, invalid_receipt)
+
+    legacy_operator_value = copy.deepcopy(work_order)
+    legacy_operator_value["acceptance"]["criteria"][0].update(
+        {"operator": "lt", "expected": "legacy-compatible-value"}
+    )
+    _assert_valid(validator, legacy_operator_value)
+
+
+def test_unknown_contract_versions_fail_closed_without_v1_downgrade() -> None:
+    validator = _validator("work_order.schema.json")
+    unknown = _work_order()
+    unknown["contract_version"] = "1.2.0"
+    _assert_invalid(validator, unknown)
+
+    receipt = _agent_result_receipt()
+    receipt["contract_version"] = "1.2.0"
+    _assert_invalid(validator, receipt)
+
+
+def test_v11_reference_work_order_pins_source_and_reconciles_observations() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+
+    _assert_valid(validator, work_order)
+    _assert_valid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+
+    assert report["ok"] is True
+    assert report["validator_contract"] == "work_order_result_reconciliation_v2"
+    assert report["checks"]["source_pins_reconciled"] is True
+    assert report["checks"]["acceptance_observations_match"] is True
+
+
+@pytest.mark.parametrize("policy", ["metadata_only", "task_only"])
+def test_v11_unpinned_source_policies_use_authorized_subset_rules(policy: str) -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _unpinned_work_order_v11(policy)
+    receipt = _unpinned_receipt_v11(policy)
+
+    _assert_valid(validator, work_order)
+    _assert_valid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is True
+    assert report["checks"]["reference_access_matches"] is True
+    assert report["checks"]["source_pins_reconciled"] is True
+
+    receipt["reference_sources"].append("https://example.invalid/unauthorized.json")
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["reference_access_matches"] is False
+    assert report["checks"]["source_pins_reconciled"] is True
+
+
+def test_v11_reference_work_order_requires_machine_readable_source_pins() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    del work_order["source_pins"]
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"][0]["expected_byte_count"] = 0
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"][0]["expected_sha256"] = "not-a-sha256"
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"][0]["artifact_url"] = (
+        "https://www.crystallography.net/cod/1010995.cif"
+    )
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"][0]["provider"] = "Different Provider"
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"][0]["provider_revision"] = "278159"
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+    receipt["work_order_binding"]["source_pins"] = work_order["source_pins"]
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+    assert any("provider revision" in error for error in report["errors"])
+
+
+def test_v11_acceptance_domains_do_not_mislabel_infrastructure_as_model_validity() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    del work_order["acceptance"]["criteria"][0]["acceptance_domain"]
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    work_order["acceptance"]["criteria"][0]["validity_state"] = "structure_valid"
+    _assert_invalid(validator, work_order)
+
+    work_order = _reference_work_order_v11()
+    criterion = work_order["acceptance"]["criteria"][0]
+    criterion["acceptance_domain"] = "model_validity"
+    criterion["validity_state"] = None
+    _assert_invalid(validator, work_order)
+
+
+def test_executed_acceptance_result_requires_observed_value() -> None:
+    validator = _validator("work_order.schema.json")
+    receipt = _reference_receipt_v11()
+    del receipt["acceptance_results"][0]["observed"]
+    _assert_invalid(validator, receipt)
+
+    receipt["acceptance_results"][0].update(
+        {
+            "status": "NOT_RUN",
+            "evidence_paths": [],
+        }
+    )
+    receipt["overall_status"] = "FAIL"
+    _assert_valid(validator, receipt)
+
+
+def test_v11_reconciliation_rejects_self_asserted_acceptance_and_source_pins() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = False
+    _assert_valid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["acceptance_observations_match"] is False
+
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["status"] = "FAIL"
+    del receipt["acceptance_results"][0]["observed"]
+    receipt["overall_status"] = "FAIL"
+    _assert_invalid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+    assert report["checks"]["acceptance_observations_match"] is False
+
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["source_pins"][0]["expected_sha256"] = "e" * 64
+    _assert_valid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    receipt["reference_sources"].append("https://example.invalid/extra.cif")
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+
+    work_order = _reference_work_order_v11()
+    work_order["reference_access"]["allowed_sources"] = [
+        "https://example.invalid/unpinned.cif"
+    ]
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    receipt["reference_sources"] = []
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+
+    duplicate = copy.deepcopy(_source_pin())
+    duplicate["artifact_url"] = "https://www.crystallography.net/cod/1010996.cif@278158"
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"].append(duplicate)
+    work_order["reference_access"]["allowed_sources"].append(duplicate["artifact_url"])
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+    receipt["work_order_binding"]["source_pins"] = work_order["source_pins"]
+    receipt["reference_sources"] = [
+        item["artifact_url"] for item in work_order["source_pins"]
+    ]
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert any("duplicate source pin IDs" in error for error in report["errors"])
+
+    duplicate_url = copy.deepcopy(_source_pin())
+    duplicate_url["source_id"] = "cod-1010995-alias"
+    work_order = _reference_work_order_v11()
+    work_order["source_pins"].append(duplicate_url)
+    work_order["reference_access"]["allowed_sources"].append(duplicate_url["artifact_url"])
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+    receipt["work_order_binding"]["source_pins"] = work_order["source_pins"]
+    receipt["reference_sources"] = [item["artifact_url"] for item in work_order["source_pins"]]
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert any("duplicate source pin URLs" in error for error in report["errors"])
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("provider", "Different Provider"),
+        ("artifact_url", "https://www.crystallography.net/cod/1010995.cif@278157"),
+        ("provider_revision", "278157"),
+        ("expected_sha256", "e" * 64),
+        ("expected_byte_count", 3388),
+        ("media_type", "text/plain"),
+        ("license_spdx_id", "MIT"),
+        ("license_url", "https://opensource.org/license/mit"),
+        ("redistributable", False),
+    ],
+)
+def test_v11_receipt_source_pin_field_mismatch_fails_reconciliation(
+    field: str,
+    replacement: Any,
+) -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["source_pins"][0][field] = replacement
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+
+
+@pytest.mark.parametrize(
+    ("operator", "expected", "observed", "tolerance"),
+    [
+        ("eq", True, True, None),
+        ("eq", 10**400, 10**400, None),
+        ("eq", [1], [1.0], None),
+        ("eq", 1.0, 1.05, 0.1),
+        ("ne", False, True, None),
+        ("ne", [1], [True], None),
+        ("lt", 2, 1, None),
+        ("lte", 1, 1, None),
+        ("gt", 1, 2, None),
+        ("gte", 2, 2, None),
+        ("contains", "SiC", "3C-SiC", None),
+        ("contains", ["Si", "C"], ["C", "Si", "H"], None),
+        ("contains", 1, [1.0], None),
+        ("set_eq", ["Si", "C"], ["C", "Si", "Si"], None),
+        ("set_eq", [1], [1.0], None),
+        ("present", True, "bound", None),
+        ("present", True, False, None),
+        ("present", True, 0, None),
+        ("present", True, "", None),
+    ],
+)
+def test_v11_acceptance_operator_truth_table(
+    operator: str,
+    expected: Any,
+    observed: Any,
+    tolerance: float | None,
+) -> None:
+    work_order = _reference_work_order_v11()
+    criterion = work_order["acceptance"]["criteria"][0]
+    criterion.update({"operator": operator, "expected": expected})
+    if tolerance is not None:
+        criterion["tolerance"] = tolerance
+
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = observed
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is True
+    assert report["checks"]["acceptance_observations_match"] is True
+
+
+def test_v11_acceptance_observation_keeps_boolean_and_integer_distinct() -> None:
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = 1
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["acceptance_observations_match"] is False
+
+
+def test_v11_acceptance_numeric_equality_accepts_int_and_float() -> None:
+    work_order = _reference_work_order_v11()
+    work_order["acceptance"]["criteria"][0].update(
+        {"expected": 1, "operator": "eq"}
+    )
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = 1.0
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+
+    report = validate_pair(work_order, receipt)
+    assert report["checks"]["acceptance_observations_match"] is True
+    assert report["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("operator", "expected", "observed"),
+    [
+        ("eq", True, False),
+        ("eq", 1, True),
+        ("eq", [1], [True]),
+        ("ne", False, False),
+        ("ne", [1], [1.0]),
+        ("lt", 2, 3),
+        ("lte", 1, 2),
+        ("gt", 1, 0),
+        ("gte", 2, 1),
+        ("contains", "SiC", "GaN"),
+        ("contains", ["Si", "C"], ["Si"]),
+        ("contains", True, [1]),
+        ("contains", 1, [True]),
+        ("set_eq", ["Si", "C"], ["Si"]),
+        ("set_eq", [True], [1]),
+        ("set_eq", [1], [True]),
+        ("present", True, None),
+    ],
+)
+def test_v11_acceptance_operator_negative_truth_table(
+    operator: str,
+    expected: Any,
+    observed: Any,
+) -> None:
+    work_order = _reference_work_order_v11()
+    work_order["acceptance"]["criteria"][0].update(
+        {"operator": operator, "expected": expected}
+    )
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = observed
+    receipt["work_order_binding"]["work_order_sha256"] = canonical_sha256(work_order)
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["acceptance_observations_match"] is False
+
+
+def test_v11_acceptance_status_must_agree_with_observed_value() -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["status"] = "FAIL"
+    receipt["overall_status"] = "FAIL"
+    _assert_valid(validator, receipt)
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["acceptance_observations_match"] is False
+
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0].update(
+        {"status": "NOT_RUN", "evidence_paths": []}
+    )
+    receipt["overall_status"] = "FAIL"
+    _assert_invalid(validator, receipt)
+
+    del receipt["acceptance_results"][0]["observed"]
+    _assert_valid(validator, receipt)
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert any("was not run" in error for error in report["errors"])
+
+
+@pytest.mark.parametrize(
+    ("operator", "expected", "tolerance"),
+    [
+        ("lt", "SiC", None),
+        ("set_eq", True, None),
+        ("present", False, None),
+        ("present", True, 0.1),
+        ("eq", True, 0.1),
+        ("contains", "SiC", 0.1),
+    ],
+)
+def test_v11_acceptance_schema_rejects_incompatible_operator_values(
+    operator: str,
+    expected: Any,
+    tolerance: float | None,
+) -> None:
+    validator = _validator("work_order.schema.json")
+    work_order = _reference_work_order_v11()
+    criterion = work_order["acceptance"]["criteria"][0]
+    criterion.update({"operator": operator, "expected": expected})
+    if tolerance is not None:
+        criterion["tolerance"] = tolerance
+    _assert_invalid(validator, work_order)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "goal_id_matches",
+        "contract_version_matches",
+        "work_order_id_matches",
+        "role_matches",
+        "base_sha_matches",
+        "branch_matches",
+        "dependencies_reconciled",
+        "required_test_ids_complete",
+        "acceptance_criterion_ids_complete",
+        "changed_paths_within_allowed_paths",
+        "forbidden_paths_untouched",
+        "path_scopes_non_overlapping",
+        "reference_access_matches",
+        "acceptance_observations_match",
+        "source_pins_reconciled",
+    ],
+)
+def test_v11_false_binding_checks_require_failed_receipt_status(field: str) -> None:
+    validator = _validator("work_order.schema.json")
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"][field] = False
+    _assert_invalid(validator, receipt)
+
+    receipt["overall_status"] = "FAIL"
+    _assert_valid(validator, receipt)
+    assert validate_pair(_reference_work_order_v11(), receipt)["ok"] is False
+
+
+@pytest.mark.parametrize("replacement", [0, 1, "true"])
+def test_v11_binding_checks_reject_non_boolean_values(replacement: Any) -> None:
+    validator = _validator("work_order.schema.json")
+    receipt = _reference_receipt_v11()
+    receipt["work_order_binding"]["source_pins_reconciled"] = replacement
+    _assert_invalid(validator, receipt)
+
+
+@pytest.mark.parametrize(
+    "field", ["acceptance_observations_match", "source_pins_reconciled", "source_pins"]
+)
+def test_v11_binding_requires_all_v2_fields(field: str) -> None:
+    validator = _validator("work_order.schema.json")
+    receipt = _reference_receipt_v11()
+    del receipt["work_order_binding"][field]
+    _assert_invalid(validator, receipt)
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+@pytest.mark.parametrize("location", ["expected", "observed", "tolerance"])
+def test_v11_non_finite_numbers_fail_closed(location: str, value: float) -> None:
+    work_order = _reference_work_order_v11()
+    receipt = _reference_receipt_v11()
+    if location == "expected":
+        work_order["acceptance"]["criteria"][0]["expected"] = value
+    elif location == "observed":
+        receipt["acceptance_results"][0]["observed"] = value
+    else:
+        work_order["acceptance"]["criteria"][0].update(
+            {"expected": 1.0, "tolerance": value}
+        )
+
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert any("non-finite JSON number" in error for error in report["errors"])
+
+
+def test_json_exponent_overflow_and_canonical_hash_reject_non_finite_numbers() -> None:
+    overflow = json.loads("1e999")
+    assert overflow == float("inf")
+    with pytest.raises(ValueError):
+        canonical_sha256({"value": overflow})
+
+    work_order = _reference_work_order_v11()
+    work_order["acceptance"]["criteria"][0]["expected"] = overflow
+    report = validate_pair(work_order, _reference_receipt_v11())
+    assert report["ok"] is False
+    assert report["work_order_sha256"] is None
+
+
+def test_schema_invalid_observations_and_source_pins_return_structured_rejection() -> None:
+    work_order = _reference_work_order_v11()
+    work_order["acceptance"]["criteria"][0].update(
+        {"operator": "set_eq", "expected": ["Si"]}
+    )
+    receipt = _reference_receipt_v11()
+    receipt["acceptance_results"][0]["observed"] = [{}]
+    report = validate_pair(work_order, receipt)
+    assert report["ok"] is False
+    assert report["checks"]["acceptance_observations_match"] is False
+    assert any(error.startswith("receipt:schema:") for error in report["errors"])
+
+    malformed_work_order = _reference_work_order_v11()
+    malformed_work_order["source_pins"] = [[]]
+    report = validate_pair(malformed_work_order, _reference_receipt_v11())
+    assert report["ok"] is False
+    assert report["checks"]["source_pins_reconciled"] is False
+    assert any(error.startswith("work_order:schema:") for error in report["errors"])
+
+    report = validate_pair([], {})  # type: ignore[arg-type]
+    assert report["ok"] is False
+    assert report["validator_contract"] is None
+    assert any("reconciliation failed closed" in error for error in report["errors"])
+
+
 def test_modeling_role_cannot_receive_hidden_reference_policy() -> None:
     validator = _validator("work_order.schema.json")
     work_order = _work_order()
@@ -686,7 +1360,7 @@ def test_work_order_reconciliation_binds_sources_versions_paths_and_real_runs() 
 
     receipt = _agent_result_receipt()
     receipt["contract_version"] = "2.0.0"
-    _assert_valid(validator, receipt)
+    _assert_invalid(validator, receipt)
     report = validate_pair(work_order, receipt)
     assert report["ok"] is False
     assert report["checks"]["contract_version_matches"] is False

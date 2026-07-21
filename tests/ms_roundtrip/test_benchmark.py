@@ -28,6 +28,7 @@ from material_studio_mcp_server.ms_roundtrip import (
 from material_studio_mcp_server.ms_roundtrip.comparison import (
     _canonicalizer_compatible_cif,
 )
+from material_studio_mcp_server.specs import ModelSpec
 from tests.domains.surface.test_blind_benchmark import (
     _analytical_oracle_cif_bytes,
 )
@@ -146,6 +147,92 @@ def _prepare_offline_run(tmp_path: Path):
     return result, roots, submission, observations, payloads
 
 
+def _evaluate_completed_roundtrip(
+    tmp_path: Path,
+    *,
+    result: RoundtripExecutionResult,
+    model: ModelSpec,
+    source_path: Path,
+    evaluation_run_id: str,
+):
+    """Freeze a completed run, then enter the isolated evaluator harness."""
+
+    assert result.status == "PASS"
+    assert result.output_path is not None
+    assert result.receipt.comparison is not None
+    candidate_root = tmp_path / "candidate" / "sic_3c_ms_roundtrip"
+    candidate_root.mkdir(parents=True)
+    structure_path = candidate_root / "structure.cif"
+    structure_path.write_bytes(source_path.read_bytes())
+    output_path = candidate_root / "ms_roundtrip_output.cif"
+    copy_roundtrip_output(result.output_path, output_path)
+    model_spec_path = candidate_root / "model_spec.json"
+    write_model_spec(model_spec_path, model)
+
+    payloads = {
+        "model_spec.json": model_spec_path.read_bytes(),
+        "structure.cif": structure_path.read_bytes(),
+        "ms_roundtrip_output.cif": output_path.read_bytes(),
+    }
+    hashes = {name: _sha256(payload) for name, payload in payloads.items()}
+    submission = CandidateSubmission(
+        structure_relative_path="structure.cif",
+        structure_sha256=hashes["structure.cif"],
+        artifacts=(
+            SubmittedCandidateArtifact(
+                kind="model_spec",
+                relative_path="model_spec.json",
+                sha256=hashes["model_spec.json"],
+            ),
+            SubmittedCandidateArtifact(
+                kind="structure",
+                relative_path="structure.cif",
+                sha256=hashes["structure.cif"],
+            ),
+            SubmittedCandidateArtifact(
+                kind="ms_roundtrip_structure",
+                relative_path="ms_roundtrip_output.cif",
+                sha256=hashes["ms_roundtrip_output.cif"],
+            ),
+        ),
+    )
+    observations = TrustedDomainObservations(
+        observations=(
+            TrustedDomainObservation(
+                metric=SURFACE_VACUUM_METRIC,
+                observed=abs(
+                    result.receipt.comparison.output_vacuum_angstrom - 15.0
+                ),
+                evidence_sha256=hashes["ms_roundtrip_output.cif"],
+            ),
+        )
+    )
+
+    # Reference bytes enter only after every candidate artifact is frozen.
+    reference_root = tmp_path / "reference" / "sic_3c_ms_roundtrip"
+    evaluator_root = tmp_path / "evaluation" / "sic_3c_ms_roundtrip"
+    reference_root.mkdir(parents=True)
+    evaluator_root.mkdir(parents=True)
+    oracle = _analytical_oracle_cif_bytes()
+    assert _sha256(oracle) == _load_case()["reference"]["structure_artifacts"][0]["sha256"]
+    (reference_root / "analytical_oracle.cif").write_bytes(oracle)
+    acceptance = evaluate_roundtrip_benchmark(
+        _load_case(),
+        roots=EvaluationRoots(
+            reference_root=reference_root,
+            candidate_root=candidate_root,
+            evaluator_output_root=evaluator_root,
+        ),
+        submission=submission,
+        evaluation_run_id=evaluation_run_id,
+        trusted_domain_observations=observations,
+        receipt=result.receipt,
+        receipt_sha256=roundtrip_receipt_sha256(result.receipt),
+    )
+    assert_coordinate_free_payload(acceptance.model_dump(mode="json"))
+    return acceptance
+
+
 def test_offline_benchmark_case_is_schema_valid_and_shared_ms_gate_is_disabled() -> None:
     case = _load_case()
     schema = json.loads(
@@ -190,6 +277,27 @@ def test_offline_fake_runner_cannot_claim_real_ms_acceptance(tmp_path: Path) -> 
     candidate_root = roots.candidate_root
     after = {name: (candidate_root / name).read_bytes() for name in before}
     assert after == before
+
+
+def test_offline_completed_roundtrip_harness_preserves_not_run_real_gate(
+    tmp_path: Path,
+) -> None:
+    result, roots, _submission, _observations, _before = _prepare_offline_run(
+        tmp_path / "first"
+    )
+    model = ModelSpec.model_validate_json(
+        (roots.candidate_root / "model_spec.json").read_text(encoding="utf-8")
+    )
+    acceptance = _evaluate_completed_roundtrip(
+        tmp_path / "second",
+        result=result,
+        model=model,
+        source_path=roots.candidate_root / "structure.cif",
+        evaluation_run_id="sic-3c-roundtrip-offline-completed",
+    )
+    assert acceptance.states.ms_roundtrip_valid == "NOT_RUN"
+    assert acceptance.real_materials_studio == "NOT_RUN"
+    assert acceptance.overall_status == "NOT_RUN"
 
 
 def test_offline_benchmark_rejects_unbound_output_observation(tmp_path: Path) -> None:

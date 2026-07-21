@@ -18,9 +18,13 @@ from material_studio_mcp_server.ms_roundtrip import (
     RoundtripRequest,
     capture_gui_inventory,
 )
+from material_studio_mcp_server.ms_roundtrip.comparison import (
+    _canonicalizer_compatible_cif,
+)
 from material_studio_mcp_server.runner import MaterialStudioRunner
 
 from ._helpers import build_candidate
+from .test_benchmark import _evaluate_completed_roundtrip
 
 
 class _InventoryOnlyWindowsBackend:
@@ -61,9 +65,16 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
         "MATERIAL_STUDIO_COMMAND_TEMPLATE must be unset",
     )
 
-    # MatServer 20.1 still expands several internal filenames under MAX_PATH.
-    # Keep real acceptance artifacts isolated and short, then remove them.
-    tmp_path = Path(tempfile.mkdtemp(prefix="msrt-"))
+    # MatServer 20.1 still expands several internal filenames under MAX_PATH,
+    # while evaluator roots reject Windows 8.3 aliases. Use one explicit,
+    # long-form user temp parent with a short isolated child name.
+    temp_parent = Path(
+        os.environ.get(
+            "LOCALAPPDATA",
+            str(Path.home() / "AppData" / "Local"),
+        )
+    ) / "Temp"
+    tmp_path = Path(tempfile.mkdtemp(prefix="msrt-", dir=temp_parent))
     request.addfinalizer(lambda: shutil.rmtree(tmp_path, ignore_errors=True))
 
     config = resolve_config(cwd=tmp_path)
@@ -105,8 +116,16 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
         )
     )
 
+    raw_candidate_path = tmp_path / "staging" / "raw.cif"
+    model = build_candidate(
+        raw_candidate_path,
+        project_id="sic_roundtrip_real_ms_20_1",
+    )
     candidate_path = tmp_path / "candidate" / "structure.cif"
-    build_candidate(candidate_path, project_id="sic_roundtrip_real_ms_20_1")
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_bytes(
+        _canonicalizer_compatible_cif(raw_candidate_path.read_bytes())
+    )
     candidate_before = candidate_path.read_bytes()
     candidate_sha256 = hashlib.sha256(candidate_before).hexdigest()
     output_root = tmp_path / "runs"
@@ -232,3 +251,29 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
 
     assert result.receipt_artifact.sha256 == _sha256(result.receipt_path)
     assert result.receipt_artifact.byte_count == result.receipt_path.stat().st_size
+
+    acceptance = _evaluate_completed_roundtrip(
+        tmp_path / "benchmark",
+        result=result,
+        model=model,
+        source_path=candidate_path,
+        evaluation_run_id="sic-3c-roundtrip-real-ms-20.1",
+    )
+    assert acceptance.shared_evaluator_states.model_dump() == {
+        "structure_valid": "PASS",
+        "semiconductor_domain_valid": "PASS",
+        "ms_roundtrip_valid": "NOT_RUN",
+        "calculation_evidence_valid": "NOT_RUN",
+        "scientifically_verified": "NOT_RUN",
+    }
+    assert acceptance.states.model_dump() == {
+        "structure_valid": "PASS",
+        "semiconductor_domain_valid": "PASS",
+        "ms_roundtrip_valid": "PASS",
+        "calculation_evidence_valid": "NOT_RUN",
+        "scientifically_verified": "NOT_RUN",
+    }
+    assert acceptance.overall_status == "PASS"
+    assert acceptance.real_materials_studio == "PASS"
+    assert acceptance.candidate_immutable is True
+    assert acceptance.comparison == comparison

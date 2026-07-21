@@ -223,6 +223,13 @@ CIF nor the Materials Studio output CIF is rewritten by this compatibility
 step. This is a closed adapter for the known surface-translator dialect, not a
 general CIF repair or conversion facility.
 
+The explicit real benchmark uses the same narrow normalization while staging
+its isolated evaluator candidate, because the shared benchmark artifact
+contract consumes the canonicalizer-compatible CIF dialect. The staged file is
+then bound and kept byte-identical for the actual MS run; the raw surface
+translator dialect remains covered by the adapter and comparison tests. No
+general-purpose CIF repair is enabled by this test-only staging step.
+
 The expanded parsed CIF is used for exact atom count, composition, and vacuum
 checks. The shared canonicalizer may represent the periodic structure in a
 smaller conventional form; that does not relax the requirement that each raw

@@ -1,0 +1,626 @@
+{
+  "benchmark_acceptance": {
+    "benchmark_profile": "ms_roundtrip_benchmark_acceptance_v1",
+    "calculation_evidence_valid": "NOT_RUN",
+    "candidate_immutable": true,
+    "comparison": {
+      "atom_count": 80,
+      "canonicalization_contract_version": "1.0.0",
+      "canonicalization_implementation_version": "1.0.0",
+      "composition": [
+        "C:32",
+        "H:16",
+        "Si:32"
+      ],
+      "input_candidate_unchanged_by_comparator": true,
+      "input_canonical_structure_sha256": "8a476d868d74be492a59e3321de62e24f64e942accb48ae04ebae58eecae6e2c",
+      "input_vacuum_angstrom": 14.999999996771546,
+      "lattice_pass": true,
+      "mapping_coverage": 1.0,
+      "mapping_degenerate": false,
+      "mapping_pass": true,
+      "maximum_displacement_angstrom": 0.00011331506564757805,
+      "maximum_displacement_pass": true,
+      "maximum_relative_lattice_error": 5.069090152076683e-07,
+      "output_canonical_structure_sha256": "9bba57248183bc2b8d274fbedb261397d61fae99a106120082c04de982d685c0",
+      "output_vacuum_angstrom": 14.999936311999997,
+      "passed": true,
+      "rms_displacement_angstrom": 8.278556797664968e-05,
+      "rms_pass": true,
+      "scientific_status": "NOT_RUN",
+      "thresholds": {
+        "inclusive_lte_boundaries": true,
+        "mapping_coverage": 1.0,
+        "maximum_displacement_angstrom": 0.15,
+        "maximum_relative_lattice_error": 0.001,
+        "rms_displacement_angstrom": 0.05,
+        "vacuum_absolute_error_angstrom": 0.1
+      },
+      "vacuum_absolute_error_angstrom": 6.36847715487221e-05,
+      "vacuum_pass": true
+    },
+    "contains_absolute_paths": false,
+    "contains_atom_mapping": false,
+    "contains_coordinates": false,
+    "contains_displacement_vectors": false,
+    "contains_lattice_vectors": false,
+    "contains_pid": false,
+    "contains_raw_artifact_bytes": false,
+    "contains_window_handle": false,
+    "contract_version": "1.0.0",
+    "evaluation_run_id": "sic-3c-roundtrip-real-ms-20.1",
+    "implementation_version": "1.0.0",
+    "ms_roundtrip_structure_sha256": "3c9ee89b2a87da85022f742376f75be406227bd7712b42c474ef3da8e20b46c5",
+    "overall_status": "PASS",
+    "real_materials_studio": "PASS",
+    "roundtrip_receipt_sha256": "91669197aad704a4611a7ecb7df5994c790b941a203762e61aa7843016aa4398",
+    "scientifically_verified": "NOT_RUN",
+    "shared_evaluator_report_sha256": "36219f2eba182f189cf0e0a98b351d79828c2fa9961193a7bd62f6a53708156e",
+    "shared_evaluator_report_unmodified": true,
+    "shared_evaluator_states": {
+      "calculation_evidence_valid": "NOT_RUN",
+      "ms_roundtrip_valid": "NOT_RUN",
+      "scientifically_verified": "NOT_RUN",
+      "semiconductor_domain_valid": "PASS",
+      "structure_valid": "PASS"
+    },
+    "states": {
+      "calculation_evidence_valid": "NOT_RUN",
+      "ms_roundtrip_valid": "PASS",
+      "scientifically_verified": "NOT_RUN",
+      "semiconductor_domain_valid": "PASS",
+      "structure_valid": "PASS"
+    }
+  },
+  "benchmark_roundtrip": {
+    "comparison": {
+      "atom_count": 80,
+      "canonicalization_contract_version": "1.0.0",
+      "canonicalization_implementation_version": "1.0.0",
+      "composition": [
+        "C:32",
+        "H:16",
+        "Si:32"
+      ],
+      "input_candidate_unchanged_by_comparator": true,
+      "input_canonical_structure_sha256": "8a476d868d74be492a59e3321de62e24f64e942accb48ae04ebae58eecae6e2c",
+      "input_vacuum_angstrom": 14.999999996771546,
+      "lattice_pass": true,
+      "mapping_coverage": 1.0,
+      "mapping_degenerate": false,
+      "mapping_pass": true,
+      "maximum_displacement_angstrom": 0.00011331506564757805,
+      "maximum_displacement_pass": true,
+      "maximum_relative_lattice_error": 5.069090152076683e-07,
+      "output_canonical_structure_sha256": "9bba57248183bc2b8d274fbedb261397d61fae99a106120082c04de982d685c0",
+      "output_vacuum_angstrom": 14.999936311999997,
+      "passed": true,
+      "rms_displacement_angstrom": 8.278556797664968e-05,
+      "rms_pass": true,
+      "scientific_status": "NOT_RUN",
+      "thresholds": {
+        "inclusive_lte_boundaries": true,
+        "mapping_coverage": 1.0,
+        "maximum_displacement_angstrom": 0.15,
+        "maximum_relative_lattice_error": 0.001,
+        "rms_displacement_angstrom": 0.05,
+        "vacuum_absolute_error_angstrom": 0.1
+      },
+      "vacuum_absolute_error_angstrom": 6.36847715487221e-05,
+      "vacuum_pass": true
+    },
+    "gui": {
+      "after": {
+        "contains_pid": false,
+        "contains_window_handle": false,
+        "process_count": 1,
+        "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+        "read_only_probe": true,
+        "usable_single_window": true,
+        "window_count": 1,
+        "window_foreground": false,
+        "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+        "window_minimized": true,
+        "window_visible": true
+      },
+      "before": {
+        "contains_pid": false,
+        "contains_window_handle": false,
+        "process_count": 1,
+        "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+        "read_only_probe": true,
+        "usable_single_window": true,
+        "window_count": 1,
+        "window_foreground": false,
+        "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+        "window_minimized": true,
+        "window_visible": true
+      },
+      "gui_input_activation_open_or_hotload_called": false,
+      "invariant_passed": true,
+      "matstudio_pid_and_window_handle_unchanged": true,
+      "matstudio_process_count_before_after": [
+        1,
+        1
+      ],
+      "matstudio_process_launched": false,
+      "matstudio_window_count_before_after": [
+        1,
+        1
+      ],
+      "process_identity_unchanged": true,
+      "window_identity_unchanged": true
+    },
+    "input_sha256": "f31f513794f80085aeda8791a9241e647b8cac5a0678ecd3e39569db7422b698",
+    "output_sha256": "3c9ee89b2a87da85022f742376f75be406227bd7712b42c474ef3da8e20b46c5",
+    "receipt_binding": {
+      "comparison": {
+        "atom_count": 80,
+        "canonicalization_contract_version": "1.0.0",
+        "canonicalization_implementation_version": "1.0.0",
+        "composition": [
+          "C:32",
+          "H:16",
+          "Si:32"
+        ],
+        "input_candidate_unchanged_by_comparator": true,
+        "input_canonical_structure_sha256": "8a476d868d74be492a59e3321de62e24f64e942accb48ae04ebae58eecae6e2c",
+        "input_vacuum_angstrom": 14.999999996771546,
+        "lattice_pass": true,
+        "mapping_coverage": 1.0,
+        "mapping_degenerate": false,
+        "mapping_pass": true,
+        "maximum_displacement_angstrom": 0.00011331506564757805,
+        "maximum_displacement_pass": true,
+        "maximum_relative_lattice_error": 5.069090152076683e-07,
+        "output_canonical_structure_sha256": "9bba57248183bc2b8d274fbedb261397d61fae99a106120082c04de982d685c0",
+        "output_vacuum_angstrom": 14.999936311999997,
+        "passed": true,
+        "rms_displacement_angstrom": 8.278556797664968e-05,
+        "rms_pass": true,
+        "scientific_status": "NOT_RUN",
+        "thresholds": {
+          "inclusive_lte_boundaries": true,
+          "mapping_coverage": 1.0,
+          "maximum_displacement_angstrom": 0.15,
+          "maximum_relative_lattice_error": 0.001,
+          "rms_displacement_angstrom": 0.05,
+          "vacuum_absolute_error_angstrom": 0.1
+        },
+        "vacuum_absolute_error_angstrom": 6.36847715487221e-05,
+        "vacuum_pass": true
+      },
+      "failure_codes": [],
+      "gui_invariant": {
+        "after": {
+          "contains_pid": false,
+          "contains_window_handle": false,
+          "process_count": 1,
+          "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+          "read_only_probe": true,
+          "usable_single_window": true,
+          "window_count": 1,
+          "window_foreground": false,
+          "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+          "window_minimized": true,
+          "window_visible": true
+        },
+        "before": {
+          "contains_pid": false,
+          "contains_window_handle": false,
+          "process_count": 1,
+          "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+          "read_only_probe": true,
+          "usable_single_window": true,
+          "window_count": 1,
+          "window_foreground": false,
+          "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+          "window_minimized": true,
+          "window_visible": true
+        },
+        "gui_input_activation_open_or_hotload_called": false,
+        "invariant_passed": true,
+        "matstudio_pid_and_window_handle_unchanged": true,
+        "matstudio_process_count_before_after": [
+          1,
+          1
+        ],
+        "matstudio_process_launched": false,
+        "matstudio_window_count_before_after": [
+          1,
+          1
+        ],
+        "process_identity_unchanged": true,
+        "window_identity_unchanged": true
+      },
+      "input_artifact": {
+        "byte_count": 3482,
+        "role": "input_cif",
+        "sha256": "f31f513794f80085aeda8791a9241e647b8cac5a0678ecd3e39569db7422b698"
+      },
+      "input_candidate_immutable": true,
+      "output_artifact": {
+        "byte_count": 5917,
+        "role": "roundtrip_output",
+        "sha256": "3c9ee89b2a87da85022f742376f75be406227bd7712b42c474ef3da8e20b46c5"
+      },
+      "output_confined_and_fresh": true,
+      "real_environment": true,
+      "real_materials_studio_status": "PASS",
+      "runner_executable_unchanged": true,
+      "runner_execution": {
+        "all_artifacts_confined": true,
+        "artifacts": [
+          {
+            "byte_count": 935,
+            "role": "script",
+            "sha256": "d8a195a558de4c547cf305a7271b5ad1dc1595beccedf8b2f7ff3da53d5fc443"
+          },
+          {
+            "byte_count": 945,
+            "role": "runner_artifact",
+            "sha256": "06dc2d4a14907328983efe459ea9c55516e81fd8dc41225137932282d7adb007"
+          },
+          {
+            "byte_count": 2175,
+            "role": "runner_artifact",
+            "sha256": "19364117c104ff5f48f50944697d1a033970fb4c076fcba86dd5311c824d9f06"
+          },
+          {
+            "byte_count": 22439,
+            "role": "runner_artifact",
+            "sha256": "2b4dd890195192ea98229977dce6e0ce5ed9acc74eb1c327fd7f4ab2a4ea76d6"
+          }
+        ],
+        "command_sha256": "acb51a556e802a16d274ec8c5b918eb3d09e029776d9289b2afc40fae092988f",
+        "materials_log_sha256": "09e7bf6cd480b4f11499c866f845c3f63ca90bba2a124086aad2f87fae8c4480",
+        "materials_output_sha256": "aa063dc73fb26af3a96663b7f8adc9100be4d95aeb0e91df6c66acd213162ca1",
+        "return_code": 0,
+        "stderr_sha256": "2bf141f7dd71c140f2e792ab749a8b8c9081888a7f0f069755b35c8c38f81da5",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "success": true,
+        "timed_out": false
+      },
+      "runner_identity": {
+        "command_template_override_absent": true,
+        "exact_runmatscript_name": true,
+        "executable": {
+          "byte_count": 1881,
+          "location_sha256": "90bcd7809d17eb5e4292f591691677038e663fae3f423ca2d8200165fa73c785",
+          "role": "runner_executable",
+          "sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0"
+        },
+        "extra_runner_args_absent": true,
+        "identity_valid": true,
+        "materials_studio_20_1_install": true,
+        "real_environment": true,
+        "runner_identity": "materials_studio_20.1_runmatscript.bat"
+      },
+      "script_safety": {
+        "deterministic": true,
+        "exact_reviewed_template": true,
+        "forbidden_operations_absent": true,
+        "materialscript_validation_passed": true,
+        "output_bound_once": true,
+        "script_artifact_sha256": "d8a195a558de4c547cf305a7271b5ad1dc1595beccedf8b2f7ff3da53d5fc443",
+        "script_source_sha256": "7f43740b14de0d5fe64f951a782e817289a1f5a6482142f7c8e683982ad74af0",
+        "source_bound_once": true,
+        "template": "import_export_script"
+      },
+      "status": "PASS",
+      "tagged_summary": {
+        "document_name_sha256": "520cdb563bf80b193aab6aad62781a9647c75dbf76748117299c7dac0ae63a87",
+        "output_matches_fresh_output": true,
+        "output_path_sha256": "1fad8ce145107b666bf0db1f0b46858369b488e97229684a39a9d109d2d21af3",
+        "source_matches_input": true,
+        "source_path_sha256": "47bffffcde09e4928a98837303d383cbbcae466f37cad879a90cc2d56e850f3b",
+        "tagged_json_matches_input_output": true
+      }
+    },
+    "receipt_binding_sha256": "12f54f539d2171cda0af488ce27f0d5cf666394fe9a646b1f8905556fcd907ff",
+    "recorded_receipt_sha256": "91669197aad704a4611a7ecb7df5994c790b941a203762e61aa7843016aa4398",
+    "roundtrip_receipt_sha256": "91669197aad704a4611a7ecb7df5994c790b941a203762e61aa7843016aa4398",
+    "runner_identity": {
+      "command_template_override_absent": true,
+      "exact_runmatscript_name": true,
+      "executable": {
+        "byte_count": 1881,
+        "location_sha256": "90bcd7809d17eb5e4292f591691677038e663fae3f423ca2d8200165fa73c785",
+        "role": "runner_executable",
+        "sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0"
+      },
+      "extra_runner_args_absent": true,
+      "identity_valid": true,
+      "materials_studio_20_1_install": true,
+      "real_environment": true,
+      "runner_identity": "materials_studio_20.1_runmatscript.bat"
+    }
+  },
+  "candidate_immutable": true,
+  "contains_absolute_paths": false,
+  "contains_atom_mapping": false,
+  "contains_coordinates": false,
+  "contains_displacement_vectors": false,
+  "contains_lattice_vectors": false,
+  "contains_pid": false,
+  "contains_raw_artifact_bytes": false,
+  "contains_window_handle": false,
+  "contract_version": "2.0.0",
+  "environment": "real_ms_20_1",
+  "evidence_profile": "sic_3c_001_si_face_ms_roundtrip_real_ms_20_1_v2",
+  "gui_continuity": {
+    "benchmark_before_process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+    "benchmark_before_window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+    "process_identity_continuous": true,
+    "raw_after_process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+    "raw_after_window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+    "verified": true,
+    "window_identity_continuous": true
+  },
+  "raw_roundtrip": {
+    "comparison": {
+      "atom_count": 80,
+      "canonicalization_contract_version": "1.0.0",
+      "canonicalization_implementation_version": "1.0.0",
+      "composition": [
+        "C:32",
+        "H:16",
+        "Si:32"
+      ],
+      "input_candidate_unchanged_by_comparator": true,
+      "input_canonical_structure_sha256": "8a476d868d74be492a59e3321de62e24f64e942accb48ae04ebae58eecae6e2c",
+      "input_vacuum_angstrom": 14.999999996771546,
+      "lattice_pass": true,
+      "mapping_coverage": 1.0,
+      "mapping_degenerate": false,
+      "mapping_pass": true,
+      "maximum_displacement_angstrom": 0.00011331506564757805,
+      "maximum_displacement_pass": true,
+      "maximum_relative_lattice_error": 5.069090152076683e-07,
+      "output_canonical_structure_sha256": "9bba57248183bc2b8d274fbedb261397d61fae99a106120082c04de982d685c0",
+      "output_vacuum_angstrom": 14.999936311999997,
+      "passed": true,
+      "rms_displacement_angstrom": 8.278556797664968e-05,
+      "rms_pass": true,
+      "scientific_status": "NOT_RUN",
+      "thresholds": {
+        "inclusive_lte_boundaries": true,
+        "mapping_coverage": 1.0,
+        "maximum_displacement_angstrom": 0.15,
+        "maximum_relative_lattice_error": 0.001,
+        "rms_displacement_angstrom": 0.05,
+        "vacuum_absolute_error_angstrom": 0.1
+      },
+      "vacuum_absolute_error_angstrom": 6.36847715487221e-05,
+      "vacuum_pass": true
+    },
+    "gui": {
+      "after": {
+        "contains_pid": false,
+        "contains_window_handle": false,
+        "process_count": 1,
+        "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+        "read_only_probe": true,
+        "usable_single_window": true,
+        "window_count": 1,
+        "window_foreground": false,
+        "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+        "window_minimized": true,
+        "window_visible": true
+      },
+      "before": {
+        "contains_pid": false,
+        "contains_window_handle": false,
+        "process_count": 1,
+        "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+        "read_only_probe": true,
+        "usable_single_window": true,
+        "window_count": 1,
+        "window_foreground": false,
+        "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+        "window_minimized": true,
+        "window_visible": true
+      },
+      "gui_input_activation_open_or_hotload_called": false,
+      "invariant_passed": true,
+      "matstudio_pid_and_window_handle_unchanged": true,
+      "matstudio_process_count_before_after": [
+        1,
+        1
+      ],
+      "matstudio_process_launched": false,
+      "matstudio_window_count_before_after": [
+        1,
+        1
+      ],
+      "process_identity_unchanged": true,
+      "window_identity_unchanged": true
+    },
+    "input_sha256": "b43f462e907d10f257ba3e406d3d45988e3d126693e21c9130bf15ebdac206a7",
+    "output_sha256": "071946067abde2d2d05c4f8345ed7b226060f20dce0aa4c248d8cee8cd434c4f",
+    "receipt_binding": {
+      "comparison": {
+        "atom_count": 80,
+        "canonicalization_contract_version": "1.0.0",
+        "canonicalization_implementation_version": "1.0.0",
+        "composition": [
+          "C:32",
+          "H:16",
+          "Si:32"
+        ],
+        "input_candidate_unchanged_by_comparator": true,
+        "input_canonical_structure_sha256": "8a476d868d74be492a59e3321de62e24f64e942accb48ae04ebae58eecae6e2c",
+        "input_vacuum_angstrom": 14.999999996771546,
+        "lattice_pass": true,
+        "mapping_coverage": 1.0,
+        "mapping_degenerate": false,
+        "mapping_pass": true,
+        "maximum_displacement_angstrom": 0.00011331506564757805,
+        "maximum_displacement_pass": true,
+        "maximum_relative_lattice_error": 5.069090152076683e-07,
+        "output_canonical_structure_sha256": "9bba57248183bc2b8d274fbedb261397d61fae99a106120082c04de982d685c0",
+        "output_vacuum_angstrom": 14.999936311999997,
+        "passed": true,
+        "rms_displacement_angstrom": 8.278556797664968e-05,
+        "rms_pass": true,
+        "scientific_status": "NOT_RUN",
+        "thresholds": {
+          "inclusive_lte_boundaries": true,
+          "mapping_coverage": 1.0,
+          "maximum_displacement_angstrom": 0.15,
+          "maximum_relative_lattice_error": 0.001,
+          "rms_displacement_angstrom": 0.05,
+          "vacuum_absolute_error_angstrom": 0.1
+        },
+        "vacuum_absolute_error_angstrom": 6.36847715487221e-05,
+        "vacuum_pass": true
+      },
+      "failure_codes": [],
+      "gui_invariant": {
+        "after": {
+          "contains_pid": false,
+          "contains_window_handle": false,
+          "process_count": 1,
+          "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+          "read_only_probe": true,
+          "usable_single_window": true,
+          "window_count": 1,
+          "window_foreground": false,
+          "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+          "window_minimized": true,
+          "window_visible": true
+        },
+        "before": {
+          "contains_pid": false,
+          "contains_window_handle": false,
+          "process_count": 1,
+          "process_identity_sha256": "80df998dc31f10ac15e8f2e567196a0a1a6fa124c2ff3ee91a49d602d176407d",
+          "read_only_probe": true,
+          "usable_single_window": true,
+          "window_count": 1,
+          "window_foreground": false,
+          "window_identity_sha256": "46a359dcb05cd841602b0cb2da35b499e54052d766b57dc213a07d2c195e1e1b",
+          "window_minimized": true,
+          "window_visible": true
+        },
+        "gui_input_activation_open_or_hotload_called": false,
+        "invariant_passed": true,
+        "matstudio_pid_and_window_handle_unchanged": true,
+        "matstudio_process_count_before_after": [
+          1,
+          1
+        ],
+        "matstudio_process_launched": false,
+        "matstudio_window_count_before_after": [
+          1,
+          1
+        ],
+        "process_identity_unchanged": true,
+        "window_identity_unchanged": true
+      },
+      "input_artifact": {
+        "byte_count": 3599,
+        "role": "input_cif",
+        "sha256": "b43f462e907d10f257ba3e406d3d45988e3d126693e21c9130bf15ebdac206a7"
+      },
+      "input_candidate_immutable": true,
+      "output_artifact": {
+        "byte_count": 5911,
+        "role": "roundtrip_output",
+        "sha256": "071946067abde2d2d05c4f8345ed7b226060f20dce0aa4c248d8cee8cd434c4f"
+      },
+      "output_confined_and_fresh": true,
+      "real_environment": true,
+      "real_materials_studio_status": "PASS",
+      "runner_executable_unchanged": true,
+      "runner_execution": {
+        "all_artifacts_confined": true,
+        "artifacts": [
+          {
+            "byte_count": 22818,
+            "role": "runner_artifact",
+            "sha256": "97bd0e4a5d34520acea2c4f7b1a8ed4ec480373da5bcc52229f0a68dd0f57fee"
+          },
+          {
+            "byte_count": 917,
+            "role": "script",
+            "sha256": "642a5b02c868d5059bbb6333f0b31decf398a153730d74bd476c932ae9116471"
+          },
+          {
+            "byte_count": 921,
+            "role": "runner_artifact",
+            "sha256": "789806333020082a55a8c3d5d517c12556598fddc4e76d3d30e4a47a22b9f622"
+          },
+          {
+            "byte_count": 2175,
+            "role": "runner_artifact",
+            "sha256": "5310b4197b75a7afd0d8cd215b7bab89f95f8c2d25d58e125538fb42466d1f11"
+          }
+        ],
+        "command_sha256": "acb51a556e802a16d274ec8c5b918eb3d09e029776d9289b2afc40fae092988f",
+        "materials_log_sha256": "c6a6c07394e07e9497f01ad92ffb389c4691b1504e3e21064b0946f202b62f16",
+        "materials_output_sha256": "3ca5b36198103477c3c6dfe4e4b4d9d60d97a6687ced2e477f951930c83697a0",
+        "return_code": 0,
+        "stderr_sha256": "2bf141f7dd71c140f2e792ab749a8b8c9081888a7f0f069755b35c8c38f81da5",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "success": true,
+        "timed_out": false
+      },
+      "runner_identity": {
+        "command_template_override_absent": true,
+        "exact_runmatscript_name": true,
+        "executable": {
+          "byte_count": 1881,
+          "location_sha256": "90bcd7809d17eb5e4292f591691677038e663fae3f423ca2d8200165fa73c785",
+          "role": "runner_executable",
+          "sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0"
+        },
+        "extra_runner_args_absent": true,
+        "identity_valid": true,
+        "materials_studio_20_1_install": true,
+        "real_environment": true,
+        "runner_identity": "materials_studio_20.1_runmatscript.bat"
+      },
+      "script_safety": {
+        "deterministic": true,
+        "exact_reviewed_template": true,
+        "forbidden_operations_absent": true,
+        "materialscript_validation_passed": true,
+        "output_bound_once": true,
+        "script_artifact_sha256": "642a5b02c868d5059bbb6333f0b31decf398a153730d74bd476c932ae9116471",
+        "script_source_sha256": "676660a083f3d3393ef9622631edf8035c68a79805d283807c584438ebd0b11e",
+        "source_bound_once": true,
+        "template": "import_export_script"
+      },
+      "status": "PASS",
+      "tagged_summary": {
+        "document_name_sha256": "d7439bee24773bcbfa2d0a97947ee36227b10d1022b1a55847e928965bb6bfde",
+        "output_matches_fresh_output": true,
+        "output_path_sha256": "ebfd3f36e21ee48dc993cc0a81d3a6688a75adff4fce747ae35b8237a248ec9e",
+        "source_matches_input": true,
+        "source_path_sha256": "9cb7d5b734d49700be41c6934ea403dcef77a9d3e9b2fe676983956a02d22ef9",
+        "tagged_json_matches_input_output": true
+      }
+    },
+    "receipt_binding_sha256": "dfdd8d0011d219077a63846c1801ff1a600d2c66734ea79b58f16d559cda6681",
+    "recorded_receipt_sha256": "53a5013c47910d99f69f77dbc15ce0188402b26fa45e78bc4ef21f67677d1039",
+    "roundtrip_receipt_sha256": "53a5013c47910d99f69f77dbc15ce0188402b26fa45e78bc4ef21f67677d1039",
+    "runner_identity": {
+      "command_template_override_absent": true,
+      "exact_runmatscript_name": true,
+      "executable": {
+        "byte_count": 1881,
+        "location_sha256": "90bcd7809d17eb5e4292f591691677038e663fae3f423ca2d8200165fa73c785",
+        "role": "runner_executable",
+        "sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0"
+      },
+      "extra_runner_args_absent": true,
+      "identity_valid": true,
+      "materials_studio_20_1_install": true,
+      "real_environment": true,
+      "runner_identity": "materials_studio_20.1_runmatscript.bat"
+    }
+  },
+  "runner_sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0",
+  "scientific_status": "NOT_RUN"
+}

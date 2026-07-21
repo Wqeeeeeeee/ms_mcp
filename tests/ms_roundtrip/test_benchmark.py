@@ -322,6 +322,84 @@ def test_offline_benchmark_rejects_unbound_output_observation(tmp_path: Path) ->
             receipt_sha256=roundtrip_receipt_sha256(result.receipt),
         )
 
+
+def test_offline_benchmark_rejects_tampered_observed_with_bound_output_digest(
+    tmp_path: Path,
+) -> None:
+    result, roots, submission, observations, _before = _prepare_offline_run(tmp_path)
+    trusted = observations.observations[0]
+    tampered = TrustedDomainObservations(
+        observations=(
+            TrustedDomainObservation(
+                metric=trusted.metric,
+                observed=trusted.observed + 0.01,
+                evidence_sha256=trusted.evidence_sha256,
+            ),
+        )
+    )
+    output_sha256 = next(
+        artifact.sha256
+        for artifact in submission.artifacts
+        if artifact.kind == "ms_roundtrip_structure"
+    )
+    assert tampered.observations[0].evidence_sha256 == output_sha256
+
+    with pytest.raises(RoundtripError, match="exactly match recomputed metrics"):
+        evaluate_roundtrip_benchmark(
+            _load_case(),
+            roots=roots,
+            submission=submission,
+            evaluation_run_id="sic-3c-roundtrip-offline-tampered-observed",
+            trusted_domain_observations=tampered,
+            receipt=result.receipt,
+            receipt_sha256=roundtrip_receipt_sha256(result.receipt),
+        )
+
+
+@pytest.mark.parametrize("invalid_kind", ("unknown", "duplicate", "nonfinite"))
+def test_offline_benchmark_rejects_invalid_trusted_metrics(
+    tmp_path: Path,
+    invalid_kind: str,
+) -> None:
+    result, roots, submission, observations, _before = _prepare_offline_run(tmp_path)
+    trusted = observations.observations[0]
+    if invalid_kind == "unknown":
+        invalid = TrustedDomainObservations(
+            observations=(
+                TrustedDomainObservation(
+                    metric="surface.unknown_metric",
+                    observed=trusted.observed,
+                    evidence_sha256=trusted.evidence_sha256,
+                ),
+            )
+        )
+    elif invalid_kind == "duplicate":
+        # The benchmark boundary must remain closed if model validation is bypassed.
+        invalid = TrustedDomainObservations.model_construct(
+            observations=(trusted, trusted)
+        )
+    else:
+        nonfinite = TrustedDomainObservation.model_construct(
+            metric=trusted.metric,
+            observed=float("nan"),
+            evidence_sha256=trusted.evidence_sha256,
+        )
+        invalid = TrustedDomainObservations.model_construct(
+            observations=(nonfinite,)
+        )
+
+    with pytest.raises(RoundtripError, match="exactly match recomputed metrics"):
+        evaluate_roundtrip_benchmark(
+            _load_case(),
+            roots=roots,
+            submission=submission,
+            evaluation_run_id=f"sic-3c-roundtrip-offline-{invalid_kind}-metric",
+            trusted_domain_observations=invalid,
+            receipt=result.receipt,
+            receipt_sha256=roundtrip_receipt_sha256(result.receipt),
+        )
+
+
 def test_offline_benchmark_rejects_receipt_digest_mismatch(tmp_path: Path) -> None:
     result, roots, submission, observations, _before = _prepare_offline_run(tmp_path)
     with pytest.raises(RoundtripError, match="receipt digest"):

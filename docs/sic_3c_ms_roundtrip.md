@@ -127,6 +127,11 @@ Input, runner, script, output, and receipt evidence is content-addressed:
 - the atomically written receipt is returned with its own relative path, byte
   count, and SHA-256 in `RoundtripExecutionResult`.
 
+Receipt publication uses an atomic no-clobber primitive in the run directory.
+If another writer creates the destination between preflight and publication,
+the adapter fails without replacing either file; a complete receipt is never
+made visible by a replace operation that can overwrite an existing target.
+
 The tagged MaterialsScript JSON is separately bound by hashes of the source
 path, output path, and document name. Runner success without the exact tagged
 summary and a fresh bound output is a failure.
@@ -223,12 +228,13 @@ CIF nor the Materials Studio output CIF is rewritten by this compatibility
 step. This is a closed adapter for the known surface-translator dialect, not a
 general CIF repair or conversion facility.
 
-The explicit real benchmark uses the same narrow normalization while staging
-its isolated evaluator candidate, because the shared benchmark artifact
-contract consumes the canonicalizer-compatible CIF dialect. The staged file is
-then bound and kept byte-identical for the actual MS run; the raw surface
-translator dialect remains covered by the adapter and comparison tests. No
-general-purpose CIF repair is enabled by this test-only staging step.
+The explicit real acceptance first gives the exact byte-for-byte surface
+translator CIF to Materials Studio. Only after that raw-input run passes does a
+second isolated benchmark run use the narrow normalization required by the
+shared evaluator's candidate dialect. Both inputs are immutable and
+SHA-256-bound before their respective runs. The normalized benchmark staging
+therefore cannot substitute for or claim coverage of the first raw-input run.
+No general-purpose CIF repair is enabled by this test-only staging step.
 
 The expanded parsed CIF is used for exact atom count, composition, and vacuum
 checks. The shared canonicalizer may represent the periodic structure in a
@@ -279,7 +285,10 @@ the shared report.
 The wrapper requires one submitted `structure` and one
 `ms_roundtrip_structure`, verifies the round-trip receipt digest, and requires
 every trusted domain observation to bind the submitted round-trip output
-SHA-256. It then:
+SHA-256. It does not trust the caller's numeric observation: after reading the
+frozen CIF bytes it derives the allowlisted metric again and requires strict
+equality before evaluator entry. Unknown, non-finite, duplicate, or mismatched
+metrics fail closed. It then:
 
 1. freezes the complete candidate tree with `CandidateTreeGuard`;
 2. reads the input and output only from the explicit candidate root;
@@ -302,6 +311,16 @@ The coordinate-free acceptance projection is checked to contain no
 coordinates, lattice vectors, atom mappings, displacement vectors, raw
 artifact bytes, absolute paths, PID, or window handle. Real-run CIFs and other
 machine-local artifacts stay outside Git.
+
+The repository retains only the coordinate-free projection
+`benchmarks/cases/sic_3c_ms_roundtrip/real_ms_20_1_evidence.json`. It binds the
+raw candidate, real exported CIF, runner, persisted run receipt, exact numeric
+comparison, compact one-window invariant, and five validity states by digest
+or scalar value. It contains no coordinates, lattice vectors, atom mappings,
+raw bytes, absolute paths, PID, handle, or title. Ordinary regression rebuilds
+the raw surface candidate and checks its SHA-256 against this projection; the
+explicit real test additionally requires all stable projection fields to match
+the current backend run.
 
 For an offline fake run, the shared structural and semiconductor gates may
 pass, but the MS state and overall state remain `NOT_RUN`. A real acceptance
@@ -371,6 +390,14 @@ The real test is opt-in and must be invoked exactly with `--run-real-ms`:
 
 ```powershell
 python -m pytest -q tests/ms_roundtrip/test_real_ms_20_1.py --run-real-ms
+```
+
+An architect recording a new real-environment projection may additionally
+provide a new path outside the repository. The command refuses an existing
+target and never updates the committed evidence automatically:
+
+```powershell
+python -m pytest -q tests/ms_roundtrip/test_real_ms_20_1.py --run-real-ms --real-ms-evidence-output <new-external-json>
 ```
 
 Before this command, leave exactly one existing Materials Studio window open.

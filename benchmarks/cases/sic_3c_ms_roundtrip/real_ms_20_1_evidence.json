@@ -1,0 +1,54 @@
+{
+  "candidate_immutable": true,
+  "comparison": {
+    "atom_count": 80,
+    "composition": [
+      "C:32",
+      "H:16",
+      "Si:32"
+    ],
+    "mapping_coverage": 1.0,
+    "maximum_displacement_angstrom": 0.00011331506564757805,
+    "maximum_relative_lattice_error": 5.069090152076683e-07,
+    "rms_displacement_angstrom": 8.278556797664968e-05,
+    "vacuum_absolute_error_angstrom": 6.36847715487221e-05
+  },
+  "contains_absolute_paths": false,
+  "contains_atom_mapping": false,
+  "contains_coordinates": false,
+  "contains_displacement_vectors": false,
+  "contains_lattice_vectors": false,
+  "contains_pid": false,
+  "contains_raw_artifact_bytes": false,
+  "contains_window_handle": false,
+  "contract_version": "1.0.0",
+  "environment": "real_ms_20_1",
+  "evidence_profile": "sic_3c_001_si_face_ms_roundtrip_real_ms_20_1_v1",
+  "gui": {
+    "gui_input_activation_open_or_hotload_called": false,
+    "identity_unchanged": true,
+    "process_count_before_after": [
+      1,
+      1
+    ],
+    "process_launched": false,
+    "window_count_before_after": [
+      1,
+      1
+    ]
+  },
+  "input_sha256": "b43f462e907d10f257ba3e406d3d45988e3d126693e21c9130bf15ebdac206a7",
+  "output_sha256": "071946067abde2d2d05c4f8345ed7b226060f20dce0aa4c248d8cee8cd434c4f",
+  "recorded_receipt_sha256": "f0e2fccdc4fac46c783113acd8922a0d46a65a16179c8d55ecb9ea04752918de",
+  "runner_identity": "materials_studio_20.1_runmatscript.bat",
+  "runner_sha256": "04ecc63a573f9b342d8490c1d2e8cdbf56dd3d4b87a65c861a3ce285db28a4e0",
+  "scientific_status": "NOT_RUN",
+  "states": {
+    "calculation_evidence_valid": "NOT_RUN",
+    "ms_roundtrip_valid": "PASS",
+    "overall_status": "PASS",
+    "scientifically_verified": "NOT_RUN",
+    "semiconductor_domain_valid": "PASS",
+    "structure_valid": "PASS"
+  }
+}

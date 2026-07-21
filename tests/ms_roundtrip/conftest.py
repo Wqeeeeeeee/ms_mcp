@@ -21,6 +21,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="run the opt-in Materials Studio 20.1 round-trip acceptance test",
     )
+    parser.addoption(
+        "--real-ms-evidence-output",
+        action="store",
+        default=None,
+        help="write coordinate-free real-MS evidence to a new external file",
+    )
 
 
 @pytest.fixture

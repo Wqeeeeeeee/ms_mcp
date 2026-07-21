@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Mapping
 
 from material_studio_mcp_server.benchmark_evaluation import (
@@ -10,6 +11,7 @@ from material_studio_mcp_server.benchmark_evaluation import (
     CandidateTreeGuard,
     EvaluationRoots,
     FiveValidityStates,
+    TrustedDomainObservation,
     TrustedDomainObservations,
     aggregate_required_gates,
     assert_coordinate_free_payload,
@@ -19,8 +21,12 @@ from material_studio_mcp_server.benchmark_evaluation import (
     verify_isolation_roots,
 )
 
-from .comparison import compare_roundtrip_cif_bytes
-from .contracts import RoundtripBenchmarkAcceptance, RoundtripReceipt
+from .comparison import EXPECTED_VACUUM_ANGSTROM, compare_roundtrip_cif_bytes
+from .contracts import (
+    RoundtripBenchmarkAcceptance,
+    RoundtripComparisonReceipt,
+    RoundtripReceipt,
+)
 from .errors import RoundtripError, RoundtripErrorCode
 from .secure_io import canonical_json_bytes, sha256_bytes
 
@@ -41,6 +47,65 @@ def _artifact_by_kind(submission: CandidateSubmission, kind: str):
             "The candidate submission has an invalid artifact-kind binding.",
         )
     return selected[0]
+
+
+def _trusted_observations_from_comparison(
+    observations: TrustedDomainObservations,
+    *,
+    comparison: RoundtripComparisonReceipt,
+    output_sha256: str,
+) -> TrustedDomainObservations:
+    trusted_metrics = {
+        "surface.vacuum_absolute_error_angstrom": abs(
+            comparison.output_vacuum_angstrom - EXPECTED_VACUUM_ANGSTROM
+        ),
+    }
+    if any(
+        type(value) is not float or not math.isfinite(value)
+        for value in trusted_metrics.values()
+    ):
+        raise RoundtripError(
+            RoundtripErrorCode.BENCHMARK_BINDING_INVALID,
+            "Recomputed round-trip metrics must be finite numbers.",
+        )
+
+    submitted = observations.observations
+    if not submitted or any(
+        not isinstance(observation, TrustedDomainObservation)
+        or observation.evidence_sha256 != output_sha256
+        for observation in submitted
+    ):
+        raise RoundtripError(
+            RoundtripErrorCode.BENCHMARK_BINDING_INVALID,
+            "Trusted domain observations must bind the round-trip output digest.",
+        )
+
+    seen_metrics: set[str] = set()
+    rebuilt: list[TrustedDomainObservation] = []
+    for observation in submitted:
+        metric = observation.metric
+        observed = observation.observed
+        if (
+            type(metric) is not str
+            or metric in seen_metrics
+            or metric not in trusted_metrics
+            or type(observed) is not float
+            or not math.isfinite(observed)
+            or observed != trusted_metrics[metric]
+        ):
+            raise RoundtripError(
+                RoundtripErrorCode.BENCHMARK_BINDING_INVALID,
+                "Trusted domain observations must exactly match recomputed metrics.",
+            )
+        seen_metrics.add(metric)
+        rebuilt.append(
+            TrustedDomainObservation(
+                metric=metric,
+                observed=trusted_metrics[metric],
+                evidence_sha256=output_sha256,
+            )
+        )
+    return TrustedDomainObservations(observations=tuple(rebuilt))
 
 
 def evaluate_roundtrip_benchmark(
@@ -80,14 +145,6 @@ def evaluate_roundtrip_benchmark(
     canonical_roots = verify_isolation_roots(roots)
     input_artifact = _artifact_by_kind(submission, "structure")
     output_artifact = _artifact_by_kind(submission, "ms_roundtrip_structure")
-    if not trusted_domain_observations.observations or any(
-        observation.evidence_sha256 != output_artifact.sha256
-        for observation in trusted_domain_observations.observations
-    ):
-        raise RoundtripError(
-            RoundtripErrorCode.BENCHMARK_BINDING_INVALID,
-            "Trusted domain observations must bind the round-trip output digest.",
-        )
     guard = CandidateTreeGuard(canonical_roots.candidate_root)
     with guard:
         input_payload = read_candidate_artifact(
@@ -118,6 +175,11 @@ def evaluate_roundtrip_benchmark(
                 RoundtripErrorCode.BENCHMARK_BINDING_INVALID,
                 "Round-trip receipt and frozen candidate artifacts disagree.",
             )
+        trusted_domain_observations = _trusted_observations_from_comparison(
+            trusted_domain_observations,
+            comparison=comparison,
+            output_sha256=output_artifact.sha256,
+        )
         guard.checkpoint()
         shared_outcome = evaluate_benchmark_case(
             case,

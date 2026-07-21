@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -129,6 +130,7 @@ def test_modified_candidate_is_not_accepted_as_fixed_profile(
 def test_symlink_output_root_is_rejected_when_supported(
     tmp_path: Path,
     request_factory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = tmp_path / "real-output"
     target.mkdir()
@@ -136,7 +138,22 @@ def test_symlink_output_root_is_rejected_when_supported(
     try:
         linked.symlink_to(target, target_is_directory=True)
     except OSError:
-        pytest.skip("symlink creation is unavailable")
+        # Some Windows test accounts cannot create symlinks. Exercise the
+        # same security branch with a synthetic reparse-point stat instead of
+        # silently skipping the confinement assertion.
+        linked.mkdir()
+        original_stat = Path.stat
+
+        def reparse_stat(path: Path, *args, **kwargs):
+            value = original_stat(path, *args, **kwargs)
+            if path == linked:
+                return SimpleNamespace(
+                    st_mode=value.st_mode,
+                    st_file_attributes=0x400,
+                )
+            return value
+
+        monkeypatch.setattr(Path, "stat", reparse_stat)
     request = request_factory(selected_output_root=linked)
     with pytest.raises(RoundtripError) as captured:
         plan_roundtrip(request)

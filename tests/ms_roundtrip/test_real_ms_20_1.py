@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -18,6 +20,9 @@ from material_studio_mcp_server.ms_roundtrip import (
     RoundtripRequest,
     capture_gui_inventory,
 )
+from material_studio_mcp_server.benchmark_evaluation import (
+    assert_coordinate_free_payload,
+)
 from material_studio_mcp_server.ms_roundtrip.comparison import (
     _canonicalizer_compatible_cif,
 )
@@ -25,6 +30,17 @@ from material_studio_mcp_server.runner import MaterialStudioRunner
 
 from ._helpers import build_candidate
 from .test_benchmark import _evaluate_completed_roundtrip
+
+
+ROOT = Path(__file__).resolve().parents[2]
+EVIDENCE_PATH = (
+    ROOT
+    / "benchmarks"
+    / "cases"
+    / "sic_3c_ms_roundtrip"
+    / "real_ms_20_1_evidence.json"
+)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class _InventoryOnlyWindowsBackend:
@@ -50,6 +66,168 @@ def _require_real_prerequisite(condition: bool, message: str) -> None:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _evidence_projection(
+    *,
+    result: RoundtripExecutionResult,
+    runner_path: Path,
+    acceptance,
+) -> dict[str, object]:
+    comparison = result.receipt.comparison
+    assert comparison is not None
+    invariant = result.receipt.gui_invariant
+    projection = {
+        "contract_version": "1.0.0",
+        "evidence_profile": "sic_3c_001_si_face_ms_roundtrip_real_ms_20_1_v1",
+        "environment": "real_ms_20_1",
+        "runner_identity": result.receipt.runner_identity.runner_identity,
+        "runner_sha256": _sha256(runner_path),
+        "input_sha256": result.receipt.input_artifact.sha256,
+        "output_sha256": result.receipt.output_artifact.sha256
+        if result.receipt.output_artifact is not None
+        else None,
+        "recorded_receipt_sha256": result.receipt_artifact.sha256,
+        "comparison": {
+            "mapping_coverage": comparison.mapping_coverage,
+            "rms_displacement_angstrom": comparison.rms_displacement_angstrom,
+            "maximum_displacement_angstrom": comparison.maximum_displacement_angstrom,
+            "maximum_relative_lattice_error": comparison.maximum_relative_lattice_error,
+            "vacuum_absolute_error_angstrom": comparison.vacuum_absolute_error_angstrom,
+            "atom_count": comparison.atom_count,
+            "composition": list(comparison.composition),
+        },
+        "gui": {
+            "process_count_before_after": list(
+                invariant.matstudio_process_count_before_after
+            ),
+            "window_count_before_after": list(
+                invariant.matstudio_window_count_before_after
+            ),
+            "identity_unchanged": invariant.matstudio_pid_and_window_handle_unchanged,
+            "process_launched": invariant.matstudio_process_launched,
+            "gui_input_activation_open_or_hotload_called": (
+                invariant.gui_input_activation_open_or_hotload_called
+            ),
+        },
+        "states": {
+            "structure_valid": acceptance.states.structure_valid,
+            "semiconductor_domain_valid": acceptance.states.semiconductor_domain_valid,
+            "ms_roundtrip_valid": acceptance.states.ms_roundtrip_valid,
+            "calculation_evidence_valid": acceptance.states.calculation_evidence_valid,
+            "scientifically_verified": acceptance.states.scientifically_verified,
+            "overall_status": acceptance.overall_status,
+        },
+        "candidate_immutable": acceptance.candidate_immutable,
+        "scientific_status": result.receipt.scientific_status,
+        "contains_coordinates": False,
+        "contains_lattice_vectors": False,
+        "contains_atom_mapping": False,
+        "contains_displacement_vectors": False,
+        "contains_raw_artifact_bytes": False,
+        "contains_absolute_paths": False,
+        "contains_pid": False,
+        "contains_window_handle": False,
+    }
+    assert_coordinate_free_payload(projection)
+    return projection
+
+
+def _write_or_verify_evidence(
+    *,
+    pytestconfig: pytest.Config,
+    projection: dict[str, object],
+) -> None:
+    output_value = pytestconfig.getoption("--real-ms-evidence-output")
+    if output_value:
+        output = Path(output_value).expanduser().resolve(strict=False)
+        repository_root = ROOT
+        _require_real_prerequisite(
+            not output.is_relative_to(repository_root),
+            "evidence output must be outside the repository",
+        )
+        _require_real_prerequisite(
+            output.parent.is_dir(),
+            "evidence output parent must already exist",
+        )
+        try:
+            with output.open("x", encoding="ascii", newline="\n") as handle:
+                json.dump(
+                    projection,
+                    handle,
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+                handle.write("\n")
+        except FileExistsError as exc:
+            pytest.fail(
+                f"real MS evidence output already exists: {output}",
+                pytrace=False,
+            )
+        return
+
+    _require_real_prerequisite(EVIDENCE_PATH.is_file(), "durable evidence manifest is missing")
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    assert_coordinate_free_payload(recorded)
+    # The receipt digest is intentionally run-specific; all structural and
+    # backend bindings must match the current explicit real-MS run.
+    comparable_keys = set(projection) - {"recorded_receipt_sha256"}
+    assert set(recorded) == set(projection)
+    assert {key: recorded[key] for key in comparable_keys} == {
+        key: projection[key] for key in comparable_keys
+    }
+    assert _SHA256_RE.fullmatch(recorded["recorded_receipt_sha256"])
+
+
+def test_recorded_real_ms_evidence_is_coordinate_free_and_bound(
+    tmp_path: Path,
+) -> None:
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    assert_coordinate_free_payload(recorded)
+    assert recorded["contract_version"] == "1.0.0"
+    assert recorded["environment"] == "real_ms_20_1"
+    assert recorded["runner_identity"] == "materials_studio_20.1_runmatscript.bat"
+    for key in (
+        "input_sha256",
+        "output_sha256",
+        "runner_sha256",
+        "recorded_receipt_sha256",
+    ):
+        assert _SHA256_RE.fullmatch(recorded[key])
+    raw_candidate_path = tmp_path / "raw_surface_candidate.cif"
+    build_candidate(raw_candidate_path, project_id="sic_roundtrip_evidence_check")
+    assert _sha256(raw_candidate_path) == recorded["input_sha256"]
+
+    comparison = recorded["comparison"]
+    assert comparison["atom_count"] == 80
+    assert comparison["composition"] == ["C:32", "H:16", "Si:32"]
+    assert comparison["mapping_coverage"] == 1.0
+    assert comparison["rms_displacement_angstrom"] <= 0.05
+    assert comparison["maximum_displacement_angstrom"] <= 0.15
+    assert comparison["maximum_relative_lattice_error"] <= 0.001
+    assert comparison["vacuum_absolute_error_angstrom"] <= 0.1
+    assert recorded["gui"] == {
+        "gui_input_activation_open_or_hotload_called": False,
+        "identity_unchanged": True,
+        "process_count_before_after": [1, 1],
+        "process_launched": False,
+        "window_count_before_after": [1, 1],
+    }
+    assert recorded["states"] == {
+        "calculation_evidence_valid": "NOT_RUN",
+        "ms_roundtrip_valid": "PASS",
+        "overall_status": "PASS",
+        "scientifically_verified": "NOT_RUN",
+        "semiconductor_domain_valid": "PASS",
+        "structure_valid": "PASS",
+    }
+    assert recorded["candidate_immutable"] is True
+    assert recorded["scientific_status"] == "NOT_RUN"
+    serialized = json.dumps(recorded, ensure_ascii=True, sort_keys=True).casefold()
+    assert ":\\\\" not in serialized
+    assert "window_title" not in serialized
 
 
 def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
@@ -121,11 +299,10 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
         raw_candidate_path,
         project_id="sic_roundtrip_real_ms_20_1",
     )
-    candidate_path = tmp_path / "candidate" / "structure.cif"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_bytes(
-        _canonicalizer_compatible_cif(raw_candidate_path.read_bytes())
-    )
+    # The first real run must consume the exact surface-plugin CIF. The shared
+    # evaluator's narrower canonicalizer dialect is staged only for a separate
+    # benchmark run after this raw-input acceptance has completed.
+    candidate_path = raw_candidate_path
     candidate_before = candidate_path.read_bytes()
     candidate_sha256 = hashlib.sha256(candidate_before).hexdigest()
     output_root = tmp_path / "runs"
@@ -252,11 +429,46 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
     assert result.receipt_artifact.sha256 == _sha256(result.receipt_path)
     assert result.receipt_artifact.byte_count == result.receipt_path.stat().st_size
 
+    benchmark_candidate_path = tmp_path / "benchmark-candidate" / "structure.cif"
+    benchmark_candidate_path.parent.mkdir(parents=True)
+    benchmark_candidate_path.write_bytes(
+        _canonicalizer_compatible_cif(candidate_before)
+    )
+    benchmark_sha256 = _sha256(benchmark_candidate_path)
+    benchmark_binding = CandidateBinding(
+        structure_path=benchmark_candidate_path,
+        expected_structure_sha256=benchmark_sha256,
+    )
+    benchmark_preview_request = RoundtripRequest(
+        request_id="real-ms-20.1-benchmark-request",
+        run_id="real-ms-20.1-benchmark-run",
+        candidate=benchmark_binding,
+        output_root=output_root,
+        execution_mode="preview",
+        timeout_seconds=300,
+    )
+    benchmark_preview = adapter.run(benchmark_preview_request)
+    assert isinstance(benchmark_preview, RoundtripPlan)
+    assert benchmark_preview.files_written is False
+    benchmark_result = adapter.run(
+        RoundtripRequest(
+            request_id=benchmark_preview_request.request_id,
+            run_id=benchmark_preview_request.run_id,
+            candidate=benchmark_binding,
+            output_root=output_root,
+            execution_mode="execute",
+            timeout_seconds=benchmark_preview_request.timeout_seconds,
+        )
+    )
+    assert isinstance(benchmark_result, RoundtripExecutionResult)
+    assert benchmark_result.status == "PASS"
+    assert benchmark_result.output_path is not None
+
     acceptance = _evaluate_completed_roundtrip(
         tmp_path / "benchmark",
-        result=result,
+        result=benchmark_result,
         model=model,
-        source_path=candidate_path,
+        source_path=benchmark_candidate_path,
         evaluation_run_id="sic-3c-roundtrip-real-ms-20.1",
     )
     assert acceptance.shared_evaluator_states.model_dump() == {
@@ -276,4 +488,13 @@ def test_real_materials_studio_20_1_cif_roundtrip_acceptance(
     assert acceptance.overall_status == "PASS"
     assert acceptance.real_materials_studio == "PASS"
     assert acceptance.candidate_immutable is True
-    assert acceptance.comparison == comparison
+    assert acceptance.comparison == benchmark_result.receipt.comparison
+    _write_or_verify_evidence(
+        pytestconfig=pytestconfig,
+        projection=_evidence_projection(
+            result=result,
+            runner_path=runner_path,
+            acceptance=acceptance,
+        ),
+    )
+    assert gui.calls == ["list_processes", "list_windows"] * 5

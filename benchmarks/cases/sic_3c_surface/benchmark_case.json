@@ -1,0 +1,205 @@
+{
+  "contract_version": "1.0.0",
+  "case_id": "sic-3c-001-si-face-surface-dev",
+  "split": "development",
+  "domain": "surface",
+  "scenario": "surface_slab",
+  "material": "3C-SiC",
+  "task": {
+    "task_id": "sic-3c-001-si-face-fixed-profile",
+    "prompt": "Build the fixed ideal 3C-SiC(001) Si-face surface slab.",
+    "semantic_requirements": [
+      "Use a 2x2 in-plane repeat.",
+      "Use four bilayers and eight alternating atomic planes.",
+      "Keep 15.0 angstrom total vacuum over the full atom extent.",
+      "Hydrogen passivate only the bottom C termination with two H per bottom C.",
+      "Use 1.09 angstrom C-H bonds."
+    ],
+    "declared_assumptions": [
+      "Use the COD 1010995 revision 278158 lattice source pin.",
+      "Ideal unreconstructed unrelaxed preview only."
+    ],
+    "input_artifacts": [],
+    "expected_output_kind": "crystal",
+    "includes_final_reference_coordinates": false
+  },
+  "isolation": {
+    "reference_root": "reference/sic_3c_surface",
+    "candidate_root": "candidate/sic_3c_surface",
+    "evaluator_output_root": "evaluation/sic_3c_surface",
+    "reference_visibility": "development_auditor",
+    "modeler_input_scope": "compiled_task_only",
+    "modeler_reference_access": "denied",
+    "evaluator_reference_access": "read_only",
+    "evaluator_candidate_access": "read_only",
+    "reference_coordinates_in_task": false,
+    "candidate_write_after_evaluation_start": false,
+    "process_isolation_required": true
+  },
+  "reference": {
+    "sources": [
+      {
+        "source_id": "cod-1010995",
+        "provider": "Crystallography Open Database",
+        "source_url": "https://www.crystallography.net/cod/1010995.html",
+        "retrieved_at": "2026-07-20T00:00:00Z",
+        "query_or_record_id": "1010995@278158",
+        "citation": "COD record 1010995 revision 278158 used as the 3C-SiC lattice source pin.",
+        "license": {
+          "name": "CC0 1.0 Universal",
+          "spdx_id": "CC0-1.0",
+          "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "redistributable": true
+        },
+        "record_sha256": "7bf61ff721dae3b8fa263506aa85e0de5a83bca822744d58e9d30670200eafbb"
+      }
+    ],
+    "structure_artifacts": [
+      {
+        "artifact_id": "independent-sic-3c-001-surface-oracle",
+        "source_id": "cod-1010995",
+        "path": "reference/sic_3c_surface/analytical_oracle.cif",
+        "format": "cif",
+        "sha256": "a798c4b6e4af7b5fdd299392d6fbd181a4f8e7e3c8e4d8667ebfb4f056d405a8",
+        "canonical": true,
+        "contains_coordinates": true
+      }
+    ],
+    "canonicalization": {
+      "method": "material_studio_periodic_canonicalization_v1",
+      "method_version": "1.0.0",
+      "settings_sha256": "6c1aca62ddd2ce2862e670c259c0accfbc0789130fa973d65e75c307fc3161b8",
+      "preserves_original_artifact": true
+    }
+  },
+  "candidate": {
+    "root": "candidate/sic_3c_surface",
+    "required_artifacts": [
+      "model_spec",
+      "structure"
+    ],
+    "immutable_after_submission": true,
+    "public_entry_tool": "material_studio_live_modeling_request"
+  },
+  "gates": {
+    "structure_valid": {
+      "state_name": "structure_valid",
+      "enabled": true,
+      "required_for_overall_pass": true,
+      "criteria": [
+        {
+          "criterion_id": "structure-mapping-complete",
+          "metric": "structure.mapping_coverage",
+          "comparison_basis": "threshold",
+          "operator": "eq",
+          "expected": 1.0,
+          "tolerance": 0.0,
+          "unit": "fraction",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Periodic atom mapping to the isolated analytical oracle must be complete."
+        },
+        {
+          "criterion_id": "structure-rms-within-limit",
+          "metric": "structure.rms_displacement_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.05,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "RMS periodic displacement must satisfy the frozen first-phase limit."
+        },
+        {
+          "criterion_id": "structure-maximum-within-limit",
+          "metric": "structure.maximum_displacement_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.15,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Maximum periodic displacement must satisfy the frozen first-phase limit."
+        },
+        {
+          "criterion_id": "structure-lattice-within-limit",
+          "metric": "structure.maximum_relative_lattice_error",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.001,
+          "tolerance": 0.0,
+          "unit": "fraction",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Maximum relative lattice error must satisfy the frozen first-phase limit."
+        }
+      ],
+      "not_run_reason": null
+    },
+    "semiconductor_domain_valid": {
+      "state_name": "semiconductor_domain_valid",
+      "enabled": true,
+      "required_for_overall_pass": true,
+      "criteria": [
+        {
+          "criterion_id": "surface-vacuum-within-limit",
+          "metric": "surface.vacuum_absolute_error_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.1,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "semiconductor_domain",
+          "description": "Independently recomputed full-extent vacuum error must satisfy the frozen limit."
+        }
+      ],
+      "not_run_reason": null
+    },
+    "ms_roundtrip_valid": {
+      "state_name": "ms_roundtrip_valid",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "No real Materials Studio round trip is authorized for WO-SURFACE-001."
+    },
+    "calculation_evidence_valid": {
+      "state_name": "calculation_evidence_valid",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "No real calculation is authorized for WO-SURFACE-001."
+    },
+    "scientifically_verified": {
+      "state_name": "scientifically_verified",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "Offline analytical comparison is not scientific verification."
+    }
+  },
+  "calculation_comparison": {
+    "required_equal_settings": [],
+    "mismatch_policy": "cross_method_reference_only",
+    "cross_method_results_strictly_scored": false
+  },
+  "aggregation": {
+    "weighted_score_allowed": false,
+    "hard_failures_compensable": false,
+    "all_required_gates_must_pass": true
+  },
+  "hard_failure_rules": [
+    {
+      "rule_id": "required-surface-gate-failure",
+      "applies_to_states": [
+        "structure_valid",
+        "semiconductor_domain_valid"
+      ],
+      "trigger": "state_failed",
+      "description": "A required structural or surface-domain failure is not compensable.",
+      "forces_overall_status": "FAIL"
+    }
+  ]
+}

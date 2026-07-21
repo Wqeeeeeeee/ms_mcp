@@ -265,12 +265,24 @@ def atomic_write_json(path: Path, payload: Any) -> FileSnapshot:
     temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("xb", buffering=0) as handle:
-            handle.write(content)
+            view = memoryview(content)
+            while view:
+                written = handle.write(view)
+                if not written:
+                    raise OSError("The result receipt write made no progress.")
+                view = view[written:]
             handle.flush()
             os.fsync(handle.fileno())
-        if destination.exists():
-            raise FileExistsError(destination)
-        os.replace(temporary, destination)
+        try:
+            # The fully written inode becomes visible with an atomic, no-clobber
+            # directory operation; a competing destination makes link fail.
+            os.link(temporary, destination)
+        except FileExistsError as exc:
+            raise RoundtripError(
+                RoundtripErrorCode.RECEIPT_PERSISTENCE_FAILED,
+                "The result receipt already exists.",
+            ) from exc
+        temporary.unlink()
         return stable_read_file(
             destination,
             expected_sha256=sha256_bytes(content),

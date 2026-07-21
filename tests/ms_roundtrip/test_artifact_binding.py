@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from material_studio_mcp_server.ms_roundtrip import (
     MaterialsStudioRoundtripAdapter,
+    RoundtripError,
+    RoundtripErrorCode,
     RoundtripExecutionResult,
 )
+from material_studio_mcp_server.ms_roundtrip import secure_io as secure_io_module
 
 
 def _execute(request_factory, runner, gui) -> RoundtripExecutionResult:
@@ -103,3 +110,72 @@ def test_persisted_receipt_contains_no_absolute_paths_or_raw_gui_identity(
         not Path(item["relative_path"]).is_absolute()
         for item in decoded["runner_execution"]["artifacts"]
     )
+
+
+def test_concurrent_receipt_publication_is_atomic_and_no_clobber(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "result_receipt.json"
+    worker_count = 8
+    payloads = [
+        {"writer": index, "body": "payload-" + str(index) * 256}
+        for index in range(worker_count)
+    ]
+    publish_barrier = threading.Barrier(worker_count)
+    observed_sources: list[bytes] = []
+    observed_lock = threading.Lock()
+    real_link = secure_io_module.os.link
+
+    def synchronized_link(source, target, *args, **kwargs):
+        with observed_lock:
+            observed_sources.append(Path(source).read_bytes())
+        publish_barrier.wait(timeout=10)
+        return real_link(source, target, *args, **kwargs)
+
+    def forbidden_replace(*args, **kwargs):
+        raise AssertionError("Receipt publication must not use replacing rename.")
+
+    monkeypatch.setattr(secure_io_module.os, "link", synchronized_link)
+    monkeypatch.setattr(secure_io_module.os, "replace", forbidden_replace)
+
+    def publish(index: int):
+        try:
+            snapshot = secure_io_module.atomic_write_json(
+                destination,
+                payloads[index],
+            )
+        except RoundtripError as exc:
+            return index, None, exc
+        return index, snapshot, None
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        results = list(executor.map(publish, range(worker_count)))
+
+    successes = [result for result in results if result[1] is not None]
+    failures = [result for result in results if result[2] is not None]
+    assert len(observed_sources) == worker_count
+    assert len(successes) == 1
+    assert len(failures) == worker_count - 1
+    assert all(
+        result[2].code is RoundtripErrorCode.RECEIPT_PERSISTENCE_FAILED
+        for result in failures
+    )
+    assert all(
+        str(result[2]) == "The result receipt already exists."
+        for result in failures
+    )
+
+    winner_index, winner_snapshot, _ = successes[0]
+    expected = secure_io_module.canonical_json_bytes(
+        payloads[winner_index],
+        trailing_newline=True,
+    )
+    assert set(observed_sources) == {
+        secure_io_module.canonical_json_bytes(payload, trailing_newline=True)
+        for payload in payloads
+    }
+    assert destination.read_bytes() == expected
+    assert winner_snapshot.payload == expected
+    assert destination.stat().st_nlink == 1
+    assert not list(tmp_path.glob(f".{destination.name}.*.tmp"))

@@ -710,6 +710,14 @@ compact JSON receipt with `project_id`, `execution_mode`, normality gate fields,
 GUI current-revision fields, recommended semiconductor diagnostic focuses,
 `report_json_path`, and `view_bundle_manifest_path`.
 
+Add `--verify-ms-roundtrip` to request and validate the revision-bound CIF
+import/export audit. In preview it accepts only a side-effect-free plan and
+does not call Materials Studio. For a real existing-window smoke test, use
+`--require-real-ms-roundtrip` together with explicit
+`--execution-mode execute`; the CLI rejects `auto` and preview, and
+`real_materials_studio_status=NOT_RUN` does not pass. See
+`docs/revision_roundtrip_audit.md` for the receipt and single-window gates.
+
 For the narrow pre-execution
 `gui_activation_required_before_execution` state, use
 `--execution-mode execute --resume-deferred-execution`. Both arguments are

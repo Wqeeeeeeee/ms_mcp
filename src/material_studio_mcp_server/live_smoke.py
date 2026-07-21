@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any, Sequence
 
 from . import server
+from .roundtrip import ROUNDTRIP_AUDIT_PROFILE, ROUNDTRIP_AUDIT_SCHEMA_VERSION
 from .specs.common import ExecutionMode
 
 
@@ -3626,6 +3628,621 @@ def _bundle_export_continuation_summary(
     }
 
 
+def _roundtrip_audit_from_response(
+    response: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Resolve an in-band or persisted round-trip plan/receipt."""
+
+    if not isinstance(response, dict):
+        return None
+    candidates: list[Any] = [response.get("materials_studio_roundtrip_audit")]
+    for container_name in (
+        "result",
+        "result_metadata",
+        "modeling_report",
+        "persisted_modeling_report",
+    ):
+        container = response.get(container_name)
+        if isinstance(container, dict):
+            candidates.append(container.get("materials_studio_roundtrip_audit"))
+    return next((item for item in candidates if isinstance(item, dict)), None)
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _sha256_path(value: Any) -> str | None:
+    identity = _path_identity(value)
+    if identity is None:
+        return None
+    try:
+        digest = hashlib.sha256()
+        with Path(identity).open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except (OSError, ValueError):
+        return None
+
+
+def _response_revision(response: dict[str, Any]) -> int | None:
+    return _revision_identity(
+        response.get("new_revision", response.get("revision"))
+    )
+
+
+def _roundtrip_receipt_projection(audit: dict[str, Any]) -> dict[str, Any]:
+    """Return persisted fields that must agree between live and status receipts."""
+
+    fields = (
+        "schema_version",
+        "profile",
+        "project_id",
+        "revision",
+        "execution_mode",
+        "required",
+        "applicable",
+        "status",
+        "ok",
+        "real_materials_studio_status",
+        "spec_sha256",
+        "source_path",
+        "source_sha256",
+        "source_sha256_planned",
+        "source_sha256_before",
+        "source_sha256_after",
+        "source_unchanged",
+        "output_path",
+        "output_sha256",
+        "output_confined",
+        "runner_script_confined",
+        "run_root",
+        "script_sha256",
+        "script_identity_verified",
+        "tagged_summary_verified",
+        "runner_success",
+        "runner_timed_out",
+        "receipt_path",
+        "gui_probe_planned",
+        "runner_call_planned",
+        "side_effects",
+        "errors",
+    )
+    projection = {field: audit.get(field) for field in fields if field in audit}
+    for nested_name, nested_fields in (
+        (
+            "gui_invariant",
+            (
+                "required",
+                "identity_unchanged",
+                "single_window_ok",
+                "process_count_before_after",
+                "window_count_before_after",
+                "process_launched",
+                "window_changed",
+                "passed",
+            ),
+        ),
+        (
+            "comparison",
+            (
+                "input_sha256",
+                "output_sha256",
+                "input_atom_count",
+                "output_atom_count",
+                "input_element_counts",
+                "output_element_counts",
+                "mapping_coverage",
+                "mapping_degenerate",
+                "rms_displacement_angstrom",
+                "maximum_displacement_angstrom",
+                "maximum_relative_lattice_error",
+                "passed",
+                "errors",
+            ),
+        ),
+    ):
+        nested = audit.get(nested_name)
+        if isinstance(nested, dict):
+            projection[nested_name] = {
+                field: nested.get(field)
+                for field in nested_fields
+                if field in nested
+            }
+    return projection
+
+
+def _roundtrip_phase_acceptance(
+    response: dict[str, Any],
+    *,
+    phase: str,
+    require_real_ms_roundtrip: bool,
+    require_runtime_inventory: bool = True,
+) -> dict[str, Any]:
+    """Validate one revision's plan or completed round-trip receipt."""
+
+    failures: list[dict[str, Any]] = []
+
+    def require(condition: bool, reason: str, **details: Any) -> None:
+        if not condition:
+            failures.append(_continuation_failure(reason, **details))
+
+    audit = _roundtrip_audit_from_response(response)
+    expected_project_id = response.get("project_id")
+    expected_revision = _response_revision(response)
+    report = _dict(response.get("modeling_report"))
+    expected_mode = response.get("execution_mode") or report.get("execution_mode")
+    require(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or audit is not None,
+        "roundtrip_request_marker_missing",
+    )
+    require(audit is not None, "roundtrip_audit_missing")
+    if audit is None:
+        return {
+            "phase": phase,
+            "ok": False,
+            "status": "failed",
+            "project_id": expected_project_id,
+            "revision": expected_revision,
+            "execution_mode": expected_mode,
+            "real_materials_studio_status": None,
+            "failures": failures,
+        }
+
+    require(
+        audit.get("schema_version") == ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        "roundtrip_schema_version_mismatch",
+        expected=ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        observed=audit.get("schema_version"),
+    )
+    require(
+        audit.get("profile") == ROUNDTRIP_AUDIT_PROFILE,
+        "roundtrip_profile_mismatch",
+        expected=ROUNDTRIP_AUDIT_PROFILE,
+        observed=audit.get("profile"),
+    )
+    require(
+        isinstance(expected_project_id, str) and bool(expected_project_id),
+        "roundtrip_response_project_missing",
+        observed=expected_project_id,
+    )
+    require(
+        audit.get("project_id") == expected_project_id,
+        "roundtrip_project_mismatch",
+        expected=expected_project_id,
+        observed=audit.get("project_id"),
+    )
+    require(
+        expected_revision is not None,
+        "roundtrip_response_revision_missing",
+    )
+    require(
+        _revision_identity(audit.get("revision")) == expected_revision,
+        "roundtrip_revision_mismatch",
+        expected=expected_revision,
+        observed=audit.get("revision"),
+    )
+    require(
+        expected_mode in {ExecutionMode.PREVIEW.value, ExecutionMode.EXECUTE.value},
+        "roundtrip_response_execution_mode_invalid",
+        observed=expected_mode,
+    )
+    require(
+        audit.get("execution_mode") == expected_mode,
+        "roundtrip_execution_mode_mismatch",
+        expected=expected_mode,
+        observed=audit.get("execution_mode"),
+    )
+    require(audit.get("required") is True, "roundtrip_not_marked_required")
+    require(audit.get("applicable") is True, "roundtrip_not_applicable")
+    require(
+        _is_sha256(audit.get("spec_sha256")),
+        "roundtrip_spec_identity_invalid",
+        observed=audit.get("spec_sha256"),
+    )
+    require(not list(audit.get("errors") or []), "roundtrip_errors_present")
+
+    if expected_mode == ExecutionMode.PREVIEW.value:
+        require(
+            audit.get("status") in {"preview_ready", "deferred_until_materialized"},
+            "roundtrip_preview_status_invalid",
+            observed=audit.get("status"),
+        )
+        require(
+            audit.get("runner_call_planned") is False,
+            "roundtrip_preview_runner_planned",
+            observed=audit.get("runner_call_planned"),
+        )
+        side_effects = _dict(audit.get("side_effects"))
+        for field in ("files_written", "runner_called", "gui_input_performed"):
+            require(
+                side_effects.get(field) is False,
+                "roundtrip_preview_side_effect_not_false",
+                field=field,
+                observed=side_effects.get(field),
+            )
+        run_root = audit.get("run_root")
+        require(
+            not run_root or not Path(str(run_root)).exists(),
+            "roundtrip_preview_run_root_exists",
+            observed=run_root,
+        )
+        require(
+            audit.get("receipt_path") in (None, ""),
+            "roundtrip_preview_receipt_path_present",
+            observed=audit.get("receipt_path"),
+        )
+    elif expected_mode == ExecutionMode.EXECUTE.value:
+        require(audit.get("status") == "passed", "roundtrip_execute_status_not_passed")
+        require(audit.get("ok") is True, "roundtrip_execute_not_ok")
+        require(
+            audit.get("scientific_correctness_established") is False,
+            "roundtrip_scientific_claim_invalid",
+        )
+        require(audit.get("calculation_performed") is False, "roundtrip_calculation_performed")
+        require(audit.get("gui_input_performed") is False, "roundtrip_gui_input_performed")
+        require(
+            audit.get("matstudio_process_launched") is False,
+            "roundtrip_matstudio_process_launched",
+        )
+        real_status = audit.get("real_materials_studio_status")
+        require(
+            real_status in {"PASS", "NOT_RUN"},
+            "roundtrip_real_materials_studio_status_invalid",
+            observed=real_status,
+        )
+        if require_real_ms_roundtrip:
+            require(
+                real_status == "PASS",
+                "roundtrip_real_materials_studio_not_proven",
+                observed=real_status,
+            )
+
+        source_hashes = [
+            audit.get("source_sha256_planned"),
+            audit.get("source_sha256_before"),
+            audit.get("source_sha256_after"),
+        ]
+        require(
+            all(_is_sha256(value) for value in source_hashes),
+            "roundtrip_source_identity_invalid",
+            observed=source_hashes,
+        )
+        require(
+            len(set(source_hashes)) == 1,
+            "roundtrip_source_identity_changed",
+            observed=source_hashes,
+        )
+        require(audit.get("source_unchanged") is True, "roundtrip_source_not_unchanged")
+        require(_is_sha256(audit.get("output_sha256")), "roundtrip_output_identity_invalid")
+        require(_is_sha256(audit.get("script_sha256")), "roundtrip_script_identity_invalid")
+        for field in (
+            "output_confined",
+            "runner_script_confined",
+            "script_identity_verified",
+            "tagged_summary_verified",
+            "runner_success",
+        ):
+            require(
+                audit.get(field) is True,
+                "roundtrip_execute_gate_not_verified",
+                field=field,
+                observed=audit.get(field),
+            )
+        require(audit.get("runner_timed_out") is False, "roundtrip_runner_timed_out")
+
+        run_root = audit.get("run_root")
+        for field in ("output_path", "receipt_path"):
+            require(
+                _path_is_within(audit.get(field), run_root),
+                "roundtrip_artifact_not_confined",
+                field=field,
+                run_root=_path_identity(run_root),
+                observed=_path_identity(audit.get(field)),
+            )
+        for field in ("source_path", "output_path", "receipt_path"):
+            require(
+                _path_exists(audit.get(field)),
+                "roundtrip_artifact_missing",
+                field=field,
+                observed=audit.get(field),
+            )
+        require(
+            _sha256_path(audit.get("source_path"))
+            == audit.get("source_sha256_after"),
+            "roundtrip_current_source_identity_mismatch",
+        )
+        require(
+            _sha256_path(audit.get("output_path")) == audit.get("output_sha256"),
+            "roundtrip_current_output_identity_mismatch",
+        )
+
+        comparison = _dict(audit.get("comparison"))
+        require(bool(comparison), "roundtrip_comparison_missing")
+        require(comparison.get("passed") is True, "roundtrip_comparison_not_passed")
+        require(not list(comparison.get("errors") or []), "roundtrip_comparison_errors_present")
+        require(
+            comparison.get("input_sha256") == audit.get("source_sha256_after"),
+            "roundtrip_comparison_input_identity_mismatch",
+        )
+        require(
+            comparison.get("output_sha256") == audit.get("output_sha256"),
+            "roundtrip_comparison_output_identity_mismatch",
+        )
+        require(
+            comparison.get("input_atom_count") == comparison.get("output_atom_count"),
+            "roundtrip_comparison_atom_count_mismatch",
+        )
+        require(
+            comparison.get("input_element_counts") == comparison.get("output_element_counts"),
+            "roundtrip_comparison_composition_mismatch",
+        )
+        require(
+            comparison.get("mapping_coverage") == 1.0,
+            "roundtrip_comparison_mapping_incomplete",
+            observed=comparison.get("mapping_coverage"),
+        )
+        require(
+            comparison.get("mapping_degenerate") is False,
+            "roundtrip_comparison_mapping_degenerate",
+        )
+
+        gui_invariant = _dict(audit.get("gui_invariant"))
+        require(bool(gui_invariant), "roundtrip_gui_invariant_missing")
+        require(gui_invariant.get("required") is True, "roundtrip_gui_invariant_not_required")
+        for field in ("identity_unchanged", "single_window_ok", "passed"):
+            require(
+                gui_invariant.get(field) is True,
+                "roundtrip_gui_invariant_gate_failed",
+                field=field,
+                observed=gui_invariant.get(field),
+            )
+        require(
+            gui_invariant.get("process_launched") is False,
+            "roundtrip_gui_process_launched",
+        )
+        require(gui_invariant.get("window_changed") is False, "roundtrip_gui_window_changed")
+        require(
+            gui_invariant.get("process_count_before_after") == [1, 1],
+            "roundtrip_gui_process_inventory_invalid",
+            observed=gui_invariant.get("process_count_before_after"),
+        )
+        require(
+            gui_invariant.get("window_count_before_after") == [1, 1],
+            "roundtrip_gui_window_inventory_invalid",
+            observed=gui_invariant.get("window_count_before_after"),
+        )
+
+        if require_runtime_inventory:
+            runner_identity = _dict(audit.get("runner_identity"))
+            runner_before = _dict(runner_identity.get("before"))
+            runner_after = _dict(runner_identity.get("after"))
+            require(bool(runner_before), "roundtrip_runner_identity_before_missing")
+            require(bool(runner_after), "roundtrip_runner_identity_after_missing")
+            require(
+                runner_identity.get("unchanged") is True and runner_before == runner_after,
+                "roundtrip_runner_identity_changed",
+            )
+            require(
+                runner_before.get("exists") is True,
+                "roundtrip_runner_identity_file_missing",
+            )
+            require(
+                _is_sha256(runner_before.get("sha256"))
+                and _sha256_path(runner_before.get("path"))
+                == runner_before.get("sha256"),
+                "roundtrip_runner_file_identity_mismatch",
+            )
+            expected_runner_kind = (
+                "materials_studio_20_1"
+                if require_real_ms_roundtrip
+                else runner_before.get("runner_kind")
+            )
+            require(
+                expected_runner_kind
+                in {"materials_studio_20_1", "unverified_or_fake_runner"}
+                and runner_before.get("runner_kind") == expected_runner_kind,
+                "roundtrip_runner_kind_invalid",
+                observed=runner_before.get("runner_kind"),
+            )
+            if require_real_ms_roundtrip:
+                require(
+                    runner_before.get("real_materials_studio_20_1") is True
+                    and runner_after.get("real_materials_studio_20_1") is True,
+                    "roundtrip_real_runner_identity_not_verified",
+                )
+            gui_before = _dict(gui_invariant.get("before"))
+            gui_after = _dict(gui_invariant.get("after"))
+            require(
+                gui_before == gui_after,
+                "roundtrip_gui_inventory_identity_changed",
+            )
+            for label, inventory in (("before", gui_before), ("after", gui_after)):
+                require(
+                    inventory.get("available") is True,
+                    "roundtrip_gui_inventory_unavailable",
+                    inventory=label,
+                )
+                require(
+                    inventory.get("usable_single_window") is True,
+                    "roundtrip_gui_inventory_not_single_window",
+                    inventory=label,
+                )
+                require(
+                    inventory.get("process_count") == 1
+                    and inventory.get("window_count") == 1,
+                    "roundtrip_gui_inventory_count_invalid",
+                    inventory=label,
+                )
+                require(
+                    inventory.get("visible_window_count") == 1,
+                    "roundtrip_gui_visible_window_count_invalid",
+                    inventory=label,
+                )
+                require(
+                    _is_sha256(inventory.get("process_identity_sha256"))
+                    and _is_sha256(inventory.get("window_identity_sha256")),
+                    "roundtrip_gui_inventory_identity_invalid",
+                    inventory=label,
+                )
+            created_files = audit.get("runner_created_files")
+            require(
+                isinstance(created_files, list) and bool(created_files),
+                "roundtrip_runner_created_files_missing",
+            )
+            for created_file in created_files if isinstance(created_files, list) else []:
+                require(
+                    _path_is_within(created_file, run_root),
+                    "roundtrip_runner_created_file_not_confined",
+                    observed=_path_identity(created_file),
+                    run_root=_path_identity(run_root),
+                )
+
+    return {
+        "phase": phase,
+        "ok": not failures,
+        "status": "passed" if not failures else "failed",
+        "project_id": expected_project_id,
+        "revision": expected_revision,
+        "execution_mode": expected_mode,
+        "audit_status": audit.get("status"),
+        "audit_applicable": audit.get("applicable"),
+        "real_materials_studio_status": audit.get("real_materials_studio_status"),
+        "source_unchanged": audit.get("source_unchanged"),
+        "script_identity_verified": audit.get("script_identity_verified"),
+        "output_confined": audit.get("output_confined"),
+        "tagged_summary_verified": audit.get("tagged_summary_verified"),
+        "comparison_passed": _dict(audit.get("comparison")).get("passed"),
+        "gui_invariant_passed": _dict(audit.get("gui_invariant")).get("passed"),
+        "failures": failures,
+    }
+
+
+def _roundtrip_status_acceptance(
+    status: dict[str, Any] | None,
+    *,
+    final_live: dict[str, Any],
+    require_real_ms_roundtrip: bool,
+) -> dict[str, Any]:
+    """Verify that final status surfaces the same current-revision audit."""
+
+    failures: list[dict[str, Any]] = []
+    if not isinstance(status, dict):
+        return {
+            "ok": False,
+            "status": "failed",
+            "consistent_with_final_live": False,
+            "failures": [_continuation_failure("roundtrip_final_status_missing")],
+        }
+
+    status_phase = _roundtrip_phase_acceptance(
+        status,
+        phase="final_status",
+        require_real_ms_roundtrip=require_real_ms_roundtrip,
+        require_runtime_inventory=False,
+    )
+    failures.extend(status_phase["failures"])
+    live_audit = _roundtrip_audit_from_response(final_live)
+    status_audit = _roundtrip_audit_from_response(status)
+    consistent = bool(live_audit and status_audit) and (
+        _roundtrip_receipt_projection(live_audit)
+        == _roundtrip_receipt_projection(status_audit)
+    )
+    if not consistent:
+        failures.append(_continuation_failure("roundtrip_final_status_receipt_mismatch"))
+    expected_project_id = final_live.get("project_id")
+    expected_revision = _response_revision(final_live)
+    if status.get("project_id") != expected_project_id:
+        failures.append(
+            _continuation_failure(
+                "roundtrip_final_status_project_mismatch",
+                expected=expected_project_id,
+                observed=status.get("project_id"),
+            )
+        )
+    if _response_revision(status) != expected_revision:
+        failures.append(
+            _continuation_failure(
+                "roundtrip_final_status_revision_mismatch",
+                expected=expected_revision,
+                observed=_response_revision(status),
+            )
+        )
+    return {
+        "ok": not failures,
+        "status": "passed" if not failures else "failed",
+        "project_id": status.get("project_id"),
+        "revision": _response_revision(status),
+        "consistent_with_final_live": consistent,
+        "real_materials_studio_status": status_phase.get(
+            "real_materials_studio_status"
+        ),
+        "failures": failures,
+    }
+
+
+def _roundtrip_smoke_acceptance(
+    *,
+    live: dict[str, Any],
+    status: dict[str, Any] | None,
+    base_live: dict[str, Any] | None,
+    require_real_ms_roundtrip: bool,
+) -> dict[str, Any]:
+    """Aggregate base, follow-up, and final-status round-trip acceptance."""
+
+    phase_responses = (
+        [("base", base_live), ("followup", live)]
+        if isinstance(base_live, dict)
+        else [("base", live)]
+    )
+    phases = {
+        phase: _roundtrip_phase_acceptance(
+            response,
+            phase=phase,
+            require_real_ms_roundtrip=require_real_ms_roundtrip,
+        )
+        for phase, response in phase_responses
+    }
+    status_acceptance = _roundtrip_status_acceptance(
+        status,
+        final_live=live,
+        require_real_ms_roundtrip=require_real_ms_roundtrip,
+    )
+    failures = [
+        {"phase": phase, **failure}
+        for phase, acceptance in phases.items()
+        for failure in acceptance["failures"]
+    ]
+    failures.extend(
+        {"phase": "final_status", **failure}
+        for failure in status_acceptance["failures"]
+    )
+    final_audit = _roundtrip_audit_from_response(live) or {}
+    return {
+        "available": True,
+        "requested": True,
+        "require_real_materials_studio": bool(require_real_ms_roundtrip),
+        "ok": not failures,
+        "status": "passed" if not failures else "failed",
+        "project_id": live.get("project_id"),
+        "revision": _response_revision(live),
+        "execution_mode": live.get("execution_mode"),
+        "real_materials_studio_status": final_audit.get(
+            "real_materials_studio_status"
+        ),
+        "phase_count": len(phases),
+        "phases": phases,
+        "final_status": status_acceptance,
+        "failures": failures,
+    }
+
+
 def run_live_smoke(
     *,
     request: str | None = None,
@@ -3643,6 +4260,8 @@ def run_live_smoke(
     resume_deferred_execution: bool = False,
     resume_deferred_hotload: bool = False,
     resume_deferred_bundle_export: bool = False,
+    verify_ms_roundtrip: bool = False,
+    require_real_ms_roundtrip: bool = False,
 ) -> dict[str, Any]:
     """Run preflight -> live request -> safe continuation -> status -> bundle."""
 
@@ -3656,21 +4275,31 @@ def run_live_smoke(
             raise ValueError("follow_up_preset requires an explicit scenario when request is supplied directly.")
         resolved_follow_up_request = default_follow_up_request_for_scenario(resolved_scenario, follow_up_preset)
     mode = _execution_mode_arg(execution_mode)
+    if require_real_ms_roundtrip and execution_mode != ExecutionMode.EXECUTE.value:
+        raise ValueError(
+            "require_real_ms_roundtrip requires explicit execution_mode='execute'."
+        )
+    roundtrip_requested = bool(verify_ms_roundtrip or require_real_ms_roundtrip)
     explicit_execution_authorized = execution_mode == ExecutionMode.EXECUTE.value
     preflight = server.material_studio_live_session_preflight(
         working_dir=working_dir,
         include_latest_project=True,
         include_gui_status=include_gui_status,
     )
+    base_live_kwargs: dict[str, Any] = {
+        "execution_mode": mode,
+        "open_in_gui": True,
+        "take_snapshot": take_snapshot,
+        "export_view_audit": True,
+        "views": views,
+        "working_dir": working_dir,
+        "timeout_seconds": timeout_seconds,
+    }
+    if roundtrip_requested:
+        base_live_kwargs["verify_ms_roundtrip"] = True
     initial_base_live = server.material_studio_live_modeling_request(
         resolved_request,
-        execution_mode=mode,
-        open_in_gui=True,
-        take_snapshot=take_snapshot,
-        export_view_audit=True,
-        views=views,
-        working_dir=working_dir,
-        timeout_seconds=timeout_seconds,
+        **base_live_kwargs,
     )
     live, base_preexecution_execution_continuation = (
         _resume_preexecution_execution(
@@ -3692,16 +4321,21 @@ def run_live_smoke(
     followup_preexecution_execution_continuation: dict[str, Any] | None = None
     followup_hotload_continuation: dict[str, Any] | None = None
     if resolved_follow_up_request and live.get("ok") and live.get("project_id"):
+        followup_live_kwargs = {
+            "project_id": str(live["project_id"]),
+            "execution_mode": mode,
+            "open_in_gui": True,
+            "take_snapshot": take_snapshot,
+            "export_view_audit": True,
+            "views": views,
+            "working_dir": working_dir,
+            "timeout_seconds": timeout_seconds,
+        }
+        if roundtrip_requested:
+            followup_live_kwargs["verify_ms_roundtrip"] = True
         initial_followup_live = server.material_studio_live_modeling_request(
             resolved_follow_up_request,
-            project_id=str(live["project_id"]),
-            execution_mode=mode,
-            open_in_gui=True,
-            take_snapshot=take_snapshot,
-            export_view_audit=True,
-            views=views,
-            working_dir=working_dir,
-            timeout_seconds=timeout_seconds,
+            **followup_live_kwargs,
         )
         followup_live, followup_preexecution_execution_continuation = (
             _resume_preexecution_execution(
@@ -3784,9 +4418,11 @@ def run_live_smoke(
         base_hotload_continuation=base_hotload_continuation,
         followup_hotload_continuation=followup_hotload_continuation,
         bundle_export_continuation=bundle_export_continuation,
+        verify_ms_roundtrip=roundtrip_requested,
+        require_real_ms_roundtrip=require_real_ms_roundtrip,
     )
 
-    return {
+    result = {
         "ok": _overall_ok(preflight=preflight, live=live, base_live=base_live, status=status, bundle=bundle, summary=summary),
         "request": resolved_request,
         "follow_up_request": resolved_follow_up_request,
@@ -3819,6 +4455,19 @@ def run_live_smoke(
         "status": status,
         "bundle": bundle,
     }
+    if roundtrip_requested:
+        result.update(
+            {
+                "verify_ms_roundtrip_requested": True,
+                "require_real_ms_roundtrip_requested": bool(
+                    require_real_ms_roundtrip
+                ),
+                "materials_studio_roundtrip_acceptance": summary[
+                    "materials_studio_roundtrip_acceptance"
+                ],
+            }
+        )
+    return result
 
 
 def build_live_smoke_summary(
@@ -3838,6 +4487,8 @@ def build_live_smoke_summary(
     base_hotload_continuation: dict[str, Any] | None = None,
     followup_hotload_continuation: dict[str, Any] | None = None,
     bundle_export_continuation: dict[str, Any] | None = None,
+    verify_ms_roundtrip: bool = False,
+    require_real_ms_roundtrip: bool = False,
 ) -> dict[str, Any]:
     """Return a compact, stable acceptance summary for a live smoke run."""
 
@@ -4133,7 +4784,7 @@ def build_live_smoke_summary(
         visual_normality=visual_normality,
     )
 
-    return {
+    result = {
         "preflight_state": preflight.get("state"),
         "preflight_recommended_tool": preflight.get("recommended_tool"),
         "preflight_blocking_reasons": preflight.get("blocking_reasons") or [],
@@ -4376,6 +5027,28 @@ def build_live_smoke_summary(
         "errors": _collect_errors(preflight, live, status, bundle),
         "warnings": _collect_warnings(preflight, live, status, bundle),
     }
+    if verify_ms_roundtrip:
+        acceptance = _roundtrip_smoke_acceptance(
+            live=live,
+            status=status,
+            base_live=base_live,
+            require_real_ms_roundtrip=require_real_ms_roundtrip,
+        )
+        result.update(
+            {
+                "verify_ms_roundtrip_requested": True,
+                "require_real_ms_roundtrip_requested": bool(
+                    require_real_ms_roundtrip
+                ),
+                "materials_studio_roundtrip_acceptance": acceptance,
+                "materials_studio_roundtrip_acceptance_ok": acceptance["ok"],
+                "materials_studio_roundtrip_real_status": acceptance[
+                    "real_materials_studio_status"
+                ],
+                "materials_studio_roundtrip_failures": acceptance["failures"],
+            }
+        )
+    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -4383,6 +5056,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.require_real_ms_roundtrip and args.execution_mode != "execute":
+        parser.error(
+            "--require-real-ms-roundtrip requires explicit --execution-mode execute"
+        )
     result = run_live_smoke(
         request=args.request,
         follow_up_request=args.follow_up_request,
@@ -4399,6 +5076,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         resume_deferred_execution=args.resume_deferred_execution,
         resume_deferred_hotload=args.resume_deferred_hotload,
         resume_deferred_bundle_export=args.resume_deferred_bundle_export,
+        verify_ms_roundtrip=(
+            args.verify_ms_roundtrip or args.require_real_ms_roundtrip
+        ),
+        require_real_ms_roundtrip=args.require_real_ms_roundtrip,
     )
     payload = result if args.include_raw else {"ok": result["ok"], **result["summary"]}
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -4472,6 +5153,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "the current revision; never rerun modeling, MaterialsScript, or GUI open."
         ),
     )
+    parser.add_argument(
+        "--verify-ms-roundtrip",
+        action="store_true",
+        help=(
+            "Request a revision-bound Materials Studio CIF import/export audit. "
+            "Preview validates a side-effect-free plan; execute requires a complete receipt."
+        ),
+    )
+    parser.add_argument(
+        "--require-real-ms-roundtrip",
+        action="store_true",
+        help=(
+            "Require real Materials Studio 20.1 round-trip status PASS. Implies "
+            "--verify-ms-roundtrip and requires explicit --execution-mode execute."
+        ),
+    )
     parser.add_argument("--output", help="Optional path to write the JSON result.")
     parser.add_argument("--include-raw", action="store_true", help="Include full preflight/live/status/bundle payloads.")
     parser.add_argument("--export-bundle", action=argparse.BooleanOptionalAction, default=True)
@@ -4511,6 +5208,11 @@ def _overall_ok(
         return False
     expected = _dict((summary or {}).get("follow_up_expected_diagnostics"))
     if expected and expected.get("ok") is False:
+        return False
+    roundtrip_acceptance = _dict(
+        (summary or {}).get("materials_studio_roundtrip_acceptance")
+    )
+    if roundtrip_acceptance and roundtrip_acceptance.get("ok") is not True:
         return False
     return True
 

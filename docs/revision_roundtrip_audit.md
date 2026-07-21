@@ -55,3 +55,44 @@ tool and confirm that exactly one existing Materials Studio window is the
 target. Then submit the same revision with explicit `execution_mode="execute"`
 and `verify_ms_roundtrip=true`. The audit never launches another
 `MatStudio.exe` process and never sends GUI input itself.
+
+## Live smoke acceptance
+
+`ms-mcp-live-smoke` exposes the audit through two opt-in flags. Neither flag is
+sent to the server during default smoke runs, and default compact summaries do
+not contain round-trip fields.
+
+Use a preview to verify request routing and planning without calling the
+runner or touching the GUI:
+
+```powershell
+ms-mcp-live-smoke --scenario silicon --execution-mode preview `
+  --verify-ms-roundtrip --no-include-gui-status --no-take-snapshot `
+  --working-dir workspace/live_smoke_roundtrip_preview
+```
+
+The smoke result requires a revision-bound plan with no runner call, no file or
+GUI side effect, and no audit run directory. When a follow-up request is
+present, the base and follow-up revisions are checked separately. The final
+`material_studio_live_project_status` audit must match the final live receipt.
+
+For a real Materials Studio acceptance run, first verify that exactly one
+existing Materials Studio window is selected, then explicitly authorize
+execution:
+
+```powershell
+ms-mcp-live-smoke --scenario silicon --hotload --execution-mode execute `
+  --require-real-ms-roundtrip `
+  --working-dir workspace/live_smoke_roundtrip_real
+```
+
+`--require-real-ms-roundtrip` implies `--verify-ms-roundtrip` and is rejected
+with `auto` or `preview`. Execute acceptance checks the source hashes before
+and after import/export, deterministic script identity, output confinement,
+tagged JSON, CIF comparison, runner identity, and unchanged one-process,
+one-window GUI inventory. A structurally valid fake-runner receipt remains
+`NOT_RUN`: it can test the acceptance code but cannot pass the real-MS flag.
+
+Continuation flags do not synthesize `verify_ms_roundtrip`. They use the exact
+workspace-bound retry payload returned by the server, so deferred execution or
+GUI synchronization cannot silently change the original audit request.

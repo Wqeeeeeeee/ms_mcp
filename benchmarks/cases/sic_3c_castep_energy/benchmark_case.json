@@ -1,0 +1,210 @@
+{
+  "contract_version": "1.0.0",
+  "case_id": "sic-3c-001-si-face-castep-energy-dev",
+  "split": "development",
+  "domain": "surface",
+  "scenario": "surface_slab_castep_energy_acceptance",
+  "material": "3C-SiC",
+  "task": {
+    "task_id": "sic-3c-001-si-face-fixed-castep-energy",
+    "prompt": "Build the fixed 80-atom 3C-SiC(001) Si-face slab and collect one CASTEP Energy result with the frozen profile.",
+    "semantic_requirements": [
+      "Use the existing ideal 2x2 four-bilayer 15 angstrom vacuum bottom-H-passivated slab.",
+      "Run Energy only with PBE, Medium quality, 300 eV cutoff, a 2x2x1 grid, and Self-consistent dipole correction.",
+      "Do not open the GUI, take a snapshot, or export a view audit."
+    ],
+    "declared_assumptions": [
+      "Use the COD 1010995 revision 278158 lattice source pin.",
+      "Calculation completion and native SCF parsing are evidence, not scientific verification."
+    ],
+    "input_artifacts": [],
+    "expected_output_kind": "crystal",
+    "includes_final_reference_coordinates": false
+  },
+  "isolation": {
+    "reference_root": "reference/sic_3c_castep_energy",
+    "candidate_root": "candidate/sic_3c_castep_energy",
+    "evaluator_output_root": "evaluation/sic_3c_castep_energy",
+    "reference_visibility": "development_auditor",
+    "modeler_input_scope": "compiled_task_only",
+    "modeler_reference_access": "denied",
+    "evaluator_reference_access": "read_only",
+    "evaluator_candidate_access": "read_only",
+    "reference_coordinates_in_task": false,
+    "candidate_write_after_evaluation_start": false,
+    "process_isolation_required": true
+  },
+  "reference": {
+    "sources": [
+      {
+        "source_id": "cod-1010995",
+        "provider": "Crystallography Open Database",
+        "source_url": "https://www.crystallography.net/cod/1010995.html",
+        "retrieved_at": "2026-07-20T00:00:00Z",
+        "query_or_record_id": "1010995@278158",
+        "citation": "COD record 1010995 revision 278158 used as the 3C-SiC lattice source pin.",
+        "license": {
+          "name": "CC0 1.0 Universal",
+          "spdx_id": "CC0-1.0",
+          "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+          "redistributable": true
+        },
+        "record_sha256": "7bf61ff721dae3b8fa263506aa85e0de5a83bca822744d58e9d30670200eafbb"
+      }
+    ],
+    "structure_artifacts": [
+      {
+        "artifact_id": "independent-sic-3c-001-castep-energy-oracle",
+        "source_id": "cod-1010995",
+        "path": "reference/sic_3c_castep_energy/analytical_oracle.cif",
+        "format": "cif",
+        "sha256": "a798c4b6e4af7b5fdd299392d6fbd181a4f8e7e3c8e4d8667ebfb4f056d405a8",
+        "canonical": true,
+        "contains_coordinates": true
+      }
+    ],
+    "canonicalization": {
+      "method": "material_studio_periodic_canonicalization_v1",
+      "method_version": "1.0.0",
+      "settings_sha256": "6c1aca62ddd2ce2862e670c259c0accfbc0789130fa973d65e75c307fc3161b8",
+      "preserves_original_artifact": true
+    }
+  },
+  "candidate": {
+    "root": "candidate/sic_3c_castep_energy",
+    "required_artifacts": [
+      "model_spec",
+      "structure",
+      "revision_metadata",
+      "calculation_result"
+    ],
+    "immutable_after_submission": true,
+    "public_entry_tool": "material_studio_live_modeling_request"
+  },
+  "gates": {
+    "structure_valid": {
+      "state_name": "structure_valid",
+      "enabled": true,
+      "required_for_overall_pass": true,
+      "criteria": [
+        {
+          "criterion_id": "structure-mapping-complete",
+          "metric": "structure.mapping_coverage",
+          "comparison_basis": "threshold",
+          "operator": "eq",
+          "expected": 1.0,
+          "tolerance": 0.0,
+          "unit": "fraction",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Periodic atom mapping to the isolated analytical oracle must be complete."
+        },
+        {
+          "criterion_id": "structure-rms-within-limit",
+          "metric": "structure.rms_displacement_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.05,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "RMS periodic displacement must satisfy the frozen first-phase limit."
+        },
+        {
+          "criterion_id": "structure-maximum-within-limit",
+          "metric": "structure.maximum_displacement_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.15,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Maximum periodic displacement must satisfy the frozen first-phase limit."
+        },
+        {
+          "criterion_id": "structure-lattice-within-limit",
+          "metric": "structure.maximum_relative_lattice_error",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.001,
+          "tolerance": 0.0,
+          "unit": "fraction",
+          "severity": "hard_failure",
+          "evidence_kind": "structure",
+          "description": "Maximum relative lattice error must satisfy the frozen first-phase limit."
+        }
+      ],
+      "not_run_reason": null
+    },
+    "semiconductor_domain_valid": {
+      "state_name": "semiconductor_domain_valid",
+      "enabled": true,
+      "required_for_overall_pass": true,
+      "criteria": [
+        {
+          "criterion_id": "surface-vacuum-within-limit",
+          "metric": "surface.vacuum_absolute_error_angstrom",
+          "comparison_basis": "threshold",
+          "operator": "lte",
+          "expected": 0.1,
+          "tolerance": 0.0,
+          "unit": "angstrom",
+          "severity": "hard_failure",
+          "evidence_kind": "semiconductor_domain",
+          "description": "Independently recomputed full-extent vacuum error must satisfy the frozen limit."
+        }
+      ],
+      "not_run_reason": null
+    },
+    "ms_roundtrip_valid": {
+      "state_name": "ms_roundtrip_valid",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "This CASTEP work order does not perform a Materials Studio round trip."
+    },
+    "calculation_evidence_valid": {
+      "state_name": "calculation_evidence_valid",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "The immutable shared evaluator does not authorize real backend evidence; the private acceptance layer derives this state."
+    },
+    "scientifically_verified": {
+      "state_name": "scientifically_verified",
+      "enabled": false,
+      "required_for_overall_pass": false,
+      "criteria": [],
+      "not_run_reason": "A completed Energy job and native SCF audit are not scientific verification."
+    }
+  },
+  "calculation_comparison": {
+    "required_equal_settings": [
+      "functional",
+      "cutoff_energy",
+      "k_points",
+      "dipole_correction"
+    ],
+    "mismatch_policy": "cross_method_reference_only",
+    "cross_method_results_strictly_scored": false
+  },
+  "aggregation": {
+    "weighted_score_allowed": false,
+    "hard_failures_compensable": false,
+    "all_required_gates_must_pass": true
+  },
+  "hard_failure_rules": [
+    {
+      "rule_id": "required-castep-input-gate-failure",
+      "applies_to_states": [
+        "structure_valid",
+        "semiconductor_domain_valid"
+      ],
+      "trigger": "state_failed",
+      "description": "A required structural or surface-domain failure is not compensable.",
+      "forces_overall_status": "FAIL"
+    }
+  ]
+}

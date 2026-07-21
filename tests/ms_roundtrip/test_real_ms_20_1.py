@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from material_studio_mcp_server.config import MaterialStudioConfig, resolve_config
 from material_studio_mcp_server.gui import ProcessInfo, WindowInfo, WindowsGuiBackend
@@ -26,6 +27,13 @@ from material_studio_mcp_server.benchmark_evaluation import (
 )
 from material_studio_mcp_server.ms_roundtrip.comparison import (
     _canonicalizer_compatible_cif,
+)
+from material_studio_mcp_server.ms_roundtrip.contracts import (
+    RoundtripBenchmarkAcceptance,
+    RoundtripComparisonReceipt,
+    RunnerIdentityReceipt,
+    ScriptSafetyReceipt,
+    TaggedSummaryReceipt,
 )
 from material_studio_mcp_server.ms_roundtrip.secure_io import (
     canonical_json_bytes,
@@ -46,6 +54,86 @@ EVIDENCE_PATH = (
     / "real_ms_20_1_evidence.json"
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_ABSOLUTE_PATH_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/)")
+_RECORDED_EVIDENCE_CANONICAL_SHA256 = (
+    "79e8a9d0b1307b8b7c5250ef0a3f22022a244d7b911149e931bae6a508595ea9"
+)
+_NEGATIVE_DISCLOSURE_FLAGS = frozenset(
+    {
+        "contains_absolute_paths",
+        "contains_atom_mapping",
+        "contains_coordinates",
+        "contains_displacement_vectors",
+        "contains_lattice_vectors",
+        "contains_pid",
+        "contains_raw_artifact_bytes",
+        "contains_window_handle",
+    }
+)
+
+_PROJECTED_ARTIFACT_KEYS = frozenset({"role", "sha256", "byte_count"})
+_PROJECTED_GUI_INVENTORY_KEYS = frozenset(
+    {
+        "process_count",
+        "window_count",
+        "usable_single_window",
+        "process_identity_sha256",
+        "window_identity_sha256",
+        "window_visible",
+        "window_minimized",
+        "window_foreground",
+        "contains_pid",
+        "contains_window_handle",
+        "read_only_probe",
+    }
+)
+_PROJECTED_GUI_KEYS = frozenset(
+    {
+        "before",
+        "after",
+        "matstudio_process_count_before_after",
+        "matstudio_window_count_before_after",
+        "process_identity_unchanged",
+        "window_identity_unchanged",
+        "matstudio_pid_and_window_handle_unchanged",
+        "matstudio_process_launched",
+        "invariant_passed",
+        "gui_input_activation_open_or_hotload_called",
+    }
+)
+_PROJECTED_RUNNER_EXECUTION_KEYS = frozenset(
+    {
+        "success",
+        "timed_out",
+        "return_code",
+        "command_sha256",
+        "stdout_sha256",
+        "stderr_sha256",
+        "materials_output_sha256",
+        "materials_log_sha256",
+        "artifacts",
+        "all_artifacts_confined",
+    }
+)
+_PROJECTED_RECEIPT_BINDING_KEYS = frozenset(
+    {
+        "status",
+        "real_environment",
+        "real_materials_studio_status",
+        "input_artifact",
+        "output_artifact",
+        "input_candidate_immutable",
+        "script_safety",
+        "runner_identity",
+        "runner_executable_unchanged",
+        "runner_execution",
+        "output_confined_and_fresh",
+        "tagged_summary",
+        "gui_invariant",
+        "comparison",
+        "failure_codes",
+    }
+)
 
 
 class _InventoryOnlyWindowsBackend:
@@ -75,6 +163,146 @@ def _sha256(path: Path) -> str:
 
 def _canonical_sha256(value: object) -> str:
     return sha256_bytes(canonical_json_bytes(value, trailing_newline=True))
+
+
+def _assert_exact_keys(
+    value: object,
+    expected: frozenset[str],
+) -> dict[str, object]:
+    assert isinstance(value, dict)
+    assert set(value) == expected
+    return value
+
+
+def _assert_sensitive_value_contract(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert isinstance(key, str)
+            normalized = key.casefold()
+            if normalized.endswith("_sha256"):
+                assert isinstance(item, str)
+                assert _SHA256_RE.fullmatch(item)
+            if normalized in _NEGATIVE_DISCLOSURE_FLAGS:
+                assert item is False
+            _assert_sensitive_value_contract(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _assert_sensitive_value_contract(item)
+        return
+    assert not isinstance(value, bytes)
+    if isinstance(value, str):
+        assert _ABSOLUTE_PATH_RE.match(value) is None
+
+
+def _assert_model_payload(model_type, value: object) -> None:
+    assert isinstance(value, dict)
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        allow_nan=False,
+        sort_keys=True,
+    )
+    validated = model_type.model_validate_json(encoded)
+    assert validated.model_dump(mode="json") == value
+
+
+def _validate_projected_artifact(
+    value: object,
+    *,
+    allowed_roles: frozenset[str],
+) -> dict[str, object]:
+    artifact = _assert_exact_keys(value, _PROJECTED_ARTIFACT_KEYS)
+    assert artifact["role"] in allowed_roles
+    assert isinstance(artifact["sha256"], str)
+    assert _SHA256_RE.fullmatch(artifact["sha256"])
+    assert isinstance(artifact["byte_count"], int)
+    assert not isinstance(artifact["byte_count"], bool)
+    assert artifact["byte_count"] >= 1
+    return artifact
+
+
+def _validate_projected_gui_inventory(value: object) -> dict[str, object]:
+    inventory = _assert_exact_keys(value, _PROJECTED_GUI_INVENTORY_KEYS)
+    assert inventory["process_count"] == 1
+    assert inventory["window_count"] == 1
+    assert inventory["usable_single_window"] is True
+    assert inventory["window_visible"] is True
+    assert isinstance(inventory["window_minimized"], bool)
+    assert isinstance(inventory["window_foreground"], bool)
+    assert inventory["contains_pid"] is False
+    assert inventory["contains_window_handle"] is False
+    assert inventory["read_only_probe"] is True
+    return inventory
+
+
+def _validate_projected_gui(value: object) -> dict[str, object]:
+    gui = _assert_exact_keys(value, _PROJECTED_GUI_KEYS)
+    before = _validate_projected_gui_inventory(gui["before"])
+    after = _validate_projected_gui_inventory(gui["after"])
+    assert gui["matstudio_process_count_before_after"] == [1, 1]
+    assert gui["matstudio_window_count_before_after"] == [1, 1]
+    process_unchanged = (
+        before["process_identity_sha256"] == after["process_identity_sha256"]
+    )
+    window_unchanged = (
+        before["window_identity_sha256"] == after["window_identity_sha256"]
+    )
+    assert gui["process_identity_unchanged"] is process_unchanged
+    assert gui["window_identity_unchanged"] is window_unchanged
+    assert gui["matstudio_pid_and_window_handle_unchanged"] is (
+        process_unchanged and window_unchanged
+    )
+    assert gui["matstudio_process_launched"] is False
+    assert gui["invariant_passed"] is True
+    assert gui["gui_input_activation_open_or_hotload_called"] is False
+    return gui
+
+
+def _validate_projected_runner_execution(value: object) -> dict[str, object]:
+    execution = _assert_exact_keys(value, _PROJECTED_RUNNER_EXECUTION_KEYS)
+    assert execution["success"] is True
+    assert execution["timed_out"] is False
+    assert execution["return_code"] == 0
+    assert not isinstance(execution["return_code"], bool)
+    assert execution["all_artifacts_confined"] is True
+    artifacts = execution["artifacts"]
+    assert isinstance(artifacts, list)
+    validated_artifacts = [
+        _validate_projected_artifact(
+            artifact,
+            allowed_roles=frozenset({"script", "runner_artifact"}),
+        )
+        for artifact in artifacts
+    ]
+    assert sum(artifact["role"] == "script" for artifact in validated_artifacts) == 1
+    return execution
+
+
+def _validate_projected_receipt_binding(value: object) -> dict[str, object]:
+    binding = _assert_exact_keys(value, _PROJECTED_RECEIPT_BINDING_KEYS)
+    assert binding["status"] == "PASS"
+    assert binding["real_environment"] is True
+    assert binding["real_materials_studio_status"] == "PASS"
+    assert binding["input_candidate_immutable"] is True
+    assert binding["runner_executable_unchanged"] is True
+    assert binding["output_confined_and_fresh"] is True
+    assert binding["failure_codes"] == []
+    _validate_projected_artifact(
+        binding["input_artifact"],
+        allowed_roles=frozenset({"input_cif"}),
+    )
+    _validate_projected_artifact(
+        binding["output_artifact"],
+        allowed_roles=frozenset({"roundtrip_output"}),
+    )
+    _assert_model_payload(ScriptSafetyReceipt, binding["script_safety"])
+    _assert_model_payload(RunnerIdentityReceipt, binding["runner_identity"])
+    _validate_projected_runner_execution(binding["runner_execution"])
+    _assert_model_payload(TaggedSummaryReceipt, binding["tagged_summary"])
+    _validate_projected_gui(binding["gui_invariant"])
+    _assert_model_payload(RoundtripComparisonReceipt, binding["comparison"])
+    return binding
 
 
 def _artifact_projection(artifact) -> dict[str, object]:
@@ -153,6 +381,7 @@ def _run_evidence_projection(result: RoundtripExecutionResult) -> dict[str, obje
 
 
 def _validate_run_evidence_projection(projection: dict[str, object]) -> None:
+    _assert_sensitive_value_contract(projection)
     assert set(projection) == {
         "input_sha256",
         "output_sha256",
@@ -174,17 +403,16 @@ def _validate_run_evidence_projection(projection: dict[str, object]) -> None:
         assert isinstance(projection[key], str)
         assert _SHA256_RE.fullmatch(projection[key])
     assert projection["roundtrip_receipt_sha256"] == projection["recorded_receipt_sha256"]
-    binding = projection["receipt_binding"]
-    assert isinstance(binding, dict)
+    binding = _validate_projected_receipt_binding(projection["receipt_binding"])
     assert _canonical_sha256(binding) == projection["receipt_binding_sha256"]
     assert binding["input_artifact"]["sha256"] == projection["input_sha256"]
     assert binding["output_artifact"]["sha256"] == projection["output_sha256"]
     assert binding["runner_identity"] == projection["runner_identity"]
     assert binding["comparison"] == projection["comparison"]
     assert binding["gui_invariant"] == projection["gui"]
-    assert projection["gui"]["invariant_passed"] is True
-    assert projection["gui"]["before"]["usable_single_window"] is True
-    assert projection["gui"]["after"]["usable_single_window"] is True
+    _assert_model_payload(RunnerIdentityReceipt, projection["runner_identity"])
+    _assert_model_payload(RoundtripComparisonReceipt, projection["comparison"])
+    _validate_projected_gui(projection["gui"])
 
 
 def _evidence_projection(
@@ -253,11 +481,16 @@ def _evidence_projection(
         "contains_window_handle": False,
     }
     assert_coordinate_free_payload(projection)
-    _validate_evidence_projection(projection)
+    _validate_evidence_projection(projection, require_recorded_anchor=False)
     return projection
 
 
-def _validate_evidence_projection(projection: dict[str, object]) -> None:
+def _validate_evidence_projection(
+    projection: dict[str, object],
+    *,
+    require_recorded_anchor: bool = True,
+) -> None:
+    _assert_sensitive_value_contract(projection)
     assert set(projection) == {
         "contract_version",
         "evidence_profile",
@@ -286,12 +519,45 @@ def _validate_evidence_projection(projection: dict[str, object]) -> None:
     _validate_run_evidence_projection(projection["benchmark_roundtrip"])
     acceptance = projection["benchmark_acceptance"]
     benchmark = projection["benchmark_roundtrip"]
+    raw = projection["raw_roundtrip"]
+    _assert_model_payload(RoundtripBenchmarkAcceptance, acceptance)
     assert acceptance["ms_roundtrip_structure_sha256"] == benchmark["output_sha256"]
     assert acceptance["roundtrip_receipt_sha256"] == benchmark[
         "roundtrip_receipt_sha256"
     ]
     assert acceptance["comparison"] == benchmark["comparison"]
-    continuity = projection["gui_continuity"]
+    assert projection["runner_sha256"] == raw["runner_identity"]["executable"][
+        "sha256"
+    ]
+    assert projection["runner_sha256"] == benchmark["runner_identity"][
+        "executable"
+    ]["sha256"]
+    continuity = _assert_exact_keys(
+        projection["gui_continuity"],
+        frozenset(
+            {
+                "raw_after_process_identity_sha256",
+                "benchmark_before_process_identity_sha256",
+                "raw_after_window_identity_sha256",
+                "benchmark_before_window_identity_sha256",
+                "process_identity_continuous",
+                "window_identity_continuous",
+                "verified",
+            }
+        ),
+    )
+    assert continuity["raw_after_process_identity_sha256"] == raw["gui"][
+        "after"
+    ]["process_identity_sha256"]
+    assert continuity["benchmark_before_process_identity_sha256"] == benchmark[
+        "gui"
+    ]["before"]["process_identity_sha256"]
+    assert continuity["raw_after_window_identity_sha256"] == raw["gui"]["after"][
+        "window_identity_sha256"
+    ]
+    assert continuity["benchmark_before_window_identity_sha256"] == benchmark[
+        "gui"
+    ]["before"]["window_identity_sha256"]
     assert continuity["process_identity_continuous"] is True
     assert continuity["window_identity_continuous"] is True
     assert continuity["verified"] is True
@@ -305,6 +571,12 @@ def _validate_evidence_projection(projection: dict[str, object]) -> None:
     )
     assert projection["candidate_immutable"] is True
     assert projection["scientific_status"] == "NOT_RUN"
+    for flag in _NEGATIVE_DISCLOSURE_FLAGS:
+        assert projection[flag] is False
+    if require_recorded_anchor:
+        assert _canonical_sha256(projection) == (
+            _RECORDED_EVIDENCE_CANONICAL_SHA256
+        )
 
 
 def _write_or_verify_evidence(
@@ -443,6 +715,82 @@ def test_recorded_evidence_rejects_cross_run_acceptance_binding_tamper(
     tampered[section][field] = "0" * 64
     with pytest.raises(AssertionError):
         _validate_evidence_projection(tampered)
+
+
+def test_recorded_evidence_rejects_coordinated_receipt_digest_tamper() -> None:
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    tampered = json.loads(json.dumps(recorded))
+    replacement = "0" * 64
+    benchmark = tampered["benchmark_roundtrip"]
+    benchmark["roundtrip_receipt_sha256"] = replacement
+    benchmark["recorded_receipt_sha256"] = replacement
+    tampered["benchmark_acceptance"]["roundtrip_receipt_sha256"] = replacement
+    with pytest.raises(AssertionError):
+        _validate_evidence_projection(tampered)
+
+
+def test_recorded_evidence_rejects_coordinated_output_digest_tamper() -> None:
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    tampered = json.loads(json.dumps(recorded))
+    replacement = "1" * 64
+    benchmark = tampered["benchmark_roundtrip"]
+    benchmark["output_sha256"] = replacement
+    benchmark["receipt_binding"]["output_artifact"]["sha256"] = replacement
+    benchmark["receipt_binding_sha256"] = _canonical_sha256(
+        benchmark["receipt_binding"]
+    )
+    tampered["benchmark_acceptance"]["ms_roundtrip_structure_sha256"] = replacement
+    with pytest.raises(AssertionError):
+        _validate_evidence_projection(tampered)
+
+
+def test_recorded_evidence_rejects_self_asserted_gui_continuity() -> None:
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    tampered = json.loads(json.dumps(recorded))
+    replacement = "2" * 64
+    continuity = tampered["gui_continuity"]
+    for key in (
+        "raw_after_process_identity_sha256",
+        "benchmark_before_process_identity_sha256",
+        "raw_after_window_identity_sha256",
+        "benchmark_before_window_identity_sha256",
+    ):
+        continuity[key] = replacement
+    with pytest.raises(AssertionError):
+        _validate_evidence_projection(
+            tampered,
+            require_recorded_anchor=False,
+        )
+
+
+def test_recorded_evidence_rejects_relabeled_sensitive_values() -> None:
+    recorded = json.loads(EVIDENCE_PATH.read_text(encoding="ascii"))
+    tampered_payloads = []
+
+    raw_pid = json.loads(json.dumps(recorded))
+    raw_pid["benchmark_roundtrip"]["receipt_binding"]["runner_execution"][
+        "stdout_sha256"
+    ] = 4242
+    tampered_payloads.append(raw_pid)
+
+    absolute_path = json.loads(json.dumps(recorded))
+    absolute_path["benchmark_roundtrip"]["receipt_binding"]["runner_identity"][
+        "executable"
+    ]["location_sha256"] = r"\\server\share\runner.bat"
+    tampered_payloads.append(absolute_path)
+
+    coordinates = json.loads(json.dumps(recorded))
+    coordinates["benchmark_roundtrip"]["receipt_binding"]["failure_codes"] = [
+        [0.0, 1.0, 2.0]
+    ]
+    tampered_payloads.append(coordinates)
+
+    for tampered in tampered_payloads:
+        with pytest.raises((AssertionError, ValidationError)):
+            _validate_evidence_projection(
+                tampered,
+                require_recorded_anchor=False,
+            )
 
 
 def test_real_materials_studio_20_1_cif_roundtrip_acceptance(

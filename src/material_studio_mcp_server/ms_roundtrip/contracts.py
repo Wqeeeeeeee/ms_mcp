@@ -212,12 +212,27 @@ class GuiInvariantReceipt(RoundtripContractModel):
             self.after.window_count,
         ):
             raise ValueError("window count pair does not match inventories")
+        expected_process_unchanged = (
+            self.before.process_identity_sha256
+            == self.after.process_identity_sha256
+        )
+        expected_window_unchanged = (
+            self.before.window_identity_sha256
+            == self.after.window_identity_sha256
+        )
+        if self.process_identity_unchanged != expected_process_unchanged:
+            raise ValueError("process identity flag does not match inventories")
+        if self.window_identity_unchanged != expected_window_unchanged:
+            raise ValueError("window identity flag does not match inventories")
+        if self.matstudio_pid_and_window_handle_unchanged != (
+            expected_process_unchanged and expected_window_unchanged
+        ):
+            raise ValueError("combined GUI identity flag does not match inventories")
         expected_pass = (
             self.before.usable_single_window
             and self.after.usable_single_window
-            and self.process_identity_unchanged
-            and self.window_identity_unchanged
-            and self.matstudio_pid_and_window_handle_unchanged
+            and expected_process_unchanged
+            and expected_window_unchanged
             and not self.matstudio_process_launched
         )
         if self.invariant_passed != expected_pass:

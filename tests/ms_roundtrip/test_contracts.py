@@ -222,6 +222,40 @@ def test_roundtrip_receipt_rejects_cross_field_evidence_mismatches(
         contracts.RoundtripReceipt.model_validate(changed, strict=True)
 
 
+def test_gui_invariant_identity_flags_are_derived_from_inventory_hashes(
+    request_factory,
+    fake_runner,
+    fake_gui,
+) -> None:
+    invariant = _fake_execution_result(
+        request_factory,
+        fake_runner,
+        fake_gui,
+    ).receipt.gui_invariant
+    payload = invariant.model_dump(mode="python")
+
+    changed = dict(payload)
+    changed["after"] = {
+        **payload["after"],
+        "process_identity_sha256": "b" * 64,
+    }
+    with pytest.raises(ValidationError, match="process identity flag"):
+        contracts.GuiInvariantReceipt.model_validate(changed, strict=True)
+
+    changed = dict(payload)
+    changed["after"] = {
+        **payload["after"],
+        "window_identity_sha256": "b" * 64,
+    }
+    with pytest.raises(ValidationError, match="window identity flag"):
+        contracts.GuiInvariantReceipt.model_validate(changed, strict=True)
+
+    changed = dict(payload)
+    changed["matstudio_pid_and_window_handle_unchanged"] = False
+    with pytest.raises(ValidationError, match="combined GUI identity flag"):
+        contracts.GuiInvariantReceipt.model_validate(changed, strict=True)
+
+
 def _offline_acceptance(
     request_factory,
     fake_runner,

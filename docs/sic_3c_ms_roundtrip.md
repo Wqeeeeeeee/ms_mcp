@@ -323,6 +323,22 @@ from the raw-input run. Each run also carries a recomputable
 process/window identities equal the benchmark run's initial identities. This
 prevents a PASS projection from silently mixing two independent executions.
 
+An internal binding digest proves consistency but cannot by itself detect a
+coordinated rewrite of both a value and every digest that names it. The
+committed projection is therefore pinned by a separate canonical SHA-256 in
+the acceptance test source. Recorded-evidence validation checks that external
+code-side anchor in addition to recomputing every internal binding. Replacing
+the committed projection requires a new opt-in real run, a fresh external
+evidence artifact, and an explicit reviewed update of that anchor.
+
+Reload validation also applies exact nested key sets and strict value
+contracts. Every `*_sha256` field must be lowercase SHA-256, all disclosure
+flags must remain false, path-like strings are rejected, and projected runner,
+receipt, comparison, and GUI objects must validate against their frozen
+contracts. `gui_continuity` is checked directly against
+`raw_roundtrip.gui.after` and `benchmark_roundtrip.gui.before`; its copied
+fields cannot establish continuity by agreeing only with each other.
+
 The projection contains no coordinates, lattice vectors, atom mappings, raw
 bytes, absolute paths, PID, window handle, or window title. Ordinary regression
 rebuilds both deterministic input forms and checks their SHA-256 bindings;

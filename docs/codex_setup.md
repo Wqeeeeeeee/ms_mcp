@@ -1494,7 +1494,13 @@ change, restart only the MCP session, keep the single Materials Studio window
 open, and rerun `material_studio_live_session_preflight`.
 
 The protocol smoke calls only the preview branch and asserts that CASTEP,
-revision creation, structure materialization, and GUI input did not occur.
+structure materialization, and GUI input did not occur. It creates one
+immutable preview revision so status and diagnostic export can be tested. The
+compact silicon request includes `verify_ms_roundtrip=true`; acceptance
+requires matching create/status plans, `deferred_until_materialized`, no
+runner or GUI probe, false side-effect fields, workspace-confined planned
+paths, and no `ms_roundtrip/preview` directory. It never promotes the audit to
+execute.
 
 ## Goal Watchdog
 

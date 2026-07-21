@@ -96,3 +96,17 @@ one-window GUI inventory. A structurally valid fake-runner receipt remains
 Continuation flags do not synthesize `verify_ms_roundtrip`. They use the exact
 workspace-bound retry payload returned by the server, so deferred execution or
 GUI synchronization cannot silently change the original audit request.
+
+## MCP protocol acceptance
+
+The default `ms-mcp-protocol-smoke` run sends the silicon preview through MCP
+stdio with `verify_ms_roundtrip=true`, `open_in_gui=false`, and compact
+responses. It verifies that tool discovery exposes the request field, then
+binds the create and live-status plans to the same project, revision, spec
+SHA-256, and workspace-confined output paths. The accepted plan must remain
+`deferred_until_materialized`, with no runner call, GUI probe, file side
+effect, receipt, comparison, or round-trip directory.
+
+This protocol check proves that an @mcp client can discover and request the
+preview audit. It does not prove real Materials Studio execution; that remains
+the explicit `--require-real-ms-roundtrip` live-smoke gate described above.

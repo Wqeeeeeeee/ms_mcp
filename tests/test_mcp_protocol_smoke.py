@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import sys
 from pathlib import Path
+
+import pytest
 
 from material_studio_mcp_server.protocol_smoke import (
     COMPACT_RESPONSE_MAX_BYTES,
     REQUIRED_PROTOCOL_TOOLS,
+    _protocol_roundtrip_preview_acceptance,
     audit_codex_config,
     run_protocol_acceptance,
+)
+from material_studio_mcp_server.roundtrip import (
+    ROUNDTRIP_AUDIT_PROFILE,
+    ROUNDTRIP_AUDIT_SCHEMA_VERSION,
 )
 
 
@@ -46,6 +54,18 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["artifact_status"] == "not_materialized"
     assert calls["planned_structure_exists"] is False
     assert calls["gui_opened"] is False
+    assert calls["roundtrip_preview_acceptance_ok"] is True
+    assert calls["roundtrip_preview_status"] == "deferred_until_materialized"
+    assert calls["roundtrip_preview_create_status_consistent"] is True
+    assert calls["roundtrip_preview_runner_call_planned"] is False
+    assert calls["roundtrip_preview_gui_probe_planned"] is False
+    assert calls["roundtrip_preview_run_root_exists"] is False
+    assert calls["roundtrip_preview_acceptance"]["output_exists"] is False
+    assert calls["roundtrip_preview_acceptance"]["side_effects"] == {
+        "files_written": False,
+        "runner_called": False,
+        "gui_input_performed": False,
+    }
     assert calls["capabilities_runner_status_present"] is True
     assert calls["capabilities_gui_status_present"] is True
     assert calls["capabilities_replay_runtime_status"] in {
@@ -197,6 +217,124 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     ) < COMPACT_RESPONSE_MAX_BYTES
     assert Path(calls["view_bundle_manifest_path"]).exists()
     assert result["config_audit"]["ok"] is True
+
+
+def _roundtrip_preview_responses(
+    tmp_path: Path,
+) -> tuple[dict, dict]:
+    project_id = "protocol_roundtrip_unit"
+    revision = 0
+    run_root = (
+        tmp_path
+        / project_id
+        / "outputs"
+        / "r000"
+        / "ms_roundtrip"
+        / "preview"
+    )
+    audit = {
+        "schema_version": ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        "profile": ROUNDTRIP_AUDIT_PROFILE,
+        "project_id": project_id,
+        "revision": revision,
+        "execution_mode": "preview",
+        "required": True,
+        "applicable": True,
+        "status": "deferred_until_materialized",
+        "spec_sha256": "a" * 64,
+        "output_path": str(run_root / "roundtrip_output.cif"),
+        "run_root": str(run_root),
+        "gui_probe_planned": False,
+        "runner_call_planned": False,
+        "side_effects": {
+            "files_written": False,
+            "runner_called": False,
+            "gui_input_performed": False,
+        },
+        "errors": [],
+        "warnings": ["Structure is not materialized."],
+    }
+    created = {
+        "project_id": project_id,
+        "revision": revision,
+        "materials_studio_roundtrip_audit_requested": True,
+        "materials_studio_roundtrip_audit": audit,
+    }
+    status = {
+        "project_id": project_id,
+        "revision": revision,
+        "materials_studio_roundtrip_audit_requested": True,
+        "materials_studio_roundtrip_audit": copy.deepcopy(audit),
+    }
+    return created, status
+
+
+def test_protocol_roundtrip_preview_acceptance_binds_side_effect_free_plan(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_preview_responses(tmp_path)
+
+    acceptance = _protocol_roundtrip_preview_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed"
+    assert acceptance["create_status_consistent"] is True
+    assert acceptance["run_root_exists"] is False
+    assert acceptance["output_exists"] is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("missing_marker", "roundtrip_create_request_marker_missing"),
+        ("invalid_sha", "roundtrip_create_spec_sha256_invalid"),
+        ("runner_planned", "roundtrip_create_runner_call_planned_mismatch"),
+        ("side_effect", "roundtrip_create_side_effects_invalid"),
+        ("status_drift", "roundtrip_create_status_plan_mismatch"),
+        ("output_escape", "roundtrip_preview_output_path_mismatch"),
+        ("run_root_created", "roundtrip_preview_run_root_created"),
+    ],
+)
+def test_protocol_roundtrip_preview_acceptance_rejects_contract_drift(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    created, status = _roundtrip_preview_responses(tmp_path)
+    created_audit = created["materials_studio_roundtrip_audit"]
+    status_audit = status["materials_studio_roundtrip_audit"]
+    if mutation == "missing_marker":
+        created["materials_studio_roundtrip_audit_requested"] = False
+    elif mutation == "invalid_sha":
+        created_audit["spec_sha256"] = "invalid"
+        status_audit["spec_sha256"] = "invalid"
+    elif mutation == "runner_planned":
+        created_audit["runner_call_planned"] = True
+        status_audit["runner_call_planned"] = True
+    elif mutation == "side_effect":
+        created_audit["side_effects"]["runner_called"] = True
+        status_audit["side_effects"]["runner_called"] = True
+    elif mutation == "status_drift":
+        status_audit["spec_sha256"] = "b" * 64
+    elif mutation == "output_escape":
+        escaped = str(tmp_path / "outside.cif")
+        created_audit["output_path"] = escaped
+        status_audit["output_path"] = escaped
+    else:
+        Path(created_audit["run_root"]).mkdir(parents=True)
+
+    acceptance = _protocol_roundtrip_preview_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+    )
+
+    assert acceptance["ok"] is False
+    assert expected_error in acceptance["errors"]
 
 
 def test_codex_config_audit_reports_missing_tools_without_modifying_config(tmp_path: Path) -> None:

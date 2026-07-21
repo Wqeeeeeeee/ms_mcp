@@ -17,6 +17,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, Tool
 
+from .roundtrip import ROUNDTRIP_AUDIT_PROFILE, ROUNDTRIP_AUDIT_SCHEMA_VERSION
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10 compatibility.
@@ -110,6 +112,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "response_mode",
             "visual_confirmation",
             "view_replay_confirmation",
+            "verify_ms_roundtrip",
         },
         "required": {"user_request"},
     },
@@ -496,6 +499,139 @@ def _resolve_object_schema(value: Any, root_schema: dict[str, Any]) -> dict[str,
     return None
 
 
+def _protocol_roundtrip_preview_acceptance(
+    *,
+    created: dict[str, Any],
+    status: dict[str, Any],
+    workspace: Path,
+) -> dict[str, Any]:
+    """Validate one side-effect-free round-trip plan across MCP responses."""
+
+    errors: list[str] = []
+    created_audit = created.get("materials_studio_roundtrip_audit")
+    status_audit = status.get("materials_studio_roundtrip_audit")
+    project_id = created.get("project_id")
+    revision = created.get("revision")
+
+    if created.get("materials_studio_roundtrip_audit_requested") is not True:
+        errors.append("roundtrip_create_request_marker_missing")
+    if status.get("materials_studio_roundtrip_audit_requested") is not True:
+        errors.append("roundtrip_status_request_marker_missing")
+    if not isinstance(created_audit, dict):
+        errors.append("roundtrip_create_plan_missing")
+        created_audit = {}
+    if not isinstance(status_audit, dict):
+        errors.append("roundtrip_status_plan_missing")
+        status_audit = {}
+
+    expected_fields = {
+        "schema_version": ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        "profile": ROUNDTRIP_AUDIT_PROFILE,
+        "project_id": project_id,
+        "revision": revision,
+        "execution_mode": "preview",
+        "required": True,
+        "applicable": True,
+        "status": "deferred_until_materialized",
+        "gui_probe_planned": False,
+        "runner_call_planned": False,
+    }
+    for label, audit in (("create", created_audit), ("status", status_audit)):
+        for field, expected in expected_fields.items():
+            observed = audit.get(field)
+            if observed != expected or type(observed) is not type(expected):
+                errors.append(f"roundtrip_{label}_{field}_mismatch")
+        spec_sha = audit.get("spec_sha256")
+        if not (
+            isinstance(spec_sha, str)
+            and len(spec_sha) == 64
+            and all(character in "0123456789abcdef" for character in spec_sha)
+        ):
+            errors.append(f"roundtrip_{label}_spec_sha256_invalid")
+        if audit.get("side_effects") != {
+            "files_written": False,
+            "runner_called": False,
+            "gui_input_performed": False,
+        }:
+            errors.append(f"roundtrip_{label}_side_effects_invalid")
+        if list(audit.get("errors") or []):
+            errors.append(f"roundtrip_{label}_plan_errors_present")
+        for forbidden_field in (
+            "receipt_path",
+            "comparison",
+            "runner_identity",
+            "runner_created_files",
+            "runner_success",
+        ):
+            if audit.get(forbidden_field) is not None:
+                errors.append(
+                    f"roundtrip_{label}_preview_field_unexpected:{forbidden_field}"
+                )
+
+    if created_audit != status_audit:
+        errors.append("roundtrip_create_status_plan_mismatch")
+
+    run_root_value = created_audit.get("run_root")
+    output_value = created_audit.get("output_path")
+    run_root = (
+        Path(str(run_root_value)).expanduser().resolve()
+        if isinstance(run_root_value, str) and run_root_value.strip()
+        else None
+    )
+    output_path = (
+        Path(str(output_value)).expanduser().resolve()
+        if isinstance(output_value, str) and output_value.strip()
+        else None
+    )
+    valid_revision = isinstance(revision, int) and not isinstance(revision, bool)
+    expected_revision_root = None
+    if valid_revision:
+        expected_revision_root = (
+            workspace
+            / str(project_id or "")
+            / "outputs"
+            / f"r{revision:03d}"
+        ).resolve()
+    expected_run_root = (
+        expected_revision_root / "ms_roundtrip" / "preview"
+        if expected_revision_root is not None
+        else None
+    )
+    if run_root is None:
+        errors.append("roundtrip_preview_run_root_missing")
+    elif run_root != expected_run_root:
+        errors.append("roundtrip_preview_run_root_mismatch")
+    if output_path is None:
+        errors.append("roundtrip_preview_output_path_missing")
+    elif run_root is None or output_path != run_root / "roundtrip_output.cif":
+        errors.append("roundtrip_preview_output_path_mismatch")
+    if run_root is not None and run_root.exists():
+        errors.append("roundtrip_preview_run_root_created")
+    if output_path is not None and output_path.exists():
+        errors.append("roundtrip_preview_output_created")
+
+    return {
+        "ok": not errors,
+        "status": "passed" if not errors else "failed",
+        "errors": errors,
+        "requested": created.get("materials_studio_roundtrip_audit_requested")
+        is True,
+        "project_id": project_id,
+        "revision": revision,
+        "execution_mode": created_audit.get("execution_mode"),
+        "audit_status": created_audit.get("status"),
+        "spec_sha256": created_audit.get("spec_sha256"),
+        "create_status_consistent": created_audit == status_audit,
+        "gui_probe_planned": created_audit.get("gui_probe_planned"),
+        "runner_call_planned": created_audit.get("runner_call_planned"),
+        "side_effects": created_audit.get("side_effects"),
+        "run_root": str(run_root) if run_root is not None else None,
+        "run_root_exists": run_root.exists() if run_root is not None else None,
+        "output_path": str(output_path) if output_path is not None else None,
+        "output_exists": output_path.exists() if output_path is not None else None,
+    }
+
+
 async def _run_preview_calls(
     session: ClientSession,
     *,
@@ -535,6 +671,7 @@ async def _run_preview_calls(
                 "views": ["front", "top", "isometric"],
                 "working_dir": str(workspace),
                 "response_mode": "compact",
+                "verify_ms_roundtrip": True,
             },
             timeout,
         )
@@ -635,6 +772,11 @@ async def _run_preview_calls(
 
         planned_structure = Path(str((created.get("planned_outputs") or {}).get("structure") or ""))
         view_names = list((created.get("live_summary") or {}).get("view_names") or [])
+        roundtrip_acceptance = _protocol_roundtrip_preview_acceptance(
+            created=created,
+            status=status,
+            workspace=workspace,
+        )
         response_sizes_bytes = {
             "capabilities": len(json.dumps(capabilities, ensure_ascii=False).encode("utf-8")),
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
@@ -659,6 +801,7 @@ async def _run_preview_calls(
             "history": len(json.dumps(history, ensure_ascii=False).encode("utf-8")),
         }
         validation_errors: list[str] = []
+        validation_errors.extend(roundtrip_acceptance["errors"])
         if capabilities.get("ok") is not True:
             validation_errors.append("capabilities_call_not_ok")
         if capabilities.get("response_mode") != "compact":
@@ -1393,6 +1536,21 @@ async def _run_preview_calls(
                 "artifact_status": created.get("structure_artifact_validation_status"),
                 "planned_structure": str(planned_structure),
                 "planned_structure_exists": planned_structure.exists(),
+                "roundtrip_preview_acceptance": roundtrip_acceptance,
+                "roundtrip_preview_acceptance_ok": roundtrip_acceptance["ok"],
+                "roundtrip_preview_status": roundtrip_acceptance["audit_status"],
+                "roundtrip_preview_create_status_consistent": (
+                    roundtrip_acceptance["create_status_consistent"]
+                ),
+                "roundtrip_preview_runner_call_planned": (
+                    roundtrip_acceptance["runner_call_planned"]
+                ),
+                "roundtrip_preview_gui_probe_planned": (
+                    roundtrip_acceptance["gui_probe_planned"]
+                ),
+                "roundtrip_preview_run_root_exists": (
+                    roundtrip_acceptance["run_root_exists"]
+                ),
                 "castep_relaxation_preview_status": relaxation_preview.get(
                     "status"
                 ),

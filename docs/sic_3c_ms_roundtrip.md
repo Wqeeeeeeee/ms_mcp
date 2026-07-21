@@ -312,15 +312,23 @@ coordinates, lattice vectors, atom mappings, displacement vectors, raw
 artifact bytes, absolute paths, PID, or window handle. Real-run CIFs and other
 machine-local artifacts stay outside Git.
 
-The repository retains only the coordinate-free projection
-`benchmarks/cases/sic_3c_ms_roundtrip/real_ms_20_1_evidence.json`. It binds the
-raw candidate, real exported CIF, runner, persisted run receipt, exact numeric
-comparison, compact one-window invariant, and five validity states by digest
-or scalar value. It contains no coordinates, lattice vectors, atom mappings,
-raw bytes, absolute paths, PID, handle, or title. Ordinary regression rebuilds
-the raw surface candidate and checks its SHA-256 against this projection; the
-explicit real test additionally requires all stable projection fields to match
-the current backend run.
+The repository retains only the coordinate-free v2 projection
+`benchmarks/cases/sic_3c_ms_roundtrip/real_ms_20_1_evidence.json`. It has three
+explicitly separated records: `raw_roundtrip`, `benchmark_roundtrip`, and
+`benchmark_acceptance`. The acceptance record must bind its
+`ms_roundtrip_structure_sha256` and `roundtrip_receipt_sha256` to the
+benchmark run's output and receipt, respectively; it may not borrow metrics
+from the raw-input run. Each run also carries a recomputable
+`receipt_binding_sha256`, and `gui_continuity` proves that the raw run's final
+process/window identities equal the benchmark run's initial identities. This
+prevents a PASS projection from silently mixing two independent executions.
+
+The projection contains no coordinates, lattice vectors, atom mappings, raw
+bytes, absolute paths, PID, window handle, or window title. Ordinary regression
+rebuilds both deterministic input forms and checks their SHA-256 bindings;
+the explicit real test additionally requires all stable projection fields to
+match the current backend run while allowing receipt and machine-identity
+hashes that necessarily change between executions.
 
 For an offline fake run, the shared structural and semiconductor gates may
 pass, but the MS state and overall state remain `NOT_RUN`. A real acceptance

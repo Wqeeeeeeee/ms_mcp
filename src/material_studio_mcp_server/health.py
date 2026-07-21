@@ -6,6 +6,30 @@ from pathlib import Path
 from typing import Any
 
 
+def _materials_studio_roundtrip_audit(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve the persisted or in-band revision round-trip receipt."""
+
+    direct = response.get("materials_studio_roundtrip_audit")
+    if isinstance(direct, dict):
+        return direct
+    result = response.get("result")
+    if isinstance(result, dict) and isinstance(
+        result.get("materials_studio_roundtrip_audit"), dict
+    ):
+        return result["materials_studio_roundtrip_audit"]
+    metadata = response.get("result_metadata")
+    if isinstance(metadata, dict) and isinstance(
+        metadata.get("materials_studio_roundtrip_audit"), dict
+    ):
+        return metadata["materials_studio_roundtrip_audit"]
+    report = response.get("modeling_report")
+    if isinstance(report, dict) and isinstance(
+        report.get("materials_studio_roundtrip_audit"), dict
+    ):
+        return report["materials_studio_roundtrip_audit"]
+    return None
+
+
 def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> dict[str, Any]:
     """Build a stable verdict from validation, execution, GUI, and audit fields."""
 
@@ -79,6 +103,81 @@ def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> d
             errors.extend(artifact_errors or ["Materialized structure artifact failed ModelSpec consistency validation."])
     else:
         checks["structure_artifact_validation_available"] = False
+
+    roundtrip_requested = bool(
+        response.get("materials_studio_roundtrip_audit_requested")
+    )
+    roundtrip = _materials_studio_roundtrip_audit(response)
+    if roundtrip is not None:
+        roundtrip_requested = True
+    if roundtrip_requested:
+        checks["materials_studio_roundtrip_audit_requested"] = True
+        checks["materials_studio_roundtrip_audit_status"] = (
+            roundtrip.get("status") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_audit_ok"] = (
+            roundtrip.get("ok") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_real_materials_studio_status"] = (
+            roundtrip.get("real_materials_studio_status") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_source_unchanged"] = (
+            roundtrip.get("source_unchanged") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_source_matches_plan"] = (
+            roundtrip.get("source_sha256_planned")
+            == roundtrip.get("source_sha256_before")
+            if roundtrip and roundtrip.get("source_sha256_planned")
+            else None
+        )
+        checks["materials_studio_roundtrip_output_confined"] = (
+            roundtrip.get("output_confined") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_runner_script_confined"] = (
+            roundtrip.get("runner_script_confined") if roundtrip else None
+        )
+        checks["materials_studio_roundtrip_gui_invariant_passed"] = (
+            (roundtrip.get("gui_invariant") or {}).get("passed")
+            if roundtrip
+            else None
+        )
+        comparison = roundtrip.get("comparison") if roundtrip else None
+        checks["materials_studio_roundtrip_comparison_passed"] = (
+            comparison.get("passed") if isinstance(comparison, dict) else None
+        )
+        checks["materials_studio_roundtrip_scientific_correctness_established"] = (
+            roundtrip.get("scientific_correctness_established")
+            if roundtrip
+            else False
+        )
+        if execution_mode == "execute":
+            if roundtrip is None:
+                errors.append(
+                    "A requested Materials Studio round-trip audit receipt is missing."
+                )
+            elif roundtrip.get("applicable") is not False and (
+                roundtrip.get("ok") is not True
+                or roundtrip.get("status") not in {"passed", "not_applicable"}
+            ):
+                errors.extend(
+                    str(item)
+                    for item in roundtrip.get("errors", []) or []
+                )
+                if not roundtrip.get("errors"):
+                    errors.append("Materials Studio round-trip audit failed.")
+            if (
+                roundtrip is not None
+                and roundtrip.get("applicable") is not False
+                and roundtrip.get("real_materials_studio_status") != "PASS"
+            ):
+                warning = (
+                    "Round-trip structural evidence does not establish real Materials "
+                    "Studio 20.1 execution."
+                )
+                warnings.append(warning)
+                verdict_warnings.append(warning)
+        elif roundtrip is not None and roundtrip.get("status") == "blocked":
+            errors.extend(str(item) for item in roundtrip.get("errors", []) or [])
 
     if execution_mode == "execute":
         result = response.get("result")

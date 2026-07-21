@@ -86,6 +86,11 @@ from .natural_language import (
     supported_templates,
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
+from .roundtrip import (
+    execute_roundtrip_audit,
+    not_applicable_roundtrip_receipt,
+    plan_roundtrip_audit,
+)
 from .runtime_provenance import (
     RUNTIME_DEPLOYMENT_SCHEMA,
     RUNTIME_PROVENANCE_SCHEMA,
@@ -129,6 +134,7 @@ from .state.diff import summarize_spec_delta
 from .state.execution import (
     ExecutionAttemptHistoryError,
     begin_execution_attempt,
+    canonical_json_sha256,
     finish_execution_attempt,
     inspect_execution_runtime,
     publish_terminal_execution_attempt,
@@ -5919,6 +5925,39 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "remediation_tool": "material_studio_gui_apply_current_revision",
                 "remediation_action": "rematerialize_current_revision_from_model_spec_then_hotload_and_reaudit",
                 "remediation_requires_user_confirmation": True,
+            },
+            "materials_studio_revision_roundtrip_audit": {
+                "scope": "revision_bound_crystal_cif_import_export_before_gui_hotload",
+                "profile": "generic_crystal_cif_import_export_v1",
+                "request_field": "verify_ms_roundtrip",
+                "default_requested": False,
+                "preview_policy": "plan_only_no_runner_no_gui_input",
+                "execution_policy": "explicit_execute_only",
+                "single_window_policy": "when_gui_hotload_is_requested_capture_identity_before_and_after_and_reject_process_or_window_changes",
+                "source_binding_fields": [
+                    "project_id",
+                    "revision",
+                    "spec_sha256",
+                    "source_sha256_before",
+                    "source_sha256_after",
+                    "script_sha256",
+                    "runner_identity",
+                ],
+                "comparison_fields": [
+                    "mapping_coverage",
+                    "rms_displacement_angstrom",
+                    "maximum_displacement_angstrom",
+                    "maximum_relative_lattice_error",
+                ],
+                "real_materials_studio_field": "real_materials_studio_status",
+                "scientific_correctness_established": False,
+                "supported_entry_tools": [
+                    "material_studio_model_create_from_spec",
+                    "material_studio_model_modify_with_patch",
+                    "material_studio_live_update_with_patch",
+                    "material_studio_live_modeling_request",
+                    "material_studio_gui_apply_current_revision",
+                ],
             },
             "semiconductor_reference_electronic_properties": {
                 "scope": "preflight_electron_affinity_band_gap_references",
@@ -16668,6 +16707,48 @@ def _attach_structure_artifact_validation(
     return validation
 
 
+def _attach_materials_studio_roundtrip_plan(
+    response: dict[str, Any],
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+    execution_mode: ExecutionMode | str,
+    requested: bool,
+    gui_probe_planned: bool,
+) -> dict[str, Any] | None:
+    """Attach a pure preview plan without probing the runner or GUI."""
+
+    if not requested:
+        return None
+    mode_value = (
+        execution_mode.value
+        if isinstance(execution_mode, ExecutionMode)
+        else str(execution_mode)
+    )
+    planned_structure = (response.get("planned_outputs") or {}).get("structure")
+    if not planned_structure:
+        planned_structure = (
+            store.outputs_dir(spec.project_id, spec.revision)
+            / f"structure_r{spec.revision:03d}.cif"
+        )
+    plan = plan_roundtrip_audit(
+        spec,
+        source_path=planned_structure,
+        output_dir=store.outputs_dir(spec.project_id, spec.revision),
+        run_id="pending_execution" if mode_value == ExecutionMode.EXECUTE.value else "preview",
+        execution_mode=(
+            ExecutionMode.EXECUTE.value
+            if mode_value == ExecutionMode.EXECUTE.value
+            else ExecutionMode.PREVIEW.value
+        ),
+        required=True,
+        gui_probe_planned=gui_probe_planned,
+    )
+    response["materials_studio_roundtrip_audit_requested"] = True
+    response["materials_studio_roundtrip_audit"] = plan
+    return plan
+
+
 def _write_modeling_report_summary(response: dict[str, Any]) -> None:
     """Append a one-row compact report summary to an existing view bundle."""
 
@@ -17228,6 +17309,11 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
     semiconductor_diagnostic_gate = (
         report.get("semiconductor_diagnostic_gate")
         if isinstance(report.get("semiconductor_diagnostic_gate"), dict)
+        else {}
+    )
+    roundtrip_audit = (
+        report.get("materials_studio_roundtrip_audit")
+        if isinstance(report.get("materials_studio_roundtrip_audit"), dict)
         else {}
     )
     diagnostic_acceptance = (
@@ -18021,6 +18107,39 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "view_bundle_manifest_path": diagnostics.get("view_bundle_manifest_path")
         or response.get("view_bundle_manifest_path"),
     }
+    if roundtrip_audit:
+        row.update(
+            {
+                "materials_studio_roundtrip_audit_requested": True,
+                "materials_studio_roundtrip_audit": _csv_json_value(roundtrip_audit),
+                "materials_studio_roundtrip_audit_status": roundtrip_audit.get("status"),
+                "materials_studio_roundtrip_audit_ok": roundtrip_audit.get("ok"),
+                "materials_studio_roundtrip_real_materials_studio_status": roundtrip_audit.get(
+                    "real_materials_studio_status"
+                ),
+                "materials_studio_roundtrip_source_unchanged": roundtrip_audit.get(
+                    "source_unchanged"
+                ),
+                "materials_studio_roundtrip_source_matches_plan": (
+                    roundtrip_audit.get("source_sha256_planned")
+                    == roundtrip_audit.get("source_sha256_before")
+                    if roundtrip_audit.get("source_sha256_planned")
+                    else None
+                ),
+                "materials_studio_roundtrip_output_confined": roundtrip_audit.get(
+                    "output_confined"
+                ),
+                "materials_studio_roundtrip_runner_script_confined": (
+                    roundtrip_audit.get("runner_script_confined")
+                ),
+                "materials_studio_roundtrip_gui_invariant_passed": (
+                    (roundtrip_audit.get("gui_invariant") or {}).get("passed")
+                ),
+                "materials_studio_roundtrip_comparison_passed": (
+                    (roundtrip_audit.get("comparison") or {}).get("passed")
+                ),
+            }
+        )
     return row
 
 
@@ -22765,6 +22884,125 @@ def _current_gui_revision_verified_for_response(response: dict[str, Any]) -> boo
     )
 
 
+def _materials_studio_roundtrip_audit_from_response(
+    response: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve a round-trip plan or receipt from current or persisted evidence."""
+
+    for candidate in (
+        response.get("materials_studio_roundtrip_audit"),
+        (response.get("result") or {}).get("materials_studio_roundtrip_audit")
+        if isinstance(response.get("result"), dict)
+        else None,
+        (response.get("result_metadata") or {}).get(
+            "materials_studio_roundtrip_audit"
+        )
+        if isinstance(response.get("result_metadata"), dict)
+        else None,
+        (response.get("modeling_report") or {}).get(
+            "materials_studio_roundtrip_audit"
+        )
+        if isinstance(response.get("modeling_report"), dict)
+        else None,
+        (response.get("persisted_modeling_report") or {}).get(
+            "materials_studio_roundtrip_audit"
+        )
+        if isinstance(response.get("persisted_modeling_report"), dict)
+        else None,
+    ):
+        if isinstance(candidate, dict):
+            return candidate
+    return None
+
+
+def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | None:
+    """Keep decision-relevant audit evidence without embedding preview scripts."""
+
+    if not isinstance(value, dict):
+        return None
+    comparison = value.get("comparison")
+    gui_invariant = value.get("gui_invariant")
+    summary = _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "profile",
+            "project_id",
+            "revision",
+            "execution_mode",
+            "required",
+            "applicable",
+            "status",
+            "ok",
+            "scientific_status",
+            "scientific_correctness_established",
+            "calculation_performed",
+            "gui_input_performed",
+            "matstudio_process_launched",
+            "real_materials_studio_status",
+            "spec_sha256",
+            "source_path",
+            "source_sha256",
+            "source_sha256_planned",
+            "source_sha256_before",
+            "source_sha256_after",
+            "source_unchanged",
+            "output_path",
+            "output_sha256",
+            "output_confined",
+            "runner_script_confined",
+            "run_root",
+            "script_sha256",
+            "script_identity_verified",
+            "tagged_summary_verified",
+            "runner_success",
+            "runner_timed_out",
+            "runner_duration_seconds",
+            "receipt_path",
+            "gui_probe_planned",
+            "runner_call_planned",
+            "side_effects",
+            "errors",
+            "warnings",
+        ),
+    )
+    if isinstance(gui_invariant, dict):
+        summary["gui_invariant"] = _mapping_subset(
+            gui_invariant,
+            (
+                "required",
+                "identity_unchanged",
+                "single_window_ok",
+                "process_count_before_after",
+                "window_count_before_after",
+                "process_launched",
+                "window_changed",
+                "passed",
+            ),
+        )
+    if isinstance(comparison, dict):
+        summary["comparison"] = _mapping_subset(
+            comparison,
+            (
+                "input_sha256",
+                "output_sha256",
+                "input_atom_count",
+                "output_atom_count",
+                "input_element_counts",
+                "output_element_counts",
+                "mapping_coverage",
+                "mapping_degenerate",
+                "rms_displacement_angstrom",
+                "maximum_displacement_angstrom",
+                "maximum_relative_lattice_error",
+                "passed",
+                "errors",
+                "warnings",
+            ),
+        )
+    return summary
+
+
 def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     """Return a compact display-ready summary for live modeling clients."""
 
@@ -22774,6 +23012,13 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     if not result and isinstance(response.get("result_metadata"), dict):
         result = response["result_metadata"]
+    roundtrip_audit = _materials_studio_roundtrip_audit_summary(
+        _materials_studio_roundtrip_audit_from_response(response)
+    )
+    roundtrip_requested = bool(
+        response.get("materials_studio_roundtrip_audit_requested")
+        or roundtrip_audit is not None
+    )
     planned_outputs = response.get("planned_outputs") or {}
     structure = planned_outputs.get("structure")
     structure_exists = bool(structure and Path(str(structure)).expanduser().exists())
@@ -23115,6 +23360,11 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
             "structure_artifact_validation_csv": bundle_files.get("structure_artifact_validation_csv"),
         },
     }
+    if roundtrip_requested:
+        report["materials_studio_roundtrip_audit_requested"] = True
+        report["materials_studio_roundtrip_audit"] = roundtrip_audit
+        response["materials_studio_roundtrip_audit_requested"] = True
+        response["materials_studio_roundtrip_audit"] = roundtrip_audit
     report["change_verification"] = _change_verification_summary(report)
     report["semiconductor_intent"] = _semiconductor_intent_summary(response, report)
     report["normality"] = _modeling_report_normality(report)
@@ -23472,6 +23722,7 @@ def _gui_apply_current_execution_retry_payload(
     working_dir: str | Path,
     timeout_seconds: int | None,
     response_mode: McpResponseMode | str,
+    verify_ms_roundtrip: bool = False,
 ) -> dict[str, Any]:
     """Build the exact current-revision continuation after GUI activation."""
 
@@ -23484,6 +23735,8 @@ def _gui_apply_current_execution_retry_payload(
         "prepare_view_replay_after_open": prepare_view_replay_after_open,
         "export_view_audit": export_view_audit,
     }
+    if verify_ms_roundtrip:
+        payload["verify_ms_roundtrip"] = True
     if views is not None:
         payload["views"] = list(views)
     if timeout_seconds is not None:
@@ -39835,6 +40088,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "view_replay_prepare",
             "execution_mode",
             "execution_mode_source",
+            "materials_studio_roundtrip_audit_requested",
             "post_hotload_fit_to_view",
             "post_hotload_fit_to_view_requested",
             "post_hotload_fit_to_view_request_source",
@@ -40787,6 +41041,12 @@ def _compact_live_response(
         )
     compact["response_mode"] = McpResponseMode.COMPACT.value
     compact["response_schema"] = LIVE_COMPACT_RESPONSE_SCHEMA
+    roundtrip_summary = _materials_studio_roundtrip_audit_summary(
+        _materials_studio_roundtrip_audit_from_response(response)
+    )
+    if roundtrip_summary is not None:
+        compact["materials_studio_roundtrip_audit_requested"] = True
+        compact["materials_studio_roundtrip_audit"] = roundtrip_summary
     execution_attempt = _compact_execution_attempt(response.get("execution_attempt"))
     if execution_attempt:
         compact["execution_attempt"] = execution_attempt
@@ -41912,6 +42172,9 @@ def _execute_or_materialize_structure(
     generated: dict[str, Any],
     script: str,
     timeout_seconds: int | None,
+    verify_ms_roundtrip: bool = False,
+    roundtrip_gui_backend: Any = None,
+    roundtrip_require_single_window: bool = False,
 ) -> dict[str, Any]:
     """Execute a script, or materialize preview-only crystal specs as CIF."""
 
@@ -42084,6 +42347,77 @@ def _execute_or_materialize_structure(
                         "Structured execution did not return result metadata"
                     )
                 result = raw_result
+                if verify_ms_roundtrip:
+                    if isinstance(spec.model, CrystalSpec) and bool(
+                        result.get("success")
+                    ):
+                        roundtrip_audit = execute_roundtrip_audit(
+                            spec,
+                            source_path=str(planned_structure or ""),
+                            output_dir=output_dir,
+                            runner=runner,
+                            run_id=str(running_attempt["attempt_id"]),
+                            timeout_seconds=timeout_seconds,
+                            gui_backend=roundtrip_gui_backend,
+                            require_single_window=roundtrip_require_single_window,
+                        )
+                        result["materials_studio_roundtrip_audit"] = roundtrip_audit
+                        _extend_revision_execution_coverage(
+                            transaction,
+                            (
+                                "materials_studio_roundtrip_audit",
+                                "roundtrip_source_spec_binding",
+                                "roundtrip_gui_inventory_invariant",
+                            ),
+                        )
+                        if not roundtrip_audit.get("ok"):
+                            result["success"] = False
+                            result["returncode"] = 1
+                            result["return_code"] = 1
+                            existing_stderr = str(result.get("stderr") or "")
+                            result["stderr"] = (
+                                existing_stderr
+                                + ("\n" if existing_stderr else "")
+                                + "Materials Studio CIF round-trip audit failed."
+                            )
+                        created_files = [
+                            str(item)
+                            for item in result.get("created_files", []) or []
+                        ]
+                        for key in ("output_path", "receipt_path"):
+                            artifact = roundtrip_audit.get(key)
+                            if artifact and str(artifact) not in created_files:
+                                created_files.append(str(artifact))
+                        result["created_files"] = created_files
+                    elif isinstance(spec.model, CrystalSpec):
+                        result["materials_studio_roundtrip_audit"] = {
+                            "schema_version": "material_studio_revision_roundtrip_audit_v1",
+                            "profile": "generic_crystal_cif_import_export_v1",
+                            "project_id": spec.project_id,
+                            "revision": spec.revision,
+                            "execution_mode": ExecutionMode.EXECUTE.value,
+                            "required": True,
+                            "applicable": True,
+                            "status": "blocked",
+                            "ok": False,
+                            "scientific_status": "NOT_RUN",
+                            "scientific_correctness_established": False,
+                            "calculation_performed": False,
+                            "gui_input_performed": False,
+                            "matstudio_process_launched": False,
+                            "real_materials_studio_status": "NOT_RUN",
+                            "spec_sha256": canonical_json_sha256(
+                                spec.model_dump(mode="json")
+                            ),
+                            "errors": [
+                                "Primary structure execution failed before round-trip auditing."
+                            ],
+                            "warnings": [],
+                        }
+                    else:
+                        result["materials_studio_roundtrip_audit"] = (
+                            not_applicable_roundtrip_receipt(spec)
+                        )
             except Exception as exc:
                 execution_error = exc
 
@@ -42283,7 +42617,7 @@ def _execute_or_materialize_structure(
                         "requesting another execution."
                     ),
                 }
-            return {
+            response = {
                 **execution,
                 "execution_started": True,
                 "execution_transaction": transaction,
@@ -42293,6 +42627,12 @@ def _execute_or_materialize_structure(
                 "result": result,
                 "result_metadata_path": str(result_path),
             }
+            if verify_ms_roundtrip:
+                response["materials_studio_roundtrip_audit_requested"] = True
+                response["materials_studio_roundtrip_audit"] = result.get(
+                    "materials_studio_roundtrip_audit"
+                )
+            return response
     except (RevisionExecutionBusyError, RevisionExecutionSupersededError) as exc:
         return _error(exc)
 
@@ -42358,6 +42698,7 @@ def material_studio_model_create_from_spec(
     execution_mode: Annotated[ExecutionMode, Field(description="preview or execute. Defaults to preview.")] = ExecutionMode.PREVIEW,
     working_dir: Annotated[str | None, Field(description="Optional structured workflow workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
+    verify_ms_roundtrip: Annotated[bool, Field(description="For crystal revisions, require a revision-bound Materials Studio CIF import/export audit before execution. Defaults to false.")] = False,
 ) -> dict[str, Any]:
     """Validate, persist, preview, and optionally execute a structured model spec."""
 
@@ -42393,6 +42734,14 @@ def material_studio_model_create_from_spec(
             "state": info.to_dict(),
             "state_write_transaction": info.state_write_transaction,
         }
+        _attach_materials_studio_roundtrip_plan(
+            response,
+            store=store,
+            spec=model_spec,
+            execution_mode=mode,
+            requested=verify_ms_roundtrip,
+            gui_probe_planned=False,
+        )
         if mode == ExecutionMode.EXECUTE:
             if not generated["executable"] and not isinstance(model_spec.model, CrystalSpec):
                 return {**response, "ok": False, "error": "生成的脚本仅用于预览或验证失败。"}
@@ -42403,6 +42752,7 @@ def material_studio_model_create_from_spec(
                     generated=generated,
                     script=generated["script"],
                     timeout_seconds=timeout_seconds,
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 )
             )
         return response
@@ -42432,6 +42782,7 @@ def material_studio_model_modify_with_patch(
     working_dir: Annotated[str | None, Field(description="Optional structured workflow workspace root.")] = None,
     timeout_seconds: Annotated[int | None, Field(description="Execution timeout in seconds.", ge=1, le=7 * 24 * 3600)] = None,
     confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation when the patch reconciles dopant metadata.")] = False,
+    verify_ms_roundtrip: Annotated[bool, Field(description="For crystal revisions, require a revision-bound Materials Studio CIF import/export audit before execution. Defaults to false.")] = False,
 ) -> dict[str, Any]:
     """Apply a semantic patch to current project state and preview by default."""
 
@@ -42513,6 +42864,14 @@ def material_studio_model_modify_with_patch(
             "current_pointer_repaired": bool(current_resolution.get("recovery_used")),
             "current_pointer_after_write": current_resolution_after_write,
         }
+        _attach_materials_studio_roundtrip_plan(
+            response,
+            store=store,
+            spec=new_spec,
+            execution_mode=mode,
+            requested=verify_ms_roundtrip,
+            gui_probe_planned=False,
+        )
         if mode == ExecutionMode.EXECUTE:
             if not generated["executable"] and not isinstance(new_spec.model, CrystalSpec):
                 return {**response, "ok": False, "error": "生成的脚本仅用于预览或验证失败。"}
@@ -42523,6 +42882,7 @@ def material_studio_model_modify_with_patch(
                     generated=generated,
                     script=generated["script"],
                     timeout_seconds=timeout_seconds,
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 )
             )
         return response
@@ -43002,6 +43362,12 @@ def material_studio_live_project_status(
                 health=effective_health,
             ),
         }
+        persisted_roundtrip_audit = _materials_studio_roundtrip_audit_from_response(
+            response
+        )
+        if persisted_roundtrip_audit is not None:
+            response["materials_studio_roundtrip_audit_requested"] = True
+            response["materials_studio_roundtrip_audit"] = persisted_roundtrip_audit
         response["project_resolution"] = project_resolution or response.get("project_resolution")
         remediation_recovery, restored_remediation = (
             _recommended_kpoint_remediation_receipt_recovery(
@@ -44793,6 +45159,7 @@ def material_studio_live_update_with_patch(
     confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation when the patch reconciles dopant metadata.")] = False,
     remediation_intent: Annotated[str | None, Field(description="Optional action ID from a prior diagnostic remediation payload.", max_length=200)] = None,
     confirm_recommended_calculation_settings: Annotated[bool, Field(description="Must be true after explicit user confirmation before a recommended calculation-settings revision can be written.")] = False,
+    verify_ms_roundtrip: Annotated[bool, Field(description="For crystal revisions, require a revision-bound Materials Studio CIF import/export audit before execution and GUI hot-load. Defaults to false.")] = False,
 ) -> dict[str, Any]:
     """Patch current state, persist a revision, and optionally execute/open it in the GUI."""
 
@@ -44800,6 +45167,12 @@ def material_studio_live_update_with_patch(
 
     try:
         mode, execution_mode_source = _resolve_live_execution_mode(execution_mode, user_text or "")
+        verify_ms_roundtrip_requested = bool(
+            orchestration_context.get(
+                "verify_ms_roundtrip_requested",
+                verify_ms_roundtrip,
+            )
+        )
         fit_to_view_requested_after_open, fit_to_view_request_source = (
             _resolve_post_hotload_fit_to_view(
                 fit_to_view_after_open,
@@ -45368,6 +45741,14 @@ def material_studio_live_update_with_patch(
             "gui_status": gui_status,
         }
         response.update(orchestration_context)
+        _attach_materials_studio_roundtrip_plan(
+            response,
+            store=store,
+            spec=new_spec,
+            execution_mode=mode,
+            requested=verify_ms_roundtrip_requested,
+            gui_probe_planned=bool(open_in_gui),
+        )
         if patch_workflow == "dopant_metadata_reconcile":
             response["confirmation_required"] = True
             response["confirmation_received"] = confirm_metadata_reconciliation
@@ -45472,6 +45853,7 @@ def material_studio_live_update_with_patch(
                     working_dir=store.workspace_root,
                     timeout_seconds=timeout_seconds,
                     response_mode=response_mode,
+                    verify_ms_roundtrip=verify_ms_roundtrip_requested,
                 ),
             )
             if blocked_response is not response:
@@ -45493,6 +45875,15 @@ def material_studio_live_update_with_patch(
             generated=generated,
             script=generated["script"],
             timeout_seconds=timeout_seconds,
+            verify_ms_roundtrip=verify_ms_roundtrip_requested,
+            roundtrip_gui_backend=(
+                getattr(gui, "backend", None)
+                if verify_ms_roundtrip_requested
+                else None
+            ),
+            roundtrip_require_single_window=bool(
+                open_in_gui and verify_ms_roundtrip_requested
+            ),
         )
         response.update(execution)
         if not execution.get("result", {}).get("success", False):
@@ -47865,6 +48256,7 @@ def material_studio_live_modeling_request(
     view_replay_confirmation: Annotated[dict[str, Any] | None, Field(description="Optional externally replayed camera/view evidence bound to the current wrapper window.")] = None,
     confirm_metadata_reconciliation: Annotated[bool, Field(description="Must be true after explicit user confirmation before reconciling dopant metadata into a new revision.")] = False,
     confirm_recommended_calculation_settings: Annotated[bool, Field(description="Must be true after explicit user confirmation before applying a current diagnostic calculation-settings recommendation.")] = False,
+    verify_ms_roundtrip: Annotated[bool, Field(description="For crystal revisions, require a revision-bound Materials Studio CIF import/export audit before execution and GUI hot-load. Defaults to false.")] = False,
 ) -> dict[str, Any]:
     """One-stop structured entry point for live modeling requests."""
 
@@ -48640,6 +49032,8 @@ def material_studio_live_modeling_request(
                     "remediation_operations": ["set_castep_energy"],
                     "expected_result": "reciprocal_status=ok",
                 }
+                if verify_ms_roundtrip:
+                    orchestration_context["verify_ms_roundtrip_requested"] = True
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_live_update_with_patch(
                         project_id=project_id,
@@ -48662,6 +49056,7 @@ def material_studio_live_modeling_request(
                         confirm_recommended_calculation_settings=(
                             confirm_recommended_calculation_settings
                         ),
+                        verify_ms_roundtrip=verify_ms_roundtrip,
                     )
                 result["nl_plan"] = nl_plan
                 result["project_resolution"] = (
@@ -48812,6 +49207,7 @@ def material_studio_live_modeling_request(
                     working_dir=working_dir,
                     timeout_seconds=timeout_seconds,
                     workflow="redo",
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 )
                 result["redo_target_resolution"] = redo_reason
                 if isinstance(result.get("modeling_report"), dict):
@@ -48858,6 +49254,7 @@ def material_studio_live_modeling_request(
                     working_dir=working_dir,
                     timeout_seconds=timeout_seconds,
                     workflow="rollback",
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 )
                 return finish(result)
             elif plan.kind == "continue_view_replay":
@@ -49287,6 +49684,8 @@ def material_studio_live_modeling_request(
                         view_replay_prepare_request_source
                     ),
                 }
+                if verify_ms_roundtrip:
+                    orchestration_context["verify_ms_roundtrip_requested"] = True
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_gui_apply_current_revision(
                         project_id=project_id,
@@ -49305,6 +49704,7 @@ def material_studio_live_modeling_request(
                         views=views,
                         working_dir=working_dir,
                         timeout_seconds=timeout_seconds,
+                        verify_ms_roundtrip=verify_ms_roundtrip,
                     )
                 diagnostic_export: dict[str, Any] | None = None
                 if export_requested and not result.get("view_bundle_manifest_path"):
@@ -49384,6 +49784,8 @@ def material_studio_live_modeling_request(
                     view_replay_prepare_request_source
                 ),
             }
+            if verify_ms_roundtrip:
+                orchestration_context["verify_ms_roundtrip_requested"] = True
             with _live_orchestration_context(orchestration_context):
                 result = material_studio_live_update_with_patch(
                     project_id,
@@ -49402,6 +49804,7 @@ def material_studio_live_modeling_request(
                     views=views,
                     working_dir=working_dir,
                     timeout_seconds=timeout_seconds,
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 )
             return finish(result)
 
@@ -49470,6 +49873,14 @@ def material_studio_live_modeling_request(
             "state_write_transaction": info.state_write_transaction,
             "gui_status": gui_status,
         }
+        _attach_materials_studio_roundtrip_plan(
+            response,
+            store=store,
+            spec=model_spec,
+            execution_mode=mode,
+            requested=verify_ms_roundtrip,
+            gui_probe_planned=bool(open_in_gui),
+        )
         audit_artifacts: list[dict[str, Any]] = []
         if export_view_audit:
             audit = model_view_audit(model_spec, views)
@@ -49512,6 +49923,7 @@ def material_studio_live_modeling_request(
                     working_dir=store.workspace_root,
                     timeout_seconds=timeout_seconds,
                     response_mode=response_mode,
+                    verify_ms_roundtrip=verify_ms_roundtrip,
                 ),
             )
             if blocked_response is not response:
@@ -49531,6 +49943,13 @@ def material_studio_live_modeling_request(
             generated=generated,
             script=generated["script"],
             timeout_seconds=timeout_seconds,
+            verify_ms_roundtrip=verify_ms_roundtrip,
+            roundtrip_gui_backend=(
+                getattr(gui, "backend", None) if verify_ms_roundtrip else None
+            ),
+            roundtrip_require_single_window=bool(
+                open_in_gui and verify_ms_roundtrip
+            ),
         )
         response.update(execution)
         if not execution.get("result", {}).get("success", False):
@@ -49649,6 +50068,7 @@ def _handle_live_rollback_request(
     working_dir: str | None,
     timeout_seconds: int | None,
     workflow: str = "rollback",
+    verify_ms_roundtrip: bool = False,
 ) -> dict[str, Any]:
     """Rollback a live project and optionally hot-load the resulting revision."""
 
@@ -49749,6 +50169,8 @@ def _handle_live_rollback_request(
             view_replay_prepare_request_source
         ),
     }
+    if verify_ms_roundtrip:
+        orchestration_context["verify_ms_roundtrip_requested"] = True
     with _live_orchestration_context(orchestration_context):
         return material_studio_gui_apply_current_revision(
             project_id=project_id,
@@ -49761,6 +50183,7 @@ def _handle_live_rollback_request(
             views=views,
             working_dir=working_dir,
             timeout_seconds=timeout_seconds,
+            verify_ms_roundtrip=verify_ms_roundtrip,
         )
 
 
@@ -53090,6 +53513,7 @@ def material_studio_gui_apply_current_revision(
     take_snapshot: Annotated[bool, Field(description="打开后尽可能捕获 GUI 快照。")] = True,
     fit_to_view_after_open: Annotated[bool, Field(description="After explicit execute and same-window open, invoke verified Fit-to-View before the final snapshot.")] = False,
     prepare_view_replay_after_open: Annotated[bool | None, Field(description="After explicit execute and same-window open, optionally prepare a preview-only view-replay manifest without changing the GUI.")] = None,
+    verify_ms_roundtrip: Annotated[bool, Field(description="Before GUI hot-load, require a revision-bound Materials Studio CIF import/export audit. Defaults to false.")] = False,
     export_view_audit: Annotated[bool, Field(description="导出当前 revision 的 view_audit.json 和 modeling_health。")] = True,
     views: Annotated[list[str] | None, Field(description="可选的标准视角名称，例如 front/back/right/left/top/bottom/isometric。")] = None,
     working_dir: Annotated[str | None, Field(description="可选的结构化/GUI 工作区根目录。")] = None,
@@ -53112,6 +53536,12 @@ def material_studio_gui_apply_current_revision(
 
     try:
         mode = _execution_mode(execution_mode)
+        verify_ms_roundtrip_requested = bool(
+            orchestration_context.get(
+                "verify_ms_roundtrip_requested",
+                verify_ms_roundtrip,
+            )
+        )
         fit_to_view_requested_after_open = bool(fit_to_view_after_open)
         fit_to_view_request_source = (
             "explicit_parameter" if fit_to_view_after_open else "default_disabled"
@@ -53226,6 +53656,14 @@ def material_studio_gui_apply_current_revision(
             ),
             "gui_status": gui.status(project_id=project_id, revision=spec.revision),
         })
+        _attach_materials_studio_roundtrip_plan(
+            response,
+            store=store,
+            spec=spec,
+            execution_mode=mode,
+            requested=verify_ms_roundtrip_requested,
+            gui_probe_planned=bool(open_in_gui),
+        )
         if export_view_audit:
             response["view_audit"] = model_view_audit(spec, views)
         if not script_validation.get("valid", False):
@@ -53264,6 +53702,7 @@ def material_studio_gui_apply_current_revision(
                     working_dir=store.workspace_root,
                     timeout_seconds=timeout_seconds,
                     response_mode=response_mode,
+                    verify_ms_roundtrip=verify_ms_roundtrip_requested,
                 ),
             )
             if blocked_response is not response:
@@ -53283,6 +53722,15 @@ def material_studio_gui_apply_current_revision(
             generated=generated,
             script=script,
             timeout_seconds=timeout_seconds,
+            verify_ms_roundtrip=verify_ms_roundtrip_requested,
+            roundtrip_gui_backend=(
+                getattr(gui, "backend", None)
+                if verify_ms_roundtrip_requested
+                else None
+            ),
+            roundtrip_require_single_window=bool(
+                open_in_gui and verify_ms_roundtrip_requested
+            ),
         )
         response.update(execution)
         result = execution.get("result", {})

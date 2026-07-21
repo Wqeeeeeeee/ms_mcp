@@ -43712,6 +43712,7 @@ def material_studio_castep_run_current(
             "recorded_revision": info.revision,
             "task": simulation.task.value,
             "success": True,
+            "execution_attempt": terminal_attempt,
             "backend_run_completed": True,
             "scientific_convergence_verified": False,
             "scientific_band_gap_verified": False,

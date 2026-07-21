@@ -969,6 +969,67 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert inspected_focus["ok"] is True
 
 
+def test_castep_execution_attempt_is_bound_to_both_success_metadata_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_silicon(tmp_path, "electronic_attempt_binding")
+    fake_runner = _ElectronicRunner(source, CastepTask.ENERGY)
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "castep_electronic_result_recorded"
+    response_attempt = result["execution_attempt"]
+    assert response_attempt["status"] == "completed"
+    assert response_attempt["result_success"] is True
+
+    run_result_metadata_path = Path(result["result_metadata_path"])
+    final_result_metadata_path = Path(
+        result["planned_outputs"]["result_metadata"]
+    )
+    assert run_result_metadata_path != final_result_metadata_path
+    run_result_metadata = json.loads(
+        run_result_metadata_path.read_text(encoding="utf-8")
+    )
+    final_result_metadata = json.loads(
+        final_result_metadata_path.read_text(encoding="utf-8")
+    )
+    assert final_result_metadata == run_result_metadata
+    assert run_result_metadata["execution_attempt"] == response_attempt
+    assert final_result_metadata["execution_attempt"] == response_attempt
+
+    journal_events = [
+        json.loads(line)
+        for line in Path(result["execution_attempt_events_path"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [event["event_type"] for event in journal_events] == [
+        "started",
+        "completed",
+    ]
+    assert journal_events[-1]["attempt"] == response_attempt
+
+    assert fake_runner.call_count == 1
+    assert result["revision_created"] is True
+    assert result["new_revision"] == source.revision + 1
+    current = ProjectStore(tmp_path).load_current(source.project_id)
+    assert current.revision == source.revision + 1
+    assert current.model.model_dump(mode="json") == source.model.model_dump(
+        mode="json"
+    )
+
+
 def test_native_fermi_crossing_surfaces_in_receipt_and_modeling_health(
     monkeypatch,
     tmp_path: Path,

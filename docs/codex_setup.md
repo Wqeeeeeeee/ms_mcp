@@ -725,23 +725,33 @@ identity-mismatched execution. Inspect
 `preexecution_execution_continuation_failures` in the compact receipt.
 
 For an explicit execute/hot-load smoke run, add
-`--resume-deferred-hotload` when the command should recover from the narrow
-`execution_completed_gui_activation_required` state. The smoke runner then
-validates the server-issued workspace, project, revision, structure, tool names,
+`--resume-deferred-hotload` when the command should recover from either of two
+strict execution-complete states. For
+`execution_completed_gui_activation_required`, the smoke runner validates the
+server-issued workspace, project, revision, structure, tool names,
 single-window gates, and exact payloads before calling
 `material_studio_gui_activate`, followed by
-`material_studio_gui_open_structure`. It never calls the modeling request or
-MaterialsScript runner again for that revision. Activation failure, payload
-mismatch, a newly spawned process, or an unverified open stops the continuation
-and prevents a follow-up edit. Fit-to-View and view-replay preparation flags are
-forwarded unchanged in the artifact-only open payload. The flag is disabled by
-default and has no GUI effect on preview responses. Inspect
+`material_studio_gui_open_structure`. For the GUI artifact report-lock timeout,
+it requires `report_persistence_deferred=true`,
+`execution_completed_before_gui_transaction=true`, a successful result, the
+same current revision, the existing planned structure, and the exact
+workspace-bound open payload before calling
+`material_studio_gui_open_structure` once. It never calls the modeling request
+or MaterialsScript runner again for either state. Activation failure, payload
+mismatch, current-revision drift, a newly spawned process, a repeated lock
+failure, or an unverified open stops the continuation and prevents a follow-up
+edit. Fit-to-View and view-replay preparation flags are forwarded unchanged in
+the artifact-only open payload. The flag is disabled by default and has no GUI
+effect on preview responses. Inspect
 `postexecution_hotload_continuation_status` and
 `postexecution_hotload_continuation_failures` in the compact receipt.
 When a resumed pre-execution apply itself loses GUI focus after successful
 execution, pass both continuation flags. The apply still runs only once; the
 existing post-execution continuation consumes only the returned activation and
 artifact-open payload and never reruns MaterialsScript.
+The same two-flag sequence handles an apply that completes execution but times
+out acquiring the GUI artifact report transaction; it revalidates current and
+opens the artifact once without reporting the apply as an execution failure.
 The receipt keeps `gui_window_identity_verification` as the raw observed-window
 value for audit. Use `current_revision_gui_evidence_applicable`,
 `current_revision_gui_evidence_status`, and

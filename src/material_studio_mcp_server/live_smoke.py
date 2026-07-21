@@ -1257,6 +1257,20 @@ def _revision_identity(value: Any) -> int | None:
     return revision if revision >= 0 else None
 
 
+def _execution_result_succeeded(response: dict[str, Any]) -> bool:
+    """Accept full or compact execution receipts, but never conflicting ones."""
+
+    receipts = [
+        response[field]
+        for field in ("result", "execution_result")
+        if field in response
+    ]
+    return bool(receipts) and all(
+        isinstance(receipt, dict) and receipt.get("success") is True
+        for receipt in receipts
+    )
+
+
 def _continuation_failure(reason: str, **details: Any) -> dict[str, Any]:
     return {"type": reason, **details}
 
@@ -1327,6 +1341,11 @@ def _validate_preexecution_execution_block(
     require(
         response.get("result") is None or response.get("result") == {},
         "preexecution_result_already_present",
+    )
+    require(
+        response.get("execution_result") is None
+        or response.get("execution_result") == {},
+        "preexecution_compact_result_already_present",
     )
     execution_transaction = _dict(response.get("execution_transaction"))
     require(
@@ -1603,7 +1622,7 @@ def _validate_postexecution_hotload_block(
         observed=execution_mode,
     )
     require(
-        _dict(response.get("result")).get("success") is True,
+        _execution_result_succeeded(response),
         "postexecution_result_not_successful",
     )
 
@@ -1765,6 +1784,244 @@ def _validate_postexecution_hotload_block(
         "workspace_identity": workspace_identity or requested_workspace,
         "structure_identity": planned_structure_identity,
         "activation_payload": activation_payload,
+        "open_payload": open_payload,
+        "failures": failures,
+    }
+
+
+def _validate_gui_transaction_hotload_block(
+    response: dict[str, Any],
+    *,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Validate an execution-complete GUI report-transaction retry contract."""
+
+    failures: list[dict[str, Any]] = []
+
+    def require(condition: bool, reason: str, **details: Any) -> None:
+        if not condition:
+            failures.append(_continuation_failure(reason, **details))
+
+    project_id = response.get("project_id")
+    project_id = project_id if isinstance(project_id, str) and project_id else None
+    response_revisions = {
+        key: _revision_identity(response.get(key))
+        for key in ("revision", "new_revision")
+        if response.get(key) is not None
+    }
+    revision_values = {value for value in response_revisions.values() if value is not None}
+    revision = next(iter(revision_values)) if len(revision_values) == 1 else None
+    require(project_id is not None, "response_project_id_missing")
+    require(bool(response_revisions), "response_revision_missing")
+    require(
+        len(revision_values) == 1 and all(value is not None for value in response_revisions.values()),
+        "response_revision_identity_invalid",
+        observed=response_revisions,
+    )
+
+    expected_fields = {
+        "ok": False,
+        "report_persistence_deferred": True,
+        "execution_completed_before_gui_transaction": True,
+        "structure_ready_for_gui_retry": True,
+        "execution_started": True,
+        "recommended_tool": "material_studio_gui_open_structure",
+        "gui_open_retry_tool": "material_studio_gui_open_structure",
+    }
+    for field, expected in expected_fields.items():
+        observed = response.get(field)
+        require(
+            observed == expected and type(observed) is type(expected),
+            "gui_transaction_response_field_mismatch",
+            field=field,
+            expected=expected,
+            observed=observed,
+        )
+
+    execution_mode = response.get("execution_mode") or _dict(
+        response.get("modeling_report")
+    ).get("execution_mode")
+    execution_mode = getattr(execution_mode, "value", execution_mode)
+    require(
+        execution_mode == ExecutionMode.EXECUTE.value,
+        "gui_transaction_response_not_execute",
+        observed=execution_mode,
+    )
+    require(
+        _execution_result_succeeded(response),
+        "gui_transaction_result_not_successful",
+    )
+    transaction_error = response.get("gui_action_transaction_error")
+    require(
+        isinstance(transaction_error, str)
+        and "GUI artifact report write transaction is busy" in transaction_error,
+        "gui_transaction_busy_error_missing",
+        observed=transaction_error,
+    )
+    gui_open = response.get("gui_open")
+    require(
+        gui_open is None or gui_open == {},
+        "gui_transaction_open_already_present",
+    )
+    require(
+        response.get("gui_input_started") is None
+        or response.get("gui_input_started") is False,
+        "gui_transaction_gui_input_already_started",
+    )
+
+    open_payload = _dict(response.get("gui_open_retry_payload"))
+    require(bool(open_payload), "gui_transaction_open_payload_missing")
+    require(
+        not (set(open_payload) - _POSTEXECUTION_OPEN_PAYLOAD_KEYS),
+        "gui_transaction_open_payload_has_unexpected_fields",
+        fields=sorted(set(open_payload) - _POSTEXECUTION_OPEN_PAYLOAD_KEYS),
+    )
+    require(
+        open_payload.get("project_id") == project_id,
+        "gui_transaction_open_payload_project_mismatch",
+        expected=project_id,
+        observed=open_payload.get("project_id"),
+    )
+    require(
+        _revision_identity(open_payload.get("revision")) == revision,
+        "gui_transaction_open_payload_revision_mismatch",
+        expected=revision,
+        observed=open_payload.get("revision"),
+    )
+    require(
+        open_payload.get("reuse_existing_window_only") is True,
+        "gui_transaction_open_payload_single_window_gate_missing",
+    )
+    for field in ("take_snapshot", "export_view_audit"):
+        require(
+            type(open_payload.get(field)) is bool,
+            "gui_transaction_open_payload_boolean_field_invalid",
+            field=field,
+            observed=open_payload.get(field),
+        )
+    require(
+        open_payload.get("export_view_audit") is True,
+        "gui_transaction_open_payload_view_audit_gate_missing",
+    )
+    for field in (
+        "fit_to_view_after_open",
+        "prepare_view_replay_after_open",
+    ):
+        if field in open_payload:
+            require(
+                open_payload.get(field) is True,
+                "gui_transaction_open_payload_optional_boolean_invalid",
+                field=field,
+                observed=open_payload.get(field),
+            )
+
+    planned_structure = _dict(response.get("planned_outputs")).get("structure")
+    planned_structure_identity = _path_identity(planned_structure)
+    open_structure_identity = _path_identity(open_payload.get("structure_path"))
+    require(
+        planned_structure_identity is not None,
+        "gui_transaction_planned_structure_missing",
+    )
+    require(
+        planned_structure_identity == open_structure_identity,
+        "gui_transaction_open_payload_structure_mismatch",
+        expected=planned_structure_identity,
+        observed=open_structure_identity,
+    )
+    try:
+        structure_exists = bool(planned_structure and Path(str(planned_structure)).is_file())
+    except (OSError, RuntimeError, ValueError):
+        structure_exists = False
+    require(structure_exists, "gui_transaction_structure_artifact_missing")
+
+    payload_has_workspace = "working_dir" in open_payload
+    payload_workspace = _path_identity(open_payload.get("working_dir"))
+    require(
+        payload_has_workspace and payload_workspace is not None,
+        "gui_transaction_open_payload_workspace_missing",
+        observed=open_payload.get("working_dir"),
+    )
+    requested_workspace = _path_identity(working_dir) if working_dir is not None else None
+    if working_dir is not None:
+        require(
+            requested_workspace is not None,
+            "gui_transaction_requested_workspace_invalid",
+            observed=working_dir,
+        )
+    if requested_workspace is not None:
+        require(
+            payload_has_workspace and payload_workspace == requested_workspace,
+            "gui_transaction_open_payload_requested_workspace_mismatch",
+            expected=requested_workspace,
+            observed=payload_workspace,
+        )
+    response_has_workspace = "working_dir" in response
+    response_workspace = _path_identity(response.get("working_dir"))
+    if response_has_workspace:
+        require(
+            response_workspace is not None,
+            "gui_transaction_response_workspace_invalid",
+            observed=response.get("working_dir"),
+        )
+    if response_workspace is not None:
+        require(
+            payload_has_workspace and payload_workspace == response_workspace,
+            "gui_transaction_open_payload_response_workspace_mismatch",
+            expected=response_workspace,
+            observed=payload_workspace,
+        )
+
+    fit_receipt = _dict(response.get("post_hotload_fit_to_view"))
+    fit_requested = bool(
+        response.get("post_hotload_fit_to_view_requested") is True
+        or fit_receipt.get("requested") is True
+    )
+    require(
+        (open_payload.get("fit_to_view_after_open") is True) == fit_requested,
+        "gui_transaction_fit_to_view_payload_mismatch",
+        requested=fit_requested,
+        observed=open_payload.get("fit_to_view_after_open"),
+    )
+    if fit_requested:
+        require(
+            fit_receipt.get("status") == "deferred_gui_transaction_busy",
+            "gui_transaction_fit_to_view_receipt_invalid",
+            observed=fit_receipt.get("status"),
+        )
+        require(
+            _dict(fit_receipt.get("followup_payload")) == open_payload,
+            "gui_transaction_fit_to_view_followup_payload_mismatch",
+        )
+
+    replay_receipt = _dict(response.get("post_hotload_view_replay_prepare"))
+    replay_requested = bool(
+        response.get("post_hotload_view_replay_prepare_requested") is True
+        or replay_receipt.get("requested") is True
+    )
+    require(
+        (open_payload.get("prepare_view_replay_after_open") is True)
+        == replay_requested,
+        "gui_transaction_view_replay_payload_mismatch",
+        requested=replay_requested,
+        observed=open_payload.get("prepare_view_replay_after_open"),
+    )
+    if replay_requested:
+        require(
+            replay_receipt.get("status") == "deferred_gui_transaction_busy",
+            "gui_transaction_view_replay_receipt_invalid",
+            observed=replay_receipt.get("status"),
+        )
+        require(
+            _dict(replay_receipt.get("followup_payload")) == open_payload,
+            "gui_transaction_view_replay_followup_payload_mismatch",
+        )
+
+    return {
+        "ok": not failures,
+        "project_id": project_id,
+        "revision": revision,
+        "workspace_identity": payload_workspace or requested_workspace,
+        "structure_identity": planned_structure_identity,
         "open_payload": open_payload,
         "failures": failures,
     }
@@ -1984,6 +2241,172 @@ def _merge_postexecution_hotload_response(
     return merged
 
 
+def _merge_gui_transaction_hotload_response(
+    blocked: dict[str, Any],
+    opened: dict[str, Any],
+    *,
+    completed: bool,
+    failure_status: str | None = None,
+) -> dict[str, Any]:
+    merged = _merge_postexecution_hotload_response(
+        blocked,
+        opened,
+        completed=completed,
+        failure_status=failure_status,
+    )
+    merged.pop("execution_completed_before_gui_activation", None)
+    merged["execution_completed_before_gui_transaction"] = True
+    merged["postexecution_hotload_original_status"] = (
+        "execution_completed_gui_transaction_required"
+    )
+    merged["gui_transaction_hotload_continuation_completed"] = completed
+    if completed:
+        merged["report_persistence_deferred"] = False
+        merged["gui_transaction_report_persistence_resolved"] = True
+        for field in (
+            "gui_action_transaction_error",
+            "gui_open_retry_tool",
+            "gui_open_retry_payload",
+            "structure_ready_for_gui_retry",
+        ):
+            merged.pop(field, None)
+    return merged
+
+
+def _resume_gui_transaction_hotload(
+    response: dict[str, Any],
+    *,
+    phase: str,
+    working_dir: str | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Consume one exact report-lock continuation without rerunning execution."""
+
+    receipt: dict[str, Any] = {
+        "phase": phase,
+        "requested": True,
+        "continuation_kind": "gui_transaction_report_persistence",
+        "eligible": False,
+        "attempted": False,
+        "completed": False,
+        "status": "contract_validation_started",
+        "failures": [],
+        "modeling_request_reinvoked": False,
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "open_structure_invoked": False,
+        "open_structure_call_count": 0,
+        "gui_process_launch_allowed": False,
+        "original_response_status": "execution_completed_gui_transaction_required",
+        "original_server_status": response.get("status"),
+        "original_report_persistence_deferred": response.get(
+            "report_persistence_deferred"
+        ),
+    }
+    contract = _validate_gui_transaction_hotload_block(
+        response,
+        working_dir=working_dir,
+    )
+    receipt["contract"] = contract
+    receipt["failures"] = list(contract["failures"])
+    if not contract["ok"]:
+        receipt["status"] = "contract_rejected"
+        return response, receipt
+
+    project_id = str(contract["project_id"])
+    revision = int(contract["revision"])
+    open_payload = dict(contract["open_payload"])
+    current_payload: dict[str, Any] = {"project_id": project_id}
+    if "working_dir" in open_payload:
+        current_payload["working_dir"] = open_payload["working_dir"]
+    elif working_dir is not None:
+        current_payload["working_dir"] = working_dir
+    receipt.update(
+        {
+            "eligible": True,
+            "attempted": True,
+            "status": "current_revision_check_started",
+            "project_id": project_id,
+            "revision": revision,
+            "workspace_identity": contract.get("workspace_identity"),
+            "structure_identity": contract.get("structure_identity"),
+            "open_payload": open_payload,
+            "current_revision_payload": current_payload,
+        }
+    )
+    try:
+        current = server.material_studio_model_get_current(**current_payload)
+    except Exception as exc:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].append(
+            _continuation_failure("current_revision_lookup_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["current_revision_receipt"] = current
+    current_failures = _validate_current_revision_continuation_receipt(
+        current,
+        project_id=project_id,
+        revision=revision,
+    )
+    if current_failures:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].extend(current_failures)
+        return response, receipt
+
+    receipt["current_revision_verified_before_open"] = True
+    receipt["status"] = "open_started"
+    receipt["open_structure_invoked"] = True
+    receipt["open_structure_call_count"] = 1
+    try:
+        opened = server.material_studio_gui_open_structure(**open_payload)
+    except Exception as exc:
+        receipt["status"] = "open_failed"
+        receipt["failures"].append(
+            _continuation_failure("open_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["open_continuation_receipt"] = opened
+    open_failures = _validate_open_continuation_receipt(
+        opened,
+        project_id=project_id,
+        revision=revision,
+        structure_identity=str(contract["structure_identity"]),
+        open_payload=open_payload,
+    )
+    if open_failures:
+        receipt["status"] = (
+            "open_failed" if opened.get("ok") is not True else "open_verification_failed"
+        )
+        receipt["failures"].extend(open_failures)
+        effective = _merge_gui_transaction_hotload_response(
+            response,
+            opened,
+            completed=False,
+            failure_status="gui_transaction_hotload_continuation_failed",
+        )
+        return effective, receipt
+
+    receipt.update(
+        {
+            "status": "completed",
+            "completed": True,
+            "exact_payload_used": True,
+            "open_completed": True,
+            "fit_to_view_after_open": (
+                open_payload.get("fit_to_view_after_open") is True
+            ),
+            "prepare_view_replay_after_open": (
+                open_payload.get("prepare_view_replay_after_open") is True
+            ),
+        }
+    )
+    effective = _merge_gui_transaction_hotload_response(
+        response,
+        opened,
+        completed=True,
+    )
+    return effective, receipt
+
+
 def _resume_postexecution_hotload(
     response: dict[str, Any],
     *,
@@ -2008,6 +2431,23 @@ def _resume_postexecution_hotload(
     }
     if not enabled:
         return response, receipt
+    if response.get("preexecution_execution_continuation_completed") is False:
+        receipt["status"] = "preexecution_execution_continuation_not_verified"
+        receipt["failures"].append(
+            _continuation_failure(
+                "preexecution_execution_continuation_not_completed"
+            )
+        )
+        return response, receipt
+    if (
+        response.get("report_persistence_deferred") is True
+        and response.get("execution_completed_before_gui_transaction") is True
+    ):
+        return _resume_gui_transaction_hotload(
+            response,
+            phase=phase,
+            working_dir=working_dir,
+        )
     if response.get("status") != "execution_completed_gui_activation_required":
         if response.get("ok") is not True:
             receipt["status"] = "not_applicable_failed_response"
@@ -2370,10 +2810,21 @@ def _resume_preexecution_execution(
             )
         )
 
+    gui_transaction_deferred = bool(
+        applied.get("report_persistence_deferred") is True
+        and applied.get("execution_completed_before_gui_transaction") is True
+    )
     postexecution_deferred = (
         applied.get("status") == "execution_completed_gui_activation_required"
     )
-    if postexecution_deferred:
+    if gui_transaction_deferred:
+        gui_transaction_contract = _validate_gui_transaction_hotload_block(
+            applied,
+            working_dir=str(execution_payload["working_dir"]),
+        )
+        receipt["gui_transaction_contract"] = gui_transaction_contract
+        receipt["failures"].extend(gui_transaction_contract["failures"])
+    elif postexecution_deferred:
         postexecution_contract = _validate_postexecution_hotload_block(
             applied,
             working_dir=str(execution_payload["working_dir"]),
@@ -2388,7 +2839,7 @@ def _resume_preexecution_execution(
                     observed=applied.get("execution_started"),
                 )
             )
-        if _dict(applied.get("result")).get("success") is not True:
+        if not _execution_result_succeeded(applied):
             receipt["failures"].append(
                 _continuation_failure("apply_response_result_not_successful")
             )
@@ -2430,14 +2881,21 @@ def _resume_preexecution_execution(
     receipt.update(
         {
             "status": (
-                "execution_completed_gui_activation_required"
-                if postexecution_deferred
-                else "completed"
+                "execution_completed_gui_transaction_required"
+                if gui_transaction_deferred
+                else (
+                    "execution_completed_gui_activation_required"
+                    if postexecution_deferred
+                    else "completed"
+                )
             ),
             "completed": True,
             "exact_payloads_used": True,
             "execution_started_by_apply": True,
-            "postexecution_hotload_deferred": postexecution_deferred,
+            "postexecution_hotload_deferred": bool(
+                postexecution_deferred or gui_transaction_deferred
+            ),
+            "gui_transaction_hotload_deferred": gui_transaction_deferred,
             "fit_to_view_after_open": (
                 execution_payload.get("fit_to_view_after_open") is True
             ),
@@ -3369,8 +3827,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--resume-deferred-hotload",
         action="store_true",
         help=(
-            "After an already completed execute request loses GUI focus, consume only "
-            "its exact activate/open continuation; never rerun modeling or MaterialsScript."
+            "After execution completes, consume one exact activation/open or GUI "
+            "report-transaction artifact-open continuation; never rerun modeling, "
+            "MaterialsScript, or the open call automatically."
         ),
     )
     parser.add_argument("--output", help="Optional path to write the JSON result.")

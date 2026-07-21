@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from material_studio_mcp_server import server
+from material_studio_mcp_server import live_smoke, server
 from material_studio_mcp_server import gui as gui_module
 from material_studio_mcp_server.diagnostic_contract import (
     DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
@@ -32683,6 +32683,12 @@ def test_high_level_hotload_lock_timeout_defers_gui_and_report_after_execution(
     assert retry_payload["revision"] == 0
     assert retry_payload["take_snapshot"] is False
     assert Path(retry_payload["structure_path"]).exists()
+    continuation_contract = live_smoke._validate_gui_transaction_hotload_block(
+        blocked,
+        working_dir=str(tmp_path),
+    )
+    assert continuation_contract["ok"] is True, continuation_contract["failures"]
+    assert continuation_contract["failures"] == []
     assert backend.opened == []
     assert report_path.read_bytes() == committed_report
 

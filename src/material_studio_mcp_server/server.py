@@ -14,7 +14,7 @@ from enum import Enum
 from functools import wraps
 from math import gcd
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -9444,26 +9444,12 @@ def _compact_live_session_preflight_payload(payload: dict[str, Any]) -> dict[str
         },
     }
     payload["response_compaction"] = receipt
-    for _ in range(16):
-        response_bytes = len(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
-        )
-        headroom_bytes = max(COMPACT_RESPONSE_MAX_BYTES - response_bytes, 0)
-        target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
-        if (
-            receipt.get("response_bytes") == response_bytes
-            and receipt.get("headroom_bytes") == headroom_bytes
-            and receipt.get("target_exceeded") == target_exceeded
-        ):
-            break
-        receipt["response_bytes"] = response_bytes
-        receipt["headroom_bytes"] = headroom_bytes
-        receipt["target_exceeded"] = target_exceeded
+    _finalize_compaction_size_receipt(
+        payload,
+        receipt,
+        semantic_core_fields=None,
+        size_function=_preflight_compact_json_size_bytes,
+    )
     return payload
 
 
@@ -39495,6 +39481,80 @@ def _compact_json_size_bytes(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
 
+def _preflight_compact_json_size_bytes(value: Any) -> int:
+    """Return the stdio size used by compact live-session preflight."""
+
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    )
+
+
+def _finalize_compaction_size_receipt(
+    payload: dict[str, Any],
+    receipt: dict[str, Any],
+    *,
+    semantic_core_fields: tuple[str, ...] | None,
+    size_function: Callable[[Any], int],
+) -> dict[str, Any]:
+    """Publish exact self-referential size fields without boundary oscillation."""
+
+    omitted_core_fields = [
+        key for key in (semantic_core_fields or ()) if key not in payload
+    ]
+    if semantic_core_fields is not None:
+        receipt["semantic_core_preserved"] = not omitted_core_fields
+        receipt["semantic_core_omitted_fields"] = omitted_core_fields
+
+    def converge() -> bool:
+        observed_states: set[tuple[int, int, bool]] = set()
+        for _ in range(32):
+            response_bytes = size_function(payload)
+            headroom_bytes = max(
+                COMPACT_RESPONSE_MAX_BYTES - response_bytes,
+                0,
+            )
+            target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
+            expected = (response_bytes, headroom_bytes, target_exceeded)
+            current = (
+                receipt.get("response_bytes"),
+                receipt.get("headroom_bytes"),
+                receipt.get("target_exceeded"),
+            )
+            if current == expected:
+                return True
+            if expected in observed_states:
+                return False
+            observed_states.add(expected)
+            receipt["response_bytes"] = response_bytes
+            receipt["headroom_bytes"] = headroom_bytes
+            receipt["target_exceeded"] = target_exceeded
+        return False
+
+    if converge():
+        return payload
+
+    # The two integer fields can have no fixed point when headroom crosses a
+    # decimal-width boundary (for example, 100 <-> 99). The reserve is
+    # redundant with target/budget and makes room for an explicit padding key.
+    receipt.pop("reserved_headroom_bytes", None)
+    for padding_bytes in range(256):
+        receipt["size_stabilization_padding"] = "x" * padding_bytes
+        receipt["response_bytes"] = -1
+        receipt["headroom_bytes"] = -1
+        receipt["target_exceeded"] = False
+        if converge():
+            return payload
+
+    raise RuntimeError(
+        "Compact response size receipt did not reach an exact fixed point."
+    )
+
+
 def _compact_response_receipt(
     *,
     detail_paths: dict[str, Any],
@@ -39540,25 +39600,12 @@ def _finalize_live_compact_response(
 ) -> dict[str, Any]:
     """Finalize exact size and semantic-core preservation evidence."""
 
-    omitted_core_fields = [
-        key for key in semantic_core_fields if key not in payload
-    ]
-    receipt["semantic_core_preserved"] = not omitted_core_fields
-    receipt["semantic_core_omitted_fields"] = omitted_core_fields
-    for _ in range(16):
-        response_bytes = _compact_json_size_bytes(payload)
-        headroom_bytes = max(COMPACT_RESPONSE_MAX_BYTES - response_bytes, 0)
-        target_exceeded = response_bytes > COMPACT_RESPONSE_TARGET_BYTES
-        if (
-            receipt.get("response_bytes") == response_bytes
-            and receipt.get("headroom_bytes") == headroom_bytes
-            and receipt.get("target_exceeded") == target_exceeded
-        ):
-            break
-        receipt["response_bytes"] = response_bytes
-        receipt["headroom_bytes"] = headroom_bytes
-        receipt["target_exceeded"] = target_exceeded
-    return payload
+    return _finalize_compaction_size_receipt(
+        payload,
+        receipt,
+        semantic_core_fields=semantic_core_fields,
+        size_function=_compact_json_size_bytes,
+    )
 
 
 def _compact_gui_evidence_reaudit(value: Any) -> dict[str, Any]:

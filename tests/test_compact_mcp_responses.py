@@ -12,6 +12,97 @@ def _json_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
 
+def test_compact_size_receipt_stabilizes_decimal_headroom_boundaries() -> None:
+    for filler_size in (47_530, 47_621):
+        receipt = server._compact_response_receipt(
+            detail_paths={},
+            semantic_core_fields=("ok",),
+        )
+        payload = {
+            "ok": True,
+            "filler": "x" * filler_size,
+            "response_compaction": receipt,
+        }
+
+        finalized = server._finalize_live_compact_response(
+            payload,
+            receipt,
+            ("ok",),
+        )
+        response_bytes = _json_size(finalized)
+
+        assert finalized is payload
+        assert receipt["response_bytes"] == response_bytes
+        assert receipt["headroom_bytes"] == (
+            server.COMPACT_RESPONSE_MAX_BYTES - response_bytes
+        )
+        assert receipt["target_exceeded"] is True
+        assert receipt["size_stabilization_padding"] == ""
+        assert "reserved_headroom_bytes" not in receipt
+        assert response_bytes < server.COMPACT_RESPONSE_MAX_BYTES
+
+
+def test_compact_size_receipt_keeps_standard_shape_without_oscillation() -> None:
+    receipt = server._compact_response_receipt(
+        detail_paths={},
+        semantic_core_fields=("ok",),
+    )
+    payload = {
+        "ok": True,
+        "response_compaction": receipt,
+    }
+
+    server._finalize_live_compact_response(payload, receipt, ("ok",))
+    empty_core_receipt = server._compact_response_receipt(
+        detail_paths={},
+        semantic_core_fields=(),
+    )
+    empty_core_payload = {"response_compaction": empty_core_receipt}
+    server._finalize_live_compact_response(
+        empty_core_payload,
+        empty_core_receipt,
+        (),
+    )
+    preflight = server._compact_live_session_preflight_payload(
+        {"runner_status": {"notes": "ready"}}
+    )
+
+    assert receipt["response_bytes"] == _json_size(payload)
+    assert "size_stabilization_padding" not in receipt
+    assert receipt["reserved_headroom_bytes"] == (
+        server.COMPACT_RESPONSE_MAX_BYTES
+        - server.COMPACT_RESPONSE_TARGET_BYTES
+    )
+    assert empty_core_receipt["semantic_core_preserved"] is True
+    assert empty_core_receipt["semantic_core_omitted_fields"] == []
+    assert "size_stabilization_padding" not in preflight[
+        "response_compaction"
+    ]
+
+
+def test_preflight_compact_size_receipt_uses_cycle_safe_finalizer() -> None:
+    compact = server._compact_live_session_preflight_payload(
+        {"runner_status": {"notes": "x" * 46_491}}
+    )
+    response_bytes = len(
+        json.dumps(
+            compact,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    )
+    receipt = compact["response_compaction"]
+
+    assert receipt["response_bytes"] == response_bytes
+    assert receipt["headroom_bytes"] == (
+        server.COMPACT_RESPONSE_MAX_BYTES - response_bytes
+    )
+    assert receipt["target_exceeded"] is True
+    assert receipt["size_stabilization_padding"] == ""
+    assert response_bytes < server.COMPACT_RESPONSE_MAX_BYTES
+
+
 def test_compact_bundle_separates_artifact_availability_from_path_index(
     tmp_path: Path,
 ) -> None:

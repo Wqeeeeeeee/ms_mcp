@@ -31741,6 +31741,50 @@ def test_diagnostic_export_lock_timeout_preserves_report_and_skips_snapshot(
     assert capture_count == 0
     assert report_path.read_bytes() == committed_report
 
+    bundle_contract = live_smoke._validate_deferred_bundle_export(
+        bundle,
+        expected_project_id=created["project_id"],
+        expected_revision=created["revision"],
+        expected_views=None,
+        expected_include_gui_snapshot=True,
+        working_dir=str(tmp_path),
+        expected_response_mode="compact",
+    )
+    assert bundle_contract["ok"] is True
+    assert bundle_contract["failures"] == []
+
+    resumed_bundle, continuation = (
+        live_smoke._resume_deferred_bundle_export(
+            bundle,
+            enabled=True,
+            bundle_requested=True,
+            expected_project_id=created["project_id"],
+            expected_revision=created["revision"],
+            expected_views=None,
+            expected_include_gui_snapshot=True,
+            working_dir=str(tmp_path),
+            expected_response_mode="compact",
+        )
+    )
+
+    assert not continuation.get("failures"), json.dumps(
+        continuation.get("failures"),
+        indent=2,
+    )
+    assert resumed_bundle["ok"] is True
+    assert continuation["status"] == "completed"
+    assert continuation["completed"] is True
+    assert continuation["bundle_export_call_count"] == 1
+    assert continuation["current_revision_verified_before_export"] is True
+    assert continuation["modeling_request_reinvoked"] is False
+    assert continuation["execution_repeated"] is False
+    assert continuation["runner_reinvoked"] is False
+    assert continuation["gui_open_invoked"] is False
+    assert Path(continuation["manifest_path"]).is_file()
+    assert Path(continuation["view_projections_csv"]).is_file()
+    assert continuation["view_projection_count"] > 0
+    assert capture_count == 1
+
 
 def test_diagnostic_export_rejects_revision_superseded_while_waiting(
     monkeypatch: pytest.MonkeyPatch,

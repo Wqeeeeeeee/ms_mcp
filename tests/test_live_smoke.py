@@ -827,6 +827,7 @@ def test_live_smoke_cli_writes_compact_json(monkeypatch, tmp_path: Path, capsys)
         assert kwargs["include_gui_status"] is False
         assert kwargs["take_snapshot"] is False
         assert kwargs["export_bundle"] is False
+        assert kwargs["resume_deferred_bundle_export"] is True
         return {
             "ok": True,
             "summary": {
@@ -851,6 +852,7 @@ def test_live_smoke_cli_writes_compact_json(monkeypatch, tmp_path: Path, capsys)
             "--no-include-gui-status",
             "--no-take-snapshot",
             "--no-export-bundle",
+            "--resume-deferred-bundle-export",
             "--output",
             str(output),
         ]
@@ -2592,6 +2594,125 @@ def _current_revision_receipt(project_id: str, revision: int) -> dict[str, objec
     }
 
 
+def _deferred_bundle_export(
+    tmp_path: Path,
+    *,
+    project_id: str,
+    revision: int,
+    views: list[str] | None,
+    include_gui_snapshot: bool,
+    response_mode: str = "full",
+) -> dict[str, object]:
+    workspace = str(tmp_path.resolve())
+    error = (
+        "GUI artifact report write transaction is busy; retry after the "
+        "current GUI evidence update finishes"
+    )
+    retry_payload = {
+        "project_id": project_id,
+        "views": views,
+        "include_gui_snapshot": include_gui_snapshot,
+        "working_dir": workspace,
+        "response_mode": response_mode,
+    }
+    return {
+        "ok": False,
+        "status": "diagnostic_export_deferred",
+        "error": error,
+        "project_id": project_id,
+        "project_resolution": {
+            "source": "explicit",
+            "project_id": project_id,
+            "revision": revision,
+        },
+        "revision": revision,
+        "diagnostic_export_deferred": True,
+        "report_persistence_deferred": True,
+        "gui_action_transaction_error": error,
+        "recommended_tool": "material_studio_model_export_view_bundle",
+        "diagnostic_export_retry_tool": (
+            "material_studio_model_export_view_bundle"
+        ),
+        "diagnostic_export_retry_payload": retry_payload,
+    }
+
+
+def _successful_bundle_export(
+    tmp_path: Path,
+    *,
+    project_id: str,
+    revision: int,
+    views: list[str] | None,
+) -> dict[str, object]:
+    bundle_dir = tmp_path / project_id / "outputs" / f"r{revision:03d}" / "view_audit"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    manifest = bundle_dir / "view_bundle_manifest.json"
+    projections = bundle_dir / "view_projections.csv"
+    summary = bundle_dir / "view_summary.csv"
+    quality = bundle_dir / "view_quality.csv"
+    view_names = views or ["front"]
+    projection_count = len(view_names)
+    projection_rows = "".join(
+        f"{view_names[index]},Si{index + 1}\n"
+        for index in range(projection_count)
+    )
+    projections.write_text(
+        "view,atom_id\n" + projection_rows,
+        encoding="utf-8",
+    )
+    summary.write_text("view\nfront\n", encoding="utf-8")
+    quality.write_text("view,status\nfront,ok\n", encoding="utf-8")
+    files = {
+        "view_projections_csv": str(projections.resolve()),
+        "view_summary_csv": str(summary.resolve()),
+        "view_quality_csv": str(quality.resolve()),
+    }
+    row_counts = {
+        "view_projections": projection_count,
+        "view_summary": 1,
+        "view_quality": 1,
+    }
+    manifest.write_text(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "revision": revision,
+                "files": files,
+                "row_counts": row_counts,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "ok": True,
+        "project_id": project_id,
+        "revision": revision,
+        "manifest_path": str(manifest.resolve()),
+        "view_bundle_manifest_path": str(manifest.resolve()),
+        "files": files,
+        "view_bundle_files": files,
+        "row_counts": row_counts,
+        "view_bundle_row_counts": row_counts,
+        "diagnostic_export_view_resolution": {
+            "resolved_view_names": views,
+        },
+        "report_write_transaction": {
+            "domain": "gui_artifact_report",
+            "project_id": project_id,
+            "revision": revision,
+            "workspace_root": str(tmp_path.resolve()),
+            "coverage": [
+                "workflow:model_export_view_bundle",
+                "current_revision_revalidation",
+                "diagnostic_export",
+                "view_audit_bundle_write",
+                "report_read_modify_write",
+            ],
+        },
+    }
+
+
 def _deferred_postexecution_live(
     tmp_path: Path,
     *,
@@ -2938,6 +3059,449 @@ def _successful_apply_continuation(
         }
     )
     return response
+
+
+def test_bundle_export_deferred_contract_accepts_exact_server_shape(
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_bundle_contract"
+    views = ["front", "top", "isometric"]
+    response = _deferred_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=2,
+        views=views,
+        include_gui_snapshot=False,
+    )
+
+    contract = live_smoke._validate_deferred_bundle_export(
+        response,
+        expected_project_id=project_id,
+        expected_revision=2,
+        expected_views=views,
+        expected_include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert contract["ok"] is True
+    assert contract["failures"] == []
+    assert contract["retry_payload"] == response[
+        "diagnostic_export_retry_payload"
+    ]
+    assert contract["workspace_identity"] == live_smoke._path_identity(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("mismatch", "expected_failure"),
+    [
+        ("project", "bundle_export_retry_payload_project_mismatch"),
+        ("revision", "bundle_export_response_revision_mismatch"),
+        ("views", "bundle_export_retry_payload_views_mismatch"),
+        ("snapshot", "bundle_export_retry_payload_snapshot_mismatch"),
+        ("response_mode", "bundle_export_retry_payload_response_mode_mismatch"),
+        ("workspace", "bundle_export_retry_payload_workspace_mismatch"),
+    ],
+)
+def test_bundle_export_deferred_contract_rejects_identity_mismatch(
+    tmp_path: Path,
+    mismatch: str,
+    expected_failure: str,
+) -> None:
+    project_id = "smoke_bundle_contract_mismatch"
+    views = ["front", "top"]
+    response = _deferred_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=4,
+        views=views,
+        include_gui_snapshot=True,
+    )
+    payload = response["diagnostic_export_retry_payload"]
+    assert isinstance(payload, dict)
+    if mismatch == "project":
+        payload["project_id"] = "another_project"
+    elif mismatch == "revision":
+        response["revision"] = 5
+    elif mismatch == "views":
+        payload["views"] = ["back"]
+    elif mismatch == "snapshot":
+        payload["include_gui_snapshot"] = False
+    elif mismatch == "response_mode":
+        payload["response_mode"] = "compact"
+    elif mismatch == "workspace":
+        payload["working_dir"] = str(tmp_path / "another_workspace")
+
+    contract = live_smoke._validate_deferred_bundle_export(
+        response,
+        expected_project_id=project_id,
+        expected_revision=4,
+        expected_views=views,
+        expected_include_gui_snapshot=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert contract["ok"] is False
+    assert expected_failure in {
+        failure["type"] for failure in contract["failures"]
+    }
+
+
+def test_bundle_export_receipt_rejects_unbound_or_inconsistent_artifacts(
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_bundle_artifact_mismatch"
+    response = _successful_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=1,
+        views=["front", "top"],
+    )
+    manifest_path = Path(str(response["manifest_path"]))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["revision"] = 2
+    manifest_path.write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+    projection_path = Path(str(response["files"]["view_projections_csv"]))
+    with projection_path.open("a", encoding="utf-8") as handle:
+        handle.write("top,Si3\n")
+    transaction = response["report_write_transaction"]
+    assert isinstance(transaction, dict)
+    transaction["coverage"] = []
+
+    verification = live_smoke._validate_bundle_export_continuation_receipt(
+        response,
+        project_id=project_id,
+        revision=1,
+        expected_views=["front", "top"],
+        expected_workspace=tmp_path / "different_workspace",
+    )
+
+    failure_types = {
+        failure["type"] for failure in verification["failures"]
+    }
+    assert {
+        "bundle_export_manifest_outside_workspace",
+        "bundle_export_manifest_revision_mismatch",
+        "bundle_export_view_projections_outside_workspace",
+        "bundle_export_view_projections_row_count_mismatch",
+        "bundle_export_report_transaction_coverage_missing",
+    } <= failure_types
+
+
+def test_live_smoke_resumes_deferred_bundle_export_once_without_model_rerun(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_resume_bundle"
+    revision = 0
+    views = ["front", "top", "isometric"]
+    deferred = _deferred_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=revision,
+        views=views,
+        include_gui_snapshot=False,
+    )
+    completed = _successful_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=revision,
+        views=views,
+    )
+    modeling_calls: list[str] = []
+    current_calls: list[dict[str, object]] = []
+    bundle_calls: list[dict[str, object]] = []
+    report = {
+        "normality": "preview_ready",
+        "execution_mode": "preview",
+        "normality_gate": {"status": "preview_only"},
+        "gui": {"hot_loaded": False, "loaded_current_revision": False},
+    }
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {
+            "ok": True,
+            "state": "ready_for_new_model",
+            "blocking_reasons": [],
+            "review_reasons": [],
+        },
+    )
+
+    def fake_live(user_request, **kwargs):
+        modeling_calls.append(user_request)
+        assert len(modeling_calls) == 1
+        return {
+            "ok": True,
+            "workflow": "create",
+            "project_id": project_id,
+            "revision": revision,
+            "new_revision": revision,
+            "execution_mode": "preview",
+            "modeling_report": report,
+        }
+
+    def fake_current(**kwargs):
+        current_calls.append(kwargs)
+        return _current_revision_receipt(project_id, revision)
+
+    def fake_bundle(**kwargs):
+        bundle_calls.append(kwargs)
+        if len(bundle_calls) == 1:
+            return deferred
+        if len(bundle_calls) == 2:
+            assert kwargs == deferred["diagnostic_export_retry_payload"]
+            return completed
+        raise AssertionError("bundle continuation must not retry more than once")
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_modeling_request",
+        fake_live,
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": project_id,
+            "revision": revision,
+            "modeling_report": report,
+        },
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_get_current",
+        fake_current,
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_export_view_bundle",
+        fake_bundle,
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Preview silicon and export standard view diagnostics.",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+        views=views,
+        resume_deferred_bundle_export=True,
+    )
+
+    assert result["ok"] is True
+    assert len(modeling_calls) == 1
+    assert current_calls == [
+        {"project_id": project_id, "working_dir": str(tmp_path.resolve())}
+    ]
+    assert len(bundle_calls) == 2
+    assert bundle_calls[0] == bundle_calls[1]
+    continuation = result["bundle_export_continuation"]
+    assert continuation["status"] == "completed"
+    assert continuation["completed"] is True
+    assert continuation["bundle_export_call_count"] == 1
+    assert continuation["current_revision_verified_before_export"] is True
+    assert continuation["modeling_request_reinvoked"] is False
+    assert continuation["execution_repeated"] is False
+    assert continuation["runner_reinvoked"] is False
+    assert continuation["gui_open_invoked"] is False
+    assert result["bundle"] is completed
+    assert result["summary"]["bundle_export_continuation_status"] == "completed"
+    assert result["summary"]["bundle_export_continuation_completed"] is True
+
+
+def test_bundle_export_continuation_stops_on_current_revision_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_bundle_revision_drift"
+    response = _deferred_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=1,
+        views=["front"],
+        include_gui_snapshot=False,
+    )
+    bundle_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_get_current",
+        lambda **kwargs: _current_revision_receipt(project_id, 2),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_export_view_bundle",
+        lambda **kwargs: bundle_calls.append(kwargs),
+    )
+
+    effective, receipt = live_smoke._resume_deferred_bundle_export(
+        response,
+        enabled=True,
+        bundle_requested=True,
+        expected_project_id=project_id,
+        expected_revision=1,
+        expected_views=["front"],
+        expected_include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert effective is response
+    assert receipt["status"] == "current_revision_check_failed"
+    assert receipt["bundle_export_invoked"] is False
+    assert bundle_calls == []
+    assert "current_revision_mismatch" in {
+        failure["type"] for failure in receipt["failures"]
+    }
+
+
+def test_bundle_export_continuation_does_not_loop_when_retry_is_still_busy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_bundle_retry_busy"
+    response = _deferred_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=3,
+        views=["front", "top"],
+        include_gui_snapshot=True,
+    )
+    bundle_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_get_current",
+        lambda **kwargs: _current_revision_receipt(project_id, 3),
+    )
+
+    def fake_bundle(**kwargs):
+        bundle_calls.append(kwargs)
+        return response
+
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_export_view_bundle",
+        fake_bundle,
+    )
+
+    effective, receipt = live_smoke._resume_deferred_bundle_export(
+        response,
+        enabled=True,
+        bundle_requested=True,
+        expected_project_id=project_id,
+        expected_revision=3,
+        expected_views=["front", "top"],
+        expected_include_gui_snapshot=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert effective is response
+    assert receipt["status"] == "bundle_export_failed"
+    assert receipt["bundle_export_call_count"] == 1
+    assert bundle_calls == [response["diagnostic_export_retry_payload"]]
+
+
+def test_bundle_export_continuation_requires_explicit_flag(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    response = _deferred_bundle_export(
+        tmp_path,
+        project_id="smoke_bundle_disabled",
+        revision=0,
+        views=["front"],
+        include_gui_snapshot=False,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_get_current",
+        lambda **kwargs: calls.append("current"),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_export_view_bundle",
+        lambda **kwargs: calls.append("bundle"),
+    )
+
+    effective, receipt = live_smoke._resume_deferred_bundle_export(
+        response,
+        enabled=False,
+        bundle_requested=True,
+        expected_project_id="smoke_bundle_disabled",
+        expected_revision=0,
+        expected_views=["front"],
+        expected_include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert effective is response
+    assert receipt["status"] == "disabled"
+    assert receipt["attempted"] is False
+    assert calls == []
+
+
+def test_live_smoke_bundle_resume_reports_export_disabled_without_calls(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "smoke_bundle_export_disabled"
+    live = {
+        "ok": True,
+        "workflow": "create",
+        "project_id": project_id,
+        "revision": 0,
+        "new_revision": 0,
+        "execution_mode": "preview",
+        "modeling_report": {"execution_mode": "preview"},
+    }
+    calls: list[str] = []
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_session_preflight",
+        lambda **kwargs: {"ok": True, "state": "ready", "blocking_reasons": []},
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_modeling_request",
+        lambda *args, **kwargs: live,
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_live_project_status",
+        lambda **kwargs: {"ok": True, "project_id": project_id, "revision": 0},
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_get_current",
+        lambda **kwargs: calls.append("current"),
+    )
+    monkeypatch.setattr(
+        live_smoke.server,
+        "material_studio_model_export_view_bundle",
+        lambda **kwargs: calls.append("bundle"),
+    )
+
+    result = live_smoke.run_live_smoke(
+        request="Preview silicon.",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        export_bundle=False,
+        include_gui_status=False,
+        take_snapshot=False,
+        resume_deferred_bundle_export=True,
+    )
+
+    assert result["ok"] is True
+    assert result["bundle"] is None
+    assert result["bundle_export_continuation"]["status"] == (
+        "bundle_export_disabled"
+    )
+    assert result["bundle_export_continuation"]["attempted"] is False
+    assert result["summary"]["bundle_export_continuation_status"] == (
+        "bundle_export_disabled"
+    )
+    assert calls == []
 
 
 def test_server_preexecution_block_satisfies_live_smoke_contract(tmp_path: Path) -> None:
@@ -4553,6 +5117,13 @@ def test_live_smoke_resume_flag_is_explicit_and_preview_does_not_touch_gui(
     )
     assert parser.parse_args([]).resume_deferred_hotload is False
     assert parser.parse_args(["--resume-deferred-hotload"]).resume_deferred_hotload is True
+    assert parser.parse_args([]).resume_deferred_bundle_export is False
+    assert (
+        parser.parse_args(
+            ["--resume-deferred-bundle-export"]
+        ).resume_deferred_bundle_export
+        is True
+    )
 
     live = {
         "ok": True,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from pathlib import Path
@@ -1234,6 +1235,15 @@ _PREEXECUTION_APPLY_PAYLOAD_KEYS = frozenset(
         "response_mode",
     }
 )
+_BUNDLE_EXPORT_RETRY_PAYLOAD_KEYS = frozenset(
+    {
+        "project_id",
+        "views",
+        "include_gui_snapshot",
+        "working_dir",
+        "response_mode",
+    }
+)
 
 
 def _path_identity(value: Any) -> str | None:
@@ -1245,6 +1255,19 @@ def _path_identity(value: Any) -> str | None:
         return os.path.normcase(str(Path(value).expanduser().resolve()))
     except (OSError, RuntimeError, ValueError):
         return None
+
+
+def _path_is_within(value: Any, root: Any) -> bool:
+    """Return whether one resolved path remains inside the resolved root."""
+
+    value_identity = _path_identity(value)
+    root_identity = _path_identity(root)
+    if value_identity is None or root_identity is None:
+        return False
+    try:
+        return os.path.commonpath((value_identity, root_identity)) == root_identity
+    except ValueError:
+        return False
 
 
 def _revision_identity(value: Any) -> int | None:
@@ -1269,6 +1292,23 @@ def _execution_result_succeeded(response: dict[str, Any]) -> bool:
         isinstance(receipt, dict) and receipt.get("success") is True
         for receipt in receipts
     )
+
+
+def _consistent_current_revision(
+    *responses: dict[str, Any] | None,
+) -> int | None:
+    revisions: set[int] = set()
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        for field in ("revision", "new_revision"):
+            if field not in response:
+                continue
+            revision = _revision_identity(response.get(field))
+            if revision is None:
+                return None
+            revisions.add(revision)
+    return next(iter(revisions)) if len(revisions) == 1 else None
 
 
 def _continuation_failure(reason: str, **details: Any) -> dict[str, Any]:
@@ -3030,6 +3070,562 @@ def _postexecution_hotload_continuation_summary(
     }
 
 
+def _validate_deferred_bundle_export(
+    response: dict[str, Any],
+    *,
+    expected_project_id: str | None,
+    expected_revision: int | None,
+    expected_views: list[str] | None,
+    expected_include_gui_snapshot: bool,
+    working_dir: str | None,
+    expected_response_mode: str = "full",
+) -> dict[str, Any]:
+    """Validate one exact report-lock retry contract for a persisted bundle."""
+
+    failures: list[dict[str, Any]] = []
+
+    def require(condition: bool, reason: str, **details: Any) -> None:
+        if not condition:
+            failures.append(_continuation_failure(reason, **details))
+
+    require(
+        isinstance(expected_project_id, str) and bool(expected_project_id),
+        "bundle_export_expected_project_missing",
+        observed=expected_project_id,
+    )
+    require(
+        expected_revision is not None,
+        "bundle_export_expected_revision_missing",
+    )
+    expected_fields = {
+        "ok": False,
+        "status": "diagnostic_export_deferred",
+        "diagnostic_export_deferred": True,
+        "report_persistence_deferred": True,
+        "recommended_tool": "material_studio_model_export_view_bundle",
+        "diagnostic_export_retry_tool": (
+            "material_studio_model_export_view_bundle"
+        ),
+    }
+    for field, expected in expected_fields.items():
+        observed = response.get(field)
+        require(
+            observed == expected and type(observed) is type(expected),
+            "bundle_export_response_field_mismatch",
+            field=field,
+            expected=expected,
+            observed=observed,
+        )
+    require(
+        response.get("project_id") == expected_project_id,
+        "bundle_export_response_project_mismatch",
+        expected=expected_project_id,
+        observed=response.get("project_id"),
+    )
+    require(
+        _revision_identity(response.get("revision")) == expected_revision,
+        "bundle_export_response_revision_mismatch",
+        expected=expected_revision,
+        observed=response.get("revision"),
+    )
+    transaction_error = response.get("gui_action_transaction_error")
+    require(
+        isinstance(transaction_error, str)
+        and "GUI artifact report write transaction is busy" in transaction_error,
+        "bundle_export_busy_error_missing",
+        observed=transaction_error,
+    )
+    project_resolution = _dict(response.get("project_resolution"))
+    require(bool(project_resolution), "bundle_export_project_resolution_missing")
+    require(
+        project_resolution.get("source") == "explicit",
+        "bundle_export_project_resolution_not_explicit",
+        observed=project_resolution.get("source"),
+    )
+    require(
+        project_resolution.get("project_id") == expected_project_id,
+        "bundle_export_project_resolution_project_mismatch",
+        expected=expected_project_id,
+        observed=project_resolution.get("project_id"),
+    )
+    require(
+        _revision_identity(project_resolution.get("revision"))
+        == expected_revision,
+        "bundle_export_project_resolution_revision_mismatch",
+        expected=expected_revision,
+        observed=project_resolution.get("revision"),
+    )
+
+    payload = _dict(response.get("diagnostic_export_retry_payload"))
+    require(bool(payload), "bundle_export_retry_payload_missing")
+    missing_fields = _BUNDLE_EXPORT_RETRY_PAYLOAD_KEYS - set(payload)
+    require(
+        not missing_fields,
+        "bundle_export_retry_payload_has_missing_fields",
+        fields=sorted(missing_fields),
+    )
+    unexpected_fields = set(payload) - _BUNDLE_EXPORT_RETRY_PAYLOAD_KEYS
+    require(
+        not unexpected_fields,
+        "bundle_export_retry_payload_has_unexpected_fields",
+        fields=sorted(unexpected_fields),
+    )
+    require(
+        "spec" not in payload,
+        "bundle_export_retry_payload_inline_spec_forbidden",
+    )
+    require(
+        payload.get("project_id") == expected_project_id,
+        "bundle_export_retry_payload_project_mismatch",
+        expected=expected_project_id,
+        observed=payload.get("project_id"),
+    )
+    require(
+        payload.get("views") == expected_views,
+        "bundle_export_retry_payload_views_mismatch",
+        expected=expected_views,
+        observed=payload.get("views"),
+    )
+    require(
+        payload.get("include_gui_snapshot") is expected_include_gui_snapshot,
+        "bundle_export_retry_payload_snapshot_mismatch",
+        expected=expected_include_gui_snapshot,
+        observed=payload.get("include_gui_snapshot"),
+    )
+    require(
+        payload.get("response_mode") == expected_response_mode,
+        "bundle_export_retry_payload_response_mode_mismatch",
+        expected=expected_response_mode,
+        observed=payload.get("response_mode"),
+    )
+
+    payload_has_workspace = "working_dir" in payload
+    payload_workspace = _path_identity(payload.get("working_dir"))
+    requested_workspace = _path_identity(working_dir) if working_dir is not None else None
+    require(
+        payload_has_workspace and payload_workspace is not None,
+        "bundle_export_retry_payload_workspace_missing",
+        observed=payload.get("working_dir"),
+    )
+    require(
+        requested_workspace is not None,
+        "bundle_export_requested_workspace_missing",
+        observed=working_dir,
+    )
+    if requested_workspace is not None:
+        require(
+            payload_workspace == requested_workspace,
+            "bundle_export_retry_payload_workspace_mismatch",
+            expected=requested_workspace,
+            observed=payload_workspace,
+        )
+
+    return {
+        "ok": not failures,
+        "project_id": expected_project_id,
+        "revision": expected_revision,
+        "workspace_identity": payload_workspace,
+        "retry_payload": payload,
+        "failures": failures,
+    }
+
+
+def _validate_bundle_export_continuation_receipt(
+    response: dict[str, Any],
+    *,
+    project_id: str,
+    revision: int,
+    expected_views: list[str] | None,
+    expected_workspace: str | Path,
+) -> dict[str, Any]:
+    """Verify that a one-shot bundle retry published usable view artifacts."""
+
+    failures: list[dict[str, Any]] = []
+
+    def require(condition: bool, reason: str, **details: Any) -> None:
+        if not condition:
+            failures.append(_continuation_failure(reason, **details))
+
+    require(response.get("ok") is True, "bundle_export_retry_tool_failed")
+    require(
+        response.get("project_id") == project_id,
+        "bundle_export_retry_project_mismatch",
+        expected=project_id,
+        observed=response.get("project_id"),
+    )
+    require(
+        _revision_identity(response.get("revision")) == revision,
+        "bundle_export_retry_revision_mismatch",
+        expected=revision,
+        observed=response.get("revision"),
+    )
+    require(
+        response.get("diagnostic_export_deferred") is not True,
+        "bundle_export_retry_still_deferred",
+    )
+
+    manifest_path = response.get("manifest_path") or response.get(
+        "view_bundle_manifest_path"
+    )
+    manifest_identity = _path_identity(manifest_path)
+    manifest_payload: dict[str, Any] = {}
+    try:
+        manifest_file = Path(str(manifest_path))
+        manifest_exists = bool(manifest_path and manifest_file.is_file())
+        if manifest_exists:
+            parsed_manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            if isinstance(parsed_manifest, dict):
+                manifest_payload = parsed_manifest
+    except (OSError, RuntimeError, ValueError):
+        manifest_exists = False
+    require(
+        manifest_identity is not None and manifest_exists,
+        "bundle_export_manifest_missing",
+        observed=manifest_path,
+    )
+    require(
+        _path_is_within(manifest_path, expected_workspace),
+        "bundle_export_manifest_outside_workspace",
+        workspace=_path_identity(expected_workspace),
+        observed=manifest_identity,
+    )
+    require(
+        bool(manifest_payload),
+        "bundle_export_manifest_invalid",
+        observed=manifest_path,
+    )
+    require(
+        manifest_payload.get("project_id") == project_id,
+        "bundle_export_manifest_project_mismatch",
+        expected=project_id,
+        observed=manifest_payload.get("project_id"),
+    )
+    require(
+        _revision_identity(manifest_payload.get("revision")) == revision,
+        "bundle_export_manifest_revision_mismatch",
+        expected=revision,
+        observed=manifest_payload.get("revision"),
+    )
+    manifest_files = _dict(manifest_payload.get("files"))
+    manifest_row_counts = _dict(manifest_payload.get("row_counts"))
+
+    files = _dict(response.get("files")) or _dict(
+        response.get("view_bundle_files")
+    )
+    row_counts = _dict(response.get("row_counts")) or _dict(
+        response.get("view_bundle_row_counts")
+    )
+    require(bool(files), "bundle_export_files_missing")
+    require(bool(row_counts), "bundle_export_row_counts_missing")
+    projection_count = row_counts.get("view_projections")
+    require(
+        isinstance(projection_count, int)
+        and not isinstance(projection_count, bool)
+        and projection_count > 0,
+        "bundle_export_view_projections_missing",
+        observed=projection_count,
+    )
+    projection_path = files.get("view_projections_csv") or manifest_files.get(
+        "view_projections_csv"
+    )
+    projection_row_count: int | None = None
+    projection_view_names: list[str] = []
+    try:
+        projection_file = Path(str(projection_path))
+        projection_exists = bool(projection_path and projection_file.is_file())
+        if projection_exists:
+            projection_row_count = 0
+            seen_view_names: set[str] = set()
+            with projection_file.open("r", encoding="utf-8", newline="") as handle:
+                for row in csv.DictReader(handle):
+                    projection_row_count += 1
+                    view_name = str(row.get("view") or "").strip()
+                    if view_name and view_name not in seen_view_names:
+                        seen_view_names.add(view_name)
+                        projection_view_names.append(view_name)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        projection_exists = False
+    require(
+        projection_exists,
+        "bundle_export_view_projections_file_missing",
+        observed=projection_path,
+    )
+    require(
+        _path_is_within(projection_path, expected_workspace),
+        "bundle_export_view_projections_outside_workspace",
+        workspace=_path_identity(expected_workspace),
+        observed=_path_identity(projection_path),
+    )
+    require(
+        projection_row_count == projection_count,
+        "bundle_export_view_projections_row_count_mismatch",
+        expected=projection_count,
+        observed=projection_row_count,
+    )
+    require(
+        _path_identity(manifest_files.get("view_projections_csv"))
+        == _path_identity(projection_path),
+        "bundle_export_manifest_projection_file_mismatch",
+        expected=_path_identity(projection_path),
+        observed=_path_identity(manifest_files.get("view_projections_csv")),
+    )
+    require(
+        manifest_row_counts.get("view_projections") == projection_count,
+        "bundle_export_manifest_projection_count_mismatch",
+        expected=projection_count,
+        observed=manifest_row_counts.get("view_projections"),
+    )
+    if expected_views is not None:
+        require(
+            projection_view_names == expected_views,
+            "bundle_export_projection_views_mismatch",
+            expected=expected_views,
+            observed=projection_view_names,
+        )
+
+    transaction = _dict(response.get("report_write_transaction")) or _dict(
+        response.get("write_transaction")
+    )
+    require(
+        transaction.get("domain") == "gui_artifact_report",
+        "bundle_export_report_transaction_missing",
+        observed=transaction.get("domain"),
+    )
+    require(
+        transaction.get("project_id") == project_id,
+        "bundle_export_report_transaction_project_mismatch",
+        expected=project_id,
+        observed=transaction.get("project_id"),
+    )
+    require(
+        _revision_identity(transaction.get("revision")) == revision,
+        "bundle_export_report_transaction_revision_mismatch",
+        expected=revision,
+        observed=transaction.get("revision"),
+    )
+    require(
+        _path_identity(transaction.get("workspace_root"))
+        == _path_identity(expected_workspace),
+        "bundle_export_report_transaction_workspace_mismatch",
+        expected=_path_identity(expected_workspace),
+        observed=_path_identity(transaction.get("workspace_root")),
+    )
+    require(
+        "diagnostic_export" in list(transaction.get("coverage") or []),
+        "bundle_export_report_transaction_coverage_missing",
+    )
+    resolution = _dict(response.get("diagnostic_export_view_resolution"))
+    resolved_names = resolution.get("resolved_view_names")
+    if expected_views is not None and isinstance(resolved_names, list):
+        require(
+            resolved_names == expected_views,
+            "bundle_export_resolved_views_mismatch",
+            expected=expected_views,
+            observed=resolved_names,
+        )
+
+    return {
+        "ok": not failures,
+        "manifest_path": manifest_path,
+        "manifest_identity": manifest_identity,
+        "view_projections_csv": projection_path,
+        "view_projection_count": projection_count,
+        "view_projection_csv_row_count": projection_row_count,
+        "view_projection_names": projection_view_names,
+        "report_write_transaction": transaction,
+        "failures": failures,
+    }
+
+
+def _resume_deferred_bundle_export(
+    response: dict[str, Any] | None,
+    *,
+    enabled: bool,
+    bundle_requested: bool,
+    expected_project_id: str | None,
+    expected_revision: int | None,
+    expected_views: list[str] | None,
+    expected_include_gui_snapshot: bool,
+    working_dir: str | None,
+    expected_response_mode: str = "full",
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Consume one exact deferred bundle export without repeating model work."""
+
+    receipt: dict[str, Any] = {
+        "requested": bool(enabled),
+        "bundle_requested": bool(bundle_requested),
+        "eligible": False,
+        "attempted": False,
+        "completed": False,
+        "status": "disabled" if not enabled else "not_required",
+        "failures": [],
+        "bundle_export_invoked": False,
+        "bundle_export_call_count": 0,
+        "modeling_request_reinvoked": False,
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "gui_open_invoked": False,
+        "gui_process_launch_allowed": False,
+    }
+    if not enabled:
+        return response, receipt
+    if not bundle_requested:
+        receipt["status"] = "bundle_export_disabled"
+        return response, receipt
+    if not isinstance(response, dict):
+        receipt["status"] = "bundle_response_missing"
+        receipt["failures"].append(
+            _continuation_failure("bundle_export_response_missing")
+        )
+        return response, receipt
+    if not (
+        response.get("diagnostic_export_deferred") is True
+        and response.get("report_persistence_deferred") is True
+    ):
+        if response.get("ok") is not True:
+            receipt["status"] = "not_applicable_failed_bundle"
+        return response, receipt
+
+    contract = _validate_deferred_bundle_export(
+        response,
+        expected_project_id=expected_project_id,
+        expected_revision=expected_revision,
+        expected_views=expected_views,
+        expected_include_gui_snapshot=expected_include_gui_snapshot,
+        working_dir=working_dir,
+        expected_response_mode=expected_response_mode,
+    )
+    receipt["contract"] = contract
+    receipt["failures"] = list(contract["failures"])
+    if not contract["ok"]:
+        receipt["status"] = "contract_rejected"
+        return response, receipt
+
+    project_id = str(contract["project_id"])
+    revision = int(contract["revision"])
+    retry_payload = dict(contract["retry_payload"])
+    current_payload = {
+        "project_id": project_id,
+        "working_dir": retry_payload["working_dir"],
+    }
+    receipt.update(
+        {
+            "eligible": True,
+            "attempted": True,
+            "status": "current_revision_check_started",
+            "project_id": project_id,
+            "revision": revision,
+            "workspace_identity": contract.get("workspace_identity"),
+            "retry_payload": retry_payload,
+            "current_revision_payload": current_payload,
+        }
+    )
+    try:
+        current = server.material_studio_model_get_current(**current_payload)
+    except Exception as exc:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].append(
+            _continuation_failure(
+                "bundle_export_current_revision_lookup_call_error",
+                error=str(exc),
+            )
+        )
+        return response, receipt
+    receipt["current_revision_receipt"] = current
+    current_failures = _validate_current_revision_continuation_receipt(
+        current,
+        project_id=project_id,
+        revision=revision,
+    )
+    if current_failures:
+        receipt["status"] = "current_revision_check_failed"
+        receipt["failures"].extend(current_failures)
+        return response, receipt
+
+    receipt["current_revision_verified_before_export"] = True
+    receipt["status"] = "bundle_export_started"
+    receipt["bundle_export_invoked"] = True
+    receipt["bundle_export_call_count"] = 1
+    try:
+        exported = server.material_studio_model_export_view_bundle(
+            **retry_payload
+        )
+    except Exception as exc:
+        receipt["status"] = "bundle_export_failed"
+        receipt["failures"].append(
+            _continuation_failure("bundle_export_retry_call_error", error=str(exc))
+        )
+        return response, receipt
+    receipt["bundle_export_receipt"] = exported
+    if exported.get("ok") is not True:
+        receipt["status"] = "bundle_export_failed"
+        receipt["failures"].append(
+            _continuation_failure(
+                "bundle_export_retry_failed",
+                observed_status=exported.get("status"),
+                error=exported.get("error"),
+            )
+        )
+        return exported, receipt
+
+    verification = _validate_bundle_export_continuation_receipt(
+        exported,
+        project_id=project_id,
+        revision=revision,
+        expected_views=expected_views,
+        expected_workspace=str(contract["workspace_identity"]),
+    )
+    receipt["verification"] = verification
+    if not verification["ok"]:
+        receipt["status"] = "bundle_export_verification_failed"
+        receipt["failures"].extend(verification["failures"])
+        effective = {
+            **exported,
+            "ok": False,
+            "status": "bundle_export_continuation_verification_failed",
+            "bundle_export_continuation_failures": verification["failures"],
+        }
+        return effective, receipt
+
+    receipt.update(
+        {
+            "status": "completed",
+            "completed": True,
+            "exact_payload_used": True,
+            "manifest_path": verification.get("manifest_path"),
+            "view_projections_csv": verification.get("view_projections_csv"),
+            "view_projection_count": verification.get("view_projection_count"),
+        }
+    )
+    return exported, receipt
+
+
+def _bundle_export_continuation_summary(
+    receipt: dict[str, Any] | None,
+) -> dict[str, Any]:
+    source = receipt if isinstance(receipt, dict) else {}
+    return {
+        "requested": source.get("requested") is True,
+        "bundle_requested": source.get("bundle_requested") is True,
+        "eligible": source.get("eligible") is True,
+        "attempted": source.get("attempted") is True,
+        "completed": source.get("completed") is True,
+        "status": source.get("status") or "unavailable",
+        "failures": list(source.get("failures") or []),
+        "bundle_export_call_count": int(
+            source.get("bundle_export_call_count") or 0
+        ),
+        "current_revision_verified_before_export": (
+            source.get("current_revision_verified_before_export") is True
+        ),
+        "modeling_request_reinvoked": False,
+        "execution_repeated": False,
+        "runner_reinvoked": False,
+        "gui_open_invoked": False,
+        "gui_process_launch_allowed": False,
+    }
+
+
 def run_live_smoke(
     *,
     request: str | None = None,
@@ -3046,6 +3642,7 @@ def run_live_smoke(
     timeout_seconds: int | None = None,
     resume_deferred_execution: bool = False,
     resume_deferred_hotload: bool = False,
+    resume_deferred_bundle_export: bool = False,
 ) -> dict[str, Any]:
     """Run preflight -> live request -> safe continuation -> status -> bundle."""
 
@@ -3136,6 +3733,8 @@ def run_live_smoke(
     project_id = live.get("project_id") if isinstance(live, dict) else None
     status: dict[str, Any] | None = None
     bundle: dict[str, Any] | None = None
+    effective_views = _effective_views_from_live_response(live, views)
+    include_bundle_snapshot = bool(take_snapshot and include_gui_status)
     if project_id:
         status = server.material_studio_live_project_status(
             project_id=str(project_id),
@@ -3143,17 +3742,24 @@ def run_live_smoke(
             working_dir=working_dir,
         )
         if export_bundle:
-            effective_views = _effective_views_from_live_response(live, views)
             bundle = server.material_studio_model_export_view_bundle(
                 project_id=str(project_id),
                 views=effective_views,
-                include_gui_snapshot=bool(take_snapshot and include_gui_status),
+                include_gui_snapshot=include_bundle_snapshot,
                 working_dir=working_dir,
+                response_mode="full",
             )
-        else:
-            effective_views = _effective_views_from_live_response(live, views)
-    else:
-        effective_views = _effective_views_from_live_response(live, views)
+    bundle, bundle_export_continuation = _resume_deferred_bundle_export(
+        bundle,
+        enabled=resume_deferred_bundle_export,
+        bundle_requested=export_bundle,
+        expected_project_id=str(project_id) if project_id else None,
+        expected_revision=_consistent_current_revision(live, status),
+        expected_views=effective_views,
+        expected_include_gui_snapshot=include_bundle_snapshot,
+        working_dir=working_dir,
+        expected_response_mode="full",
+    )
 
     scenario_for_summary = resolved_scenario if request is None else scenario
     scenario_expectation = resolved_scenario if request is None and resolved_follow_up_request is None else ""
@@ -3177,6 +3783,7 @@ def run_live_smoke(
         ),
         base_hotload_continuation=base_hotload_continuation,
         followup_hotload_continuation=followup_hotload_continuation,
+        bundle_export_continuation=bundle_export_continuation,
     )
 
     return {
@@ -3189,6 +3796,9 @@ def run_live_smoke(
         "hotload_requested": bool(hotload),
         "resume_deferred_execution_requested": bool(resume_deferred_execution),
         "resume_deferred_hotload_requested": bool(resume_deferred_hotload),
+        "resume_deferred_bundle_export_requested": bool(
+            resume_deferred_bundle_export
+        ),
         "execution_mode_argument": execution_mode,
         "working_dir": str(Path(working_dir).expanduser()) if working_dir else None,
         "effective_views": effective_views,
@@ -3205,6 +3815,7 @@ def run_live_smoke(
         ),
         "base_hotload_continuation": base_hotload_continuation,
         "followup_hotload_continuation": followup_hotload_continuation,
+        "bundle_export_continuation": bundle_export_continuation,
         "status": status,
         "bundle": bundle,
     }
@@ -3226,6 +3837,7 @@ def build_live_smoke_summary(
     followup_preexecution_execution_continuation: dict[str, Any] | None = None,
     base_hotload_continuation: dict[str, Any] | None = None,
     followup_hotload_continuation: dict[str, Any] | None = None,
+    bundle_export_continuation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a compact, stable acceptance summary for a live smoke run."""
 
@@ -3238,6 +3850,9 @@ def build_live_smoke_summary(
     continuation_summary = _postexecution_hotload_continuation_summary(
         base_hotload_continuation,
         followup_hotload_continuation,
+    )
+    bundle_continuation_summary = _bundle_export_continuation_summary(
+        bundle_export_continuation
     )
     live_report = _dict(live.get("modeling_report"))
     nl_plan = _dict(live.get("nl_plan"))
@@ -3526,6 +4141,22 @@ def build_live_smoke_summary(
         "live_request_ok": bool(live.get("ok")),
         "status_ok": None if status is None else bool(status.get("ok")),
         "bundle_ok": None if bundle is None else bool(bundle.get("ok")),
+        "bundle_export_continuation": bundle_continuation_summary,
+        "bundle_export_continuation_requested": (
+            bundle_continuation_summary["requested"]
+        ),
+        "bundle_export_continuation_attempted": (
+            bundle_continuation_summary["attempted"]
+        ),
+        "bundle_export_continuation_completed": (
+            bundle_continuation_summary["completed"]
+        ),
+        "bundle_export_continuation_status": (
+            bundle_continuation_summary["status"]
+        ),
+        "bundle_export_continuation_failures": (
+            bundle_continuation_summary["failures"]
+        ),
         "preexecution_execution_continuation": preexecution_continuation_summary,
         "preexecution_execution_continuation_requested": (
             preexecution_continuation_summary["requested"]
@@ -3767,6 +4398,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
         resume_deferred_execution=args.resume_deferred_execution,
         resume_deferred_hotload=args.resume_deferred_hotload,
+        resume_deferred_bundle_export=args.resume_deferred_bundle_export,
     )
     payload = result if args.include_raw else {"ok": result["ok"], **result["summary"]}
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -3830,6 +4462,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "After execution completes, consume one exact activation/open or GUI "
             "report-transaction artifact-open continuation; never rerun modeling, "
             "MaterialsScript, or the open call automatically."
+        ),
+    )
+    parser.add_argument(
+        "--resume-deferred-bundle-export",
+        action="store_true",
+        help=(
+            "Consume one exact diagnostic bundle report-lock retry after checking "
+            "the current revision; never rerun modeling, MaterialsScript, or GUI open."
         ),
     )
     parser.add_argument("--output", help="Optional path to write the JSON result.")

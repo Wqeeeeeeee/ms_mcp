@@ -752,6 +752,26 @@ artifact-open payload and never reruns MaterialsScript.
 The same two-flag sequence handles an apply that completes execution but times
 out acquiring the GUI artifact report transaction; it revalidates current and
 opens the artifact once without reporting the apply as an execution failure.
+
+For a view-bundle export that alone returns
+`status=diagnostic_export_deferred`, pass
+`--resume-deferred-bundle-export` with an explicit `--working-dir`. This flag
+does not authorize execution or GUI opening. The smoke runner requires the
+server-issued retry payload to match the exact workspace, project, revision,
+views, `include_gui_snapshot`, and `response_mode`; reads the current revision;
+then calls `material_studio_model_export_view_bundle` once with that payload.
+It accepts completion only after the returned manifest is bound to the same
+project/revision, `view_projections.csv` exists with the declared row count,
+and the report transaction covers `diagnostic_export`. Compact responses may
+resolve the CSV path from their bound manifest. Contract drift, revision drift,
+another lock timeout, or invalid artifacts stop the continuation without a
+loop and without rerunning the modeling request, MaterialsScript, runner, or
+GUI open. Inspect `bundle_export_continuation_status`,
+`bundle_export_continuation_completed`, and
+`bundle_export_continuation_failures` in the compact receipt. The flag is off
+by default; when `--no-export-bundle` is present it returns the stable
+`bundle_export_disabled` receipt and performs no continuation call.
+
 The receipt keeps `gui_window_identity_verification` as the raw observed-window
 value for audit. Use `current_revision_gui_evidence_applicable`,
 `current_revision_gui_evidence_status`, and

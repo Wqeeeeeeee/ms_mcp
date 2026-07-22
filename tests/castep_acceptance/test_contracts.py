@@ -11,6 +11,7 @@ from material_studio_mcp_server.castep_acceptance import (
 )
 from material_studio_mcp_server.castep_acceptance.contracts import (
     ACCEPTANCE_PROFILE,
+    FIXED_PROJECT_ID,
     REAL_CASTEP_OPT_IN,
 )
 from material_studio_mcp_server.castep_acceptance.profile import (
@@ -82,7 +83,7 @@ def test_request_requires_literal_opt_in_and_preview_digest(tmp_path: Path) -> N
 
 
 def test_surface_candidate_is_the_existing_exact_80_atom_profile() -> None:
-    candidate = build_fixed_candidate("sic_3c_castep_energy_acceptance")
+    candidate = build_fixed_candidate(FIXED_PROJECT_ID)
     composition: dict[str, int] = {}
     for atom in candidate.model.basis_atoms:
         composition[atom.element] = composition.get(atom.element, 0) + 1

@@ -28,6 +28,7 @@ from material_studio_mcp_server.castep_acceptance.benchmark import (
 )
 from material_studio_mcp_server.castep_acceptance.contracts import (
     CastepVerificationReport,
+    FIXED_PROJECT_ID,
 )
 from material_studio_mcp_server.castep_acceptance.profile import (
     build_fixed_candidate,
@@ -224,7 +225,7 @@ def test_offline_fake_calculation_cannot_claim_real_acceptance(tmp_path: Path) -
     verification = synthetic_verification(real=False)
     staged = _stage_benchmark(
         tmp_path,
-        source_spec=build_fixed_candidate("sic_3c_castep_energy_acceptance"),
+        source_spec=build_fixed_candidate(FIXED_PROJECT_ID),
         verification=verification,
     )
     acceptance = evaluate_castep_acceptance_benchmark(
@@ -259,7 +260,7 @@ def test_offline_synthetic_real_projection_derives_only_calculation_state(
     verification = synthetic_verification(real=True)
     staged = _stage_benchmark(
         tmp_path,
-        source_spec=build_fixed_candidate("sic_3c_castep_energy_acceptance"),
+        source_spec=build_fixed_candidate(FIXED_PROJECT_ID),
         verification=verification,
     )
     acceptance = evaluate_castep_acceptance_benchmark(
@@ -288,7 +289,7 @@ def test_offline_benchmark_rejects_unbound_surface_observation(
     verification = synthetic_verification(real=False)
     staged = _stage_benchmark(
         tmp_path,
-        source_spec=build_fixed_candidate("sic_3c_castep_energy_acceptance"),
+        source_spec=build_fixed_candidate(FIXED_PROJECT_ID),
         verification=verification,
     )
     unbound = TrustedDomainObservations(
@@ -324,7 +325,7 @@ def test_offline_benchmark_rejects_unbound_calculation_artifact(
     verification = synthetic_verification(real=False)
     staged = _stage_benchmark(
         tmp_path,
-        source_spec=build_fixed_candidate("sic_3c_castep_energy_acceptance"),
+        source_spec=build_fixed_candidate(FIXED_PROJECT_ID),
         verification=verification,
     )
     artifacts = tuple(

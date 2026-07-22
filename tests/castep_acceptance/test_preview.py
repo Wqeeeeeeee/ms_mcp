@@ -8,10 +8,12 @@ import pytest
 from material_studio_mcp_server.castep_acceptance import (
     CastepAcceptanceHarness,
 )
+from material_studio_mcp_server.castep_acceptance.contracts import FIXED_PROJECT_ID
 from material_studio_mcp_server.castep_acceptance.profile import (
     EXPECTED_SIMULATION_PAYLOAD,
     reserve_external_fresh_workspace,
     validate_windows_job_cwd,
+    windows_job_path_lengths,
 )
 
 
@@ -46,7 +48,7 @@ def test_preview_payload_is_the_only_frozen_public_call(request_factory) -> None
     plan = CastepAcceptanceHarness(real_environment=False).run(request_factory())
     payload = plan.public_tool_payload
     assert payload == {
-        "project_id": "sic_3c_castep_energy_acceptance",
+        "project_id": FIXED_PROJECT_ID,
         "task": "Energy",
         "quality": "Medium",
         "functional": "PBE",
@@ -151,3 +153,11 @@ def test_external_workspace_rejects_legacy_windows_job_cwd_overflow(
     long_parent.mkdir()
     with pytest.raises(ValueError, match="job cwd"):
         validate_windows_job_cwd(long_parent / "workspace")
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path budget")
+def test_windows_job_path_budget_includes_script_and_log() -> None:
+    lengths = windows_job_path_lengths(Path("C:/msca/workspace-001"))
+    assert lengths["cwd"] < 248
+    assert lengths["script"] < 260
+    assert lengths["log"] < 260

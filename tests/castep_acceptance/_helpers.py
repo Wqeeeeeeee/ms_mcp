@@ -13,6 +13,7 @@ from material_studio_mcp_server.castep_acceptance import (
 from material_studio_mcp_server.castep_acceptance.contracts import (
     CastepBenchmarkAcceptance,
     CastepVerificationReport,
+    FIXED_PROJECT_ID,
     GuiInvariantProjection,
 )
 from material_studio_mcp_server.gui import ProcessInfo, WindowInfo
@@ -182,7 +183,7 @@ def run_fake_acceptance(monkeypatch, tmp_path: Path):
 
     short_id = hashlib.sha256(str(tmp_path).encode("utf-8")).hexdigest()[:10]
     workspace = tmp_path.parent / f"ca-{short_id}"
-    source = build_fixed_candidate("sic_3c_castep_energy_acceptance")
+    source = build_fixed_candidate(FIXED_PROJECT_ID)
     fake_runner = FakeElectronicRunner(source)
     monkeypatch.setattr(server, "runner", fake_runner)
     gui = FakeGuiBackend()

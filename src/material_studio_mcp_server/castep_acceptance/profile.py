@@ -71,6 +71,7 @@ WORKSPACE_GUARD_NAME = ".castep_acceptance_workspace.lock"
 # general extended-path APIs. Keep the fixed acceptance layout below that
 # boundary before the public runner is called.
 WINDOWS_JOB_CWD_LIMIT = 248
+WINDOWS_JOB_PATH_LIMIT = 260
 _FIXED_RUN_DIRECTORY_PARTS = (
     "outputs",
     "r000",
@@ -172,8 +173,8 @@ def _is_inside(path: Path, root: Path) -> bool:
     return True
 
 
-def windows_job_cwd_length(workspace: Path) -> int:
-    """Return the worst-case job cwd length for the frozen CASTEP profile."""
+def windows_job_path_lengths(workspace: Path) -> dict[str, int]:
+    """Return worst-case Windows lengths for the frozen runner artifacts."""
 
     if not isinstance(workspace, Path):
         raise TypeError("workspace must be Path")
@@ -186,7 +187,18 @@ def windows_job_cwd_length(workspace: Path) -> int:
         + "-"
         + ("0" * 8)
     )
-    return len(os.fspath(run_root / job_name))
+    job_dir = run_root / job_name
+    return {
+        "cwd": len(os.fspath(job_dir)),
+        "script": len(os.fspath(job_dir / "run_castep_electronic.pl")),
+        "log": len(os.fspath(job_dir / "run_castep_electronicMatStudioLog.htm")),
+    }
+
+
+def windows_job_cwd_length(workspace: Path) -> int:
+    """Return the worst-case job cwd length for the frozen CASTEP profile."""
+
+    return windows_job_path_lengths(workspace)["cwd"]
 
 
 def validate_windows_job_cwd(workspace: Path) -> None:
@@ -196,11 +208,19 @@ def validate_windows_job_cwd(workspace: Path) -> None:
         raise TypeError("workspace must be Path")
     if os.name != "nt":
         return
-    length = windows_job_cwd_length(workspace)
-    if length >= WINDOWS_JOB_CWD_LIMIT:
+    lengths = windows_job_path_lengths(workspace)
+    if lengths["cwd"] >= WINDOWS_JOB_CWD_LIMIT:
         raise ValueError(
             "CASTEP acceptance workspace is too long for the Materials Studio "
-            f"Windows job cwd (estimated {length}; limit {WINDOWS_JOB_CWD_LIMIT}); "
+            f"Windows job cwd (estimated {lengths['cwd']}; limit "
+            f"{WINDOWS_JOB_CWD_LIMIT}); choose a shorter external path"
+        )
+    longest_kind, longest_length = max(lengths.items(), key=lambda item: item[1])
+    if longest_length >= WINDOWS_JOB_PATH_LIMIT:
+        raise ValueError(
+            "CASTEP acceptance workspace is too long for the Materials Studio "
+            f"Windows {longest_kind} path (estimated {longest_length}; limit "
+            f"{WINDOWS_JOB_PATH_LIMIT}); "
             "choose a shorter external path"
         )
 
@@ -459,6 +479,8 @@ __all__ = [
     "source_profile_is_exact",
     "validate_external_fresh_workspace",
     "WINDOWS_JOB_CWD_LIMIT",
+    "WINDOWS_JOB_PATH_LIMIT",
     "windows_job_cwd_length",
+    "windows_job_path_lengths",
     "validate_windows_job_cwd",
 ]

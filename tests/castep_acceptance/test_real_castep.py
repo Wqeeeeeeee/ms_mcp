@@ -13,7 +13,9 @@ from material_studio_mcp_server.ms_roundtrip.secure_io import (
 )
 from material_studio_mcp_server.castep_acceptance.profile import (
     WINDOWS_JOB_CWD_LIMIT,
+    WINDOWS_JOB_PATH_LIMIT,
     repository_root,
+    windows_job_path_lengths,
     windows_job_cwd_length,
 )
 
@@ -87,6 +89,7 @@ def test_default_destinations_reject_repository_temp_before_creation(
 def test_short_default_shape_keeps_windows_job_cwd_below_legacy_limit() -> None:
     workspace = Path("C:/msca/workspace-001")
     assert windows_job_cwd_length(workspace) < WINDOWS_JOB_CWD_LIMIT
+    assert max(windows_job_path_lengths(workspace).values()) < WINDOWS_JOB_PATH_LIMIT
 
 
 def test_real_castep_energy_acceptance_once(pytestconfig: pytest.Config) -> None:

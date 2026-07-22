@@ -22,7 +22,9 @@ CONTRACT_VERSION = "1.0.0"
 IMPLEMENTATION_VERSION = "1.0.0"
 ACCEPTANCE_PROFILE = "sic_3c_001_si_face_castep_energy_acceptance_v1"
 EVIDENCE_PROFILE = "sic_3c_001_si_face_castep_energy_real_castep_v1"
-FIXED_PROJECT_ID = "sic_3c_castep_energy_acceptance"
+# Keep the private acceptance project identifier compact: Materials Studio 20.1
+# still uses legacy Windows path handling for the generated job script/log.
+FIXED_PROJECT_ID = "sic3c_ca"
 REAL_CASTEP_OPT_IN = "--run-real-castep"
 PUBLIC_CASTEP_TOOL = "material_studio_castep_run_current"
 

@@ -107,9 +107,10 @@ The literal Work Order command is sufficient on a clean machine. With no path
 options, the test atomically creates one short fixed external parent (`msca`)
 under the OS temporary directory, uses `workspace-001` and
 `real-castep-evidence-001.json`, and refuses to reuse that parent on a later
-attempt. The short root is required because the fixed project/output/job path
-must remain below the Windows legacy `CreateProcess` current-directory limit;
-longer explicit paths fail during preview with a clear path-budget error. This
+attempt. The short root and compact private project identifier are required
+because the fixed project/output/job script and log paths must remain below
+the Windows legacy `CreateProcess` limits; longer explicit paths fail before
+execution with a clear path-budget error. This
 keeps the exact required command safe while preserving all artifacts. A caller
 may instead provide both destinations explicitly; they are validated as fresh
 external paths before execution.

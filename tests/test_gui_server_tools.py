@@ -10483,6 +10483,15 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["window_handle"] == 303
     assert activated["window_title"] == f"{wrapper['project_name']} - Materials Studio"
     assert activated["snapshot_after_activate"] is True
+    assert activated["status"] == "gui_snapshot_captured"
+    assert activated["snapshot_status"] == "captured"
+    assert activated["snapshot_captured"] is True
+    assert activated["snapshot_deferred"] is False
+    assert activated["snapshot"]["window_management"]["needs_snapshot"] is False
+    assert activated["window_management"]["recommended_tool"] == (
+        "material_studio_gui_status"
+    )
+    assert activated["window_management"]["single_window_policy_ok"] is False
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert activated["structured_sync"]["persisted"] is True
     assert activated["structured_sync"]["project_id"] == created["project_id"]
@@ -10604,8 +10613,30 @@ def test_minimized_current_window_routes_preflight_through_activate_then_snapsho
     assert activated["activated"] is True
     assert activated["activation_verified"] is True
     assert activated["snapshot_after_activate"] is True
+    assert activated["status"] == "gui_snapshot_captured"
+    assert activated["snapshot_status"] == "captured"
+    assert activated["snapshot_captured"] is True
+    assert activated["snapshot_deferred"] is False
+    assert activated["snapshot_evidence_persisted"] is True
+    assert activated["snapshot_report_persisted"] is True
     assert activated["snapshot"]["window"]["is_minimized"] is False
     assert activated["snapshot"]["window"]["is_foreground"] is True
+    assert activated["snapshot"]["window_management_before_capture"]["needs_snapshot"] is True
+    assert activated["snapshot"]["window_management"]["needs_snapshot"] is False
+    assert activated["snapshot"]["window_management"]["recommended_tool"] == (
+        "material_studio_live_project_status"
+    )
+    assert activated["window_management"]["recommended_action"] == (
+        "review_current_revision_after_snapshot"
+    )
+    assert activated["window_management"]["payload_hint"] == {
+        "project_id": created["project_id"],
+        "include_gui_status": True,
+        "response_mode": "compact",
+        "working_dir": str(tmp_path.resolve()),
+    }
+    assert activated["pre_snapshot_window_management"]["needs_snapshot"] is True
+    assert activated["post_snapshot_window_management"]["needs_snapshot"] is False
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert backend.captured_handles == [101]
 

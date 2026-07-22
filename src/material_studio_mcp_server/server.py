@@ -1345,6 +1345,118 @@ def _gui_snapshot_deferred_receipt(
     }
 
 
+def _gui_snapshot_completed_receipt(
+    *,
+    activation_result: dict[str, Any],
+    snapshot: dict[str, Any],
+    project_id: str | None,
+    revision: int | None,
+    working_dir: str | Path | None,
+) -> dict[str, Any]:
+    """Reconcile activation state after a snapshot has actually been captured.
+
+    The controller's window-management receipt describes the pre-capture
+    recommendation and therefore still asks for a snapshot. Keep that evidence
+    available, but publish a post-capture view so clients do not repeat the
+    same screenshot before continuing the live workflow.
+    """
+
+    activation_management = (
+        activation_result.get("window_management")
+        if isinstance(activation_result.get("window_management"), dict)
+        else {}
+    )
+    snapshot_management = (
+        snapshot.get("window_management")
+        if isinstance(snapshot.get("window_management"), dict)
+        else {}
+    )
+    pre_capture_management = dict(snapshot_management or activation_management)
+    post_capture_management = dict(pre_capture_management)
+    screenshot_path = snapshot.get("screenshot_path")
+    screenshot_persisted = bool(
+        screenshot_path
+        and Path(str(screenshot_path)).expanduser().is_file()
+    )
+
+    if project_id is not None:
+        followup_tool = "material_studio_live_project_status"
+        followup_action = "review_current_revision_after_snapshot"
+        followup_payload: dict[str, Any] = {
+            "project_id": str(project_id),
+            "include_gui_status": True,
+            "response_mode": "compact",
+        }
+    else:
+        followup_tool = "material_studio_gui_status"
+        followup_action = "refresh_gui_status_after_snapshot"
+        followup_payload = {}
+    followup_payload = _workspace_bound_payload_hint(
+        followup_tool,
+        followup_payload,
+        working_dir,
+    )
+
+    post_capture_management.update(
+        {
+            "needs_snapshot": False,
+            "snapshot_captured": True,
+            "snapshot_deferred": False,
+            "snapshot_status": "captured",
+            "snapshot_path": str(screenshot_path) if screenshot_path else None,
+            "window_management_phase": "post_capture",
+        }
+    )
+    # Preserve safety blockers such as an extra Materials Studio window. Only
+    # replace the repeated-snapshot recommendation when it was the sole next
+    # action suggested by the controller.
+    if post_capture_management.get("recommended_tool") == "material_studio_gui_snapshot":
+        post_capture_management.update(
+            {
+                "recommended_tool": followup_tool,
+                "recommended_action": followup_action,
+                "payload_hint": followup_payload,
+            }
+        )
+
+    snapshot_receipt = dict(snapshot)
+    snapshot_receipt["window_management_before_capture"] = pre_capture_management
+    snapshot_receipt["window_management"] = dict(post_capture_management)
+    snapshot_receipt["post_capture_window_management"] = dict(post_capture_management)
+    snapshot_receipt["window_management_phase"] = "post_capture"
+
+    structured_sync = (
+        activation_result.get("structured_sync")
+        if isinstance(activation_result.get("structured_sync"), dict)
+        else {}
+    )
+    return {
+        "status": "gui_snapshot_captured",
+        "snapshot_status": "captured",
+        "snapshot": snapshot_receipt,
+        "snapshot_captured": True,
+        "snapshot_after_activate": True,
+        "snapshot_deferred": False,
+        "snapshot_focus_lost_after_activation": False,
+        "snapshot_evidence_persisted": screenshot_persisted,
+        "snapshot_report_persisted": structured_sync.get("persisted"),
+        "capture_started": True,
+        "gui_process_launched": False,
+        "structure_reopened": False,
+        "pre_snapshot_window_management": activation_management,
+        "post_snapshot_window_management": post_capture_management,
+        "window_management": post_capture_management,
+        "recommended_tool": post_capture_management.get("recommended_tool")
+        or followup_tool,
+        "recommended_action": post_capture_management.get("recommended_action")
+        or followup_action,
+        "needs_user_confirmation": False,
+        "safe_to_call_without_confirmation": True,
+        "payload_hint": post_capture_management.get("payload_hint")
+        or followup_payload,
+    }
+
+
 def _error(exc: Exception) -> dict[str, Any]:
     if isinstance(exc, GuiSnapshotBlockedError):
         return {
@@ -52300,6 +52412,15 @@ def material_studio_gui_activate(
                             "available": False,
                             "reason": "no_project_revision_context",
                         }
+                    result.update(
+                        _gui_snapshot_completed_receipt(
+                            activation_result=result,
+                            snapshot=snapshot,
+                            project_id=context.get("project_id"),
+                            revision=context.get("revision"),
+                            working_dir=working_dir or gui.workspace_root,
+                        )
+                    )
                 except GuiSnapshotBlockedError as exc:
                     result["snapshot_warning"] = str(exc)
                     result.update(

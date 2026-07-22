@@ -22883,6 +22883,7 @@ def _persist_modeling_report(store: ProjectStore, spec: ModelSpec, response: dic
         "workflow": response.get("workflow"),
         "execution_mode": response.get("execution_mode"),
         "execution_mode_source": response.get("execution_mode_source"),
+        "apply_current_request": response.get("apply_current_request"),
         "diagnostic_export_requested": response.get("diagnostic_export_requested"),
         "normality_check_requested": response.get("normality_check_requested"),
         "gui_evidence_reaudit": response.get("gui_evidence_reaudit"),
@@ -24448,9 +24449,19 @@ def _gui_report_summary(
     if not isinstance(window, dict):
         window = {}
     warnings = [str(item) for item in snapshot_analysis.get("warnings", []) or []]
-    local_visual_validation = _gui_visual_validation(snapshot_analysis, bool(gui_open), response.get("gui_open_warning"))
-    visual_validation = "passed" if external_visual_confirmation_ok else local_visual_validation
     revision_consistency = _gui_current_revision_consistency(response, gui_open)
+    live_status_hotload = _live_status_current_revision_hotload_evidence(
+        response,
+        gui_status=gui_status,
+        revision_consistency=revision_consistency,
+    )
+    hot_loaded = bool(gui_open) or live_status_hotload["verified"]
+    local_visual_validation = _gui_visual_validation(
+        snapshot_analysis,
+        hot_loaded,
+        response.get("gui_open_warning"),
+    )
+    visual_validation = "passed" if external_visual_confirmation_ok else local_visual_validation
     gui_status_was_probed = "window_found" in gui_status or "supported" in gui_status
     if not gui_status_was_probed and persisted_gui:
         for key in (
@@ -24504,7 +24515,10 @@ def _gui_report_summary(
         "window_found": gui_status.get("window_found") if gui_status else bool(window),
         "window_title": window.get("title"),
         "window_handle": window.get("handle"),
-        "hot_loaded": bool(gui_open),
+        "hot_loaded": hot_loaded,
+        "hot_loaded_from_gui_open_artifact": bool(gui_open),
+        "hot_loaded_from_live_status": live_status_hotload["verified"],
+        "live_status_hotload_evidence": live_status_hotload,
         **revision_consistency,
         **open_identity,
         "window_management": window_management or None,
@@ -24646,6 +24660,122 @@ def _gui_report_summary(
         "external_visual_confirmation_screenshot_path": visual_confirmation.get("screenshot_path"),
         "visual_validation": visual_validation,
         "gui_artifact_count": len(response.get("gui_artifacts") or []),
+    }
+
+
+def _live_status_current_revision_hotload_evidence(
+    response: dict[str, Any],
+    *,
+    gui_status: dict[str, Any],
+    revision_consistency: dict[str, Any],
+) -> dict[str, Any]:
+    """Verify an already-loaded revision without inventing a GUI open action."""
+
+    expected_project_id = response.get("project_id")
+    expected_revision = response.get("new_revision", response.get("revision"))
+    planned_structure = (response.get("planned_outputs") or {}).get("structure")
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    target_resolution = (
+        gui_status.get("target_window_resolution")
+        if isinstance(gui_status.get("target_window_resolution"), dict)
+        else {}
+    )
+    wrapper = (
+        target_resolution.get("target_project_wrapper_metadata")
+        if isinstance(
+            target_resolution.get("target_project_wrapper_metadata"),
+            dict,
+        )
+        else {}
+    )
+    window_management = (
+        gui_status.get("window_management")
+        if isinstance(gui_status.get("window_management"), dict)
+        else {}
+    )
+    target_window = (
+        gui_status.get("target_window")
+        if isinstance(gui_status.get("target_window"), dict)
+        else gui_status.get("window")
+        if isinstance(gui_status.get("window"), dict)
+        else {}
+    )
+
+    reasons: list[str] = []
+    if result.get("success") is not True:
+        reasons.append("successful_revision_result_missing")
+    if not planned_structure or not Path(str(planned_structure)).expanduser().is_file():
+        reasons.append("planned_structure_missing")
+    if gui_status.get("window_found") is not True:
+        reasons.append("target_window_missing")
+    if gui_status.get("single_window_policy_ok") is not True:
+        reasons.append("single_window_policy_unverified")
+    if int(window_management.get("process_count") or 0) != 1:
+        reasons.append("matstudio_process_count_not_one")
+    if int(window_management.get("window_count") or 0) != 1:
+        reasons.append("matstudio_window_count_not_one")
+    if gui_status.get("current_revision_loaded") is not True:
+        reasons.append("gui_status_current_revision_not_loaded")
+    if revision_consistency.get("loaded_current_revision") is not True:
+        reasons.append("revision_consistency_not_loaded")
+    if target_resolution.get("matched_project_window") is not True:
+        reasons.append("target_window_project_not_matched")
+    if int(target_resolution.get("matching_window_count") or 0) != 1:
+        reasons.append("target_window_match_count_not_one")
+    if target_resolution.get("fallback_used") is not False:
+        reasons.append("target_window_fallback_used")
+    if target_window.get("is_visible") is not True:
+        reasons.append("target_window_not_visible")
+    if target_window.get("is_minimized") is not False:
+        reasons.append("target_window_minimized_or_unknown")
+    if str(wrapper.get("project_id") or "") != str(expected_project_id or ""):
+        reasons.append("wrapper_project_mismatch")
+    try:
+        wrapper_revision_matches = int(wrapper.get("revision")) == int(
+            expected_revision
+        )
+    except (TypeError, ValueError):
+        wrapper_revision_matches = False
+    if not wrapper_revision_matches:
+        reasons.append("wrapper_revision_mismatch")
+    wrapper_source = wrapper.get("source_path")
+    if not wrapper_source or not planned_structure or not _structure_path_matches_current(
+        response,
+        wrapper_source,
+        planned_structure,
+    ):
+        reasons.append("wrapper_structure_mismatch")
+    if wrapper.get("wrapper_workspace_matches_controller") is not True:
+        reasons.append("wrapper_workspace_mismatch")
+    if wrapper.get("wrapper_provenance_status") != "verified_revision_wrapper":
+        reasons.append("wrapper_provenance_unverified")
+
+    reasons = _dedupe_strings(reasons)
+    verified = not reasons
+    return {
+        "schema_version": "material_studio_live_status_hotload_evidence_v1",
+        "available": bool(gui_status),
+        "verified": verified,
+        "status": (
+            "verified_current_revision_loaded"
+            if verified
+            else "not_verified"
+        ),
+        "blocking_reasons": reasons,
+        "project_id": expected_project_id,
+        "revision": expected_revision,
+        "structure_path": str(planned_structure) if planned_structure else None,
+        "target_window_handle": target_window.get("handle"),
+        "target_window_title": target_window.get("title"),
+        "target_window_is_foreground": target_window.get("is_foreground"),
+        "wrapper_source_path": wrapper_source,
+        "result_success": result.get("success"),
+        "process_count": window_management.get("process_count"),
+        "window_count": window_management.get("window_count"),
+        "gui_input_performed": False,
+        "structure_reopened": False,
+        "gui_process_launched": False,
+        "observation_only": True,
     }
 
 
@@ -25504,7 +25634,7 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
         else:
             recommended_action = "fix_blocking_reasons_then_regenerate_or_reaudit"
             recommended_tool = "material_studio_live_project_status"
-    elif execution_mode == ExecutionMode.PREVIEW.value:
+    elif execution_mode == ExecutionMode.PREVIEW.value and not gui.get("hot_loaded"):
         state = "preview_ready_with_review" if review_reasons else (
             "preview_ready_with_visual_notes" if visual_review_reasons else "preview_ready"
         )
@@ -25564,6 +25694,7 @@ def _live_readiness_summary(report: dict[str, Any]) -> dict[str, Any]:
     )
     ready_for_hotload = (
         execution_mode == ExecutionMode.PREVIEW.value
+        and not gui.get("hot_loaded")
         and not hotload_blocking_reasons
         and report.get("script_valid") is not False
     )
@@ -27711,7 +27842,7 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     model_must_not_claim.extend(model_calculation_blocking_reasons)
     gui_must_not_claim = []
     gui_must_not_claim.extend(unresolved_visual_review_reasons)
-    if execution_mode == ExecutionMode.PREVIEW.value:
+    if execution_mode == ExecutionMode.PREVIEW.value and not hot_loaded:
         model_must_not_claim.append("preview_not_hot_loaded")
     elif not hot_loaded:
         model_must_not_claim.append("generated_structure_not_hot_loaded_in_gui")
@@ -27779,7 +27910,7 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     elif blocking_reasons or report.get("ok") is False or report.get("health_ok") is False:
         status = "blocked"
         next_action = "fix_blocking_reasons_then_reaudit"
-    elif execution_mode == ExecutionMode.PREVIEW.value:
+    elif execution_mode == ExecutionMode.PREVIEW.value and not hot_loaded:
         status = "preview_only"
         next_action = "execute_and_hotload_current_revision_before_claiming_normal"
     elif model_review_reasons or model_calculation_blocking_reasons or calculation_only_review_reasons:
@@ -36791,7 +36922,10 @@ def _modeling_report_normality(report: dict[str, Any]) -> str:
         return "review_warnings"
     if verdict is None and report["warning_count"]:
         return "review_warnings"
-    if report["execution_mode"] == ExecutionMode.EXECUTE.value and report["gui"]["hot_loaded"]:
+    if report["gui"]["hot_loaded"] and (
+        report["execution_mode"] == ExecutionMode.EXECUTE.value
+        or report["gui"].get("hot_loaded_from_live_status") is True
+    ):
         if report["gui"].get("loaded_current_revision") is False:
             return "review_warnings"
         if report["gui"].get("selected_window_matches_current") is False:
@@ -36829,7 +36963,10 @@ def _nonblocking_modeling_warning(warning: str, report: dict[str, Any]) -> bool:
     return (
         "Crystal MaterialsScript lattice construction is preview-only" in warning
         and report.get("execution_backend") == "crystal_cif_materialize"
-        and report.get("execution_mode") == ExecutionMode.EXECUTE.value
+        and (
+            report.get("execution_mode") == ExecutionMode.EXECUTE.value
+            or gui.get("hot_loaded_from_live_status") is True
+        )
         and structure.get("exists") is True
     )
 
@@ -44006,6 +44143,7 @@ def _persisted_live_context_for_export(store: ProjectStore, spec: ModelSpec) -> 
             "user_request",
             "execution_mode",
             "execution_mode_source",
+            "apply_current_request",
             "diagnostic_export_requested",
             "normality_check_requested",
             "requested_diagnostic_focuses",
@@ -54000,12 +54138,38 @@ def material_studio_gui_apply_current_revision(
         script = script_path.read_text(encoding="utf-8")
         script_validation = validate_generated_script(script)
         generated = _generate_structured_script(spec, store)
+        gui_status = gui.status(project_id=project_id, revision=spec.revision)
+        persisted_context = (
+            _persisted_live_context_for_export(store, spec)
+            if mode == ExecutionMode.PREVIEW
+            else {}
+        )
+        persisted_context_loaded = bool(persisted_context)
+        audit_artifacts.extend(
+            item
+            for item in persisted_context.pop("gui_artifacts", []) or []
+            if isinstance(item, dict)
+        )
         response: dict[str, Any] = enrich({
+            **persisted_context,
             "ok": True,
             "project_id": project_id,
             "project_resolution": project_resolution,
             "revision": spec.revision,
             "execution_mode": mode.value,
+            "apply_current_request": {
+                "schema_version": "material_studio_apply_current_request_v1",
+                "requested_execution_mode": mode.value,
+                "execution_started_by_request": False,
+                "runner_invoked_by_request": False,
+                "structure_materialization_started_by_request": False,
+                "gui_input_started_by_request": False,
+                "structure_reopened_by_request": False,
+                "gui_process_launched_by_request": False,
+                "prior_current_revision_context_loaded": bool(
+                    persisted_context_loaded
+                ),
+            },
             "post_hotload_fit_to_view_requested": fit_to_view_requested_after_open,
             "post_hotload_fit_to_view_request_source": fit_to_view_request_source,
             "post_hotload_fit_to_view": _post_hotload_fit_to_view_request_receipt(
@@ -54039,8 +54203,51 @@ def material_studio_gui_apply_current_revision(
                 include_script=False,
                 working_dir=store.workspace_root,
             ),
-            "gui_status": gui.status(project_id=project_id, revision=spec.revision),
+            "gui_status": gui_status,
         })
+        if mode == ExecutionMode.PREVIEW:
+            preview_revision_consistency = _gui_current_revision_consistency(
+                response,
+                response.get("gui_open")
+                if isinstance(response.get("gui_open"), dict)
+                else None,
+            )
+            preview_live_hotload_evidence = (
+                _live_status_current_revision_hotload_evidence(
+                    response,
+                    gui_status=gui_status,
+                    revision_consistency=preview_revision_consistency,
+                )
+            )
+            persisted_gui_open_verified = bool(
+                isinstance(response.get("gui_open"), dict)
+                and preview_revision_consistency.get("loaded_current_revision")
+                is True
+            )
+            request_receipt = response.get("apply_current_request")
+            if isinstance(request_receipt, dict):
+                request_receipt.update(
+                    {
+                        "current_revision_already_hot_loaded": bool(
+                            persisted_gui_open_verified
+                            or preview_live_hotload_evidence["verified"]
+                        ),
+                        "current_revision_hotload_evidence_source": (
+                            "live_status_current_revision"
+                            if preview_live_hotload_evidence["verified"]
+                            else "persisted_gui_open_artifact"
+                            if persisted_gui_open_verified
+                            else None
+                        ),
+                        "existing_live_state_reused": bool(
+                            persisted_gui_open_verified
+                            or preview_live_hotload_evidence["verified"]
+                        ),
+                        "live_status_hotload_evidence": (
+                            preview_live_hotload_evidence
+                        ),
+                    }
+                )
         _attach_materials_studio_roundtrip_plan(
             response,
             store=store,
@@ -54061,9 +54268,40 @@ def material_studio_gui_apply_current_revision(
                 _attach_modeling_health(response, execution_mode=mode, store=store, spec=spec, gui_artifacts=audit_artifacts)
             )
         if mode == ExecutionMode.PREVIEW:
-            return finish(
-                _attach_modeling_health(response, execution_mode=mode, store=store, spec=spec, gui_artifacts=audit_artifacts)
+            preview = _attach_modeling_health(
+                response,
+                execution_mode=mode,
+                store=store,
+                spec=spec,
+                gui_artifacts=audit_artifacts,
             )
+            gui_report = (
+                preview.get("modeling_report", {}).get("gui", {})
+                if isinstance(preview.get("modeling_report"), dict)
+                else {}
+            )
+            request_receipt = preview.get("apply_current_request")
+            if isinstance(request_receipt, dict):
+                already_hot_loaded = bool(
+                    gui_report.get("hot_loaded") is True
+                    and gui_report.get("loaded_current_revision") is True
+                )
+                request_receipt.update(
+                    {
+                        "current_revision_already_hot_loaded": already_hot_loaded,
+                        "current_revision_hotload_evidence_source": (
+                            "live_status_current_revision"
+                            if already_hot_loaded
+                            and gui_report.get("hot_loaded_from_live_status") is True
+                            else "persisted_gui_open_artifact"
+                            if already_hot_loaded
+                            and gui_report.get("hot_loaded_from_gui_open_artifact") is True
+                            else None
+                        ),
+                        "existing_live_state_reused": already_hot_loaded,
+                    }
+                )
+            return finish(preview)
         if not generated["executable"] and not isinstance(spec.model, CrystalSpec):
             response = {**response, "ok": False, "error": "当前修订版本仅用于预览，无法安全执行。"}
             return finish(

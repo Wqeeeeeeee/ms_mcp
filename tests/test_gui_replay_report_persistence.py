@@ -31,6 +31,7 @@ class FakeGuiBackend:
     file_open_may_launch_new_instance = False
 
     def __init__(self) -> None:
+        self.opened_paths: list[Path] = []
         self.window = WindowInfo(
             handle=101,
             title="msmcp_r000_replay - Materials Studio",
@@ -63,6 +64,7 @@ class FakeGuiBackend:
         return output_path
 
     def open_file(self, path: Path) -> dict:
+        self.opened_paths.append(path)
         return {"method": "fake", "path": str(path)}
 
 
@@ -363,3 +365,163 @@ def test_apply_current_execute_keeps_replay_bound_through_same_window_hotload(
     )
     assert report["gui_view_replay"]["binding_verified"] is True
     assert report["trusted_clean_view_replay"]["ok"] is True
+
+
+def test_apply_current_preview_recovers_existing_live_revision_without_gui_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, manifest_path, _ = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+        create_execution_mode=ExecutionMode.PREVIEW,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.EXECUTE,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+    assert executed["ok"] is True
+    structure_path = Path(executed["planned_outputs"]["structure"])
+    wrapper = gui._create_project_wrapper(
+        structure_path,
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    gui.backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    live_status = gui.status(
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    assert live_status["current_revision_loaded"] is True
+    snapshot_path = (
+        Path(live_status["screenshots_dir"])
+        / created["project_id"]
+        / f"r{created['revision']:03d}"
+        / "existing_live_revision.bmp"
+    )
+    gui.backend.capture_window(gui.backend.window, snapshot_path)
+    open_count_before_preview = len(gui.backend.opened_paths)
+
+    preview = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.PREVIEW,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert preview["ok"] is True
+    assert preview["execution_mode"] == "preview"
+    assert len(gui.backend.opened_paths) == open_count_before_preview
+    request = preview["apply_current_request"]
+    assert request["execution_started_by_request"] is False
+    assert request["gui_input_started_by_request"] is False
+    assert request["structure_reopened_by_request"] is False
+    assert request["gui_process_launched_by_request"] is False
+    assert request["current_revision_already_hot_loaded"] is True
+    assert request["current_revision_hotload_evidence_source"] == (
+        "live_status_current_revision"
+    )
+    evidence = request["live_status_hotload_evidence"]
+    assert evidence["verified"] is True
+    assert evidence["process_count"] == 1
+    assert evidence["window_count"] == 1
+    assert evidence["gui_input_performed"] is False
+    gui_report = preview["modeling_report"]["gui"]
+    assert gui_report["hot_loaded"] is True
+    assert gui_report["hot_loaded_from_live_status"] is True
+    assert gui_report["loaded_current_revision"] is True
+    readiness = preview["modeling_report"]["live_readiness"]
+    assert readiness["ready_for_hotload"] is False
+    assert readiness["recommended_action"] != (
+        "execute_current_revision_to_hotload_when_user_confirms"
+    )
+    gate = preview["modeling_report"]["normality_gate"]
+    assert "preview_not_hot_loaded" not in gate["must_not_claim_normal_reasons"]
+    assert "generated_structure_not_hot_loaded_in_gui" not in gate[
+        "must_not_claim_normal_reasons"
+    ]
+    assert gate["can_claim_live_gui_normal"] is True
+    assert preview["trusted_clean_view_replay"]["ok"] is True
+    report = json.loads(
+        (manifest_path.parent / "report.json").read_text(encoding="utf-8")
+    )
+    assert report["modeling_report"]["gui"]["hot_loaded_from_live_status"] is True
+    assert report["apply_current_request"]["current_revision_already_hot_loaded"] is True
+    assert report["apply_current_request"][
+        "current_revision_hotload_evidence_source"
+    ] == request["current_revision_hotload_evidence_source"]
+
+
+def test_apply_current_preview_does_not_recover_live_state_from_failed_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, _, _ = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+        create_execution_mode=ExecutionMode.PREVIEW,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.EXECUTE,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+    result_metadata_path = Path(executed["result_metadata_path"])
+    result_metadata = json.loads(result_metadata_path.read_text(encoding="utf-8"))
+    result_metadata["success"] = False
+    result_metadata_path.write_text(
+        json.dumps(result_metadata, indent=2),
+        encoding="utf-8",
+    )
+    structure_path = Path(executed["planned_outputs"]["structure"])
+    wrapper = gui._create_project_wrapper(
+        structure_path,
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    gui.backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+
+    preview = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.PREVIEW,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+
+    evidence = preview["apply_current_request"]["live_status_hotload_evidence"]
+    assert evidence["verified"] is False
+    assert "successful_revision_result_missing" in evidence["blocking_reasons"]
+    assert preview["apply_current_request"]["current_revision_already_hot_loaded"] is False
+    assert preview["modeling_report"]["gui"]["hot_loaded_from_live_status"] is False
+    assert "preview_not_hot_loaded" in preview["modeling_report"][
+        "normality_gate"
+    ]["must_not_claim_normal_reasons"]

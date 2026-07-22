@@ -927,6 +927,18 @@ display.
 When a persisted `view_audit.json` contains an executed `modeling_health` result
 and a GUI-open artifact, `material_studio_live_project_status` reports that
 same hot-loaded state instead of downgrading the project to a preview summary.
+An apply-current preview can also recover that prior live state from a fresh
+GUI status when the older report no longer contains its GUI-open artifact. The
+recovery requires a successful persisted result and existing planned structure,
+one Materials Studio process and one window, an exact project/revision wrapper,
+matching controller workspace and source path, and no fallback window match.
+The response marks this as `hot_loaded_from_live_status=true` and persists an
+`apply_current_request` receipt whose runner, materializer, GUI-input, reopen,
+and process-launch fields remain false. This is observation of an already-loaded
+revision, not evidence that the preview executed or changed Materials Studio.
+Failed results, missing artifacts, hidden or minimized targets, multi-window
+sessions, and stale or mismatched wrappers remain blocked and retain the normal
+preview/hot-load recommendation.
 
 ## GUI-Free Diagnostic Contract Refresh
 

@@ -11,7 +11,11 @@ from material_studio_mcp_server.ms_roundtrip.secure_io import (
     reject_link_or_reparse_components,
     resolve_existing_directory,
 )
-from material_studio_mcp_server.castep_acceptance.profile import repository_root
+from material_studio_mcp_server.castep_acceptance.profile import (
+    WINDOWS_JOB_CWD_LIMIT,
+    repository_root,
+    windows_job_cwd_length,
+)
 
 
 def _require_real_prerequisite(condition: bool, message: str) -> None:
@@ -33,7 +37,9 @@ def _default_real_destinations() -> tuple[Path, Path]:
         ) from exc
     else:
         raise ValueError("the default real CASTEP parent must be outside the repository")
-    root = temp_root / "ms-mcp-castep-acceptance"
+    # Keep the fixed nested Materials Studio job cwd below Windows' legacy
+    # CreateProcess limit even when the user profile path is long.
+    root = temp_root / "msca"
     try:
         reject_link_or_reparse_components(root)
         root.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -56,10 +62,10 @@ def test_default_destinations_satisfy_literal_work_order_command(
 ) -> None:
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     workspace, evidence = _default_real_destinations()
-    assert workspace == tmp_path / "ms-mcp-castep-acceptance" / "workspace-001"
+    assert workspace == tmp_path / "msca" / "workspace-001"
     assert evidence == (
         tmp_path
-        / "ms-mcp-castep-acceptance"
+        / "msca"
         / "real-castep-evidence-001.json"
     )
     assert workspace.parent.is_dir()
@@ -75,7 +81,12 @@ def test_default_destinations_reject_repository_temp_before_creation(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(repository_root()))
     with pytest.raises(ValueError, match="outside the repository"):
         _default_real_destinations()
-    assert not (repository_root() / "ms-mcp-castep-acceptance").exists()
+    assert not (repository_root() / "msca").exists()
+
+
+def test_short_default_shape_keeps_windows_job_cwd_below_legacy_limit() -> None:
+    workspace = Path("C:/msca/workspace-001")
+    assert windows_job_cwd_length(workspace) < WINDOWS_JOB_CWD_LIMIT
 
 
 def test_real_castep_energy_acceptance_once(pytestconfig: pytest.Config) -> None:

@@ -32,6 +32,7 @@ from .contracts import (
     ACCEPTANCE_PROFILE,
     CastepAcceptancePlan,
     CastepAcceptanceRequest,
+    FIXED_PROJECT_ID,
     FixedCastepProfile,
     PUBLIC_CASTEP_TOOL,
 )
@@ -65,6 +66,20 @@ EXPECTED_SIMULATION_PAYLOAD: dict[str, Any] = {
 }
 
 WORKSPACE_GUARD_NAME = ".castep_acceptance_workspace.lock"
+
+# Windows CreateProcess accepts a shorter current-directory path than the
+# general extended-path APIs. Keep the fixed acceptance layout below that
+# boundary before the public runner is called.
+WINDOWS_JOB_CWD_LIMIT = 248
+_FIXED_RUN_DIRECTORY_PARTS = (
+    "outputs",
+    "r000",
+    "castep_electronic",
+    "energy",
+    "run_0001",
+    ".material-studio-mcp",
+    "jobs",
+)
 
 
 @dataclass
@@ -155,6 +170,39 @@ def _is_inside(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def windows_job_cwd_length(workspace: Path) -> int:
+    """Return the worst-case job cwd length for the frozen CASTEP profile."""
+
+    if not isinstance(workspace, Path):
+        raise TypeError("workspace must be Path")
+    run_root = workspace / FIXED_PROJECT_ID
+    for part in _FIXED_RUN_DIRECTORY_PARTS:
+        run_root /= part
+    job_name = (
+        f"{FIXED_PROJECT_ID}_r000_castep_energy-"
+        + ("0" * 15)
+        + "-"
+        + ("0" * 8)
+    )
+    return len(os.fspath(run_root / job_name))
+
+
+def validate_windows_job_cwd(workspace: Path) -> None:
+    """Reject a real-run workspace that cannot be a Windows process cwd."""
+
+    if not isinstance(workspace, Path):
+        raise TypeError("workspace must be Path")
+    if os.name != "nt":
+        return
+    length = windows_job_cwd_length(workspace)
+    if length >= WINDOWS_JOB_CWD_LIMIT:
+        raise ValueError(
+            "CASTEP acceptance workspace is too long for the Materials Studio "
+            f"Windows job cwd (estimated {length}; limit {WINDOWS_JOB_CWD_LIMIT}); "
+            "choose a shorter external path"
+        )
 
 
 def validate_external_fresh_workspace(path: Path) -> Path:
@@ -410,4 +458,7 @@ __all__ = [
     "reserve_external_fresh_workspace",
     "source_profile_is_exact",
     "validate_external_fresh_workspace",
+    "WINDOWS_JOB_CWD_LIMIT",
+    "windows_job_cwd_length",
+    "validate_windows_job_cwd",
 ]

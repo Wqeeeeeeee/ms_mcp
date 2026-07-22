@@ -104,12 +104,15 @@ Before authorization is consumed, verify all of the following:
    reparse component.
 
 The literal Work Order command is sufficient on a clean machine. With no path
-options, the test atomically creates one fixed external parent under the OS
-temporary directory, uses `workspace-001` and
+options, the test atomically creates one short fixed external parent (`msca`)
+under the OS temporary directory, uses `workspace-001` and
 `real-castep-evidence-001.json`, and refuses to reuse that parent on a later
-attempt. This keeps the exact required command safe while preserving all
-artifacts. A caller may instead provide both destinations explicitly; they are
-validated as fresh external paths before execution.
+attempt. The short root is required because the fixed project/output/job path
+must remain below the Windows legacy `CreateProcess` current-directory limit;
+longer explicit paths fail during preview with a clear path-budget error. This
+keeps the exact required command safe while preserving all artifacts. A caller
+may instead provide both destinations explicitly; they are validated as fresh
+external paths before execution.
 
 Example authorized command using explicitly reviewed destinations:
 

@@ -45,6 +45,8 @@ from .profile import (
     plan_acceptance,
     reserve_external_fresh_workspace,
     WORKSPACE_GUARD_NAME,
+    validate_external_fresh_workspace,
+    validate_windows_job_cwd,
 )
 from .verification import verify_castep_acceptance_execution
 
@@ -200,6 +202,14 @@ class CastepAcceptanceHarness:
             raise CastepAcceptanceError(
                 "real CASTEP runner identity failed before workspace creation"
             )
+        if self._real_environment:
+            try:
+                workspace = validate_external_fresh_workspace(request.workspace_root)
+                validate_windows_job_cwd(workspace)
+            except (OSError, TypeError, ValueError) as exc:
+                raise CastepAcceptanceError(
+                    "real CASTEP workspace failed the Windows job path preflight"
+                ) from exc
 
         try:
             reservation = reserve_external_fresh_workspace(request.workspace_root)

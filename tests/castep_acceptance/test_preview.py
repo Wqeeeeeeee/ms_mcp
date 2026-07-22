@@ -11,6 +11,7 @@ from material_studio_mcp_server.castep_acceptance import (
 from material_studio_mcp_server.castep_acceptance.profile import (
     EXPECTED_SIMULATION_PAYLOAD,
     reserve_external_fresh_workspace,
+    validate_windows_job_cwd,
 )
 
 
@@ -140,3 +141,13 @@ def test_workspace_reservation_rejects_reparse_parent(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unsafe component"):
         reserve_external_fresh_workspace(linked_parent / "workspace")
     assert not (real_parent / "workspace").exists()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path budget")
+def test_external_workspace_rejects_legacy_windows_job_cwd_overflow(
+    tmp_path: Path,
+) -> None:
+    long_parent = tmp_path / ("parent-" + ("x" * 100))
+    long_parent.mkdir()
+    with pytest.raises(ValueError, match="job cwd"):
+        validate_windows_job_cwd(long_parent / "workspace")

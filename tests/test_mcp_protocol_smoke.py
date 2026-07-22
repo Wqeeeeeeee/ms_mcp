@@ -213,6 +213,22 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     )
     assert calls["view_replay_progress_decision_field"] == "trusted_complete"
     assert calls["view_replay_progress_fail_closed"] is True
+    assert calls["watchdog_contract_schema"] == (
+        "material_studio_live_watchdog_status_v1"
+    )
+    assert calls["watchdog_contract_max_response_bytes"] == 12_000
+    assert calls["watchdog_contract_poll_interval_seconds"] == 1_200
+    assert calls["watchdog_revision_matches_expected"] is True
+    assert len(calls["watchdog_state_fingerprint"]) == 64
+    assert calls["watchdog_repeat_changed_since_previous"] is False
+    assert calls["watchdog_automatic_poll_allowed"] is True
+    assert calls["watchdog_automatic_non_poll_action_allowed"] is False
+    watchdog_compaction = calls["watchdog_response_compaction"]
+    assert watchdog_compaction["schema_version"] == (
+        "material_studio_live_watchdog_compaction_v1"
+    )
+    assert watchdog_compaction["budget_bytes"] == 12_000
+    assert watchdog_compaction["response_bytes"] < 12_000
     assert calls["history_count"] == 1
     assert calls["visual_diagnostics_binding_verified"] is True
     assert calls["visual_diagnostics_action_id"]
@@ -233,6 +249,8 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
             "capabilities",
             "create",
             "status",
+            "watchdog",
+            "watchdog_repeat",
             "prepare_view_replay",
             "resumed_preflight",
             "view_bundle",

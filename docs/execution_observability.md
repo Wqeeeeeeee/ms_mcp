@@ -86,3 +86,23 @@ Never delete lock, state, journal, result, or runner artifacts to clear a status
 The lock order remains project state, release, revision execution, release, then
 GUI artifact/report. Attempt persistence occurs only while the revision
 execution lock is held and never performs GUI input.
+
+## Bounded Watchdog Receipt
+
+Use `material_studio_live_watchdog_status` for recurring 20-minute checks. It
+internally reads the authoritative full project status but returns a bounded
+`material_studio_live_watchdog_status_v1` receipt under 12 KB. Supply the
+current `project_id` and `expected_revision`; on later calls also pass the
+previous `state_fingerprint`. The SHA-256 excludes observation time, so an
+unchanged project produces `changed_since_previous=false`.
+
+The receipt keeps execution, single-window GUI, trusted view-replay,
+normality, calculation-readiness, and primary-action tracks separate. It may
+report a modeling or GUI action, but `automatic_followup_action_allowed` and
+`safety.automatic_non_poll_action_allowed` remain false. Only the exact
+`poll_action` may be invoked unattended when its payload is present and
+`automatic_call_allowed=true`. Failed/interrupted execution, a stale runtime,
+multiple windows, workspace mismatch, replay-integrity failure, revision
+supersession, or user-confirmed calculation settings always remain review
+bound. If hard response compaction omits the poll payload, the poll action is
+also marked non-callable.

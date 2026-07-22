@@ -32,6 +32,7 @@ SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_model_get_current",
     "material_studio_live_modeling_request",
     "material_studio_live_project_status",
+    "material_studio_live_watchdog_status",
     "material_studio_model_export_view_audit",
     "material_studio_model_export_view_bundle",
     "material_studio_live_update_with_patch",

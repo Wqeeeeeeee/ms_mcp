@@ -9,6 +9,7 @@ def test_codex_config_example_disables_custom_script() -> None:
     assert "material_studio_model_create_from_spec" in text
     assert "material_studio_live_modeling_request" in text
     assert "material_studio_live_project_status" in text
+    assert "material_studio_live_watchdog_status" in text
     assert "material_studio_live_update_with_patch" in text
     assert "material_studio_model_export_view_audit" in text
     assert "material_studio_model_export_view_bundle" in text

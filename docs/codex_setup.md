@@ -1513,6 +1513,13 @@ this payload from a generic execute example.
 
 ## Goal Watchdog
 
+This section describes unattended Codex code-goal continuation. For periodic
+read-only monitoring of one Materials Studio modeling project, call
+`material_studio_live_watchdog_status` instead and carry forward its
+`expected_revision` plus `state_fingerprint`. Only the returned poll action is
+eligible for automation; project changes, calculations, and GUI input still
+require their normal gates.
+
 The optional local watchdog runs as one hidden user-level PowerShell process
 and is restored by the Startup shortcut. It invokes
 `scripts/codex_goal_watchdog.ps1` every 20 minutes. The runner skips a cycle

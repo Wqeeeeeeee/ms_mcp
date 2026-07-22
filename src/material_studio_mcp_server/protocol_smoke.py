@@ -31,6 +31,7 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_live_session_preflight",
     "material_studio_live_modeling_request",
     "material_studio_live_project_status",
+    "material_studio_live_watchdog_status",
     "material_studio_live_update_with_patch",
     "material_studio_castep_relax_current",
     "material_studio_castep_run_current",
@@ -54,6 +55,8 @@ COMPACT_RESPONSE_MAX_BYTES = 48_000
 COMPACT_RESPONSE_TARGET_BYTES = 45_000
 EXPECTED_CAPABILITIES_COMPACT_SCHEMA = "material_studio_capabilities_compact_v2"
 EXPECTED_LIVE_COMPACT_SCHEMA = "material_studio_live_compact_v2"
+EXPECTED_LIVE_WATCHDOG_SCHEMA = "material_studio_live_watchdog_status_v1"
+EXPECTED_LIVE_WATCHDOG_MAX_BYTES = 12_000
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
@@ -69,6 +72,7 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_capabilities": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_live_session_preflight": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_live_project_status": {"readOnlyHint": True, "destructiveHint": False},
+    "material_studio_live_watchdog_status": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_gui_status": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_live_modeling_request": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_live_update_with_patch": {"readOnlyHint": False, "destructiveHint": True},
@@ -118,6 +122,16 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
     },
     "material_studio_live_project_status": {
         "properties": {"project_id", "include_gui_status", "working_dir", "response_mode"},
+        "required": set(),
+    },
+    "material_studio_live_watchdog_status": {
+        "properties": {
+            "project_id",
+            "expected_revision",
+            "previous_state_fingerprint",
+            "include_gui_status",
+            "working_dir",
+        },
         "required": set(),
     },
     "material_studio_live_update_with_patch": {
@@ -799,6 +813,31 @@ async def _run_preview_calls(
             },
             timeout,
         )
+        watchdog = await _call_tool(
+            session,
+            "material_studio_live_watchdog_status",
+            {
+                "project_id": project_id,
+                "expected_revision": created.get("revision"),
+                "include_gui_status": False,
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
+        watchdog_repeat = await _call_tool(
+            session,
+            "material_studio_live_watchdog_status",
+            {
+                "project_id": project_id,
+                "expected_revision": created.get("revision"),
+                "previous_state_fingerprint": watchdog.get(
+                    "state_fingerprint"
+                ),
+                "include_gui_status": False,
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
         relaxation_preview = await _call_tool(
             session,
             "material_studio_castep_relax_current",
@@ -902,6 +941,12 @@ async def _run_preview_calls(
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
             "create": len(json.dumps(created, ensure_ascii=False).encode("utf-8")),
             "status": len(json.dumps(status, ensure_ascii=False).encode("utf-8")),
+            "watchdog": len(
+                json.dumps(watchdog, ensure_ascii=False).encode("utf-8")
+            ),
+            "watchdog_repeat": len(
+                json.dumps(watchdog_repeat, ensure_ascii=False).encode("utf-8")
+            ),
             "castep_relaxation_preview": len(
                 json.dumps(relaxation_preview, ensure_ascii=False).encode("utf-8")
             ),
@@ -1360,6 +1405,30 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_view_replay_progress_fail_closed_missing"
             )
+        watchdog_contract = capabilities.get("live_watchdog_contract")
+        if not isinstance(watchdog_contract, dict):
+            validation_errors.append("capabilities_live_watchdog_contract_missing")
+            watchdog_contract = {}
+        if capabilities.get("live_watchdog_tool") != (
+            "material_studio_live_watchdog_status"
+        ):
+            validation_errors.append("capabilities_live_watchdog_tool_mismatch")
+        if watchdog_contract.get("schema_version") != (
+            EXPECTED_LIVE_WATCHDOG_SCHEMA
+        ):
+            validation_errors.append("capabilities_live_watchdog_schema_mismatch")
+        if watchdog_contract.get("max_response_bytes") != (
+            EXPECTED_LIVE_WATCHDOG_MAX_BYTES
+        ):
+            validation_errors.append("capabilities_live_watchdog_budget_mismatch")
+        if watchdog_contract.get("default_poll_interval_seconds") != 1200:
+            validation_errors.append("capabilities_live_watchdog_interval_mismatch")
+        if watchdog_contract.get("automatic_polling_allowed") is not True:
+            validation_errors.append("capabilities_live_watchdog_poll_gate_missing")
+        if watchdog_contract.get("automatic_non_poll_action_allowed") is not False:
+            validation_errors.append(
+                "capabilities_live_watchdog_non_poll_boundary_missing"
+            )
         runner_status = capabilities.get("runner_status")
         if not isinstance(runner_status, dict):
             validation_errors.append("capabilities_compact_runner_status_missing")
@@ -1476,6 +1545,55 @@ async def _run_preview_calls(
             validation_errors.append("status_response_not_compact")
         if status.get("response_schema") != EXPECTED_LIVE_COMPACT_SCHEMA:
             validation_errors.append("status_compact_schema_mismatch")
+        if watchdog.get("ok") is not True:
+            validation_errors.append("watchdog_status_not_ok")
+        if watchdog.get("schema_version") != EXPECTED_LIVE_WATCHDOG_SCHEMA:
+            validation_errors.append("watchdog_status_schema_mismatch")
+        if watchdog.get("project_id") != project_id:
+            validation_errors.append("watchdog_status_project_mismatch")
+        if watchdog.get("revision") != created.get("revision"):
+            validation_errors.append("watchdog_status_revision_mismatch")
+        if watchdog.get("revision_matches_expected") is not True:
+            validation_errors.append("watchdog_status_revision_binding_failed")
+        if watchdog.get("read_only") is not True:
+            validation_errors.append("watchdog_status_not_read_only")
+        watchdog_safety = watchdog.get("safety")
+        if not isinstance(watchdog_safety, dict):
+            validation_errors.append("watchdog_status_safety_missing")
+            watchdog_safety = {}
+        if watchdog_safety.get("automatic_poll_allowed") is not True:
+            validation_errors.append("watchdog_status_poll_gate_missing")
+        if watchdog_safety.get("automatic_non_poll_action_allowed") is not False:
+            validation_errors.append("watchdog_status_non_poll_boundary_missing")
+        if watchdog_safety.get("automatic_execution_retry_allowed") is not False:
+            validation_errors.append("watchdog_status_execution_retry_boundary_missing")
+        watchdog_poll = watchdog.get("poll_action")
+        if not isinstance(watchdog_poll, dict):
+            validation_errors.append("watchdog_status_poll_action_missing")
+            watchdog_poll = {}
+        if watchdog_poll.get("automatic_call_allowed") is not True:
+            validation_errors.append("watchdog_status_poll_action_not_callable")
+        watchdog_fingerprint = watchdog.get("state_fingerprint")
+        if not isinstance(watchdog_fingerprint, str) or len(watchdog_fingerprint) != 64:
+            validation_errors.append("watchdog_status_fingerprint_missing")
+        if watchdog_repeat.get("state_fingerprint") != watchdog_fingerprint:
+            validation_errors.append("watchdog_status_fingerprint_not_stable")
+        if watchdog_repeat.get("changed_since_previous") is not False:
+            validation_errors.append("watchdog_status_repeat_reported_change")
+        watchdog_compaction = watchdog.get("response_compaction")
+        if not isinstance(watchdog_compaction, dict):
+            validation_errors.append("watchdog_status_compaction_missing")
+            watchdog_compaction = {}
+        watchdog_bytes = len(
+            json.dumps(
+                watchdog,
+                ensure_ascii=False,
+            ).encode("utf-8")
+        )
+        if watchdog_compaction.get("response_bytes") != watchdog_bytes:
+            validation_errors.append("watchdog_status_compaction_size_mismatch")
+        if watchdog_bytes >= EXPECTED_LIVE_WATCHDOG_MAX_BYTES:
+            validation_errors.append("watchdog_status_size_limit_exceeded")
         relaxation_structure_value = str(
             (relaxation_preview.get("planned_outputs") or {}).get("structure")
             or ""
@@ -1808,6 +1926,32 @@ async def _run_preview_calls(
                 "view_replay_progress_fail_closed": replay_progress_contract.get(
                     "fail_closed"
                 ),
+                "watchdog_contract_schema": watchdog_contract.get(
+                    "schema_version"
+                ),
+                "watchdog_contract_max_response_bytes": watchdog_contract.get(
+                    "max_response_bytes"
+                ),
+                "watchdog_contract_poll_interval_seconds": watchdog_contract.get(
+                    "default_poll_interval_seconds"
+                ),
+                "watchdog_status": watchdog.get("status"),
+                "watchdog_revision_matches_expected": watchdog.get(
+                    "revision_matches_expected"
+                ),
+                "watchdog_state_fingerprint": watchdog.get(
+                    "state_fingerprint"
+                ),
+                "watchdog_repeat_changed_since_previous": watchdog_repeat.get(
+                    "changed_since_previous"
+                ),
+                "watchdog_automatic_poll_allowed": watchdog_safety.get(
+                    "automatic_poll_allowed"
+                ),
+                "watchdog_automatic_non_poll_action_allowed": (
+                    watchdog_safety.get("automatic_non_poll_action_allowed")
+                ),
+                "watchdog_response_compaction": watchdog_compaction,
                 "history_count": len(history.get("history") or []),
                 "preflight_state": preflight.get("state"),
                 "resumed_preflight_state": resumed_preflight.get("state"),

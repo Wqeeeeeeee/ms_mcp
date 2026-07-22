@@ -177,8 +177,12 @@ class McpResponseMode(str, Enum):
 
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
+LIVE_WATCHDOG_STATUS_SCHEMA = "material_studio_live_watchdog_status_v1"
+LIVE_WATCHDOG_COMPACTION_SCHEMA = "material_studio_live_watchdog_compaction_v1"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
 COMPACT_RESPONSE_TARGET_BYTES = 45_000
+LIVE_WATCHDOG_MAX_BYTES = 12_000
+LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS = 20 * 60
 
 _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
     {
@@ -4408,6 +4412,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "live_preflight_tool": "material_studio_live_session_preflight",
         "live_entry_tool": "material_studio_live_modeling_request",
         "live_status_tool": "material_studio_live_project_status",
+        "live_watchdog_tool": "material_studio_live_watchdog_status",
+        "live_watchdog_contract": _live_watchdog_capability_policy(),
         "view_replay_progress_contract": _view_replay_progress_capability_policy(),
         "runtime_provenance_contract": {
             "schema": RUNTIME_PROVENANCE_SCHEMA,
@@ -39938,6 +39944,30 @@ def _view_replay_progress_capability_policy() -> dict[str, Any]:
     }
 
 
+def _live_watchdog_capability_policy() -> dict[str, Any]:
+    """Return discovery metadata for the bounded read-only watchdog receipt."""
+
+    return {
+        "schema_version": LIVE_WATCHDOG_STATUS_SCHEMA,
+        "tool": "material_studio_live_watchdog_status",
+        "detail_tool": "material_studio_live_project_status",
+        "read_only": True,
+        "default_poll_interval_seconds": (
+            LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS
+        ),
+        "max_response_bytes": LIVE_WATCHDOG_MAX_BYTES,
+        "binds_expected_revision": True,
+        "supports_previous_state_fingerprint": True,
+        "state_fingerprint_algorithm": "sha256_canonical_json_v1",
+        "automatic_polling_allowed": True,
+        "automatic_non_poll_action_allowed": False,
+        "automatic_execution_retry_allowed": False,
+        "automatic_gui_input_allowed": False,
+        "automatic_revision_creation_allowed": False,
+        "source_status_tool_is_internal_full_receipt": True,
+    }
+
+
 def _attach_view_replay_progress(
     replay: dict[str, Any],
     manifest: dict[str, Any] | None,
@@ -41188,6 +41218,8 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_preflight_tool",
             "live_entry_tool",
             "live_status_tool",
+            "live_watchdog_tool",
+            "live_watchdog_contract",
             "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
@@ -42439,6 +42471,8 @@ def _compact_capabilities_response(
             "live_preflight_tool",
             "live_entry_tool",
             "live_status_tool",
+            "live_watchdog_tool",
+            "live_watchdog_contract",
             "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
@@ -42479,6 +42513,30 @@ def _compact_capabilities_response(
                 "direct_tool_runtime_guard_fails_closed",
                 "guarded_tool_count",
                 "restart_is_never_automatic",
+            ),
+        )
+    watchdog_contract = compact.get("live_watchdog_contract")
+    if isinstance(watchdog_contract, dict):
+        compact["live_watchdog_contract"] = _mapping_subset(
+            watchdog_contract,
+            (
+                "schema_version",
+                "tool",
+                "default_poll_interval_seconds",
+                "max_response_bytes",
+                "automatic_polling_allowed",
+                "automatic_non_poll_action_allowed",
+            ),
+        )
+    replay_progress_contract = compact.get("view_replay_progress_contract")
+    if isinstance(replay_progress_contract, dict):
+        compact["view_replay_progress_contract"] = _mapping_subset(
+            replay_progress_contract,
+            (
+                "schema_version",
+                "status_field",
+                "decision_field",
+                "fail_closed",
             ),
         )
     schema_catalog = compact.get("schemas")
@@ -44123,6 +44181,1043 @@ def material_studio_live_project_status(
         return _compact_live_response(_ok(response), response_mode)
     except Exception as exc:
         return _error(exc)
+
+
+_WATCHDOG_EXECUTION_POLL_STATUSES = frozenset(
+    {"running", "running_unrecorded", "transitioning"}
+)
+_WATCHDOG_EXECUTION_REVIEW_STATUSES = frozenset(
+    {
+        "running_identity_mismatch",
+        "failed",
+        "interrupted",
+        "history_invalid",
+        "identity_mismatch",
+        "result_missing",
+    }
+)
+
+
+def _watchdog_reason_list(
+    *values: Any,
+    limit: int = 20,
+    max_chars: int = 240,
+) -> list[str]:
+    """Return a bounded stable reason list for one monitor observation."""
+
+    reasons: list[str] = []
+    for value in values:
+        items = (
+            sorted(value, key=str)
+            if isinstance(value, set)
+            else value
+            if isinstance(value, (list, tuple))
+            else [value]
+        )
+        for item in items:
+            if item is None:
+                continue
+            text = str(item).strip()[:max_chars]
+            if not text or text in reasons:
+                continue
+            reasons.append(text)
+            if len(reasons) >= limit:
+                return reasons
+    return reasons
+
+
+def _watchdog_payload_receipt(
+    value: Any,
+    *,
+    detail_ref: str,
+    max_inline_bytes: int = 2_500,
+) -> dict[str, Any]:
+    """Bind an action payload without allowing a large spec to inflate polling."""
+
+    if not isinstance(value, dict) or not value:
+        return {
+            "available": False,
+            "included": False,
+            "detail_ref": detail_ref,
+        }
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    encoded = canonical.encode("utf-8")
+    included = len(encoded) <= max_inline_bytes
+    receipt: dict[str, Any] = {
+        "available": True,
+        "included": included,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "byte_count": len(encoded),
+        "key_names": sorted(str(key) for key in value)[:30],
+        "detail_ref": detail_ref,
+    }
+    if included:
+        receipt["payload_hint"] = dict(value)
+    else:
+        receipt["omission_reason"] = "payload_exceeds_watchdog_inline_budget"
+    return receipt
+
+
+def _watchdog_action_receipt(
+    value: Any,
+    *,
+    detail_ref: str,
+) -> dict[str, Any]:
+    """Return one bounded action while preserving confirmation boundaries."""
+
+    if not isinstance(value, dict) or not value:
+        return {
+            "available": False,
+            "detail_ref": detail_ref,
+            "automatic_call_allowed": False,
+        }
+    payload = _watchdog_payload_receipt(
+        value.get("payload_hint"),
+        detail_ref=f"{detail_ref}.payload_hint",
+    )
+    action = _mapping_subset(
+        value,
+        (
+            "state",
+            "action_id",
+            "project_id",
+            "revision",
+            "recommended_tool",
+            "recommended_action",
+            "needs_user_confirmation",
+            "safe_to_call_without_confirmation",
+            "binding_verified",
+            "read_only",
+            "mutates_structure",
+            "creates_revision",
+            "issues_gui_input",
+            "gui_preflight_verified",
+            "gui_preflight_required",
+            "payload_hint_is_directly_callable",
+        ),
+    )
+    action.update(
+        {
+            "available": bool(
+                value.get("recommended_tool") and value.get("recommended_action")
+            ),
+            "payload": payload,
+            "blocking_reasons": _watchdog_reason_list(
+                value.get("blocking_reasons")
+            ),
+            "review_reasons": _watchdog_reason_list(
+                value.get("review_reasons")
+            ),
+            "detail_ref": detail_ref,
+            # A watchdog may report an action but never performs it automatically.
+            "automatic_call_allowed": False,
+        }
+    )
+    return _drop_none_values(action)
+
+
+def _watchdog_execution_receipt(value: Any) -> dict[str, Any]:
+    """Keep execution state and no-retry evidence without artifact history bulk."""
+
+    if not isinstance(value, dict):
+        return {"available": False, "status": "unavailable"}
+    consistency = value.get("consistency")
+    consistency = consistency if isinstance(consistency, dict) else {}
+    latest_attempt = value.get("latest_attempt")
+    latest_attempt = latest_attempt if isinstance(latest_attempt, dict) else {}
+    continuation = value.get("continuation")
+    continuation = continuation if isinstance(continuation, dict) else {}
+    return _drop_none_values(
+        {
+            "available": True,
+            "schema_version": value.get("schema_version"),
+            "status": value.get("status"),
+            "active": value.get("active"),
+            "lock_observation_stable": value.get("lock_observation_stable"),
+            "consistency_ok": consistency.get("ok"),
+            "consistency_issue_codes": _watchdog_reason_list(
+                consistency.get("issue_codes"),
+                limit=12,
+            ),
+            "latest_attempt_id": latest_attempt.get("attempt_id"),
+            "latest_attempt_sequence": latest_attempt.get("sequence"),
+            "latest_attempt_status": latest_attempt.get("status"),
+            "latest_attempt_result_success": latest_attempt.get(
+                "result_success"
+            ),
+            "automatic_retry_allowed": continuation.get(
+                "automatic_retry_allowed"
+            ),
+            "explicit_execute_confirmation_required": continuation.get(
+                "explicit_execute_confirmation_required"
+            ),
+            "execution_may_still_be_running": continuation.get(
+                "execution_may_still_be_running"
+            ),
+            "detail_ref": "material_studio_live_project_status.execution_runtime",
+        }
+    )
+
+
+def _watchdog_gui_receipt(
+    status: dict[str, Any],
+    *,
+    include_gui_status: bool,
+) -> dict[str, Any]:
+    """Return the exact single-window and target-wrapper monitor gates."""
+
+    current = status.get("gui_current_revision")
+    current = current if isinstance(current, dict) else {}
+    gui_status = status.get("gui_status")
+    gui_status = gui_status if isinstance(gui_status, dict) else {}
+    management = gui_status.get("window_management")
+    management = management if isinstance(management, dict) else {}
+    target = gui_status.get("target_window")
+    target = target if isinstance(target, dict) else {}
+    visible_action = {
+        "project_id": status.get("project_id"),
+        "revision": status.get("revision"),
+        "recommended_tool": current.get("recommended_tool"),
+        "recommended_action": current.get("recommended_action"),
+        "needs_user_confirmation": False,
+        "safe_to_call_without_confirmation": False,
+        "issues_gui_input": True,
+        "payload_hint": current.get("payload_hint"),
+        "blocking_reasons": current.get("stale_reasons") or [],
+        "review_reasons": current.get("window_management_warnings") or [],
+    }
+    return _drop_none_values(
+        {
+            "status_was_probed": include_gui_status,
+            "status": current.get("status") or gui_status.get("status"),
+            "process_count": gui_status.get("process_count"),
+            "window_count": gui_status.get("window_count"),
+            "single_window_policy_ok": _first_not_none(
+                current.get("single_window_policy_ok"),
+                management.get("single_window_policy_ok"),
+                gui_status.get("single_window_policy_ok"),
+            ),
+            "single_window_violation_reasons": _watchdog_reason_list(
+                current.get("single_window_violation_reasons"),
+                management.get("single_window_violation_reasons"),
+                gui_status.get("single_window_violation_reasons"),
+            ),
+            "workspace_context_mismatch": _first_not_none(
+                gui_status.get("workspace_context_mismatch"),
+                management.get("workspace_context_mismatch"),
+            ),
+            "target_window_found": gui_status.get("target_window_found"),
+            "target_window_handle": target.get("handle")
+            or current.get("target_window_handle"),
+            "target_window_title": target.get("title")
+            or current.get("target_window_title"),
+            "target_window_identity_verified": current.get(
+                "target_window_identity_verified"
+            ),
+            "target_window_is_visible": target.get("is_visible"),
+            "target_window_is_minimized": target.get("is_minimized"),
+            "target_window_is_foreground": gui_status.get(
+                "target_window_is_foreground"
+            ),
+            "loaded_current_revision": current.get("loaded_current_revision"),
+            "hot_loaded": current.get("hot_loaded"),
+            "needs_reload": current.get("needs_reload"),
+            "needs_activation": current.get("needs_activation"),
+            "needs_snapshot": current.get("needs_snapshot"),
+            "needs_single_window_resolution": current.get(
+                "needs_single_window_resolution"
+            ),
+            "visual_validation": current.get("visual_validation"),
+            "warnings": _watchdog_reason_list(
+                current.get("window_management_warnings"),
+                management.get("warnings"),
+            ),
+            "followup_action": _watchdog_action_receipt(
+                visible_action,
+                detail_ref=(
+                    "material_studio_live_project_status.gui_current_revision"
+                ),
+            ),
+            "detail_ref": "material_studio_live_project_status.gui_status",
+        }
+    )
+
+
+def _watchdog_view_replay_receipt(value: Any) -> dict[str, Any]:
+    """Keep the trusted replay decision while bounding view-name lists."""
+
+    if not isinstance(value, dict):
+        return {"available": False, "status": "unavailable"}
+    return _drop_none_values(
+        {
+            "schema_version": value.get("schema_version"),
+            "available": value.get("available"),
+            "status": value.get("status"),
+            "project_id": value.get("project_id"),
+            "revision": value.get("revision"),
+            "binding_verified": value.get("binding_verified"),
+            "requested_view_count": value.get("requested_view_count"),
+            "supported_view_count": value.get("supported_view_count"),
+            "accepted_view_count": value.get("accepted_view_count"),
+            "accepted_view_names": _watchdog_reason_list(
+                value.get("accepted_view_names"),
+                limit=16,
+            ),
+            "pending_view_count": value.get("pending_view_count"),
+            "pending_view_names": _watchdog_reason_list(
+                value.get("pending_view_names"),
+                limit=16,
+            ),
+            "accepted_view_count_consistent": value.get(
+                "accepted_view_count_consistent"
+            ),
+            "pending_view_count_consistent": value.get(
+                "pending_view_count_consistent"
+            ),
+            "all_supported_views_confirmed": value.get(
+                "all_supported_views_confirmed"
+            ),
+            "evidence_integrity_status": value.get(
+                "evidence_integrity_status"
+            ),
+            "journal_consistency_status": value.get(
+                "journal_consistency_status"
+            ),
+            "trusted_complete": value.get("trusted_complete"),
+            "blocking_reasons": _watchdog_reason_list(
+                value.get("blocking_reasons")
+            ),
+            "detail_ref": (
+                "material_studio_live_project_status.gui_view_replay.progress"
+            ),
+        }
+    )
+
+
+def _watchdog_normality_receipt(value: Any) -> dict[str, Any]:
+    """Return the model, live-GUI, and calculation decisions independently."""
+
+    if not isinstance(value, dict):
+        return {"available": False, "status": "unavailable"}
+    return _drop_none_values(
+        {
+            "available": value.get("available"),
+            "status": value.get("status"),
+            "normality": value.get("normality"),
+            "trust_level": value.get("trust_level"),
+            "can_claim_model_normal": value.get("can_claim_model_normal"),
+            "can_claim_live_gui_normal": value.get(
+                "can_claim_live_gui_normal"
+            ),
+            "ready_for_next_edit": value.get("ready_for_next_edit"),
+            "ready_for_calculation": value.get("ready_for_calculation"),
+            "hot_loaded": value.get("hot_loaded"),
+            "gui_loaded_current_revision": value.get(
+                "gui_loaded_current_revision"
+            ),
+            "trusted_clean_view_replay_ok": value.get(
+                "trusted_clean_view_replay_ok"
+            ),
+            "primary_reason": value.get("primary_reason"),
+            "must_not_claim_live_gui_normal_reasons": _watchdog_reason_list(
+                value.get("must_not_claim_live_gui_normal_reasons")
+            ),
+            "calculation_blocking_reasons": _watchdog_reason_list(
+                value.get("calculation_blocking_reasons")
+            ),
+            "review_reasons": _watchdog_reason_list(
+                value.get("review_reasons")
+            ),
+            "resolved_visual_review_reasons": _watchdog_reason_list(
+                value.get("resolved_visual_review_reasons")
+            ),
+            "detail_ref": "material_studio_live_project_status.normality_gate",
+        }
+    )
+
+
+def _watchdog_state_fingerprint(value: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _finalize_watchdog_receipt(payload: dict[str, Any]) -> dict[str, Any]:
+    """Publish an explicitly bounded watchdog response with deterministic fallback."""
+
+    bounded = _drop_none_values(dict(payload))
+    compaction = {
+        "schema_version": LIVE_WATCHDOG_COMPACTION_SCHEMA,
+        "budget_bytes": LIVE_WATCHDOG_MAX_BYTES,
+        "hard_budget_applied": False,
+        "omitted_fields": [],
+    }
+    bounded["response_compaction"] = compaction
+
+    def update_size() -> int:
+        for _ in range(8):
+            size = _compact_json_size_bytes(bounded)
+            compaction["response_bytes"] = size
+            compaction["headroom_bytes"] = max(
+                0,
+                LIVE_WATCHDOG_MAX_BYTES - size,
+            )
+            final_size = _compact_json_size_bytes(bounded)
+            if final_size == size:
+                return final_size
+        return _compact_json_size_bytes(bounded)
+
+    if update_size() < LIVE_WATCHDOG_MAX_BYTES:
+        update_size()
+        return bounded
+
+    compaction["hard_budget_applied"] = True
+    for action_path in ("primary_action", "gui.followup_action"):
+        target: Any = bounded
+        for part in action_path.split("."):
+            target = target.get(part) if isinstance(target, dict) else None
+        payload_receipt = target.get("payload") if isinstance(target, dict) else None
+        if isinstance(payload_receipt, dict) and "payload_hint" in payload_receipt:
+            payload_receipt.pop("payload_hint", None)
+            payload_receipt["included"] = False
+            payload_receipt["omission_reason"] = "watchdog_hard_budget"
+            compaction["omitted_fields"].append(f"{action_path}.payload.payload_hint")
+    replay = bounded.get("view_replay")
+    if isinstance(replay, dict):
+        for key in ("accepted_view_names", "pending_view_names"):
+            if replay.pop(key, None) is not None:
+                compaction["omitted_fields"].append(f"view_replay.{key}")
+    if update_size() < LIVE_WATCHDOG_MAX_BYTES:
+        update_size()
+        return bounded
+
+    essential = _mapping_subset(
+        bounded,
+        (
+            "ok",
+            "schema_version",
+            "observed_at",
+            "status",
+            "project_id",
+            "revision",
+            "expected_revision",
+            "revision_matches_expected",
+            "state_fingerprint",
+            "previous_state_fingerprint",
+            "changed_since_previous",
+            "runtime",
+            "execution",
+            "gui",
+            "view_replay",
+            "normality",
+            "primary_action",
+            "blocking_reasons",
+            "review_reasons",
+            "poll_action",
+            "detail_action",
+            "safety",
+        ),
+    )
+    compaction["omitted_fields"].append("watchdog_nonessential_extended_fields")
+    essential["response_compaction"] = compaction
+    bounded = essential
+    if update_size() >= LIVE_WATCHDOG_MAX_BYTES:
+        compact_gui = bounded.get("gui")
+        compact_gui = compact_gui if isinstance(compact_gui, dict) else {}
+        compact_replay = bounded.get("view_replay")
+        compact_replay = compact_replay if isinstance(compact_replay, dict) else {}
+        compact_normality = bounded.get("normality")
+        compact_normality = (
+            compact_normality if isinstance(compact_normality, dict) else {}
+        )
+        compact_action = bounded.get("primary_action")
+        compact_action = compact_action if isinstance(compact_action, dict) else {}
+        compact_poll = bounded.get("poll_action")
+        compact_poll = compact_poll if isinstance(compact_poll, dict) else {}
+        compact_detail = bounded.get("detail_action")
+        compact_detail = compact_detail if isinstance(compact_detail, dict) else {}
+        bounded = {
+            **_mapping_subset(
+                bounded,
+                (
+                    "ok",
+                    "schema_version",
+                    "observed_at",
+                    "status",
+                    "project_id",
+                    "revision",
+                    "expected_revision",
+                    "revision_matches_expected",
+                    "state_fingerprint",
+                    "previous_state_fingerprint",
+                    "changed_since_previous",
+                    "runtime",
+                    "safety",
+                ),
+            ),
+            "execution": _mapping_subset(
+                bounded.get("execution") or {},
+                (
+                    "available",
+                    "status",
+                    "active",
+                    "lock_observation_stable",
+                    "consistency_ok",
+                    "automatic_retry_allowed",
+                ),
+            ),
+            "gui": _mapping_subset(
+                compact_gui,
+                (
+                    "status_was_probed",
+                    "status",
+                    "process_count",
+                    "window_count",
+                    "single_window_policy_ok",
+                    "workspace_context_mismatch",
+                    "target_window_handle",
+                    "target_window_identity_verified",
+                    "target_window_is_foreground",
+                    "loaded_current_revision",
+                    "needs_reload",
+                    "needs_activation",
+                    "needs_snapshot",
+                    "needs_single_window_resolution",
+                ),
+            ),
+            "view_replay": _mapping_subset(
+                compact_replay,
+                (
+                    "schema_version",
+                    "available",
+                    "status",
+                    "binding_verified",
+                    "accepted_view_count",
+                    "pending_view_count",
+                    "all_supported_views_confirmed",
+                    "evidence_integrity_status",
+                    "journal_consistency_status",
+                    "trusted_complete",
+                ),
+            ),
+            "normality": _mapping_subset(
+                compact_normality,
+                (
+                    "available",
+                    "status",
+                    "can_claim_model_normal",
+                    "can_claim_live_gui_normal",
+                    "ready_for_next_edit",
+                    "ready_for_calculation",
+                    "primary_reason",
+                ),
+            ),
+            "primary_action": {
+                **_mapping_subset(
+                    compact_action,
+                    (
+                        "available",
+                        "action_id",
+                        "recommended_tool",
+                        "recommended_action",
+                        "needs_user_confirmation",
+                        "safe_to_call_without_confirmation",
+                        "automatic_call_allowed",
+                    ),
+                ),
+                "detail_ref": compact_action.get("detail_ref"),
+            },
+            "blocking_reasons": _watchdog_reason_list(
+                bounded.get("blocking_reasons"),
+                limit=10,
+                max_chars=120,
+            ),
+            "review_reasons": _watchdog_reason_list(
+                bounded.get("review_reasons"),
+                limit=10,
+                max_chars=120,
+            ),
+            "poll_action": _mapping_subset(
+                compact_poll,
+                (
+                    "recommended_tool",
+                    "recommended_action",
+                    "poll_after_seconds",
+                    "automatic_call_allowed",
+                ),
+            ),
+            "detail_action": _mapping_subset(
+                compact_detail,
+                (
+                    "recommended_tool",
+                    "recommended_action",
+                    "automatic_call_allowed",
+                ),
+            ),
+            "response_compaction": compaction,
+        }
+        if isinstance(compact_poll.get("payload_hint"), dict):
+            bounded["poll_action"]["automatic_call_allowed"] = False
+            bounded["poll_action"]["payload_omitted"] = True
+        compaction["omitted_fields"].append("watchdog_oversized_payload_hints")
+        update_size()
+    return bounded
+
+
+def _live_watchdog_status_payload(
+    *,
+    project_id: str | None,
+    expected_revision: int | None,
+    previous_state_fingerprint: str | None,
+    include_gui_status: bool,
+    working_dir: str | None,
+) -> dict[str, Any]:
+    """Build one side-effect-free monitor observation from authoritative status."""
+
+    observed_at = datetime.now(timezone.utc).isoformat()
+    runtime = _runtime_source_guard_status()
+    runtime_receipt = _drop_none_values(
+        {
+            "schema_version": runtime.get("schema"),
+            "status": runtime.get("status"),
+            "source_current": runtime.get("source_current"),
+            "restart_required": runtime.get("restart_required"),
+            "runtime_instance_id": runtime.get("runtime_instance_id"),
+            "restart_action": runtime.get("restart_action"),
+        }
+    )
+    base = {
+        "ok": True,
+        "schema_version": LIVE_WATCHDOG_STATUS_SCHEMA,
+        "observed_at": observed_at,
+        "read_only": True,
+        "requested_project_id": project_id,
+        "expected_revision": expected_revision,
+        "runtime": runtime_receipt,
+        "poll_interval_seconds": LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS,
+        "previous_state_fingerprint": previous_state_fingerprint,
+        "safety": {
+            "automatic_poll_allowed": True,
+            "automatic_non_poll_action_allowed": False,
+            "automatic_execution_retry_allowed": False,
+            "automatic_gui_input_allowed": False,
+            "automatic_revision_creation_allowed": False,
+        },
+    }
+    if runtime.get("restart_required") is True:
+        state = "mcp_server_restart_required"
+        blocking_reasons = [_runtime_source_blocking_reason(runtime)]
+        fingerprint = _watchdog_state_fingerprint(
+            {
+                "status": state,
+                "runtime": runtime_receipt,
+                "blocking_reasons": blocking_reasons,
+            }
+        )
+        base.update(
+            {
+                "status": state,
+                "state_fingerprint": fingerprint,
+                "changed_since_previous": (
+                    None
+                    if previous_state_fingerprint is None
+                    else previous_state_fingerprint != fingerprint
+                ),
+                "blocking_reasons": blocking_reasons,
+                "review_reasons": [],
+                "poll_action": {
+                    "recommended_tool": "material_studio_live_watchdog_status",
+                    "recommended_action": "poll_again_after_mcp_server_restart",
+                    "poll_after_seconds": (
+                        LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS
+                    ),
+                    "automatic_call_allowed": True,
+                    "payload_hint": {
+                        "project_id": project_id,
+                        "expected_revision": expected_revision,
+                        "include_gui_status": include_gui_status,
+                        "working_dir": working_dir,
+                        "previous_state_fingerprint": fingerprint,
+                    },
+                },
+                "detail_action": {
+                    "recommended_tool": "material_studio_get_status",
+                    "recommended_action": "restart_mcp_server_then_verify_runtime_source",
+                    "automatic_call_allowed": False,
+                },
+            }
+        )
+        return _finalize_watchdog_receipt(base)
+
+    try:
+        status = material_studio_live_project_status(
+            project_id=project_id,
+            include_gui_status=include_gui_status,
+            working_dir=working_dir,
+            response_mode=McpResponseMode.FULL,
+        )
+    except Exception as exc:
+        status = {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"}
+    if not isinstance(status, dict) or status.get("ok") is not True:
+        state = "project_status_unavailable"
+        error = str((status or {}).get("error") or "status_not_ok")[:1000]
+        fingerprint = _watchdog_state_fingerprint(
+            {"status": state, "runtime": runtime_receipt, "error": error}
+        )
+        base.update(
+            {
+                "ok": False,
+                "status": state,
+                "error": error,
+                "state_fingerprint": fingerprint,
+                "changed_since_previous": (
+                    None
+                    if previous_state_fingerprint is None
+                    else previous_state_fingerprint != fingerprint
+                ),
+                "blocking_reasons": ["live_project_status_unavailable"],
+                "review_reasons": [],
+                "poll_action": {
+                    "recommended_tool": "material_studio_live_watchdog_status",
+                    "recommended_action": "poll_project_status_again",
+                    "poll_after_seconds": (
+                        LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS
+                    ),
+                    "automatic_call_allowed": True,
+                    "payload_hint": {
+                        "project_id": project_id,
+                        "expected_revision": expected_revision,
+                        "include_gui_status": include_gui_status,
+                        "working_dir": working_dir,
+                        "previous_state_fingerprint": fingerprint,
+                    },
+                },
+                "detail_action": {
+                    "recommended_tool": "material_studio_live_project_status",
+                    "recommended_action": "inspect_full_project_status_error",
+                    "automatic_call_allowed": False,
+                    "payload_hint": {
+                        "project_id": project_id,
+                        "include_gui_status": include_gui_status,
+                        "working_dir": working_dir,
+                        "response_mode": "compact",
+                    },
+                },
+            }
+        )
+        return _finalize_watchdog_receipt(base)
+
+    resolved_project_id = str(status.get("project_id") or project_id or "")
+    revision = status.get("revision")
+    revision = revision if isinstance(revision, int) and not isinstance(revision, bool) else None
+    revision_matches_expected = (
+        None if expected_revision is None else revision == expected_revision
+    )
+    execution = _watchdog_execution_receipt(status.get("execution_runtime"))
+    gui = _watchdog_gui_receipt(
+        status,
+        include_gui_status=include_gui_status,
+    )
+    replay_container = status.get("gui_view_replay")
+    replay_container = replay_container if isinstance(replay_container, dict) else {}
+    replay = _watchdog_view_replay_receipt(replay_container.get("progress"))
+    normality = _watchdog_normality_receipt(status.get("normality_gate"))
+    readiness = status.get("mcp_client_readiness")
+    readiness = readiness if isinstance(readiness, dict) else {}
+    primary_action = _watchdog_action_receipt(
+        status.get("next_action_plan"),
+        detail_ref="material_studio_live_project_status.next_action_plan",
+    )
+    action_binding_reasons: list[str] = []
+    action_project_id = primary_action.get("project_id")
+    if (
+        action_project_id is not None
+        and str(action_project_id) != resolved_project_id
+    ):
+        action_binding_reasons.append("primary_action_project_id_mismatch")
+    action_revision = primary_action.get("revision")
+    if action_revision is not None and action_revision != revision:
+        action_binding_reasons.append("primary_action_revision_mismatch")
+    if primary_action.get("binding_verified") is False:
+        action_binding_reasons.append("primary_action_binding_unverified")
+
+    execution_status = str(execution.get("status") or "unavailable")
+    blocking_reasons = _watchdog_reason_list(
+        status.get("blocking_reasons"),
+        readiness.get("blocking_reasons"),
+        normality.get("must_not_claim_live_gui_normal_reasons"),
+    )
+    review_reasons = _watchdog_reason_list(
+        status.get("review_reasons"),
+        readiness.get("review_reasons"),
+        normality.get("review_reasons"),
+        normality.get("calculation_blocking_reasons"),
+        primary_action.get("review_reasons"),
+    )
+    if revision_matches_expected is False:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            "expected_revision_mismatch",
+        )
+    if action_binding_reasons:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            action_binding_reasons,
+        )
+    if execution_status in _WATCHDOG_EXECUTION_REVIEW_STATUSES:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            f"execution:{execution_status}",
+        )
+    if gui.get("single_window_policy_ok") is False:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            gui.get("single_window_violation_reasons"),
+            "gui:single_window_policy_violation",
+        )
+    if gui.get("workspace_context_mismatch") is True:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            "gui:workspace_context_mismatch",
+        )
+    replay_status = str(replay.get("status") or "unavailable")
+    if replay_status in {"binding_rejected", "trust_review_required"}:
+        blocking_reasons = _watchdog_reason_list(
+            blocking_reasons,
+            replay.get("blocking_reasons"),
+            f"view_replay:{replay_status}",
+        )
+
+    action_needs_confirmation = primary_action.get("needs_user_confirmation") is True
+    action_safe = primary_action.get("safe_to_call_without_confirmation") is True
+    gui_attention_required = bool(
+        gui.get("needs_reload") is True
+        or gui.get("needs_activation") is True
+        or gui.get("needs_snapshot") is True
+        or gui.get("needs_single_window_resolution") is True
+    )
+    if revision_matches_expected is False:
+        state = "current_revision_changed"
+    elif execution_status in _WATCHDOG_EXECUTION_POLL_STATUSES:
+        state = "execution_in_progress"
+    elif execution_status in _WATCHDOG_EXECUTION_REVIEW_STATUSES:
+        state = "execution_review_required"
+    elif (
+        gui.get("single_window_policy_ok") is False
+        or gui.get("workspace_context_mismatch") is True
+    ):
+        state = "gui_session_blocked"
+    elif replay_status in {"binding_rejected", "trust_review_required"}:
+        state = "view_replay_review_required"
+    elif action_binding_reasons:
+        state = "primary_action_binding_blocked"
+    elif action_needs_confirmation:
+        state = "awaiting_user_confirmation"
+    elif (
+        normality.get("can_claim_model_normal") is True
+        and normality.get("ready_for_calculation") is False
+    ):
+        state = "model_normal_calculation_review"
+    elif gui_attention_required:
+        state = "gui_attention_required"
+    elif replay.get("pending_view_count", 0) not in {None, 0}:
+        state = "view_replay_in_progress"
+    elif action_safe:
+        state = "safe_followup_available"
+    elif (
+        normality.get("can_claim_live_gui_normal") is True
+        and normality.get("ready_for_calculation") is True
+    ):
+        state = "ready_for_next_request"
+    elif blocking_reasons:
+        state = "blocked_review_required"
+    elif review_reasons:
+        state = "review_required"
+    else:
+        state = "idle"
+
+    decision_core = {
+        "status": state,
+        "project_id": resolved_project_id,
+        "revision": revision,
+        "expected_revision": expected_revision,
+        "revision_matches_expected": revision_matches_expected,
+        "runtime": runtime_receipt,
+        "execution": execution,
+        "gui": {
+            key: gui.get(key)
+            for key in (
+                "process_count",
+                "window_count",
+                "single_window_policy_ok",
+                "workspace_context_mismatch",
+                "target_window_handle",
+                "target_window_identity_verified",
+                "target_window_is_foreground",
+                "loaded_current_revision",
+                "needs_reload",
+                "needs_activation",
+                "needs_snapshot",
+                "needs_single_window_resolution",
+            )
+        },
+        "view_replay": replay,
+        "normality": normality,
+        "primary_action": {
+            key: primary_action.get(key)
+            for key in (
+                "action_id",
+                "recommended_tool",
+                "recommended_action",
+                "needs_user_confirmation",
+                "safe_to_call_without_confirmation",
+                "binding_verified",
+            )
+        },
+        "primary_action_payload_sha256": (
+            primary_action.get("payload") or {}
+        ).get("sha256"),
+        "blocking_reasons": blocking_reasons,
+        "review_reasons": review_reasons,
+    }
+    fingerprint = _watchdog_state_fingerprint(decision_core)
+    poll_expected_revision = (
+        expected_revision
+        if revision_matches_expected is False
+        else revision
+    )
+    poll_payload = {
+        "project_id": resolved_project_id,
+        "expected_revision": poll_expected_revision,
+        "previous_state_fingerprint": fingerprint,
+        "include_gui_status": include_gui_status,
+        "working_dir": status.get("working_dir") or working_dir,
+    }
+    detail_payload = {
+        "project_id": resolved_project_id,
+        "include_gui_status": include_gui_status,
+        "working_dir": status.get("working_dir") or working_dir,
+        "response_mode": "compact",
+    }
+    base.update(
+        {
+            "status": state,
+            "working_dir": status.get("working_dir") or working_dir,
+            "project_id": resolved_project_id,
+            "revision": revision,
+            "revision_matches_expected": revision_matches_expected,
+            "state_fingerprint": fingerprint,
+            "changed_since_previous": (
+                None
+                if previous_state_fingerprint is None
+                else previous_state_fingerprint != fingerprint
+            ),
+            "execution": execution,
+            "gui": gui,
+            "view_replay": replay,
+            "normality": normality,
+            "modeling_readiness": _mapping_subset(
+                readiness,
+                (
+                    "status",
+                    "state",
+                    "can_accept_modeling_request",
+                    "can_accept_followup_request",
+                    "can_accept_preview_request",
+                    "ready_for_live_edit",
+                    "ready_for_live_hotload",
+                    "ready_for_calculation",
+                    "current_revision_loaded_in_gui",
+                    "next_edit_status",
+                    "next_edit_requires_reaudit",
+                ),
+            ),
+            "primary_action": primary_action,
+            "blocking_reasons": blocking_reasons,
+            "review_reasons": review_reasons,
+            "requires_user_confirmation": action_needs_confirmation,
+            "safe_followup_reported": action_safe,
+            "automatic_followup_action_allowed": False,
+            "poll_action": {
+                "recommended_tool": "material_studio_live_watchdog_status",
+                "recommended_action": "poll_same_revision_after_interval",
+                "poll_after_seconds": LIVE_WATCHDOG_DEFAULT_POLL_INTERVAL_SECONDS,
+                "automatic_call_allowed": True,
+                "payload_hint": poll_payload,
+            },
+            "detail_action": {
+                "recommended_tool": "material_studio_live_project_status",
+                "recommended_action": "inspect_full_project_decision_before_action",
+                "automatic_call_allowed": False,
+                "payload_hint": detail_payload,
+            },
+        }
+    )
+    return _finalize_watchdog_receipt(base)
+
+
+@mcp.tool(
+    name="material_studio_live_watchdog_status",
+    annotations={
+        "title": "Read bounded live modeling watchdog status",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def material_studio_live_watchdog_status(
+    project_id: Annotated[
+        str | None,
+        Field(
+            description="Structured project ID. When omitted, the latest current project is used.",
+            min_length=1,
+            max_length=120,
+        ),
+    ] = None,
+    expected_revision: Annotated[
+        int | None,
+        Field(
+            description="Optional revision identity that must still be current.",
+            ge=0,
+        ),
+    ] = None,
+    previous_state_fingerprint: Annotated[
+        str | None,
+        Field(
+            description="Optional prior watchdog SHA-256 used to report whether state changed.",
+            pattern=r"^[0-9a-f]{64}$",
+        ),
+    ] = None,
+    include_gui_status: Annotated[
+        bool,
+        Field(description="Include a read-only single-window Materials Studio GUI probe."),
+    ] = True,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured/GUI workspace root."),
+    ] = None,
+) -> dict[str, Any]:
+    """Return a small revision-bound monitor receipt without issuing actions."""
+
+    return _live_watchdog_status_payload(
+        project_id=project_id,
+        expected_revision=expected_revision,
+        previous_state_fingerprint=previous_state_fingerprint,
+        include_gui_status=include_gui_status,
+        working_dir=working_dir,
+    )
 
 
 def _status_view_bundle_from_report(

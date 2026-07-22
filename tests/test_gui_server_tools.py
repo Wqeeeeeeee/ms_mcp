@@ -5962,6 +5962,26 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["live_preflight_tool"] == "material_studio_live_session_preflight"
     assert capabilities["live_entry_tool"] == "material_studio_live_modeling_request"
     assert capabilities["live_status_tool"] == "material_studio_live_project_status"
+    assert capabilities["live_watchdog_tool"] == (
+        "material_studio_live_watchdog_status"
+    )
+    assert capabilities["live_watchdog_contract"] == {
+        "schema_version": "material_studio_live_watchdog_status_v1",
+        "tool": "material_studio_live_watchdog_status",
+        "detail_tool": "material_studio_live_project_status",
+        "read_only": True,
+        "default_poll_interval_seconds": 1_200,
+        "max_response_bytes": 12_000,
+        "binds_expected_revision": True,
+        "supports_previous_state_fingerprint": True,
+        "state_fingerprint_algorithm": "sha256_canonical_json_v1",
+        "automatic_polling_allowed": True,
+        "automatic_non_poll_action_allowed": False,
+        "automatic_execution_retry_allowed": False,
+        "automatic_gui_input_allowed": False,
+        "automatic_revision_creation_allowed": False,
+        "source_status_tool_is_internal_full_receipt": True,
+    }
     replay_progress_contract = capabilities["view_replay_progress_contract"]
     assert replay_progress_contract == {
         "schema_version": "material_studio_gui_view_replay_progress_v1",
@@ -5985,10 +6005,22 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     compact_capabilities = server.material_studio_live_capabilities(
         response_mode="compact"
     )
-    assert (
-        compact_capabilities["view_replay_progress_contract"]
-        == replay_progress_contract
-    )
+    assert compact_capabilities["live_watchdog_contract"] == {
+        "schema_version": "material_studio_live_watchdog_status_v1",
+        "tool": "material_studio_live_watchdog_status",
+        "default_poll_interval_seconds": 1_200,
+        "max_response_bytes": 12_000,
+        "automatic_polling_allowed": True,
+        "automatic_non_poll_action_allowed": False,
+    }
+    assert compact_capabilities["view_replay_progress_contract"] == {
+        "schema_version": "material_studio_gui_view_replay_progress_v1",
+        "status_field": (
+            "material_studio_live_project_status.gui_view_replay.progress"
+        ),
+        "decision_field": "trusted_complete",
+        "fail_closed": True,
+    }
     assert capabilities["live_status_project_id_optional"] is True
     assert capabilities["live_update_tool"] == "material_studio_live_update_with_patch"
     assert (

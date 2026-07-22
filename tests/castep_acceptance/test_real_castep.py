@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from material_studio_mcp_server.castep_acceptance.profile import (
     WINDOWS_JOB_CWD_LIMIT,
     WINDOWS_JOB_PATH_LIMIT,
     repository_root,
+    validate_windows_job_cwd,
     windows_job_path_lengths,
     windows_job_cwd_length,
 )
@@ -42,6 +44,7 @@ def _default_real_destinations() -> tuple[Path, Path]:
     # Keep the fixed nested Materials Studio job cwd below Windows' legacy
     # CreateProcess limit even when the user profile path is long.
     root = temp_root / "msca"
+    validate_windows_job_cwd(root / "workspace-001")
     try:
         reject_link_or_reparse_components(root)
         root.mkdir(mode=0o700, parents=False, exist_ok=False)
@@ -63,6 +66,11 @@ def test_default_destinations_satisfy_literal_work_order_command(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "validate_windows_job_cwd",
+        lambda _workspace: None,
+    )
     workspace, evidence = _default_real_destinations()
     assert workspace == tmp_path / "msca" / "workspace-001"
     assert evidence == (
@@ -84,6 +92,19 @@ def test_default_destinations_reject_repository_temp_before_creation(
     with pytest.raises(ValueError, match="outside the repository"):
         _default_real_destinations()
     assert not (repository_root() / "msca").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows path budget")
+def test_default_destination_rejects_path_budget_before_root_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    long_temp = tmp_path / ("temp-" + ("x" * 120))
+    long_temp.mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(long_temp))
+    with pytest.raises(ValueError, match="Windows .* path"):
+        _default_real_destinations()
+    assert not (long_temp / "msca").exists()
 
 
 def test_short_default_shape_keeps_windows_job_cwd_below_legacy_limit() -> None:

@@ -289,21 +289,34 @@ class CastepAcceptanceHarness:
 
         execute_invocation_count = 0
         public_execute: dict[str, Any]
+        execution_error: Exception | None = None
+        gui_after_error: Exception | None = None
         try:
             execute_invocation_count += 1
             public_execute = tool(execution_mode="execute", **preview_payload)
         except Exception as exc:
-            raise CastepAcceptanceError(
-                f"public CASTEP execution raised {exc.__class__.__name__}; "
-                "workspace evidence was preserved"
-            ) from exc
+            execution_error = exc
         finally:
-            gui_after = capture_gui_inventory(gui_backend)
+            try:
+                gui_after = capture_gui_inventory(gui_backend)
+            except Exception as exc:
+                gui_after = gui_before
+                gui_after_error = exc
             if self._real_environment:
                 runner_identity_valid = runner_identity_valid and _real_runner_unchanged(
                     tool,
                     runner_before,
                 )
+        if execution_error is not None:
+            raise CastepAcceptanceError(
+                f"public CASTEP execution raised {execution_error.__class__.__name__}; "
+                "workspace evidence was preserved"
+            ) from execution_error
+        if gui_after_error is not None:
+            raise CastepAcceptanceError(
+                "read-only GUI inventory failed after CASTEP execution; "
+                "workspace evidence was preserved"
+            ) from gui_after_error
         try:
             assert_workspace_reservation(reservation)
         except (OSError, TypeError, ValueError) as exc:

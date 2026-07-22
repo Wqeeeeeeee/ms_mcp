@@ -14,6 +14,14 @@ from material_studio_mcp_server.runner import MaterialStudioRunner
 from ._helpers import FakeGuiBackend, run_fake_acceptance
 
 
+class _SecondInventoryFailure(FakeGuiBackend):
+    def list_processes(self):
+        prior_calls = sum(name == "list_processes" for name, _ in self.calls)
+        if prior_calls:
+            raise RuntimeError("GUI after-probe failed")
+        return super().list_processes()
+
+
 def test_offline_fake_public_tool_path_executes_once_and_cannot_claim_real(
     monkeypatch,
     tmp_path,
@@ -125,3 +133,42 @@ def test_real_runner_snapshot_binds_trusted_path_and_file_identity(
     assert adapter_module._real_runner_unchanged(tool, before) is True
     runner_path.write_bytes(b"@echo off\r\nrem changed runner\r\n")
     assert adapter_module._real_runner_unchanged(tool, before) is False
+
+
+def test_execute_error_is_not_masked_by_after_gui_probe_failure(
+    monkeypatch,
+    request_factory,
+) -> None:
+    from material_studio_mcp_server import server
+
+    public_tool = server.material_studio_castep_run_current
+
+    def failing_public_tool(*, execution_mode, **kwargs):
+        if execution_mode == "execute":
+            raise FileNotFoundError("runner script path failed")
+        return public_tool(execution_mode=execution_mode, **kwargs)
+
+    monkeypatch.setattr(
+        server,
+        "material_studio_castep_run_current",
+        failing_public_tool,
+    )
+    gui = _SecondInventoryFailure()
+    harness = CastepAcceptanceHarness(
+        gui_backend_resolver=lambda: gui,
+        real_environment=False,
+    )
+    preview_request = request_factory()
+    preview = harness.run(preview_request)
+    execute_request = request_factory(
+        execution_mode="execute",
+        expected_plan_sha256=preview.plan_sha256,
+        real_opt_in="--run-real-castep",
+    )
+
+    with pytest.raises(CastepAcceptanceError) as raised:
+        harness.run(execute_request)
+
+    assert "FileNotFoundError" in str(raised.value)
+    assert isinstance(raised.value.__cause__, FileNotFoundError)
+    assert "runner script path failed" in str(raised.value.__cause__)

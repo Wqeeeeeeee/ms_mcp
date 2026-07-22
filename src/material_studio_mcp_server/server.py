@@ -43353,6 +43353,8 @@ def material_studio_castep_run_current(
         runner_result: dict[str, Any] | None = None
         result_validation: dict[str, Any] | None = None
         structure_validation: dict[str, Any] | None = None
+        preserved_export_validation: dict[str, Any] | None = None
+        preserved_export_matches_source: bool | None = None
         native_manifest: list[dict[str, Any]] = []
         native_warnings: list[str] = []
         current_after_run: ModelSpec | None = None
@@ -43440,9 +43442,19 @@ def material_studio_castep_run_current(
                     output_structure=output_structure,
                     output_report=output_report,
                 )
+                validated_result = result_validation.get("result") or {}
+                result_cif_policy = (
+                    "materials_studio_20_1_export"
+                    if runner_result.get("success") is True
+                    and result_validation.get("ok") is True
+                    and validated_result.get("materials_studio_api_contract")
+                    == "Materials Studio 20.1"
+                    else "strict"
+                )
                 structure_validation = validate_crystal_cif_against_spec(
                     base_spec.model,
                     output_structure,
+                    policy=result_cif_policy,
                 )
                 excluded_paths = {
                     input_structure.resolve(),
@@ -43594,6 +43606,9 @@ def material_studio_castep_run_current(
                 candidate_output_dir
                 / f"structure_r{candidate_revision:03d}.cif"
             )
+            final_export_structure = (
+                candidate_result_dir / "materials_studio_export.cif"
+            )
             final_report = candidate_result_dir / "castep_report.txt"
             final_result_metadata_path = (
                 candidate_result_dir / "result_metadata.json"
@@ -43605,6 +43620,7 @@ def material_studio_castep_run_current(
             final_native_audit_path = candidate_result_dir / "native_output_audit.json"
             if (
                 final_structure.exists()
+                or final_export_structure.exists()
                 or final_report.exists()
                 or final_result_metadata_path.exists()
                 or final_result_payload_path.exists()
@@ -43618,7 +43634,25 @@ def material_studio_castep_run_current(
                     "refusing to overwrite orphan evidence."
                 )
             candidate_result_dir.mkdir(parents=True, exist_ok=False)
-            shutil.copy2(output_structure, final_structure)
+            shutil.copy2(output_structure, final_export_structure)
+            preserved_export_validation = validate_crystal_cif_against_spec(
+                base_spec.model,
+                final_export_structure,
+                policy="materials_studio_20_1_export",
+            )
+            if not preserved_export_validation.get("ok"):
+                raise ValueError(
+                    "Preserved Materials Studio export failed export-policy validation"
+                )
+            preserved_export_matches_source = (
+                preserved_export_validation.get("sha256")
+                == structure_validation.get("sha256")
+            )
+            if not preserved_export_matches_source:
+                raise ValueError(
+                    "Preserved Materials Studio export differs from the validated source"
+                )
+            write_crystal_cif(base_spec.model, final_structure)
             shutil.copy2(output_report, final_report)
             shutil.copy2(script_path, final_script_path)
             validated_result_payload = dict(result_validation.get("result") or {})
@@ -43630,6 +43664,13 @@ def material_studio_castep_run_current(
                 native_manifest,
                 source_root=native_capture_dir,
                 destination_root=final_native_dir,
+            )
+            copied_native_manifest.append(
+                {
+                    "path": str(final_export_structure),
+                    "sha256": str(preserved_export_validation["sha256"]),
+                    "size_bytes": final_export_structure.stat().st_size,
+                }
             )
             native_output_audit, derived_artifacts = audit_castep_native_artifacts(
                 copied_native_manifest,
@@ -43648,10 +43689,12 @@ def material_studio_castep_run_current(
             final_structure_validation = validate_crystal_cif_against_spec(
                 base_spec.model,
                 final_structure,
+                policy="strict",
             )
             if not final_structure_validation.get("ok"):
                 raise ValueError(
-                    "Copied CASTEP electronic structure failed unchanged-structure validation"
+                    "Canonical CASTEP electronic result structure failed strict "
+                    "unchanged-structure validation"
                 )
             result_spec, electronic_receipt = (
                 build_electronic_result_revision_spec(
@@ -43698,6 +43741,8 @@ def material_studio_castep_run_current(
             )
 
         recorded_spec = store.get_revision(base_spec.project_id, info.revision)
+        assert preserved_export_validation is not None
+        assert preserved_export_matches_source is True
         electronic_result_assessment = assess_castep_electronic_result(
             recorded_spec
         )
@@ -43724,6 +43769,16 @@ def material_studio_castep_run_current(
             "runner": runner_result,
             "result_validation": result_validation,
             "structure_artifact_validation": final_structure_validation,
+            "materials_studio_export_structure": str(final_export_structure),
+            "materials_studio_export_structure_sha256": (
+                preserved_export_validation.get("sha256")
+            ),
+            "materials_studio_export_copy_sha256_matches_source": (
+                preserved_export_matches_source
+            ),
+            "materials_studio_export_bound_in_native_artifacts": True,
+            "materials_studio_export_source_validation": structure_validation,
+            "materials_studio_export_validation": preserved_export_validation,
             "native_artifacts": copied_native_manifest,
             "native_output_audit": native_output_audit,
             "sampled_band_edges": native_output_audit.get(
@@ -43820,9 +43875,18 @@ def material_studio_castep_run_current(
                     "absolute_difference_ev"
                 ),
                 "derived_artifact_count": len(derived_artifacts),
+                "materials_studio_export_copy_sha256_matches_source": (
+                    preserved_export_matches_source
+                ),
+                "materials_studio_export_bound_in_native_artifacts": True,
+                "materials_studio_export_source_validation": structure_validation,
+                "materials_studio_export_validation": preserved_export_validation,
                 "structure_artifact_validation": final_structure_validation,
                 "planned_outputs": {
                     "structure": str(final_structure),
+                    "materials_studio_export_structure": str(
+                        final_export_structure
+                    ),
                     "report": str(final_report),
                     "result_metadata": str(final_result_metadata_path),
                     "tagged_result": str(final_result_payload_path),

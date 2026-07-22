@@ -35,9 +35,12 @@ SCF audit establish calculation evidence only. `scientifically_verified` and
 
 Preview builds the candidate and exact public-tool payload in memory. It does
 not create the workspace, resolve the server tool, inspect the GUI, or call a
-runner. Execute requires both the matching preview SHA-256 and the literal
-`--run-real-castep` authorization. The workspace must be absent, external to
-the repository, and have an existing parent.
+runner. Execute requires the reviewed request identifier, timeout, matching
+preview SHA-256, and literal `--run-real-castep` authorization. These values
+are required CLI parameters. Their format is validated before destination
+allocation; plan equality is checked after the side-effect-free preview and
+before workspace reservation or backend resolution. The workspace must be
+absent, external to the repository, and have an existing parent.
 
 Execution performs one public-tool preview followed by one public-tool execute
 call. The journal must prove exactly one backend attempt with `started` and
@@ -103,24 +106,34 @@ Before authorization is consumed, verify all of the following:
 5. The external evidence file is absent and its real parent contains no link or
    reparse component.
 
-The literal Work Order command is sufficient on a clean machine. With no path
-options, the test atomically creates one short fixed external parent (`msca`)
-under the OS temporary directory, uses `workspace-001` and
+The real command must include the exact request ID, timeout, and plan SHA-256
+that were reviewed after all offline gates passed. Missing, malformed, or
+mismatched binding values fail before workspace creation or backend execution.
+With no path options, the test atomically creates one short fixed external
+parent (`msca`) under the OS temporary directory, uses `workspace-001` and
 `real-castep-evidence-001.json`, and refuses to reuse that parent on a later
 attempt. The short root and compact private project identifier are required
 because the fixed project/output/job script and log paths must remain below
 the Windows legacy `CreateProcess` limits; longer explicit paths fail before
-execution with a clear path-budget error. This
-keeps the exact required command safe while preserving all artifacts. A caller
-may instead provide both destinations explicitly; they are validated as fresh
-external paths before execution.
+execution with a clear path-budget error. A caller may instead provide both
+destinations explicitly; they are validated as fresh external paths before
+execution.
 
 Example authorized command using explicitly reviewed destinations:
 
 ```powershell
 $workspace = 'C:\ms-castep-acceptance\workspace-001'
 $evidence = 'C:\ms-castep-acceptance\real-castep-evidence-001.json'
-python -m pytest -q tests/castep_acceptance/test_real_castep.py --run-real-castep --real-castep-workspace $workspace --real-castep-evidence-output $evidence
+$requestId = 'reviewed-request-id'
+$timeoutSeconds = 1800
+$planSha256 = '<reviewed-plan-sha256>'
+python -m pytest -q tests/castep_acceptance/test_real_castep.py `
+  --run-real-castep `
+  --real-castep-workspace $workspace `
+  --real-castep-evidence-output $evidence `
+  --real-castep-request-id $requestId `
+  --real-castep-timeout-seconds $timeoutSeconds `
+  --real-castep-expected-plan-sha256 $planSha256
 ```
 
 An explicit real command fails rather than skips when any prerequisite is

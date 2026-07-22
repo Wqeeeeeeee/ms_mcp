@@ -29,6 +29,25 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="write coordinate-free real CASTEP evidence to a new external file",
     )
+    parser.addoption(
+        "--real-castep-request-id",
+        action="store",
+        default=None,
+        help="bind the real execution to the reviewed preview request identifier",
+    )
+    parser.addoption(
+        "--real-castep-timeout-seconds",
+        action="store",
+        type=int,
+        default=None,
+        help="bind the real execution to the reviewed runner timeout",
+    )
+    parser.addoption(
+        "--real-castep-expected-plan-sha256",
+        action="store",
+        default=None,
+        help="require the real execution preview to match this reviewed plan digest",
+    )
 
 
 @pytest.fixture

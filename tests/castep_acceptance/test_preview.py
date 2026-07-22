@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from material_studio_mcp_server.castep_acceptance import (
 )
 from material_studio_mcp_server.castep_acceptance.profile import (
     EXPECTED_SIMULATION_PAYLOAD,
+    reserve_external_fresh_workspace,
 )
 
 
@@ -90,3 +92,51 @@ def test_preview_rejects_repository_or_existing_workspace(
         CastepAcceptanceHarness(real_environment=False).run(
             request_factory(selected_workspace=repository_workspace)
         )
+
+
+def test_workspace_reservation_is_atomic_and_no_clobbering(tmp_path: Path) -> None:
+    target = tmp_path / "single-winner"
+
+    def reserve():
+        try:
+            return reserve_external_fresh_workspace(target)
+        except ValueError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(lambda _index: reserve(), range(2)))
+    assert sum(hasattr(item, "path") for item in outcomes) == 1
+    assert sum(isinstance(item, ValueError) for item in outcomes) == 1
+    assert target.is_dir()
+    next(item for item in outcomes if hasattr(item, "path")).close()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows directory handle gate")
+def test_workspace_reservation_blocks_rename_until_release(tmp_path: Path) -> None:
+    target = tmp_path / "locked-workspace"
+    moved = tmp_path / "moved-workspace"
+    reservation = reserve_external_fresh_workspace(target)
+    try:
+        with pytest.raises(OSError):
+            target.rename(moved)
+        assert target.is_dir()
+        assert not moved.exists()
+    finally:
+        reservation.close()
+    target.rename(moved)
+    assert moved.is_dir()
+
+
+def test_workspace_reservation_rejects_reparse_parent(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        if __import__("os").name != "nt":
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        pytest.skip("directory symlinks are unavailable")
+    with pytest.raises(ValueError, match="unsafe component"):
+        reserve_external_fresh_workspace(linked_parent / "workspace")
+    assert not (real_parent / "workspace").exists()

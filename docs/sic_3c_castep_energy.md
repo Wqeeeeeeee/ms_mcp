@@ -42,7 +42,11 @@ the repository, and have an existing parent.
 Execution performs one public-tool preview followed by one public-tool execute
 call. The journal must prove exactly one backend attempt with `started` and
 `completed` events. No automatic retry is available. The workspace is never
-deleted by the harness, including on failure.
+deleted by the harness, including on failure. Before writing the candidate, the
+harness atomically reserves the fresh workspace and holds a hidden guard-file
+handle for the entire ProjectStore, preview, execution, and verification
+transaction; a rename or reparse replacement is therefore rejected while the
+run is active.
 
 The only permitted GUI interaction is read-only process/window inventory
 before and after execution. Acceptance requires one existing Materials Studio
@@ -99,8 +103,15 @@ Before authorization is consumed, verify all of the following:
 5. The external evidence file is absent and its real parent contains no link or
    reparse component.
 
-Example authorized command, with both destinations deliberately selected and
-reviewed before execution:
+The literal Work Order command is sufficient on a clean machine. With no path
+options, the test atomically creates one fixed external parent under the OS
+temporary directory, uses `workspace-001` and
+`real-castep-evidence-001.json`, and refuses to reuse that parent on a later
+attempt. This keeps the exact required command safe while preserving all
+artifacts. A caller may instead provide both destinations explicitly; they are
+validated as fresh external paths before execution.
+
+Example authorized command using explicitly reviewed destinations:
 
 ```powershell
 $workspace = 'C:\ms-castep-acceptance\workspace-001'

@@ -4,17 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import os
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from material_studio_mcp_server.config import COMMON_INSTALL_ROOTS
 from material_studio_mcp_server.ms_roundtrip.gui_inventory import (
     GuiObservation,
     ReadOnlyGuiBackend,
     capture_gui_inventory,
     default_gui_backend,
+)
+from material_studio_mcp_server.ms_roundtrip.errors import (
+    RoundtripError,
+    RoundtripErrorCode,
+)
+from material_studio_mcp_server.ms_roundtrip.secure_io import (
+    FileSnapshot,
+    MAX_RUNNER_ARTIFACT_BYTES,
+    reject_link_or_reparse_components,
+    snapshot_unchanged,
+    stable_read_file,
 )
 from material_studio_mcp_server.runner import MaterialStudioRunner
 from material_studio_mcp_server.specs import ModelSpec
@@ -27,10 +38,13 @@ from .contracts import (
     PUBLIC_CASTEP_TOOL,
 )
 from .profile import (
+    WorkspaceReservation,
+    assert_workspace_reservation,
     build_fixed_candidate,
     effective_settings_are_exact,
     plan_acceptance,
-    validate_external_fresh_workspace,
+    reserve_external_fresh_workspace,
+    WORKSPACE_GUARD_NAME,
 )
 from .verification import verify_castep_acceptance_execution
 
@@ -63,6 +77,8 @@ def _default_tool_resolver() -> CastepTool:
 def _snapshot_tree(root: Path) -> dict[str, str]:
     snapshots: dict[str, str] = {}
     for path in sorted(root.rglob("*"), key=lambda value: value.as_posix()):
+        if path.name == WORKSPACE_GUARD_NAME:
+            continue
         if path.is_file():
             relative = path.relative_to(root).as_posix()
             snapshots[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -70,32 +86,65 @@ def _snapshot_tree(root: Path) -> dict[str, str]:
 
 
 def _public_tool_identity_valid(tool: CastepTool) -> bool:
-    return bool(
-        callable(tool)
-        and getattr(tool, "__name__", None) == PUBLIC_CASTEP_TOOL
-        and getattr(tool, "__module__", None)
-        == "material_studio_mcp_server.server"
-    )
+    from material_studio_mcp_server import server
+
+    return callable(tool) and tool is getattr(server, PUBLIC_CASTEP_TOOL, None)
 
 
-def _real_runner_identity_valid(tool: CastepTool) -> bool:
-    module = sys.modules.get(getattr(tool, "__module__", ""))
-    runner = getattr(module, "runner", None) if module is not None else None
-    if not isinstance(runner, MaterialStudioRunner):
+def _trusted_runner_path(path: Path) -> bool:
+    try:
+        resolved = path.expanduser().resolve(strict=True)
+    except OSError:
         return False
+    parts = tuple(part.casefold() for part in resolved.parts)
+    if len(parts) < 6 or parts[-1] != "runmatscript.bat":
+        return False
+    if parts[-4:-1] != ("etc", "scripting", "bin"):
+        return False
+    if parts[-5] not in {"materials studio 20.1", "materials studio 20.1 x64 server"}:
+        return False
+    install_root = Path(*resolved.parts[:-5])
+    trusted_roots = {
+        os.path.normcase(str(Path(root).expanduser().resolve(strict=False)))
+        for root in COMMON_INSTALL_ROOTS
+    }
+    return os.path.normcase(str(install_root)) in trusted_roots
+
+
+def _real_runner_snapshot(tool: CastepTool) -> FileSnapshot | None:
+    from material_studio_mcp_server import server
+
+    if tool is not getattr(server, PUBLIC_CASTEP_TOOL, None):
+        return None
+    runner = getattr(server, "runner", None)
+    if not isinstance(runner, MaterialStudioRunner):
+        return None
     config = runner.config
     path = getattr(config, "runner", None)
-    if not isinstance(path, Path) or not path.is_file():
-        return False
-    parts = {part.casefold() for part in path.resolve().parts}
-    return bool(
-        path.name.casefold() == "runmatscript.bat"
-        and parts.intersection(
-            {"materials studio 20.1", "materials studio 20.1 x64 server"}
+    if not isinstance(path, Path) or not _trusted_runner_path(path):
+        return None
+    if tuple(getattr(config, "extra_runner_args", ())) or os.environ.get(
+        "MATERIAL_STUDIO_COMMAND_TEMPLATE"
+    ):
+        return None
+    try:
+        reject_link_or_reparse_components(path)
+        return stable_read_file(
+            path,
+            max_bytes=MAX_RUNNER_ARTIFACT_BYTES,
+            require_single_link=False,
+            code=RoundtripErrorCode.RUNNER_IDENTITY_INVALID,
         )
-        and not tuple(getattr(config, "extra_runner_args", ()))
-        and not os.environ.get("MATERIAL_STUDIO_COMMAND_TEMPLATE")
-    )
+    except (OSError, RoundtripError):
+        return None
+
+
+def _real_runner_unchanged(
+    tool: CastepTool,
+    before: FileSnapshot | None,
+) -> bool:
+    after = _real_runner_snapshot(tool)
+    return before is not None and after is not None and snapshot_unchanged(before, after)
 
 
 class CastepAcceptanceHarness:
@@ -132,8 +181,6 @@ class CastepAcceptanceHarness:
         request: CastepAcceptanceRequest,
         plan: CastepAcceptancePlan,
     ) -> CastepAcceptanceExecutionResult:
-        workspace = validate_external_fresh_workspace(request.workspace_root)
-
         gui_backend = self._gui_backend_resolver()
         gui_before = capture_gui_inventory(gui_backend)
         if not gui_before.receipt.usable_single_window:
@@ -147,11 +194,44 @@ class CastepAcceptanceHarness:
             raise CastepAcceptanceError(
                 "acceptance execution requires material_studio_castep_run_current"
             )
-        runner_identity_valid = _real_runner_identity_valid(tool)
+        runner_before = _real_runner_snapshot(tool) if self._real_environment else None
+        runner_identity_valid = runner_before is not None
         if self._real_environment and not runner_identity_valid:
             raise CastepAcceptanceError(
                 "real CASTEP runner identity failed before workspace creation"
             )
+
+        try:
+            reservation = reserve_external_fresh_workspace(request.workspace_root)
+        except (OSError, TypeError, ValueError) as exc:
+            raise CastepAcceptanceError(
+                "real CASTEP workspace could not be reserved safely"
+            ) from exc
+        with reservation:
+            return self._execute_reserved(
+                plan=plan,
+                gui_backend=gui_backend,
+                gui_before=gui_before,
+                tool=tool,
+                public_tool_reused=public_tool_reused,
+                runner_before=runner_before,
+                runner_identity_valid=runner_identity_valid,
+                reservation=reservation,
+            )
+
+    def _execute_reserved(
+        self,
+        *,
+        plan: CastepAcceptancePlan,
+        gui_backend: ReadOnlyGuiBackend,
+        gui_before: GuiObservation,
+        tool: CastepTool,
+        public_tool_reused: bool,
+        runner_before: FileSnapshot | None,
+        runner_identity_valid: bool,
+        reservation: WorkspaceReservation,
+    ) -> CastepAcceptanceExecutionResult:
+        workspace = reservation.path
 
         source_spec = build_fixed_candidate(plan.project_id)
         store = ProjectStore(workspace)
@@ -162,6 +242,12 @@ class CastepAcceptanceHarness:
         )
         source_spec = store.load_current(plan.project_id)
 
+        try:
+            assert_workspace_reservation(reservation)
+        except (OSError, TypeError, ValueError) as exc:
+            raise CastepAcceptanceError(
+                "real CASTEP workspace identity changed before preview"
+            ) from exc
         baseline = _snapshot_tree(workspace)
         preview_payload = dict(plan.public_tool_payload)
         public_preview = tool(execution_mode="preview", **preview_payload)
@@ -180,6 +266,16 @@ class CastepAcceptanceHarness:
             raise CastepAcceptanceError(
                 "public CASTEP preview changed state or failed the frozen profile"
             )
+        if self._real_environment and not _real_runner_unchanged(tool, runner_before):
+            raise CastepAcceptanceError(
+                "real CASTEP runner changed during preview"
+            )
+        try:
+            assert_workspace_reservation(reservation)
+        except (OSError, TypeError, ValueError) as exc:
+            raise CastepAcceptanceError(
+                "real CASTEP workspace identity changed before execution"
+            ) from exc
 
         execute_invocation_count = 0
         public_execute: dict[str, Any]
@@ -193,6 +289,17 @@ class CastepAcceptanceHarness:
             ) from exc
         finally:
             gui_after = capture_gui_inventory(gui_backend)
+            if self._real_environment:
+                runner_identity_valid = runner_identity_valid and _real_runner_unchanged(
+                    tool,
+                    runner_before,
+                )
+        try:
+            assert_workspace_reservation(reservation)
+        except (OSError, TypeError, ValueError) as exc:
+            raise CastepAcceptanceError(
+                "real CASTEP workspace identity changed after execution"
+            ) from exc
 
         verification = verify_castep_acceptance_execution(
             plan=plan,

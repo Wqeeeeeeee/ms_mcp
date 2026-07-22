@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,11 @@ from material_studio_mcp_server.castep_relaxation import (
     crystal_structure_sha256,
 )
 from material_studio_mcp_server.domains.surface import PLUGIN, build, plan
+from material_studio_mcp_server.ms_roundtrip.errors import RoundtripError
+from material_studio_mcp_server.ms_roundtrip.secure_io import (
+    reject_link_or_reparse_components,
+    resolve_existing_directory,
+)
 from material_studio_mcp_server.runtime import (
     BuildOutputKind,
     ModelKind,
@@ -57,6 +64,86 @@ EXPECTED_SIMULATION_PAYLOAD: dict[str, Any] = {
     "task": "Energy",
 }
 
+WORKSPACE_GUARD_NAME = ".castep_acceptance_workspace.lock"
+
+
+@dataclass
+class WorkspaceReservation:
+    path: Path
+    identity: tuple[int, int]
+    guard_path: Path
+    handle: int
+    handle_kind: str
+    closed: bool = False
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        _close_workspace_handle(self.handle, self.handle_kind)
+        self.closed = True
+
+    def __enter__(self) -> "WorkspaceReservation":
+        if self.closed:
+            raise ValueError("workspace reservation is already closed")
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+
+def _close_workspace_handle(handle: int, handle_kind: str) -> None:
+    if handle_kind == "windows":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        if not kernel32.CloseHandle(wintypes.HANDLE(handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        os.close(handle)
+
+
+def _open_workspace_guard(path: Path) -> tuple[int, str, Path]:
+    guard_path = path / WORKSPACE_GUARD_NAME
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        generic_read = 0x80000000
+        generic_write = 0x40000000
+        create_new = 1
+        file_attribute_hidden = 0x00000002
+        file_flag_open_reparse_point = 0x00200000
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        handle = kernel32.CreateFileW(
+            str(guard_path),
+            generic_read | generic_write,
+            0,
+            None,
+            create_new,
+            file_attribute_hidden | file_flag_open_reparse_point,
+            None,
+        )
+        invalid_handle = ctypes.c_void_p(-1).value
+        if handle == invalid_handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(handle), "windows", guard_path
+
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    return os.open(guard_path, flags, 0o600), "posix", guard_path
+
 
 def repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -71,15 +158,89 @@ def _is_inside(path: Path, root: Path) -> bool:
 
 
 def validate_external_fresh_workspace(path: Path) -> Path:
-    workspace = path.expanduser().resolve(strict=False)
+    if not isinstance(path, Path):
+        raise TypeError("path must be Path")
+    workspace = Path(os.path.abspath(os.fspath(path.expanduser())))
+    if os.name == "nt" and ":" in workspace.name:
+        raise ValueError("CASTEP acceptance workspace contains an unsafe component")
+    try:
+        reject_link_or_reparse_components(workspace)
+        parent = resolve_existing_directory(workspace.parent)
+    except RoundtripError as exc:
+        raise ValueError(
+            "CASTEP acceptance workspace contains an unsafe component"
+        ) from exc
+    workspace = parent / workspace.name
     root = repository_root().resolve()
     if _is_inside(workspace, root):
         raise ValueError("CASTEP acceptance workspace must be outside the repository")
-    if workspace.exists():
+    if workspace.exists() or workspace.is_symlink():
         raise ValueError("CASTEP acceptance workspace must not already exist")
-    if not workspace.parent.is_dir():
-        raise ValueError("CASTEP acceptance workspace parent must already exist")
     return workspace
+
+
+def reserve_external_fresh_workspace(path: Path) -> WorkspaceReservation:
+    workspace = validate_external_fresh_workspace(path)
+    try:
+        workspace.mkdir(mode=0o700, parents=False, exist_ok=False)
+    except OSError as exc:
+        raise ValueError(
+            "CASTEP acceptance workspace could not be reserved atomically"
+        ) from exc
+    handle: int | None = None
+    handle_kind: str | None = None
+    guard_path: Path | None = None
+    try:
+        handle, handle_kind, guard_path = _open_workspace_guard(workspace)
+        resolved = resolve_existing_directory(workspace)
+        value = resolved.stat(follow_symlinks=False)
+    except (OSError, RoundtripError) as exc:
+        if handle is not None and handle_kind is not None:
+            try:
+                _close_workspace_handle(handle, handle_kind)
+            except OSError:
+                pass
+        raise ValueError(
+            "CASTEP acceptance workspace identity could not be verified"
+        ) from exc
+    if os.path.normcase(str(resolved)) != os.path.normcase(str(workspace)):
+        if handle is not None and handle_kind is not None:
+            _close_workspace_handle(handle, handle_kind)
+        raise ValueError("CASTEP acceptance workspace identity changed")
+    if handle is None or handle_kind is None or guard_path is None:
+        if handle is not None and handle_kind is not None:
+            _close_workspace_handle(handle, handle_kind)
+        raise ValueError("CASTEP acceptance workspace lock was not acquired")
+    return WorkspaceReservation(
+        path=resolved,
+        identity=(int(value.st_dev), int(value.st_ino)),
+        guard_path=guard_path,
+        handle=handle,
+        handle_kind=handle_kind,
+    )
+
+
+def assert_workspace_reservation(reservation: WorkspaceReservation) -> Path:
+    if not isinstance(reservation, WorkspaceReservation):
+        raise TypeError("reservation must be WorkspaceReservation")
+    if reservation.closed:
+        raise ValueError("CASTEP acceptance workspace reservation is closed")
+    if not reservation.guard_path.is_file() or reservation.guard_path.is_symlink():
+        raise ValueError("CASTEP acceptance workspace guard is unavailable")
+    try:
+        resolved = resolve_existing_directory(reservation.path)
+        value = resolved.stat(follow_symlinks=False)
+    except (OSError, RoundtripError) as exc:
+        raise ValueError(
+            "CASTEP acceptance workspace identity could not be reverified"
+        ) from exc
+    identity = (int(value.st_dev), int(value.st_ino))
+    if (
+        os.path.normcase(str(resolved)) != os.path.normcase(str(reservation.path))
+        or identity != reservation.identity
+    ):
+        raise ValueError("CASTEP acceptance workspace identity changed")
+    return resolved
 
 
 def build_fixed_candidate(project_id: str) -> ModelSpec:
@@ -238,11 +399,15 @@ def plan_acceptance(request: CastepAcceptanceRequest) -> CastepAcceptancePlan:
 
 __all__ = [
     "EXPECTED_SIMULATION_PAYLOAD",
+    "WORKSPACE_GUARD_NAME",
+    "WorkspaceReservation",
+    "assert_workspace_reservation",
     "build_fixed_candidate",
     "effective_settings_are_exact",
     "fixed_public_tool_payload",
     "plan_acceptance",
     "repository_root",
+    "reserve_external_fresh_workspace",
     "source_profile_is_exact",
     "validate_external_fresh_workspace",
 ]

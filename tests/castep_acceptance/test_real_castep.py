@@ -1,14 +1,81 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
+
+from material_studio_mcp_server.ms_roundtrip.errors import RoundtripError
+from material_studio_mcp_server.ms_roundtrip.secure_io import (
+    reject_link_or_reparse_components,
+    resolve_existing_directory,
+)
+from material_studio_mcp_server.castep_acceptance.profile import repository_root
 
 
 def _require_real_prerequisite(condition: bool, message: str) -> None:
     if not condition:
         pytest.fail(f"real CASTEP prerequisite failed: {message}", pytrace=False)
+
+
+def _default_real_destinations() -> tuple[Path, Path]:
+    """Allocate the fixed external destinations for the literal Work Order command."""
+
+    try:
+        temp_root = resolve_existing_directory(Path(tempfile.gettempdir()).expanduser())
+        temp_root.relative_to(repository_root().resolve())
+    except ValueError:
+        pass
+    except (OSError, RoundtripError) as exc:
+        raise ValueError(
+            "the default real CASTEP parent is not a safe regular directory"
+        ) from exc
+    else:
+        raise ValueError("the default real CASTEP parent must be outside the repository")
+    root = temp_root / "ms-mcp-castep-acceptance"
+    try:
+        reject_link_or_reparse_components(root)
+        root.mkdir(mode=0o700, parents=False, exist_ok=False)
+        root = resolve_existing_directory(root)
+    except FileExistsError as exc:
+        raise ValueError(
+            "the default real CASTEP destination already exists; use a reviewed "
+            "fresh external destination"
+        ) from exc
+    except (OSError, RoundtripError) as exc:
+        raise ValueError(
+            "the default real CASTEP destination is not a safe regular directory"
+        ) from exc
+    return root / "workspace-001", root / "real-castep-evidence-001.json"
+
+
+def test_default_destinations_satisfy_literal_work_order_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    workspace, evidence = _default_real_destinations()
+    assert workspace == tmp_path / "ms-mcp-castep-acceptance" / "workspace-001"
+    assert evidence == (
+        tmp_path
+        / "ms-mcp-castep-acceptance"
+        / "real-castep-evidence-001.json"
+    )
+    assert workspace.parent.is_dir()
+    assert not workspace.exists()
+    assert not evidence.exists()
+    with pytest.raises(ValueError, match="already exists"):
+        _default_real_destinations()
+
+
+def test_default_destinations_reject_repository_temp_before_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(repository_root()))
+    with pytest.raises(ValueError, match="outside the repository"):
+        _default_real_destinations()
+    assert not (repository_root() / "ms-mcp-castep-acceptance").exists()
 
 
 def test_real_castep_energy_acceptance_once(pytestconfig: pytest.Config) -> None:
@@ -38,15 +105,17 @@ def test_real_castep_energy_acceptance_once(pytestconfig: pytest.Config) -> None
     workspace_value = pytestconfig.getoption("--real-castep-workspace")
     evidence_value = pytestconfig.getoption("--real-castep-evidence-output")
     _require_real_prerequisite(
-        bool(workspace_value),
-        "--real-castep-workspace must name one absent external directory",
+        bool(workspace_value) == bool(evidence_value),
+        "workspace and evidence destinations must be supplied together",
     )
-    _require_real_prerequisite(
-        bool(evidence_value),
-        "--real-castep-evidence-output must name one absent external file",
-    )
-    workspace = Path(workspace_value).expanduser()
-    evidence_output = Path(evidence_value).expanduser()
+    if workspace_value and evidence_value:
+        workspace = Path(workspace_value).expanduser()
+        evidence_output = Path(evidence_value).expanduser()
+    else:
+        try:
+            workspace, evidence_output = _default_real_destinations()
+        except ValueError as exc:
+            pytest.fail(f"real CASTEP prerequisite failed: {exc}", pytrace=False)
     try:
         workspace = validate_external_fresh_workspace(workspace)
     except (OSError, ValueError) as exc:

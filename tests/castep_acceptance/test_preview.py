@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+from material_studio_mcp_server.castep_acceptance import (
+    CastepAcceptanceHarness,
+    CastepAcceptanceRequest,
+)
+from material_studio_mcp_server.castep_acceptance.contracts import FIXED_PROJECT_ID
+from material_studio_mcp_server.castep_acceptance.profile import (
+    EXPECTED_SIMULATION_PAYLOAD,
+    reserve_external_fresh_workspace,
+    validate_windows_job_cwd,
+    windows_job_path_lengths,
+)
+
+
+def test_preview_does_not_resolve_tool_gui_or_create_files(request_factory) -> None:
+    calls: list[str] = []
+
+    def forbidden_tool_resolver():
+        calls.append("tool")
+        raise AssertionError("preview must not resolve a CASTEP backend")
+
+    def forbidden_gui_resolver():
+        calls.append("gui")
+        raise AssertionError("preview must not resolve a GUI backend")
+
+    request = request_factory()
+    workspace = request.workspace_root
+    plan = CastepAcceptanceHarness(
+        tool_resolver=forbidden_tool_resolver,
+        gui_backend_resolver=forbidden_gui_resolver,
+        real_environment=True,
+    ).run(request)
+
+    assert calls == []
+    assert not workspace.exists()
+    assert plan.preview_files_runner_or_gui_touched is False
+    assert plan.backend_resolution_deferred is True
+    assert plan.explicit_real_opt_in_required is True
+    assert plan.public_tool == "material_studio_castep_run_current"
+
+
+def test_preview_plan_digest_is_deterministic_and_binds_request(
+    request_factory,
+    tmp_path: Path,
+) -> None:
+    harness = CastepAcceptanceHarness(real_environment=False)
+    request = request_factory()
+
+    first = harness.run(request)
+    repeated = harness.run(request_factory())
+    different_workspace = harness.run(
+        request_factory(selected_workspace=tmp_path / "other-workspace")
+    )
+    different_request = harness.run(
+        CastepAcceptanceRequest(
+            request_id="castep-acceptance-other-request",
+            workspace_root=request.workspace_root,
+            timeout_seconds=request.timeout_seconds,
+        )
+    )
+
+    assert first.model_dump(mode="json") == repeated.model_dump(mode="json")
+    assert first.plan_sha256 != different_workspace.plan_sha256
+    assert first.plan_sha256 != different_request.plan_sha256
+    assert first.candidate_model_spec_sha256 == (
+        different_workspace.candidate_model_spec_sha256
+    )
+    assert (
+        first.source_structure_sha256
+        == different_workspace.source_structure_sha256
+    )
+    assert not request.workspace_root.exists()
+    assert not (tmp_path / "other-workspace").exists()
+
+
+def test_preview_payload_is_the_only_frozen_public_call(request_factory) -> None:
+    plan = CastepAcceptanceHarness(real_environment=False).run(request_factory())
+    payload = plan.public_tool_payload
+    assert payload == {
+        "project_id": FIXED_PROJECT_ID,
+        "task": "Energy",
+        "quality": "Medium",
+        "functional": "PBE",
+        "cutoff_energy_ev": 300,
+        "kpoint_separation": None,
+        "kpoints": (2, 2, 1),
+        "properties_kpoint_separation": None,
+        "band_structure_energy_max_ev": None,
+        "band_structure_extra_bands": None,
+        "band_structure_energy_tolerance_ev": None,
+        "dos_energy_max_ev": None,
+        "dos_extra_bands": None,
+        "dos_energy_tolerance_ev": None,
+        "dos_smearing_width_ev": None,
+        "dos_integration_method": None,
+        "dipole_correction": "Self-consistent",
+        "open_in_gui": False,
+        "take_snapshot": False,
+        "export_view_audit": False,
+        "views": None,
+        "working_dir": str(request_factory().workspace_root.resolve()),
+        "timeout_seconds": 30,
+        "expected_revision": 0,
+        "response_mode": "full",
+    }
+    assert set(EXPECTED_SIMULATION_PAYLOAD).isdisjoint(
+        {"geometry_optimization", "dos", "pdos", "band_structure"}
+    )
+
+
+def test_preview_rejects_repository_or_existing_workspace(
+    request_factory,
+    tmp_path: Path,
+) -> None:
+    existing = tmp_path / "already-used"
+    existing.mkdir()
+    with pytest.raises(ValueError, match="must not already exist"):
+        CastepAcceptanceHarness(real_environment=False).run(
+            request_factory(selected_workspace=existing)
+        )
+
+    repository_workspace = Path(__file__).resolve().parents[2] / "forbidden-workspace"
+    with pytest.raises(ValueError, match="outside the repository"):
+        CastepAcceptanceHarness(real_environment=False).run(
+            request_factory(selected_workspace=repository_workspace)
+        )
+
+
+def test_workspace_reservation_is_atomic_and_no_clobbering(tmp_path: Path) -> None:
+    target = tmp_path / "single-winner"
+
+    def reserve():
+        try:
+            return reserve_external_fresh_workspace(target)
+        except ValueError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = tuple(executor.map(lambda _index: reserve(), range(2)))
+    assert sum(hasattr(item, "path") for item in outcomes) == 1
+    assert sum(isinstance(item, ValueError) for item in outcomes) == 1
+    assert target.is_dir()
+    next(item for item in outcomes if hasattr(item, "path")).close()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows directory handle gate")
+def test_workspace_reservation_blocks_rename_until_release(tmp_path: Path) -> None:
+    target = tmp_path / "locked-workspace"
+    moved = tmp_path / "moved-workspace"
+    reservation = reserve_external_fresh_workspace(target)
+    try:
+        with pytest.raises(OSError):
+            target.rename(moved)
+        assert target.is_dir()
+        assert not moved.exists()
+    finally:
+        reservation.close()
+    target.rename(moved)
+    assert moved.is_dir()
+
+
+def test_workspace_reservation_rejects_reparse_parent(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real-parent"
+    real_parent.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        if __import__("os").name != "nt":
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        pytest.skip("directory symlinks are unavailable")
+    with pytest.raises(ValueError, match="unsafe component"):
+        reserve_external_fresh_workspace(linked_parent / "workspace")
+    assert not (real_parent / "workspace").exists()
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path budget")
+def test_external_workspace_rejects_legacy_windows_job_cwd_overflow(
+    tmp_path: Path,
+) -> None:
+    long_parent = tmp_path / ("parent-" + ("x" * 100))
+    long_parent.mkdir()
+    with pytest.raises(ValueError, match="job cwd"):
+        validate_windows_job_cwd(long_parent / "workspace")
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows path budget")
+def test_windows_job_path_budget_includes_script_and_log() -> None:
+    lengths = windows_job_path_lengths(Path("C:/msca/workspace-001"))
+    assert lengths["cwd"] < 248
+    assert lengths["script"] < 260
+    assert lengths["log"] < 260

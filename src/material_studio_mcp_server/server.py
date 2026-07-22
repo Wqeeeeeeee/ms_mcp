@@ -16759,6 +16759,11 @@ def _attach_modeling_health(
         _attach_structure_artifact_validation(response, spec=spec, execution_mode=mode_value)
     if store is not None and spec is not None:
         _attach_castep_convergence_audit(response, store=store, spec=spec)
+        _attach_current_revision_replay_report_context(
+            response,
+            store=store,
+            spec=spec,
+        )
     health = build_modeling_health(response, execution_mode=mode_value)
     response["modeling_health"] = health
     if store is not None and spec is not None and isinstance(response.get("view_audit"), dict):
@@ -43841,6 +43846,45 @@ def _current_revision_view_replay_for_report(
     return replay_context
 
 
+def _attach_current_revision_replay_report_context(
+    response: dict[str, Any],
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+) -> None:
+    """Bind existing replay evidence before a same-revision report rewrite."""
+
+    if isinstance(response.get("gui_view_replay"), dict):
+        return
+
+    output_dir = store.outputs_dir(spec.project_id, spec.revision)
+    manifest_path = output_dir / "gui_view_replay_manifest.json"
+    if not manifest_path.exists():
+        return
+
+    view_audit = response.get("view_audit")
+    if not isinstance(view_audit, dict):
+        persisted_audit, _ = _read_json_file(output_dir / "view_audit.json")
+        view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
+            spec,
+            views=None,
+            persisted_audit=persisted_audit,
+        )
+        response["view_audit"] = view_audit
+        response.setdefault(
+            "view_selection_resolution",
+            view_selection_resolution,
+        )
+
+    report_json_payload, _ = _read_json_file(output_dir / "report.json")
+    response["gui_view_replay"] = _current_revision_view_replay_for_report(
+        store=store,
+        spec=spec,
+        report_json_payload=report_json_payload,
+        current_spec_fingerprint=view_audit.get("spec_fingerprint"),
+    )
+
+
 def _diagnostic_export_audit(
     store: ProjectStore,
     spec: ModelSpec,
@@ -53945,7 +53989,11 @@ def material_studio_gui_apply_current_revision(
                 "script_path": str(script_path),
             })
             if export_view_audit:
-                response["view_audit"] = model_view_audit(spec, views)
+                (
+                    response["view_audit"],
+                    response["gui_view_replay"],
+                    response["diagnostic_export_view_resolution"],
+                ) = _diagnostic_export_audit(store, spec, views)
             return finish(
                 _attach_modeling_health(response, execution_mode=mode, store=store, spec=spec, gui_artifacts=audit_artifacts)
             )
@@ -54002,7 +54050,11 @@ def material_studio_gui_apply_current_revision(
             gui_probe_planned=bool(open_in_gui),
         )
         if export_view_audit:
-            response["view_audit"] = model_view_audit(spec, views)
+            (
+                response["view_audit"],
+                response["gui_view_replay"],
+                response["diagnostic_export_view_resolution"],
+            ) = _diagnostic_export_audit(store, spec, views)
         if not script_validation.get("valid", False):
             response = {**response, "ok": False, "error": "保存的预览脚本未通过安全验证。"}
             return finish(

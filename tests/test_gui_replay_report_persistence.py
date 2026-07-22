@@ -100,6 +100,8 @@ def _tiny_bmp() -> bytes:
 def _prepare_replay_project(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    create_execution_mode: ExecutionMode = ExecutionMode.EXECUTE,
 ) -> tuple[dict, MaterialsStudioGuiController, Path, list[dict]]:
     payload = json.loads(
         Path(
@@ -110,7 +112,7 @@ def _prepare_replay_project(
     payload["project_id"] = "snapshot_replay_persistence"
     created = server.material_studio_model_create_from_spec(
         payload,
-        execution_mode=ExecutionMode.EXECUTE,
+        execution_mode=create_execution_mode,
         working_dir=str(tmp_path),
     )
     assert created["ok"] is True
@@ -268,3 +270,96 @@ def test_snapshot_report_does_not_trust_a_different_view_selection(
         (manifest_path.parent / "report.json").read_text(encoding="utf-8")
     )
     assert report["trusted_clean_view_replay"]["ok"] is False
+
+
+def test_apply_current_preview_preserves_current_trusted_view_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, manifest_path, refresh_calls = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.PREVIEW,
+        working_dir=str(tmp_path),
+    )
+
+    assert refresh_calls
+    assert result["diagnostic_export_view_resolution"]["source"] == (
+        "current_revision_view_replay_manifest"
+    )
+    assert result["gui_view_replay"]["binding_verified"] is True
+    assert result["trusted_clean_view_replay"]["ok"] is True
+    report = json.loads(
+        (manifest_path.parent / "report.json").read_text(encoding="utf-8")
+    )
+    assert report["gui_view_replay"]["binding_verified"] is True
+    assert report["trusted_clean_view_replay"]["ok"] is True
+
+
+def test_apply_current_preview_invalidates_replay_for_explicit_view_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, manifest_path, _ = _prepare_replay_project(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.PREVIEW,
+        views=["front"],
+        working_dir=str(tmp_path),
+    )
+
+    assert result["diagnostic_export_view_resolution"]["source"] == (
+        "explicit_request"
+    )
+    trusted = result["trusted_clean_view_replay"]
+    assert trusted["ok"] is False
+    assert trusted["view_selection_matches"] is False
+    assert "view_replay_view_selection_mismatch" in trusted["blocking_reasons"]
+    report = json.loads(
+        (manifest_path.parent / "report.json").read_text(encoding="utf-8")
+    )
+    assert report["trusted_clean_view_replay"]["ok"] is False
+
+
+def test_apply_current_execute_keeps_replay_bound_through_same_window_hotload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, manifest_path, refresh_calls = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+        create_execution_mode=ExecutionMode.PREVIEW,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.EXECUTE,
+        open_in_gui=True,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["success"] is True
+    assert len(gui.backend.list_processes()) == 1
+    assert result["gui_open"]["reuse_existing_window_only"] is True
+    assert refresh_calls
+    assert result["view_selection_resolution"]["source"] == (
+        "persisted_current_revision"
+    )
+    assert result["gui_view_replay"]["binding_verified"] is True
+    assert result["trusted_clean_view_replay"]["ok"] is True
+    report = json.loads(
+        (manifest_path.parent / "report.json").read_text(encoding="utf-8")
+    )
+    assert report["gui_view_replay"]["binding_verified"] is True
+    assert report["trusted_clean_view_replay"]["ok"] is True

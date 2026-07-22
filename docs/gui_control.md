@@ -66,6 +66,13 @@ while the revision fingerprint, exact diagnostic view set, evidence integrity,
 and event journal remain valid. Missing or stale replay evidence is reported as
 untrusted instead of copying an older positive summary.
 
+The same binding is applied by the common modeling-health report writer. This
+prevents an apply-current preview or a same-revision high-level hot-load from
+dropping a previously verified replay receipt. When apply-current omits
+`views`, it resolves the current replay view set before a persisted audit or
+domain defaults. An explicit replacement view set remains authoritative and
+causes prior replay trust to fail closed until those views are reviewed.
+
 - `material_studio_live_session_preflight`: read-only session check that combines runner status, GUI status, latest current project, readiness flags, and next recommended tool.
   It also detects when the visible MCP wrapper came from a different trusted workspace. In that case it returns `state="preview_ready_gui_workspace_context_mismatch"`, the exact visible wrapper project/revision, and `recommended_working_dir`; it does not switch workspaces or write external state.
 - `material_studio_live_capabilities`: lists the high-level live-modeling entry point, deterministic natural-language templates, supported patch commands, schema paths, GUI tools, and diagnostic fields. `view_replay_automation_policy.local_uia_implementation_contract` is the static source of truth for implemented recipe classes: Cartesian faces, staged isometric, transactional Miller planes, and exact-collinear crystal directions are implemented; non-collinear directions are not. With `include_status=true`, both full and compact responses retain bounded `runner_status`, `gui_status`, and `view_replay_runtime_availability` receipts. Static implementation never authorizes GUI input: runtime transactional-Miller support, the single-window gate, and the current prepared recipe's `automation_ready=true` are still required.

@@ -60,7 +60,11 @@ model: generic models use the standard views, while semiconductor crystals use
 front/top/isometric plus interface-, surface-, or lattice-family diagnostic
 views. `view_selection`, `view_selection_resolution`, and the visual-confirmation
 `gui_evidence_reaudit` receipt expose the selected source, names, reuse flag,
-and mismatch reasons.
+and mismatch reasons. Each report rewrite also refreshes and rebinds the current
+`gui_view_replay_manifest.json`; it preserves `trusted_clean_view_replay` only
+while the revision fingerprint, exact diagnostic view set, evidence integrity,
+and event journal remain valid. Missing or stale replay evidence is reported as
+untrusted instead of copying an older positive summary.
 
 - `material_studio_live_session_preflight`: read-only session check that combines runner status, GUI status, latest current project, readiness flags, and next recommended tool.
   It also detects when the visible MCP wrapper came from a different trusted workspace. In that case it returns `state="preview_ready_gui_workspace_context_mismatch"`, the exact visible wrapper project/revision, and `recommended_working_dir`; it does not switch workspaces or write external state.
@@ -192,8 +196,8 @@ duplicate, or divergent copies set `event_journal_reverification_required` and
 invalidate replay-derived visual confirmation. Read-only status reports but does
 not reconcile files automatically; a new real observation is the recovery path.
 
-`material_studio_live_project_status` converts a fully verified replay into the
-separate `trusted_clean_view_replay` receipt. This receipt is positive only when
+Live project status and serialized GUI report rewrites convert a fully verified
+replay into the separate `trusted_clean_view_replay` receipt. This receipt is positive only when
 the current project/revision binding is verified, replay and diagnostic view
 sets match exactly, all supported views are confirmed under current recipes,
 the recommended clean view and every manual-review view are confirmed, artifact

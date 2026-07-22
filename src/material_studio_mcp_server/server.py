@@ -43760,6 +43760,22 @@ def _diagnostic_export_replay_context(
 ) -> dict[str, Any]:
     """Return current revision replay evidence for a diagnostic re-export."""
 
+    context, _ = _current_revision_view_replay_context(
+        store,
+        spec,
+        current_spec_fingerprint=current_spec_fingerprint,
+    )
+    return context
+
+
+def _current_revision_view_replay_context(
+    store: ProjectStore,
+    spec: ModelSpec,
+    *,
+    current_spec_fingerprint: str | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Read and refresh replay evidence without publishing the manifest."""
+
     output_dir = store.outputs_dir(spec.project_id, spec.revision)
     manifest_path = output_dir / "gui_view_replay_manifest.json"
     events_path = output_dir / "gui_view_replay_events.jsonl"
@@ -43801,7 +43817,28 @@ def _diagnostic_export_replay_context(
             current_spec_fingerprint=current_spec_fingerprint,
         )
     )
-    return context
+    return context, manifest
+
+
+def _current_revision_view_replay_for_report(
+    *,
+    store: ProjectStore,
+    spec: ModelSpec,
+    report_json_payload: dict[str, Any] | None,
+    current_spec_fingerprint: str | None,
+) -> dict[str, Any]:
+    """Keep GUI report rewrites bound to the current replay evidence."""
+
+    replay_context, replay_manifest = _current_revision_view_replay_context(
+        store,
+        spec,
+        current_spec_fingerprint=current_spec_fingerprint,
+    )
+    _bind_replay_integrity_to_visual_confirmations(
+        report_json_payload,
+        replay_manifest,
+    )
+    return replay_context
 
 
 def _diagnostic_export_audit(
@@ -51527,6 +51564,12 @@ def _persist_gui_open_structure_report(
         views=views,
         persisted_audit=report_payload,
     )
+    replay_context = _current_revision_view_replay_for_report(
+        store=store,
+        spec=spec,
+        report_json_payload=report_json_payload,
+        current_spec_fingerprint=(view_audit or {}).get("spec_fingerprint"),
+    )
     previous_modeling_report = (
         report_json_payload.get("modeling_report")
         if isinstance(report_json_payload, dict)
@@ -51638,6 +51681,7 @@ def _persist_gui_open_structure_report(
         "gui_artifacts": audit_artifacts,
         "view_audit": view_audit,
         "view_selection_resolution": view_selection_resolution,
+        "gui_view_replay": replay_context,
         "post_hotload_fit_to_view_requested": fit_to_view_after_open,
         "post_hotload_fit_to_view_request_source": (
             fit_request_source if fit_to_view_after_open else "default_disabled"
@@ -51715,6 +51759,8 @@ def _persist_gui_open_structure_report(
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
         "view_selection_resolution": response.get("view_selection_resolution"),
+        "gui_view_replay": response.get("gui_view_replay"),
+        "trusted_clean_view_replay": response.get("trusted_clean_view_replay"),
         "gui_artifacts": response.get("gui_artifacts"),
         "post_hotload_fit_to_view_requested": response.get(
             "post_hotload_fit_to_view_requested"
@@ -51768,6 +51814,12 @@ def _persist_gui_snapshot_report(
         views=views,
         persisted_audit=report_payload,
     )
+    replay_context = _current_revision_view_replay_for_report(
+        store=store,
+        spec=spec,
+        report_json_payload=report_json_payload,
+        current_spec_fingerprint=(view_audit or {}).get("spec_fingerprint"),
+    )
     previous_artifacts = _status_gui_artifacts(report_payload, report_json_payload)
     snapshot_artifact = {"type": "gui_snapshot", **snapshot}
     audit_artifacts = [
@@ -51809,6 +51861,7 @@ def _persist_gui_snapshot_report(
         "gui_artifacts": audit_artifacts,
         "view_audit": view_audit,
         "view_selection_resolution": view_selection_resolution,
+        "gui_view_replay": replay_context,
     }
     if latest_gui_open is not None:
         response["gui_open"] = latest_gui_open
@@ -51839,6 +51892,8 @@ def _persist_gui_snapshot_report(
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
         "view_selection_resolution": response.get("view_selection_resolution"),
+        "gui_view_replay": response.get("gui_view_replay"),
+        "trusted_clean_view_replay": response.get("trusted_clean_view_replay"),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),
@@ -51960,6 +52015,12 @@ def _persist_gui_visual_confirmation_report_unlocked(
         views=views,
         persisted_audit=report_payload,
     )
+    replay_context = _current_revision_view_replay_for_report(
+        store=store,
+        spec=spec,
+        report_json_payload=report_json_payload,
+        current_spec_fingerprint=(view_audit or {}).get("spec_fingerprint"),
+    )
     previous_artifacts = _status_gui_artifacts(report_payload, report_json_payload)
     confirmation_artifact = {"type": "visual_confirmation", **confirmation}
     audit_artifacts = [artifact for artifact in previous_artifacts if isinstance(artifact, dict)]
@@ -52073,6 +52134,7 @@ def _persist_gui_visual_confirmation_report_unlocked(
         "gui_visual_confirmation": confirmation_artifact,
         "view_audit": view_audit,
         "view_selection_resolution": view_selection_resolution,
+        "gui_view_replay": replay_context,
     }
     if latest_gui_open is not None:
         response["gui_open"] = latest_gui_open
@@ -52108,6 +52170,8 @@ def _persist_gui_visual_confirmation_report_unlocked(
         "planned_outputs": response.get("planned_outputs"),
         "view_audit": response.get("view_audit"),
         "view_selection_resolution": response.get("view_selection_resolution"),
+        "gui_view_replay": response.get("gui_view_replay"),
+        "trusted_clean_view_replay": response.get("trusted_clean_view_replay"),
         "modeling_health": response.get("modeling_health"),
         "modeling_report": response.get("modeling_report"),
         "live_summary": response.get("live_summary"),

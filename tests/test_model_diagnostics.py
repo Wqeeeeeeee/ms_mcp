@@ -27,6 +27,84 @@ def load_example(name: str) -> ModelSpec:
     return ModelSpec.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
+def _live_status_health_response(tmp_path: Path) -> dict:
+    structure_path = tmp_path / "structure_r004.cif"
+    structure_path.write_text("current revision structure", encoding="utf-8")
+    return {
+        "ok": True,
+        "project_id": "live_status_health",
+        "revision": 4,
+        "planned_outputs": {"structure": str(structure_path)},
+        "result": {"success": True},
+        "gui_status": {"window_found": True},
+        "live_status_hotload_evidence": {
+            "schema_version": "material_studio_live_status_hotload_evidence_v1",
+            "available": True,
+            "verified": True,
+            "status": "verified_current_revision_loaded",
+            "blocking_reasons": [],
+            "project_id": "live_status_health",
+            "revision": 4,
+            "structure_path": str(structure_path),
+            "target_window_handle": 101,
+            "target_window_title": "msmcp_r004_health - Materials Studio",
+            "result_success": True,
+            "process_count": 1,
+            "window_count": 1,
+            "gui_input_performed": False,
+            "structure_reopened": False,
+            "gui_process_launched": False,
+            "observation_only": True,
+        },
+    }
+
+
+def test_modeling_health_accepts_strict_live_status_hotload_evidence(
+    tmp_path: Path,
+) -> None:
+    health = build_modeling_health(
+        _live_status_health_response(tmp_path),
+        execution_mode="execute",
+    )
+
+    assert health["verdict"] == "passed"
+    assert health["checks"]["gui_opened"] is True
+    assert health["checks"]["gui_loaded_current_revision"] is True
+    assert health["checks"]["gui_hot_loaded_from_live_status"] is True
+    assert health["checks"]["gui_hotload_evidence_source"] == (
+        "live_status_current_revision"
+    )
+    assert health["checks"]["gui_input_performed_by_current_request"] is False
+    assert "GUI hot-load was not performed" not in "\n".join(health["warnings"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["multiple_processes", "gui_input_performed", "revision_mismatch", "structure_mismatch"],
+)
+def test_modeling_health_rejects_incomplete_live_status_hotload_evidence(
+    mutation: str,
+    tmp_path: Path,
+) -> None:
+    response = _live_status_health_response(tmp_path)
+    evidence = response["live_status_hotload_evidence"]
+    if mutation == "multiple_processes":
+        evidence["process_count"] = 2
+    elif mutation == "gui_input_performed":
+        evidence["gui_input_performed"] = True
+    elif mutation == "revision_mismatch":
+        evidence["revision"] = 3
+    else:
+        evidence["structure_path"] = str(tmp_path / "other_structure.cif")
+
+    health = build_modeling_health(response, execution_mode="execute")
+
+    assert health["verdict"] == "passed_with_warnings"
+    assert health["checks"]["gui_opened"] is False
+    assert health["checks"]["gui_hot_loaded_from_live_status"] is False
+    assert "GUI hot-load was not performed" in "\n".join(health["warnings"])
+
+
 def test_common_iii_v_reference_electronic_properties_cover_band_alignment_preflight() -> None:
     for material in ("GaP", "AlP", "InP", "GaSb", "AlSb", "InSb"):
         properties = SEMICONDUCTOR_REFERENCE_ELECTRONIC_PROPERTIES[material]

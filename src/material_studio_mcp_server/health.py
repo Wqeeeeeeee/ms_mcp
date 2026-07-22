@@ -30,6 +30,65 @@ def _materials_studio_roundtrip_audit(response: dict[str, Any]) -> dict[str, Any
     return None
 
 
+def _verified_live_status_hotload_evidence(
+    response: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Accept only fresh, revision-bound observation evidence from the server."""
+
+    evidence = response.get("live_status_hotload_evidence")
+    gui_status = response.get("gui_status")
+    if not isinstance(evidence, dict) or not isinstance(gui_status, dict):
+        return None
+    if evidence.get("schema_version") != "material_studio_live_status_hotload_evidence_v1":
+        return None
+    if evidence.get("verified") is not True:
+        return None
+    if evidence.get("status") != "verified_current_revision_loaded":
+        return None
+    if evidence.get("blocking_reasons"):
+        return None
+    if evidence.get("result_success") is not True:
+        return None
+    if evidence.get("observation_only") is not True:
+        return None
+    if any(
+        evidence.get(key) is not False
+        for key in (
+            "gui_input_performed",
+            "structure_reopened",
+            "gui_process_launched",
+        )
+    ):
+        return None
+    try:
+        if int(evidence.get("process_count")) != 1:
+            return None
+        if int(evidence.get("window_count")) != 1:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if not evidence.get("target_window_handle") or not evidence.get(
+        "target_window_title"
+    ):
+        return None
+
+    expected_project_id = response.get("project_id")
+    if str(evidence.get("project_id") or "") != str(expected_project_id or ""):
+        return None
+    expected_revision = response.get("new_revision", response.get("revision"))
+    try:
+        if int(evidence.get("revision")) != int(expected_revision):
+            return None
+    except (TypeError, ValueError):
+        return None
+    expected_structure = (response.get("planned_outputs") or {}).get("structure")
+    if not expected_structure or not _same_path(
+        evidence.get("structure_path"), expected_structure
+    ):
+        return None
+    return evidence
+
+
 def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> dict[str, Any]:
     """Build a stable verdict from validation, execution, GUI, and audit fields."""
 
@@ -189,7 +248,10 @@ def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> d
             errors.append(f"Planned output structure was not found: {planned_structure}")
 
         gui_open = response.get("gui_open")
+        live_status_hotload = _verified_live_status_hotload_evidence(response)
+        checks["gui_hot_loaded_from_live_status"] = bool(live_status_hotload)
         if isinstance(gui_open, dict):
+            checks["gui_hotload_evidence_source"] = "gui_open_artifact"
             external_visual_confirmation_ok = _external_visual_confirmation_ok(response)
             checks["external_visual_confirmation_ok"] = external_visual_confirmation_ok
             checks["gui_opened"] = bool(gui_open.get("window"))
@@ -247,6 +309,30 @@ def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> d
                 verdict_warnings.append(warning)
         elif response.get("gui_open_warning"):
             errors.append(str(response["gui_open_warning"]))
+        elif live_status_hotload is not None:
+            checks.update(
+                {
+                    "gui_opened": True,
+                    "gui_loaded_current_revision": True,
+                    "gui_stale_reasons": [],
+                    "gui_hotload_evidence_source": "live_status_current_revision",
+                    "gui_live_status_process_count": live_status_hotload.get(
+                        "process_count"
+                    ),
+                    "gui_live_status_window_count": live_status_hotload.get(
+                        "window_count"
+                    ),
+                    "gui_live_status_target_window_handle": (
+                        live_status_hotload.get("target_window_handle")
+                    ),
+                    "gui_live_status_target_window_title": (
+                        live_status_hotload.get("target_window_title")
+                    ),
+                    "gui_input_performed_by_current_request": False,
+                    "gui_structure_reopened_by_current_request": False,
+                    "gui_process_launched_by_current_request": False,
+                }
+            )
         else:
             checks["gui_opened"] = False
             warning = "GUI hot-load was not performed or no GUI open result was returned."

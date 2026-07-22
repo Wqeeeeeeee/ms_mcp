@@ -939,6 +939,17 @@ revision, not evidence that the preview executed or changed Materials Studio.
 Failed results, missing artifacts, hidden or minimized targets, multi-window
 sessions, and stale or mismatched wrappers remain blocked and retain the normal
 preview/hot-load recommendation.
+The same fresh evidence is attached before execute-mode modeling-health is
+recomputed by live status or a diagnostic bundle export. Health accepts it only
+when its schema, project, revision, planned structure, successful result,
+single-process/window counts, target identity, and observation-only side-effect
+fields all match the current response. It then reports
+`checks.gui_hot_loaded_from_live_status=true` and does not add the legacy
+`GUI hot-load was not performed` warning. This keeps `ModelSpec.acceptance`
+focused on the remaining real model/calculation warnings instead of failing
+because an older report lost `gui_open`. Missing or invalid evidence preserves
+the original warning or preview-only gate; it never proves that the current
+request opened the structure or issued GUI input.
 
 ## GUI-Free Diagnostic Contract Refresh
 

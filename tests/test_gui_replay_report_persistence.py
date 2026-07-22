@@ -466,6 +466,26 @@ def test_apply_current_preview_recovers_existing_live_revision_without_gui_input
         "current_revision_hotload_evidence_source"
     ] == request["current_revision_hotload_evidence_source"]
 
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+    )
+    status_health = status["modeling_health"]
+    assert status_health["checks"]["gui_hot_loaded_from_live_status"] is True
+    assert status_health["checks"]["gui_loaded_current_revision"] is True
+    assert status_health["checks"]["gui_input_performed_by_current_request"] is False
+    assert "GUI hot-load was not performed" not in "\n".join(
+        status_health["warnings"]
+    )
+    assert status["modeling_report"]["acceptance_review"]["ok"] is True
+    assert "acceptance_criteria_failed" not in status["modeling_report"][
+        "normality_gate"
+    ]["must_not_claim_normal_reasons"]
+    assert status["modeling_report"]["normality_gate"][
+        "can_claim_live_gui_normal"
+    ] is True
+
 
 def test_apply_current_preview_does_not_recover_live_state_from_failed_result(
     tmp_path: Path,
@@ -523,5 +543,23 @@ def test_apply_current_preview_does_not_recover_live_state_from_failed_result(
     assert preview["apply_current_request"]["current_revision_already_hot_loaded"] is False
     assert preview["modeling_report"]["gui"]["hot_loaded_from_live_status"] is False
     assert "preview_not_hot_loaded" in preview["modeling_report"][
+        "normality_gate"
+    ]["must_not_claim_normal_reasons"]
+
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+    )
+    status_health = status["modeling_health"]
+    assert status["live_status_hotload_evidence"]["verified"] is False
+    assert "successful_revision_result_missing" in status[
+        "live_status_hotload_evidence"
+    ]["blocking_reasons"]
+    assert status_health["checks"].get("gui_hot_loaded_from_live_status") is not True
+    assert status_health["checks"]["gui_opened"] is None
+    assert status["modeling_report"]["gui"]["hot_loaded"] is False
+    assert status["modeling_report"]["gui"]["hot_loaded_from_live_status"] is False
+    assert "preview_not_hot_loaded" in status["modeling_report"][
         "normality_gate"
     ]["must_not_claim_normal_reasons"]

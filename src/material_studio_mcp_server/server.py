@@ -12472,6 +12472,7 @@ def _refresh_status_modeling_health(response: dict[str, Any]) -> None:
         else:
             response["modeling_health_source"] = "computed_without_execution_result"
         return
+    _attach_live_status_current_revision_hotload_evidence(response)
     response["modeling_health"] = build_modeling_health(response, execution_mode=mode)
     response["modeling_health_source"] = "recomputed_status"
 
@@ -16764,6 +16765,7 @@ def _attach_modeling_health(
             store=store,
             spec=spec,
         )
+    _attach_live_status_current_revision_hotload_evidence(response)
     health = build_modeling_health(response, execution_mode=mode_value)
     response["modeling_health"] = health
     if store is not None and spec is not None and isinstance(response.get("view_audit"), dict):
@@ -24455,6 +24457,7 @@ def _gui_report_summary(
         gui_status=gui_status,
         revision_consistency=revision_consistency,
     )
+    response["live_status_hotload_evidence"] = live_status_hotload
     hot_loaded = bool(gui_open) or live_status_hotload["verified"]
     local_visual_validation = _gui_visual_validation(
         snapshot_analysis,
@@ -24777,6 +24780,36 @@ def _live_status_current_revision_hotload_evidence(
         "gui_process_launched": False,
         "observation_only": True,
     }
+
+
+def _attach_live_status_current_revision_hotload_evidence(
+    response: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Attach fresh current-window evidence for downstream health evaluation."""
+
+    gui_status = (
+        response.get("gui_status")
+        if isinstance(response.get("gui_status"), dict)
+        else None
+    )
+    if gui_status is None:
+        response.pop("live_status_hotload_evidence", None)
+        return None
+    gui_open = (
+        response.get("gui_open")
+        if isinstance(response.get("gui_open"), dict)
+        else None
+    )
+    evidence = _live_status_current_revision_hotload_evidence(
+        response,
+        gui_status=gui_status,
+        revision_consistency=_gui_current_revision_consistency(
+            response,
+            gui_open,
+        ),
+    )
+    response["live_status_hotload_evidence"] = evidence
+    return evidence
 
 
 def _gui_current_revision_consistency(response: dict[str, Any], gui_open: dict[str, Any] | None) -> dict[str, Any]:
@@ -44991,6 +45024,7 @@ def material_studio_model_export_view_bundle(
                 store=store,
                 spec=model_spec,
             )
+            _attach_live_status_current_revision_hotload_evidence(response)
             modeling_health = build_modeling_health(
                 response,
                 execution_mode=str(execution_mode),

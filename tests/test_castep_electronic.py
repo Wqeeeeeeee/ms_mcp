@@ -111,6 +111,110 @@ def _create_silicon(tmp_path: Path, project_id: str) -> ModelSpec:
     return ProjectStore(tmp_path).load_current(project_id)
 
 
+def _synthetic_binary_spec(project_id: str) -> dict[str, Any]:
+    return {
+        "project_id": project_id,
+        "revision": 0,
+        "software": "Materials Studio",
+        "model_type": "crystal",
+        "model": {
+            "name": "synthetic_non_reference_binary",
+            "lattice": {
+                "a": 7.123456,
+                "b": 8.234564,
+                "c": 9.345674,
+                "alpha": 88.123456,
+                "beta": 91.234564,
+                "gamma": 93.345674,
+            },
+            "basis_atoms": [
+                {
+                    "id": "SiSyntheticA",
+                    "element": "Si",
+                    "fractional": [0.123456, 0.234564, 0.345674],
+                },
+                {
+                    "id": "CSyntheticA",
+                    "element": "C",
+                    "fractional": [0.374996, 0.485004, 0.596004],
+                },
+                {
+                    "id": "SiSyntheticB",
+                    "element": "Si",
+                    "fractional": [0.623456, 0.734564, 0.845674],
+                },
+                {
+                    "id": "CSyntheticB",
+                    "element": "C",
+                    "fractional": [0.874996, 0.985004, 0.096004],
+                },
+            ],
+            "operations": [],
+        },
+        "simulation": {
+            "module": "CASTEP",
+            "task": "Energy",
+            "functional": "PBE",
+            "quality": "Medium",
+            "cutoff_energy_ev": 400,
+            "kpoint_separation": 0.04,
+        },
+        "outputs": {},
+        "acceptance": {
+            "max_warnings": 1,
+            "require_convergence": False,
+            "notes": [],
+        },
+        "metadata": {
+            "source": "synthetic_test_fixture",
+            "domain": "semiconductor",
+            "structure_family": "synthetic_non_reference_binary",
+        },
+    }
+
+
+def _create_synthetic_binary(tmp_path: Path, project_id: str) -> ModelSpec:
+    created = server.material_studio_model_create_from_spec(
+        _synthetic_binary_spec(project_id),
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    return ProjectStore(tmp_path).load_current(project_id)
+
+
+def _write_normalized_ms_export(source: ModelSpec, path: Path) -> None:
+    lattice = source.model.lattice
+    lines = [
+        "data_synthetic_ms_export",
+        f"_cell_length_a {lattice.a:.4f}",
+        f"_cell_length_b {lattice.b:.4f}",
+        f"_cell_length_c {lattice.c:.4f}",
+        f"_cell_angle_alpha {lattice.alpha:.4f}",
+        f"_cell_angle_beta {lattice.beta:.4f}",
+        f"_cell_angle_gamma {lattice.gamma:.4f}",
+        "loop_",
+        "_atom_site_label",
+        "_atom_site_type_symbol",
+        "_atom_site_fract_x",
+        "_atom_site_fract_y",
+        "_atom_site_fract_z",
+    ]
+    for index, atom in enumerate(reversed(source.model.basis_atoms), start=1):
+        lines.append(
+            " ".join(
+                [
+                    f"MS_EXPORT_{index}",
+                    atom.element,
+                    f"{atom.fractional.x:.5f}",
+                    f"{atom.fractional.y:.5f}",
+                    f"{atom.fractional.z:.5f}",
+                ]
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 class _ElectronicRunner:
     def __init__(
         self,
@@ -120,6 +224,7 @@ class _ElectronicRunner:
         missing_result_document: bool = False,
         payload_revision: int | None = None,
         change_structure: bool = False,
+        normalized_ms_export: bool = False,
         native_bands_text: str = _NATIVE_BANDS,
         total_energy_kcal_per_mol: float = -101.25,
         band_gap_ev: float = 1.12,
@@ -129,6 +234,7 @@ class _ElectronicRunner:
         self.missing_result_document = missing_result_document
         self.payload_revision = payload_revision
         self.change_structure = change_structure
+        self.normalized_ms_export = normalized_ms_export
         self.native_bands_text = native_bands_text
         self.total_energy_kcal_per_mol = total_energy_kcal_per_mol
         self.band_gap_ev = band_gap_ev
@@ -167,6 +273,8 @@ class _ElectronicRunner:
                 self.source.model.model_copy(update={"basis_atoms": atoms}),
                 output_structure,
             )
+        elif self.normalized_ms_export:
+            _write_normalized_ms_export(self.source, output_structure)
         else:
             shutil.copy2(input_structure, output_structure)
         output_report.write_text(
@@ -686,6 +794,124 @@ def test_electronic_result_next_action_is_preview_safe() -> None:
     ]
 
 
+def test_completed_ms_normalized_export_uses_explicit_policy_and_records_revision(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_synthetic_binary(tmp_path, "synthetic_ms_export")
+    fake_runner = _ElectronicRunner(
+        source,
+        CastepTask.ENERGY,
+        normalized_ms_export=True,
+    )
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True, result
+    assert result["status"] == "castep_electronic_result_recorded"
+    assert result["revision_created"] is True
+    assert result["new_revision"] == 1
+    assert fake_runner.call_count == 1
+    assert result["input_structure_validation"]["policy"] == "strict"
+    assert result["input_structure_validation"]["labels_preserved"] is True
+    output_validation = result["materials_studio_export_validation"]
+    assert output_validation["policy"] == "materials_studio_20_1_export"
+    assert output_validation["ok"] is True
+    assert output_validation["mapping_coverage"] == 1.0
+    assert output_validation["labels_preserved"] is False
+    assert output_validation["label_preservation_status"] == "regenerated"
+    assert output_validation["tolerance_derived_from_exported_lexemes"] is True
+    source_export_validation = result["materials_studio_export_source_validation"]
+    assert source_export_validation["policy"] == "materials_studio_20_1_export"
+    assert output_validation["sha256"] == source_export_validation["sha256"]
+    assert result["materials_studio_export_copy_sha256_matches_source"] is True
+    assert result["structure_artifact_validation"]["policy"] == "strict"
+
+    execution_metadata = json.loads(
+        Path(result["result_metadata_path"]).read_text(encoding="utf-8")
+    )
+    preserved_export_validation = execution_metadata[
+        "materials_studio_export_validation"
+    ]
+    assert preserved_export_validation["policy"] == "materials_studio_20_1_export"
+    assert preserved_export_validation["mapping_coverage"] == 1.0
+    assert execution_metadata[
+        "materials_studio_export_copy_sha256_matches_source"
+    ] is True
+    assert preserved_export_validation["sha256"] == execution_metadata[
+        "materials_studio_export_source_validation"
+    ]["sha256"]
+    assert Path(execution_metadata["materials_studio_export_structure"]).is_file()
+    final_validation = execution_metadata["structure_artifact_validation"]
+    assert final_validation["policy"] == "strict"
+    assert final_validation["mapping_coverage"] == 1.0
+    current = ProjectStore(tmp_path).load_current(source.project_id)
+    assert current.revision == 1
+    assert current.model.model_dump(mode="json") == source.model.model_dump(mode="json")
+    verified = verify_castep_electronic_receipt(current)
+    assert verified is not None
+    assert verified["binding_verified"] is True
+    receipt = current.metadata["last_castep_electronic_calculation"]
+    preserved_export = Path(execution_metadata["materials_studio_export_structure"])
+    bound_export = next(
+        item
+        for item in receipt["native_artifacts"]
+        if Path(item["path"]) == preserved_export
+    )
+    assert bound_export["sha256"] == preserved_export_validation["sha256"]
+    assert execution_metadata["materials_studio_export_bound_in_native_artifacts"] is True
+
+    preserved_export.write_text("tampered export\n", encoding="utf-8")
+    tampered = verify_castep_electronic_receipt(current)
+    assert tampered is not None
+    assert tampered["binding_verified"] is False
+    assert tampered["checks"]["native_artifacts"] is False
+
+
+def test_completed_ms_export_policy_rejects_genuine_geometry_change(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    source = _create_synthetic_binary(tmp_path, "synthetic_ms_geometry_change")
+    fake_runner = _ElectronicRunner(
+        source,
+        CastepTask.ENERGY,
+        change_structure=True,
+    )
+    monkeypatch.setattr(server, "runner", fake_runner)
+
+    result = server.material_studio_castep_run_current(
+        project_id=source.project_id,
+        execution_mode="execute",
+        task="Energy",
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "castep_electronic_execution_failed", result
+    assert result["revision_created"] is False
+    assert result["input_structure_validation"]["policy"] == "strict"
+    output_validation = result["structure_artifact_validation"]
+    assert output_validation["policy"] == "materials_studio_20_1_export"
+    assert output_validation["ok"] is False
+    assert "periodic_fractional_geometry_mismatch" in output_validation[
+        "rejection_reasons"
+    ]
+    assert ProjectStore(tmp_path).load_current(source.project_id).revision == 0
+
+
 def test_energy_result_records_metadata_only_revision_and_diagnostics(
     monkeypatch,
     tmp_path: Path,
@@ -745,7 +971,7 @@ def test_energy_result_records_metadata_only_revision_and_diagnostics(
     assert summary["scientific_convergence_verified"] is False
     assert summary["scientific_band_gap_verified"] is False
     assert summary["numeric_curve_data_exported"] is False
-    assert summary["native_artifact_count"] == 2
+    assert summary["native_artifact_count"] == 3
     assert summary["native_output_audit"]["status"] == "complete"
     assert summary["native_output_audit"]["castep_output_audit"]["status"] == (
         "completed_below_max_cycles"
@@ -1392,6 +1618,7 @@ def test_malformed_electronic_chart_preserves_evidence_without_revision(
     assert result["status"] == "castep_electronic_execution_failed"
     assert result["revision_created"] is False
     assert fake_runner.call_count == 1
+    assert result["structure_artifact_validation"]["policy"] == "strict"
     assert Path(result["run_directory"]).is_dir()
     assert Path(result["result_metadata_path"]).is_file()
     assert ProjectStore(tmp_path).load_current(source.project_id).revision == 1

@@ -205,6 +205,14 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["trusted_clean_view_policy_requires_view_selection_match"] is True
     assert calls["trusted_clean_view_policy_requires_all_views_confirmed"] is True
     assert calls["trusted_clean_view_policy_calculation_independent"] is True
+    assert calls["view_replay_progress_schema"] == (
+        "material_studio_gui_view_replay_progress_v1"
+    )
+    assert calls["view_replay_progress_status_field"] == (
+        "material_studio_live_project_status.gui_view_replay.progress"
+    )
+    assert calls["view_replay_progress_decision_field"] == "trusted_complete"
+    assert calls["view_replay_progress_fail_closed"] is True
     assert calls["history_count"] == 1
     assert calls["visual_diagnostics_binding_verified"] is True
     assert calls["visual_diagnostics_action_id"]

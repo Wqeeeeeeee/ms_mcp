@@ -1332,6 +1332,34 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_trusted_clean_view_calculation_boundary_missing"
             )
+        replay_progress_contract = capabilities.get(
+            "view_replay_progress_contract"
+        )
+        if not isinstance(replay_progress_contract, dict):
+            validation_errors.append(
+                "capabilities_view_replay_progress_contract_missing"
+            )
+            replay_progress_contract = {}
+        if replay_progress_contract.get("schema_version") != (
+            "material_studio_gui_view_replay_progress_v1"
+        ):
+            validation_errors.append(
+                "capabilities_view_replay_progress_schema_mismatch"
+            )
+        if replay_progress_contract.get("status_field") != (
+            "material_studio_live_project_status.gui_view_replay.progress"
+        ):
+            validation_errors.append(
+                "capabilities_view_replay_progress_field_mismatch"
+            )
+        if replay_progress_contract.get("decision_field") != "trusted_complete":
+            validation_errors.append(
+                "capabilities_view_replay_progress_decision_field_mismatch"
+            )
+        if replay_progress_contract.get("fail_closed") is not True:
+            validation_errors.append(
+                "capabilities_view_replay_progress_fail_closed_missing"
+            )
         runner_status = capabilities.get("runner_status")
         if not isinstance(runner_status, dict):
             validation_errors.append("capabilities_compact_runner_status_missing")
@@ -1767,6 +1795,18 @@ async def _run_preview_calls(
                     trusted_clean_view_policy.get(
                         "calculation_readiness_remains_independent"
                     )
+                ),
+                "view_replay_progress_schema": replay_progress_contract.get(
+                    "schema_version"
+                ),
+                "view_replay_progress_status_field": replay_progress_contract.get(
+                    "status_field"
+                ),
+                "view_replay_progress_decision_field": replay_progress_contract.get(
+                    "decision_field"
+                ),
+                "view_replay_progress_fail_closed": replay_progress_contract.get(
+                    "fail_closed"
                 ),
                 "history_count": len(history.get("history") or []),
                 "preflight_state": preflight.get("state"),

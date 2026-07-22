@@ -1505,6 +1505,22 @@ def test_gui_view_replay_prepare_and_record_latest_current_project(monkeypatch, 
         "semiconductor_bulk_cubic"
     )
     assert replay_status["replay_summary"]["accepted_view_count"] == 1
+    progress = replay_status["progress"]
+    assert progress["schema_version"] == (
+        "material_studio_gui_view_replay_progress_v1"
+    )
+    assert progress["status"] == "in_progress"
+    assert progress["project_id"] == created["project_id"]
+    assert progress["revision"] == created["revision"]
+    assert progress["binding_verified"] is True
+    assert progress["accepted_view_count"] == 1
+    assert progress["accepted_view_names"] == ["front"]
+    assert progress["pending_view_count"] == 5
+    assert progress["remaining_supported_view_count"] == 5
+    assert progress["all_supported_views_confirmed"] is False
+    assert progress["trusted_complete"] is False
+    assert replay_status["accepted_view_count"] == 1
+    assert replay_status["accepted_view_names"] == ["front"]
     assert replay_status["last_replay_event"]["view_name"] == "front"
 
 
@@ -1566,6 +1582,112 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
     int(event_digest, 16)
     assert "modeling_report" not in recorded
     assert "view_replay_binding" in recorded
+
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=False,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    progress = status["gui_view_replay"]["progress"]
+    assert progress["status"] == "complete"
+    assert progress["accepted_view_count"] == 1
+    assert progress["accepted_view_names"] == ["front"]
+    assert progress["pending_view_count"] == 0
+    assert progress["all_supported_views_confirmed"] is True
+    assert progress["evidence_integrity_status"] == "verified"
+    assert progress["journal_consistency_status"] == "consistent"
+    assert progress["trusted_complete"] is True
+    assert status["gui_view_replay"]["accepted_view_count"] == 1
+    assert status["gui_view_replay"]["trusted_complete"] is True
+
+
+def test_view_replay_progress_rejects_complete_manifest_with_wrong_binding() -> None:
+    summary = {
+        "accepted_event_count": 1,
+        "trusted_accepted_event_count": 1,
+        "accepted_view_count": 1,
+        "accepted_view_names": ["front"],
+        "supported_view_count": 1,
+        "pending_view_count": 0,
+        "pending_view_names": [],
+        "all_supported_views_confirmed": True,
+        "evidence_integrity_status": "verified",
+        "journal_consistency_status": "consistent",
+    }
+    replay = {
+        "project_id": "wrong_manifest_project",
+        "revision": 2,
+        "target_project_id": "current_project",
+        "target_revision": 4,
+        "binding_verified": False,
+        "binding_reasons": ["view_replay_revision_mismatch"],
+        "replay_status": "externally_confirmed",
+        "view_names": ["front"],
+        "requested_view_count": 1,
+        "supported_view_count": 1,
+        "replay_summary": summary,
+    }
+    manifest = {
+        "replay_summary": summary,
+        "replay_continuation": {"status": "complete"},
+    }
+
+    progress = server._attach_view_replay_progress(replay, manifest)
+
+    assert progress["status"] == "binding_rejected"
+    assert progress["project_id"] == "current_project"
+    assert progress["revision"] == 4
+    assert progress["manifest_project_id"] == "wrong_manifest_project"
+    assert progress["manifest_revision"] == 2
+    assert progress["all_supported_views_confirmed"] is True
+    assert progress["trusted_complete"] is False
+    assert progress["blocking_reasons"] == ["view_replay_revision_mismatch"]
+
+
+def test_view_replay_progress_rejects_contradictory_complete_counts() -> None:
+    summary = {
+        "accepted_event_count": 1,
+        "trusted_accepted_event_count": 1,
+        "accepted_view_count": 1,
+        "accepted_view_names": ["front"],
+        "supported_view_count": 1,
+        "pending_view_count": 1,
+        "pending_view_names": ["front"],
+        "all_supported_views_confirmed": True,
+        "evidence_integrity_status": "verified",
+        "journal_consistency_status": "consistent",
+    }
+    replay = {
+        "project_id": "current_project",
+        "revision": 4,
+        "target_project_id": "current_project",
+        "target_revision": 4,
+        "binding_verified": True,
+        "binding_reasons": [],
+        "replay_status": "externally_confirmed",
+        "view_names": ["front"],
+        "requested_view_count": 1,
+        "supported_view_count": 1,
+        "replay_summary": summary,
+    }
+
+    progress = server._attach_view_replay_progress(
+        replay,
+        {
+            "replay_summary": summary,
+            "replay_continuation": {"status": "complete"},
+        },
+    )
+
+    assert progress["status"] == "trust_review_required"
+    assert progress["accepted_view_count_consistent"] is True
+    assert progress["pending_view_count_consistent"] is False
+    assert progress["all_supported_views_confirmed"] is False
+    assert progress["trusted_complete"] is False
+    assert "view_replay_pending_view_count_mismatch" in progress[
+        "blocking_reasons"
+    ]
 
 
 def _reviewed_copy_script_payload() -> dict[str, object]:
@@ -5840,6 +5962,33 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["live_preflight_tool"] == "material_studio_live_session_preflight"
     assert capabilities["live_entry_tool"] == "material_studio_live_modeling_request"
     assert capabilities["live_status_tool"] == "material_studio_live_project_status"
+    replay_progress_contract = capabilities["view_replay_progress_contract"]
+    assert replay_progress_contract == {
+        "schema_version": "material_studio_gui_view_replay_progress_v1",
+        "status_field": (
+            "material_studio_live_project_status.gui_view_replay.progress"
+        ),
+        "available_in_response_modes": ["full", "compact"],
+        "compatibility_alias_parent": (
+            "material_studio_live_project_status.gui_view_replay"
+        ),
+        "decision_field": "trusted_complete",
+        "requires_current_project_revision_binding": True,
+        "requires_accepted_view_count_consistency": True,
+        "requires_pending_view_count_consistency": True,
+        "requires_all_supported_views_confirmed": True,
+        "requires_evidence_integrity_status": "verified",
+        "requires_event_journal_consistency_status": "consistent",
+        "complete_status_requires_trusted_complete": True,
+        "fail_closed": True,
+    }
+    compact_capabilities = server.material_studio_live_capabilities(
+        response_mode="compact"
+    )
+    assert (
+        compact_capabilities["view_replay_progress_contract"]
+        == replay_progress_contract
+    )
     assert capabilities["live_status_project_id_optional"] is True
     assert capabilities["live_update_tool"] == "material_studio_live_update_with_patch"
     assert (
@@ -32759,6 +32908,7 @@ def test_high_level_hotload_lock_timeout_defers_gui_and_report_after_execution(
     assert blocked["gui_open_retry_tool"] == "material_studio_gui_open_structure"
     assert blocked["execution_completed_before_gui_transaction"] is True
     assert blocked["structure_ready_for_gui_retry"] is True
+    assert blocked["execution_result"]["success"] is True
     retry_payload = blocked["gui_open_retry_payload"]
     assert retry_payload["project_id"] == created["project_id"]
     assert retry_payload["revision"] == 0

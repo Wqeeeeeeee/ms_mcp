@@ -485,6 +485,31 @@ def test_apply_current_preview_recovers_existing_live_revision_without_gui_input
     assert status["modeling_report"]["normality_gate"][
         "can_claim_live_gui_normal"
     ] is True
+    replay_progress = status["gui_view_replay"]["progress"]
+    assert replay_progress["status"] == "complete"
+    assert replay_progress["accepted_view_count"] == len(REPLAY_VIEWS)
+    assert set(replay_progress["accepted_view_names"]) == set(REPLAY_VIEWS)
+    assert replay_progress["remaining_supported_view_count"] == 0
+    assert replay_progress["all_supported_views_confirmed"] is True
+    assert replay_progress["trusted_complete"] is True
+    assert status["gui_view_replay"]["accepted_view_count"] == len(REPLAY_VIEWS)
+    assert status["gui_view_replay"]["all_supported_views_confirmed"] is True
+
+    compact_status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+        response_mode="compact",
+    )
+    compact_progress = compact_status["gui_view_replay"]["progress"]
+    assert compact_progress["status"] == replay_progress["status"]
+    assert compact_progress["accepted_view_count"] == len(REPLAY_VIEWS)
+    assert set(compact_progress["accepted_view_names"]) == set(REPLAY_VIEWS)
+    assert compact_progress["all_supported_views_confirmed"] is True
+    assert compact_progress["trusted_complete"] is True
+    assert len(
+        json.dumps(compact_status, ensure_ascii=False).encode("utf-8")
+    ) < server.COMPACT_RESPONSE_MAX_BYTES
 
 
 def test_apply_current_preview_does_not_recover_live_state_from_failed_result(

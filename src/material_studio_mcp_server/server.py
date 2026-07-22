@@ -4408,6 +4408,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
         "live_preflight_tool": "material_studio_live_session_preflight",
         "live_entry_tool": "material_studio_live_modeling_request",
         "live_status_tool": "material_studio_live_project_status",
+        "view_replay_progress_contract": _view_replay_progress_capability_policy(),
         "runtime_provenance_contract": {
             "schema": RUNTIME_PROVENANCE_SCHEMA,
             "deployment_binding_schema": RUNTIME_DEPLOYMENT_SCHEMA,
@@ -39080,6 +39081,7 @@ def _compact_terminal_view_replay_summary(value: Any) -> dict[str, Any]:
             "journal_consistency_status",
             "pending_view_count",
             "all_requested_views_accepted",
+            "all_supported_views_confirmed",
         ),
     )
     compact.update(
@@ -39249,6 +39251,7 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
             "unsupported_pending_view_count",
             "unsupported_pending_view_names",
             "all_requested_views_accepted",
+            "all_supported_views_confirmed",
         ),
     )
     for key in (
@@ -39274,6 +39277,46 @@ def _compact_view_replay_summary(value: Any) -> dict[str, Any]:
         if value.get(key):
             compact[key] = value[key]
     return compact
+
+
+def _compact_view_replay_progress(value: Any) -> dict[str, Any]:
+    """Keep the complete revision-bound replay decision in compact status."""
+
+    if not isinstance(value, dict):
+        return {}
+    return _mapping_subset(
+        value,
+        (
+            "schema_version",
+            "available",
+            "status",
+            "project_id",
+            "revision",
+            "manifest_project_id",
+            "manifest_revision",
+            "binding_verified",
+            "replay_status",
+            "requested_view_count",
+            "supported_view_count",
+            "accepted_event_count",
+            "trusted_accepted_event_count",
+            "accepted_view_count",
+            "accepted_view_names",
+            "accepted_view_count_consistent",
+            "pending_view_count",
+            "pending_view_names",
+            "pending_view_count_consistent",
+            "remaining_supported_view_count",
+            "all_requested_views_accepted",
+            "all_supported_views_confirmed",
+            "evidence_integrity_status",
+            "journal_consistency_status",
+            "next_pending_view_name",
+            "terminal_continuation",
+            "trusted_complete",
+            "blocking_reasons",
+        ),
+    )
 
 
 def _compact_view_replay_recipe_contract(value: Any) -> dict[str, Any]:
@@ -39511,8 +39554,19 @@ def _compact_view_replay(value: Any) -> dict[str, Any]:
             "manifest_path",
             "events_path",
             "replay_status",
+            "accepted_view_count",
+            "accepted_view_names",
+            "pending_view_count",
+            "pending_view_names",
+            "all_supported_views_confirmed",
+            "evidence_integrity_status",
+            "journal_consistency_status",
+            "trusted_complete",
         ),
     )
+    progress = _compact_view_replay_progress(value.get("progress"))
+    if progress:
+        replay["progress"] = progress
     summary = _compact_view_replay_summary(value.get("replay_summary"))
     if summary:
         replay["replay_summary"] = summary
@@ -39692,8 +39746,19 @@ def _compact_gui_view_replay(value: Any) -> dict[str, Any]:
             "view_names",
             "requested_view_count",
             "supported_view_count",
+            "accepted_view_count",
+            "accepted_view_names",
+            "pending_view_count",
+            "pending_view_names",
+            "all_supported_views_confirmed",
+            "evidence_integrity_status",
+            "journal_consistency_status",
+            "trusted_complete",
         ),
     )
+    progress = _compact_view_replay_progress(value.get("progress"))
+    if progress:
+        replay["progress"] = progress
     if terminal_complete:
         view_selection = _compact_terminal_view_replay_selection(
             value.get("view_selection"),
@@ -39800,6 +39865,8 @@ def _view_replay_manifest_binding_summary(
         return {
             "project_id": None,
             "revision": None,
+            "target_project_id": project_id,
+            "target_revision": revision,
             "spec_fingerprint": None,
             "current_spec_fingerprint": current_spec_fingerprint,
             "binding_status": "manifest_unavailable",
@@ -39835,6 +39902,8 @@ def _view_replay_manifest_binding_summary(
     return {
         "project_id": manifest_project_id,
         "revision": manifest_revision,
+        "target_project_id": project_id,
+        "target_revision": revision,
         "spec_fingerprint": manifest_fingerprint,
         "current_spec_fingerprint": current_spec_fingerprint,
         "binding_status": (
@@ -39845,6 +39914,202 @@ def _view_replay_manifest_binding_summary(
         "binding_verified": binding_verified,
         "binding_reasons": reasons,
     }
+
+
+def _view_replay_progress_capability_policy() -> dict[str, Any]:
+    """Return discovery metadata for the stable replay-progress receipt."""
+
+    return {
+        "schema_version": "material_studio_gui_view_replay_progress_v1",
+        "status_field": "material_studio_live_project_status.gui_view_replay.progress",
+        "available_in_response_modes": ["full", "compact"],
+        "compatibility_alias_parent": (
+            "material_studio_live_project_status.gui_view_replay"
+        ),
+        "decision_field": "trusted_complete",
+        "requires_current_project_revision_binding": True,
+        "requires_accepted_view_count_consistency": True,
+        "requires_pending_view_count_consistency": True,
+        "requires_all_supported_views_confirmed": True,
+        "requires_evidence_integrity_status": "verified",
+        "requires_event_journal_consistency_status": "consistent",
+        "complete_status_requires_trusted_complete": True,
+        "fail_closed": True,
+    }
+
+
+def _attach_view_replay_progress(
+    replay: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Expose one fail-closed accepted-view progress receipt for MCP clients."""
+
+    summary = (
+        manifest.get("replay_summary")
+        if isinstance(manifest, dict)
+        and isinstance(manifest.get("replay_summary"), dict)
+        else replay.get("replay_summary")
+        if isinstance(replay.get("replay_summary"), dict)
+        else {}
+    )
+    continuation = (
+        manifest.get("replay_continuation")
+        if isinstance(manifest, dict)
+        and isinstance(manifest.get("replay_continuation"), dict)
+        else replay.get("replay_continuation")
+        if isinstance(replay.get("replay_continuation"), dict)
+        else {}
+    )
+
+    def count(value: Any, fallback: int = 0) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return max(0, fallback)
+
+    view_names = _dedupe_strings(
+        [str(item) for item in replay.get("view_names") or [] if item]
+    )
+    accepted_view_names = _dedupe_strings(
+        [str(item) for item in summary.get("accepted_view_names") or [] if item]
+    )
+    reported_accepted_view_count = count(
+        summary.get("accepted_view_count"),
+        len(accepted_view_names),
+    )
+    accepted_view_count_consistent = (
+        reported_accepted_view_count == len(accepted_view_names)
+    )
+    accepted_view_count = len(accepted_view_names)
+    requested_view_count = count(
+        replay.get("requested_view_count"),
+        len(view_names),
+    )
+    supported_view_count = count(
+        summary.get("supported_view_count"),
+        count(replay.get("supported_view_count"), len(view_names)),
+    )
+    pending_view_names = _dedupe_strings(
+        [str(item) for item in summary.get("pending_view_names") or [] if item]
+    )
+    if not pending_view_names and accepted_view_count < supported_view_count:
+        accepted_names = set(accepted_view_names)
+        pending_view_names = [
+            view_name for view_name in view_names if view_name not in accepted_names
+        ][: max(0, supported_view_count - accepted_view_count)]
+    remaining_supported_view_count = max(
+        0,
+        supported_view_count - accepted_view_count,
+    )
+    reported_pending_view_count = count(
+        summary.get("pending_view_count"),
+        remaining_supported_view_count,
+    )
+    pending_view_count_consistent = bool(
+        reported_pending_view_count == len(pending_view_names)
+        and reported_pending_view_count == remaining_supported_view_count
+    )
+    pending_view_count = max(
+        reported_pending_view_count,
+        remaining_supported_view_count,
+    )
+    evidence_integrity_status = summary.get("evidence_integrity_status")
+    journal_consistency_status = summary.get("journal_consistency_status")
+    binding_verified = replay.get("binding_verified") is True
+    reported_all_supported = summary.get("all_supported_views_confirmed") is True
+    all_supported_views_confirmed = bool(
+        reported_all_supported
+        and supported_view_count > 0
+        and accepted_view_count_consistent
+        and pending_view_count_consistent
+        and accepted_view_count == supported_view_count
+    )
+    all_requested_views_accepted = bool(
+        requested_view_count > 0
+        and accepted_view_count_consistent
+        and accepted_view_count == requested_view_count
+    )
+    blocking_reasons = list(replay.get("binding_reasons") or [])
+    if not accepted_view_count_consistent:
+        blocking_reasons.append("view_replay_accepted_view_count_mismatch")
+    if not pending_view_count_consistent:
+        blocking_reasons.append("view_replay_pending_view_count_mismatch")
+    if reported_all_supported and not all_supported_views_confirmed:
+        blocking_reasons.append("view_replay_supported_view_count_mismatch")
+    if accepted_view_count and evidence_integrity_status != "verified":
+        blocking_reasons.append("view_replay_evidence_integrity_unverified")
+    if accepted_view_count and journal_consistency_status != "consistent":
+        blocking_reasons.append("view_replay_event_journal_inconsistent")
+    blocking_reasons = _dedupe_strings(blocking_reasons)
+    trusted_complete = bool(
+        binding_verified
+        and all_supported_views_confirmed
+        and evidence_integrity_status == "verified"
+        and journal_consistency_status == "consistent"
+        and not blocking_reasons
+    )
+    if not isinstance(manifest, dict):
+        status = "manifest_unavailable"
+    elif not binding_verified:
+        status = "binding_rejected"
+    elif trusted_complete:
+        status = "complete"
+    elif accepted_view_count and blocking_reasons:
+        status = "trust_review_required"
+    elif accepted_view_count:
+        status = "in_progress"
+    else:
+        status = "pending"
+
+    progress = {
+        "schema_version": "material_studio_gui_view_replay_progress_v1",
+        "available": isinstance(manifest, dict),
+        "status": status,
+        "project_id": replay.get("target_project_id") or replay.get("project_id"),
+        "revision": (
+            replay.get("target_revision")
+            if replay.get("target_revision") is not None
+            else replay.get("revision")
+        ),
+        "manifest_project_id": replay.get("project_id"),
+        "manifest_revision": replay.get("revision"),
+        "binding_verified": binding_verified,
+        "replay_status": replay.get("replay_status"),
+        "requested_view_count": requested_view_count,
+        "supported_view_count": supported_view_count,
+        "accepted_event_count": summary.get("accepted_event_count"),
+        "trusted_accepted_event_count": summary.get(
+            "trusted_accepted_event_count"
+        ),
+        "accepted_view_count": accepted_view_count,
+        "accepted_view_names": accepted_view_names,
+        "accepted_view_count_consistent": accepted_view_count_consistent,
+        "pending_view_count": pending_view_count,
+        "pending_view_names": pending_view_names,
+        "pending_view_count_consistent": pending_view_count_consistent,
+        "remaining_supported_view_count": remaining_supported_view_count,
+        "all_requested_views_accepted": all_requested_views_accepted,
+        "all_supported_views_confirmed": all_supported_views_confirmed,
+        "evidence_integrity_status": evidence_integrity_status,
+        "journal_consistency_status": journal_consistency_status,
+        "next_pending_view_name": continuation.get("next_pending_view_name"),
+        "terminal_continuation": continuation.get("status") == "complete",
+        "trusted_complete": trusted_complete,
+        "blocking_reasons": blocking_reasons,
+    }
+    replay["progress"] = progress
+    for key in (
+        "accepted_view_count",
+        "accepted_view_names",
+        "pending_view_count",
+        "pending_view_names",
+        "all_supported_views_confirmed",
+        "evidence_integrity_status",
+        "journal_consistency_status",
+        "trusted_complete",
+    ):
+        replay[key] = progress[key]
+    return progress
 
 
 def _deduplicate_compact_gui_view_replay(
@@ -40559,6 +40824,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_continuation",
             "execution_attempt_state_path",
             "execution_attempt_events_path",
+            "execution_result",
             "execution_started",
             "execution_deferred",
             "execution_completed_before_gui_activation",
@@ -40790,6 +41056,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "execution_continuation",
             "execution_attempt_state_path",
             "execution_attempt_events_path",
+            "execution_result",
             "execution_started",
             "execution_deferred",
             "execution_completed_before_gui_activation",
@@ -40921,6 +41188,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_preflight_tool",
             "live_entry_tool",
             "live_status_tool",
+            "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
             "codex_config_status_contract",
@@ -42171,6 +42439,7 @@ def _compact_capabilities_response(
             "live_preflight_tool",
             "live_entry_tool",
             "live_status_tool",
+            "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
             "codex_config_status_contract",
@@ -43453,6 +43722,10 @@ def material_studio_live_project_status(
                 current_spec_fingerprint=computed_audit.get("spec_fingerprint"),
             )
         )
+        _attach_view_replay_progress(
+            view_replay_summary,
+            view_replay_manifest,
+        )
         computed_health = build_modeling_health(
             {
                 "validation": generated["script_validation"],
@@ -43992,6 +44265,7 @@ def _current_revision_view_replay_context(
             current_spec_fingerprint=current_spec_fingerprint,
         )
     )
+    _attach_view_replay_progress(context, manifest)
     return context, manifest
 
 

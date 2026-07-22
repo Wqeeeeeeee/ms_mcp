@@ -10,6 +10,7 @@ import pytest
 from material_studio_mcp_server.protocol_smoke import (
     COMPACT_RESPONSE_MAX_BYTES,
     REQUIRED_PROTOCOL_TOOLS,
+    _protocol_roundtrip_execution_handoff_acceptance,
     _protocol_roundtrip_preview_acceptance,
     audit_codex_config,
     run_protocol_acceptance,
@@ -60,6 +61,20 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["roundtrip_preview_runner_call_planned"] is False
     assert calls["roundtrip_preview_gui_probe_planned"] is False
     assert calls["roundtrip_preview_run_root_exists"] is False
+    assert calls["roundtrip_execution_handoff_acceptance_ok"] is True
+    assert calls["roundtrip_execution_handoff_confirmation_required"] is True
+    assert calls["roundtrip_execution_handoff_payload_consistent"] is True
+    assert calls["roundtrip_execution_handoff_acceptance"]["payload"] == {
+        "project_id": calls["project_id"],
+        "expected_revision": calls["revision"],
+        "execution_mode": "execute",
+        "open_in_gui": True,
+        "take_snapshot": True,
+        "verify_ms_roundtrip": True,
+        "export_view_audit": True,
+        "views": ["front", "top", "isometric"],
+        "working_dir": str(workspace.resolve()),
+    }
     assert calls["roundtrip_preview_acceptance"]["output_exists"] is False
     assert calls["roundtrip_preview_acceptance"]["side_effects"] == {
         "files_written": False,
@@ -331,6 +346,110 @@ def test_protocol_roundtrip_preview_acceptance_rejects_contract_drift(
         created=created,
         status=status,
         workspace=tmp_path,
+    )
+
+    assert acceptance["ok"] is False
+    assert expected_error in acceptance["errors"]
+
+
+def _roundtrip_handoff_responses(tmp_path: Path) -> tuple[dict, dict]:
+    project_id = "protocol_roundtrip_handoff"
+    revision = 3
+    payload = {
+        "project_id": project_id,
+        "expected_revision": revision,
+        "execution_mode": "execute",
+        "open_in_gui": True,
+        "take_snapshot": True,
+        "verify_ms_roundtrip": True,
+        "export_view_audit": True,
+        "views": ["front", "top", "isometric"],
+        "working_dir": str(tmp_path.resolve()),
+    }
+    action = {
+        "action_id": "execute_and_hotload_current_revision",
+        "recommended_tool": "material_studio_gui_apply_current_revision",
+        "needs_user_confirmation": True,
+        "safe_to_call_without_confirmation": False,
+        "payload_hint": payload,
+    }
+    created = {
+        "project_id": project_id,
+        "revision": revision,
+        "next_action_plan": copy.deepcopy(action),
+    }
+    status = {
+        "project_id": project_id,
+        "revision": revision,
+        "next_action_plan": {
+            "action_id": "verify_single_window_gui_preflight",
+            "recommended_tool": "material_studio_gui_status",
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+            "payload_hint": {
+                "project_id": project_id,
+                "revision": revision,
+                "working_dir": str(tmp_path.resolve()),
+            },
+            "deferred_hotload_action": copy.deepcopy(action),
+        },
+    }
+    return created, status
+
+
+def test_protocol_roundtrip_execution_handoff_acceptance_binds_exact_payload(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_handoff_responses(tmp_path)
+
+    acceptance = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed"
+    assert acceptance["needs_user_confirmation"] is True
+    assert acceptance["safe_to_call_without_confirmation"] is False
+    assert acceptance["create_status_payload_consistent"] is True
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("missing_revision", "roundtrip_create_apply_expected_revision_mismatch"),
+        ("missing_roundtrip", "roundtrip_create_apply_verify_ms_roundtrip_mismatch"),
+        ("missing_workspace", "roundtrip_create_apply_working_dir_mismatch"),
+        ("confirmation_bypass", "roundtrip_create_apply_confirmation_gate_missing"),
+        ("status_drift", "roundtrip_create_status_apply_payload_mismatch"),
+    ],
+)
+def test_protocol_roundtrip_execution_handoff_acceptance_rejects_drift(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    created, status = _roundtrip_handoff_responses(tmp_path)
+    create_action = created["next_action_plan"]
+    status_action = status["next_action_plan"]["deferred_hotload_action"]
+    if mutation == "missing_revision":
+        create_action["payload_hint"].pop("expected_revision")
+    elif mutation == "missing_roundtrip":
+        create_action["payload_hint"].pop("verify_ms_roundtrip")
+    elif mutation == "missing_workspace":
+        create_action["payload_hint"].pop("working_dir")
+    elif mutation == "confirmation_bypass":
+        create_action["needs_user_confirmation"] = False
+    else:
+        status_action["payload_hint"]["take_snapshot"] = False
+
+    acceptance = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
     )
 
     assert acceptance["ok"] is False

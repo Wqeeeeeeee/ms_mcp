@@ -2518,6 +2518,7 @@ def _deferred_preexecution_live(
     }
     execution_payload: dict[str, object] = {
         "project_id": project_id,
+        "expected_revision": revision,
         "execution_mode": "execute",
         "open_in_gui": True,
         "take_snapshot": take_snapshot,
@@ -3510,6 +3511,7 @@ def test_server_preexecution_block_satisfies_live_smoke_contract(tmp_path: Path)
     views = ["front", "top"]
     retry_payload = live_smoke.server._gui_apply_current_execution_retry_payload(
         project_id=project_id,
+        expected_revision=revision,
         open_in_gui=True,
         take_snapshot=True,
         fit_to_view_after_open=True,

@@ -93,9 +93,11 @@ tagged JSON, CIF comparison, runner identity, and unchanged one-process,
 one-window GUI inventory. A structurally valid fake-runner receipt remains
 `NOT_RUN`: it can test the acceptance code but cannot pass the real-MS flag.
 
-Continuation flags do not synthesize `verify_ms_roundtrip`. They use the exact
-workspace-bound retry payload returned by the server, so deferred execution or
-GUI synchronization cannot silently change the original audit request.
+Continuation flags do not synthesize `verify_ms_roundtrip`. The server-issued
+apply handoff preserves it together with `expected_revision`, `working_dir`,
+explicit framing/replay choices, and selected views. Deferred execution or GUI
+synchronization must use that exact confirmation-gated payload. A stale
+`expected_revision` is rejected before execution or GUI probing.
 
 ## MCP protocol acceptance
 
@@ -106,6 +108,11 @@ binds the create and live-status plans to the same project, revision, spec
 SHA-256, and workspace-confined output paths. The accepted plan must remain
 `deferred_until_materialized`, with no runner call, GUI probe, file side
 effect, receipt, comparison, or round-trip directory.
+
+The same run also validates the preview-to-execute handoff without calling it.
+The create and status/deferred payloads must be identical, directly callable,
+revision/workspace bound, retain `verify_ms_roundtrip=true`, and continue to
+require explicit user confirmation. See `docs/execution_handoff_contract.md`.
 
 This protocol check proves that an @mcp client can discover and request the
 preview audit. It does not prove real Materials Studio execution; that remains

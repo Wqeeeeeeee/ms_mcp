@@ -232,7 +232,66 @@ def _workspace_bound_action_plan(
         bound.get("payload_hint"),
         working_dir,
     )
+    deferred = bound.get("deferred_hotload_action")
+    if isinstance(deferred, dict) and deferred:
+        deferred_bound = dict(deferred)
+        deferred_bound["payload_hint"] = _workspace_bound_payload_hint(
+            deferred_bound.get("recommended_tool"),
+            deferred_bound.get("payload_hint"),
+            working_dir,
+        )
+        bound["deferred_hotload_action"] = deferred_bound
     return bound
+
+
+def _bind_current_revision_apply_payload(
+    payload_hint: Any,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve the exact revision and safety options in an apply handoff.
+
+    A preview response is often followed by a status/preflight call before the
+    user confirms execution.  Rebuilding the action from only the generic
+    readiness state can otherwise drop round-trip, framing, replay, or view
+    selection requests.  Keep those options bound to the revision that
+    produced the report and let the apply tool reject a superseded revision.
+    """
+
+    payload = dict(payload_hint) if isinstance(payload_hint, dict) else {}
+    payload_revision = payload.pop("revision", None)
+    revision = report.get("revision", payload_revision)
+    if isinstance(revision, int) and not isinstance(revision, bool):
+        payload.setdefault("expected_revision", revision)
+
+    if report.get("materials_studio_roundtrip_audit_requested") is True:
+        payload["verify_ms_roundtrip"] = True
+
+    fit_requested = report.get("post_hotload_fit_to_view_requested")
+    fit_source = report.get("post_hotload_fit_to_view_request_source")
+    if isinstance(fit_requested, bool) and (
+        fit_requested or fit_source == "explicit_parameter"
+    ):
+        payload["fit_to_view_after_open"] = fit_requested
+
+    replay_requested = report.get("post_hotload_view_replay_prepare_requested")
+    replay_source = report.get("post_hotload_view_replay_prepare_request_source")
+    if isinstance(replay_requested, bool) and (
+        replay_requested or replay_source == "explicit_parameter"
+    ):
+        payload["prepare_view_replay_after_open"] = replay_requested
+
+    view_selection = report.get("view_selection")
+    selected_views = (
+        view_selection.get("view_names")
+        if isinstance(view_selection, dict)
+        else None
+    )
+    if isinstance(selected_views, list) and selected_views:
+        selection_source = view_selection.get("source")
+        if selection_source == "explicit_request" or replay_requested is True:
+            payload["views"] = list(selected_views)
+
+    return payload
 
 
 LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
@@ -1321,6 +1380,7 @@ def _error(exc: Exception) -> dict[str, Any]:
             "status": "current_revision_execution_block",
             "error": str(exc),
             "project_id": exc.project_id,
+            "expected_revision": exc.target_revision,
             "revision": exc.target_revision,
             "target_revision": exc.target_revision,
             "current_revision": exc.current_revision,
@@ -22351,6 +22411,8 @@ def _modeling_issue_remediation(issue: dict[str, Any], report: dict[str, Any]) -
         recommended_action = recommended_action or "review_live_delivery_failure_before_next_step"
         payload_hint = default_payload
 
+    if recommended_tool == "material_studio_gui_apply_current_revision":
+        payload_hint = _bind_current_revision_apply_payload(payload_hint, report)
     payload_hint = _drop_none_values(payload_hint)
     return _drop_none_values(
         {
@@ -23713,6 +23775,7 @@ def _with_single_window_hotload_block(
 def _gui_apply_current_execution_retry_payload(
     *,
     project_id: str,
+    expected_revision: int,
     open_in_gui: bool,
     take_snapshot: bool,
     fit_to_view_after_open: bool,
@@ -23728,6 +23791,7 @@ def _gui_apply_current_execution_retry_payload(
 
     payload: dict[str, Any] = {
         "project_id": project_id,
+        "expected_revision": expected_revision,
         "execution_mode": ExecutionMode.EXECUTE.value,
         "open_in_gui": open_in_gui,
         "take_snapshot": take_snapshot,
@@ -29569,6 +29633,7 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
                 or readiness.get("recommended_action")
                 or report.get("next_action"),
                 "needs_user_confirmation": needs_user_confirmation,
+                "safe_to_call_without_confirmation": not needs_user_confirmation,
                 "payload_hint": _drop_none_values(payload_hint),
             }
         )
@@ -29580,6 +29645,26 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
             "project_id": report.get("project_id"),
             "revision": report.get("revision"),
         }
+
+    if recommended_tool == "material_studio_gui_apply_current_revision":
+        payload_hint = _bind_current_revision_apply_payload(payload_hint, report)
+    if isinstance(deferred_hotload_action, dict) and deferred_hotload_action:
+        deferred_hotload_action = dict(deferred_hotload_action)
+        if (
+            deferred_hotload_action.get("recommended_tool")
+            == "material_studio_gui_apply_current_revision"
+        ):
+            deferred_hotload_action["payload_hint"] = (
+                _bind_current_revision_apply_payload(
+                    deferred_hotload_action.get("payload_hint"),
+                    report,
+                )
+            )
+        deferred_hotload_action["payload_hint"] = _workspace_bound_payload_hint(
+            deferred_hotload_action.get("recommended_tool"),
+            deferred_hotload_action.get("payload_hint"),
+            report.get("working_dir"),
+        )
 
     payload_hint = _workspace_bound_payload_hint(
         recommended_tool,
@@ -29827,6 +29912,8 @@ def _live_hotload_preflight_summary(report: dict[str, Any]) -> dict[str, Any]:
         }
         needs_user_confirmation = bool(next_action.get("needs_user_confirmation"))
 
+    if recommended_tool == "material_studio_gui_apply_current_revision":
+        payload_hint = _bind_current_revision_apply_payload(payload_hint, report)
     payload_hint = _workspace_bound_payload_hint(
         recommended_tool,
         payload_hint,
@@ -32868,6 +32955,8 @@ def _gui_current_revision_status_from_report(report: dict[str, Any]) -> dict[str
     elif recommended_tool == "material_studio_gui_fit_to_view":
         payload_hint = dict(fit_to_view_preview.get("payload_hint") or {})
 
+    if recommended_tool == "material_studio_gui_apply_current_revision":
+        payload_hint = _bind_current_revision_apply_payload(payload_hint, report)
     payload_hint = _workspace_bound_payload_hint(
         recommended_tool,
         payload_hint,
@@ -43177,6 +43266,38 @@ def material_studio_live_project_status(
             or (
                 persisted_change_receipt or {}
             ).get("execution_mode_source"),
+            "post_hotload_fit_to_view_requested": _first_not_none(
+                (persisted_modeling_report or {}).get(
+                    "post_hotload_fit_to_view_requested"
+                ),
+                (report_json_payload or {}).get(
+                    "post_hotload_fit_to_view_requested"
+                ),
+            ),
+            "post_hotload_fit_to_view_request_source": _first_not_none(
+                (persisted_modeling_report or {}).get(
+                    "post_hotload_fit_to_view_request_source"
+                ),
+                (report_json_payload or {}).get(
+                    "post_hotload_fit_to_view_request_source"
+                ),
+            ),
+            "post_hotload_view_replay_prepare_requested": _first_not_none(
+                (persisted_modeling_report or {}).get(
+                    "post_hotload_view_replay_prepare_requested"
+                ),
+                (report_json_payload or {}).get(
+                    "post_hotload_view_replay_prepare_requested"
+                ),
+            ),
+            "post_hotload_view_replay_prepare_request_source": _first_not_none(
+                (persisted_modeling_report or {}).get(
+                    "post_hotload_view_replay_prepare_request_source"
+                ),
+                (report_json_payload or {}).get(
+                    "post_hotload_view_replay_prepare_request_source"
+                ),
+            ),
             "diagnostic_export_requested": persisted_diagnostic_export_requested,
             "normality_check_requested": persisted_normality_check_requested,
             "gui_evidence_reaudit": persisted_gui_evidence_reaudit,
@@ -45842,6 +45963,7 @@ def material_studio_live_update_with_patch(
                 views=views,
                 execution_retry_payload=_gui_apply_current_execution_retry_payload(
                     project_id=project_id,
+                    expected_revision=new_spec.revision,
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
@@ -49689,6 +49811,7 @@ def material_studio_live_modeling_request(
                 with _live_orchestration_context(orchestration_context):
                     result = material_studio_gui_apply_current_revision(
                         project_id=project_id,
+                        expected_revision=current_spec.revision,
                         execution_mode=mode,
                         open_in_gui=open_in_gui,
                         take_snapshot=take_snapshot,
@@ -49912,6 +50035,7 @@ def material_studio_live_modeling_request(
                 views=views,
                 execution_retry_payload=_gui_apply_current_execution_retry_payload(
                     project_id=model_spec.project_id,
+                    expected_revision=model_spec.revision,
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,
@@ -50174,6 +50298,7 @@ def _handle_live_rollback_request(
     with _live_orchestration_context(orchestration_context):
         return material_studio_gui_apply_current_revision(
             project_id=project_id,
+            expected_revision=rollback.get("revision", rollback.get("new_revision")),
             execution_mode=execution_mode,
             open_in_gui=open_in_gui,
             take_snapshot=take_snapshot,
@@ -53508,6 +53633,7 @@ def material_studio_gui_fit_to_view(
 @_require_current_runtime_source
 def material_studio_gui_apply_current_revision(
     project_id: Annotated[str | None, Field(description="要应用的结构化项目 ID；省略时使用最近 current 项目。", min_length=1, max_length=120)] = None,
+    expected_revision: Annotated[int | None, Field(description="Optional revision binding from a preview or status handoff; stale bindings are rejected before execution or GUI probing.", ge=0)] = None,
     execution_mode: Annotated[ExecutionMode, Field(description="preview 或 execute。默认为 preview。")] = ExecutionMode.PREVIEW,
     open_in_gui: Annotated[bool, Field(description="成功执行后在现有 GUI 中打开生成的结构。")] = True,
     take_snapshot: Annotated[bool, Field(description="打开后尽可能捕获 GUI 快照。")] = True,
@@ -53592,6 +53718,32 @@ def material_studio_gui_apply_current_revision(
         else:
             spec, current_resolution = store.resolve_current(project_id)
             project_resolution = _explicit_project_resolution(spec, current_resolution)
+        current_pointer = (
+            project_resolution.get("current_pointer")
+            if isinstance(project_resolution, dict)
+            and isinstance(project_resolution.get("current_pointer"), dict)
+            else {}
+        )
+        if expected_revision is not None and spec.revision != expected_revision:
+            return finish(
+                _error(
+                    RevisionExecutionSupersededError(
+                        spec.project_id,
+                        expected_revision,
+                        spec.revision,
+                        current_pointer,
+                        {
+                            "domain": "revision_execution_preflight",
+                            "source": "apply_current_expected_revision",
+                            "project_id": spec.project_id,
+                            "target_revision": expected_revision,
+                            "current_revision": spec.revision,
+                            "execution_started": False,
+                            "gui_probe_started": False,
+                        },
+                    )
+                )
+            )
         audit_artifacts: list[dict[str, Any]] = []
         gui = _gui_controller(working_dir)
         script_path = store.project_dir(project_id) / "scripts" / f"r{spec.revision:03d}_build.pl"
@@ -53691,6 +53843,7 @@ def material_studio_gui_apply_current_revision(
                 views=views,
                 execution_retry_payload=_gui_apply_current_execution_retry_payload(
                     project_id=project_id,
+                    expected_revision=spec.revision,
                     open_in_gui=open_in_gui,
                     take_snapshot=take_snapshot,
                     fit_to_view_after_open=fit_to_view_requested_after_open,

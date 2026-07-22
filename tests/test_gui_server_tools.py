@@ -5758,12 +5758,15 @@ def test_crystal_cif_roundtrip_blocks_tampered_artifact_and_rematerializes_same_
         "recommended_tool": "material_studio_gui_apply_current_revision",
         "recommended_action": "rematerialize_current_revision_from_model_spec_then_hotload_and_reaudit",
         "needs_user_confirmation": True,
+        "safe_to_call_without_confirmation": False,
         "payload_hint": {
             "project_id": created["project_id"],
+            "expected_revision": created["revision"],
             "execution_mode": "execute",
             "open_in_gui": True,
             "take_snapshot": True,
             "export_view_audit": True,
+            "working_dir": str(tmp_path.resolve()),
         },
     }
     assert status["live_summary"]["next_action_id"] == "verify_single_window_gui_preflight"
@@ -9403,8 +9406,10 @@ def test_live_session_preflight_preserves_deferred_current_revision_hotload(
         "material_studio_gui_apply_current_revision"
     )
     assert deferred["needs_user_confirmation"] is True
+    assert deferred["safe_to_call_without_confirmation"] is False
     assert deferred["payload_hint"] == {
         "project_id": spec["project_id"],
+        "expected_revision": created["revision"],
         "execution_mode": "execute",
         "open_in_gui": True,
         "take_snapshot": True,
@@ -13465,6 +13470,7 @@ def test_gui_apply_current_revision_execute_requires_activation_before_running(
     assert executed["execution_retry_tool"] == "material_studio_gui_apply_current_revision"
     assert executed["execution_retry_payload"] == {
         "project_id": project_id,
+        "expected_revision": created["revision"],
         "execution_mode": "execute",
         "open_in_gui": True,
         "take_snapshot": True,

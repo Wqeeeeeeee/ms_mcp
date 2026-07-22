@@ -1225,6 +1225,7 @@ _POSTEXECUTION_OPEN_PAYLOAD_KEYS = frozenset(
 _PREEXECUTION_APPLY_PAYLOAD_KEYS = frozenset(
     {
         "project_id",
+        "expected_revision",
         "execution_mode",
         "open_in_gui",
         "take_snapshot",
@@ -1235,6 +1236,7 @@ _PREEXECUTION_APPLY_PAYLOAD_KEYS = frozenset(
         "working_dir",
         "timeout_seconds",
         "response_mode",
+        "verify_ms_roundtrip",
     }
 )
 _BUNDLE_EXPORT_RETRY_PAYLOAD_KEYS = frozenset(
@@ -1479,6 +1481,12 @@ def _validate_preexecution_execution_block(
         observed=execution_payload.get("project_id"),
     )
     require(
+        _revision_identity(execution_payload.get("expected_revision")) == revision,
+        "execution_payload_revision_binding_mismatch",
+        expected=revision,
+        observed=execution_payload.get("expected_revision"),
+    )
+    require(
         execution_payload.get("execution_mode") == ExecutionMode.EXECUTE.value,
         "execution_payload_not_execute",
         observed=execution_payload.get("execution_mode"),
@@ -1498,6 +1506,24 @@ def _validate_preexecution_execution_block(
             "execution_payload_boolean_field_invalid",
             field=field,
             observed=execution_payload.get(field),
+        )
+    if "verify_ms_roundtrip" in execution_payload:
+        require(
+            execution_payload.get("verify_ms_roundtrip") is True,
+            "execution_payload_roundtrip_gate_invalid",
+            observed=execution_payload.get("verify_ms_roundtrip"),
+        )
+    roundtrip_requested = bool(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or _dict(response.get("modeling_report")).get(
+            "materials_studio_roundtrip_audit_requested"
+        )
+        is True
+    )
+    if roundtrip_requested:
+        require(
+            execution_payload.get("verify_ms_roundtrip") is True,
+            "execution_payload_roundtrip_gate_missing",
         )
     if "timeout_seconds" in execution_payload:
         timeout_seconds = execution_payload.get("timeout_seconds")

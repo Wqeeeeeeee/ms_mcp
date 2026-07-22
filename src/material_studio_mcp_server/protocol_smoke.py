@@ -223,6 +223,7 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
     "material_studio_gui_apply_current_revision": {
         "properties": {
             "project_id",
+            "expected_revision",
             "execution_mode",
             "open_in_gui",
             "take_snapshot",
@@ -632,6 +633,117 @@ def _protocol_roundtrip_preview_acceptance(
     }
 
 
+def _protocol_roundtrip_execution_handoff_acceptance(
+    *,
+    created: dict[str, Any],
+    status: dict[str, Any],
+    workspace: Path,
+    expected_views: Sequence[str],
+) -> dict[str, Any]:
+    """Validate the exact, confirmation-gated execute handoff after preview."""
+
+    errors: list[str] = []
+    project_id = created.get("project_id")
+    revision = created.get("revision")
+    workspace_path = workspace.expanduser().resolve()
+    allowed_payload_fields = {
+        "project_id",
+        "expected_revision",
+        "execution_mode",
+        "open_in_gui",
+        "take_snapshot",
+        "fit_to_view_after_open",
+        "prepare_view_replay_after_open",
+        "verify_ms_roundtrip",
+        "export_view_audit",
+        "views",
+        "working_dir",
+        "timeout_seconds",
+        "response_mode",
+    }
+
+    def extract(label: str, response: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        plan = response.get("next_action_plan")
+        if not isinstance(plan, dict):
+            errors.append(f"roundtrip_{label}_next_action_plan_missing")
+            return {}, {}
+        action = plan
+        if plan.get("recommended_tool") != "material_studio_gui_apply_current_revision":
+            deferred = plan.get("deferred_hotload_action")
+            if (
+                isinstance(deferred, dict)
+                and deferred.get("recommended_tool")
+                == "material_studio_gui_apply_current_revision"
+            ):
+                action = deferred
+            else:
+                errors.append(f"roundtrip_{label}_apply_handoff_missing")
+                return {}, {}
+        payload = action.get("payload_hint")
+        if not isinstance(payload, dict):
+            errors.append(f"roundtrip_{label}_apply_payload_missing")
+            return action, {}
+        return action, payload
+
+    extracted = {
+        label: extract(label, response)
+        for label, response in (("create", created), ("status", status))
+    }
+    expected_payload_fields: dict[str, Any] = {
+        "project_id": project_id,
+        "expected_revision": revision,
+        "execution_mode": "execute",
+        "open_in_gui": True,
+        "take_snapshot": True,
+        "verify_ms_roundtrip": True,
+        "export_view_audit": True,
+        "views": list(expected_views),
+        "working_dir": str(workspace_path),
+    }
+    for label, (action, payload) in extracted.items():
+        if not action or not payload:
+            continue
+        if action.get("action_id") != "execute_and_hotload_current_revision":
+            errors.append(f"roundtrip_{label}_apply_action_id_mismatch")
+        if action.get("needs_user_confirmation") is not True:
+            errors.append(f"roundtrip_{label}_apply_confirmation_gate_missing")
+        if action.get("safe_to_call_without_confirmation") is not False:
+            errors.append(f"roundtrip_{label}_apply_safe_flag_invalid")
+        unexpected = sorted(set(payload) - allowed_payload_fields)
+        if unexpected:
+            errors.append(
+                f"roundtrip_{label}_apply_payload_fields_unexpected:{','.join(unexpected)}"
+            )
+        for field, expected in expected_payload_fields.items():
+            observed = payload.get(field)
+            if observed != expected or type(observed) is not type(expected):
+                errors.append(f"roundtrip_{label}_apply_{field}_mismatch")
+
+    create_payload = extracted["create"][1]
+    status_payload = extracted["status"][1]
+    if create_payload and status_payload and create_payload != status_payload:
+        errors.append("roundtrip_create_status_apply_payload_mismatch")
+
+    return {
+        "ok": not errors,
+        "status": "passed" if not errors else "failed",
+        "errors": errors,
+        "project_id": project_id,
+        "revision": revision,
+        "recommended_tool": "material_studio_gui_apply_current_revision",
+        "needs_user_confirmation": extracted["create"][0].get(
+            "needs_user_confirmation"
+        ),
+        "safe_to_call_without_confirmation": extracted["create"][0].get(
+            "safe_to_call_without_confirmation"
+        ),
+        "create_status_payload_consistent": bool(
+            create_payload and create_payload == status_payload
+        ),
+        "payload": create_payload,
+    }
+
+
 async def _run_preview_calls(
     session: ClientSession,
     *,
@@ -777,6 +889,14 @@ async def _run_preview_calls(
             status=status,
             workspace=workspace,
         )
+        roundtrip_handoff_acceptance = (
+            _protocol_roundtrip_execution_handoff_acceptance(
+                created=created,
+                status=status,
+                workspace=workspace,
+                expected_views=("front", "top", "isometric"),
+            )
+        )
         response_sizes_bytes = {
             "capabilities": len(json.dumps(capabilities, ensure_ascii=False).encode("utf-8")),
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
@@ -802,6 +922,7 @@ async def _run_preview_calls(
         }
         validation_errors: list[str] = []
         validation_errors.extend(roundtrip_acceptance["errors"])
+        validation_errors.extend(roundtrip_handoff_acceptance["errors"])
         if capabilities.get("ok") is not True:
             validation_errors.append("capabilities_call_not_ok")
         if capabilities.get("response_mode") != "compact":
@@ -1550,6 +1671,20 @@ async def _run_preview_calls(
                 ),
                 "roundtrip_preview_run_root_exists": (
                     roundtrip_acceptance["run_root_exists"]
+                ),
+                "roundtrip_execution_handoff_acceptance": (
+                    roundtrip_handoff_acceptance
+                ),
+                "roundtrip_execution_handoff_acceptance_ok": (
+                    roundtrip_handoff_acceptance["ok"]
+                ),
+                "roundtrip_execution_handoff_confirmation_required": (
+                    roundtrip_handoff_acceptance["needs_user_confirmation"]
+                ),
+                "roundtrip_execution_handoff_payload_consistent": (
+                    roundtrip_handoff_acceptance[
+                        "create_status_payload_consistent"
+                    ]
                 ),
                 "castep_relaxation_preview_status": relaxation_preview.get(
                     "status"

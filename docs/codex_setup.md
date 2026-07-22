@@ -1502,6 +1502,15 @@ runner or GUI probe, false side-effect fields, workspace-confined planned
 paths, and no `ms_roundtrip/preview` directory. It never promotes the audit to
 execute.
 
+When a preview recommends `material_studio_gui_apply_current_revision`, use
+the returned `next_action_plan.payload_hint` or its exact
+`deferred_hotload_action.payload_hint` after explicit confirmation. It is
+bound to `expected_revision` and `working_dir` and preserves requested
+roundtrip, Fit-to-View, replay, and view-selection options. The apply tool
+fails closed with `current_revision_execution_block` if the current revision
+has advanced, before probing the GUI or starting a runner. Do not reconstruct
+this payload from a generic execute example.
+
 ## Goal Watchdog
 
 The optional local watchdog runs as one hidden user-level PowerShell process

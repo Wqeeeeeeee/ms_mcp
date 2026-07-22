@@ -7,6 +7,7 @@ import pytest
 
 from material_studio_mcp_server.castep_acceptance import (
     CastepAcceptanceHarness,
+    CastepAcceptanceRequest,
 )
 from material_studio_mcp_server.castep_acceptance.contracts import FIXED_PROJECT_ID
 from material_studio_mcp_server.castep_acceptance.profile import (
@@ -42,6 +43,40 @@ def test_preview_does_not_resolve_tool_gui_or_create_files(request_factory) -> N
     assert plan.backend_resolution_deferred is True
     assert plan.explicit_real_opt_in_required is True
     assert plan.public_tool == "material_studio_castep_run_current"
+
+
+def test_preview_plan_digest_is_deterministic_and_binds_request(
+    request_factory,
+    tmp_path: Path,
+) -> None:
+    harness = CastepAcceptanceHarness(real_environment=False)
+    request = request_factory()
+
+    first = harness.run(request)
+    repeated = harness.run(request_factory())
+    different_workspace = harness.run(
+        request_factory(selected_workspace=tmp_path / "other-workspace")
+    )
+    different_request = harness.run(
+        CastepAcceptanceRequest(
+            request_id="castep-acceptance-other-request",
+            workspace_root=request.workspace_root,
+            timeout_seconds=request.timeout_seconds,
+        )
+    )
+
+    assert first.model_dump(mode="json") == repeated.model_dump(mode="json")
+    assert first.plan_sha256 != different_workspace.plan_sha256
+    assert first.plan_sha256 != different_request.plan_sha256
+    assert first.candidate_model_spec_sha256 == (
+        different_workspace.candidate_model_spec_sha256
+    )
+    assert (
+        first.source_structure_sha256
+        == different_workspace.source_structure_sha256
+    )
+    assert not request.workspace_root.exists()
+    assert not (tmp_path / "other-workspace").exists()
 
 
 def test_preview_payload_is_the_only_frozen_public_call(request_factory) -> None:

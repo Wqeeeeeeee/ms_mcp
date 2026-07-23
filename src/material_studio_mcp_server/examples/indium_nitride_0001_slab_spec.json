@@ -1,0 +1,44 @@
+{
+  "project_id": "indium_nitride_0001_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "indium_nitride_0001_slab",
+    "lattice": {"a": 3.545, "b": 3.545, "c": 25.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "In1", "element": "In", "fractional": [0.333333, 0.666667, 0.0]},
+      {"id": "In2", "element": "In", "fractional": [0.666667, 0.333333, 0.11406]},
+      {"id": "N1", "element": "N", "fractional": [0.333333, 0.666667, 0.086458]},
+      {"id": "N2", "element": "N", "fractional": [0.666667, 0.333333, 0.200517]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Unpassivated InN(0001) slab starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite slab",
+    "material": "InN",
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 5.703,
+    "vacuum_angstrom": 19.297,
+    "termination": "unpassivated",
+    "reference_lattice_angstrom": {"a": 3.545, "c": 5.703},
+    "internal_parameter_u": 0.379
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "project_id": "alpha_alumina_sapphire_substrate_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "alpha_alumina_sapphire_substrate",
+    "lattice": {
+      "a": 4.7605,
+      "b": 4.7605,
+      "c": 12.9956,
+      "alpha": 90.0,
+      "beta": 90.0,
+      "gamma": 120.0
+    },
+    "basis_atoms": [
+      {"id": "Al1", "element": "Al", "fractional": [0.0, 0.0, 0.14784]},
+      {"id": "Al2", "element": "Al", "fractional": [0.0, 0.0, 0.35216]},
+      {"id": "Al3", "element": "Al", "fractional": [0.0, 0.0, 0.64784]},
+      {"id": "Al4", "element": "Al", "fractional": [0.0, 0.0, 0.85216]},
+      {"id": "Al5", "element": "Al", "fractional": [0.333333, 0.666667, 0.018827]},
+      {"id": "Al6", "element": "Al", "fractional": [0.333333, 0.666667, 0.314507]},
+      {"id": "Al7", "element": "Al", "fractional": [0.333333, 0.666667, 0.518827]},
+      {"id": "Al8", "element": "Al", "fractional": [0.333333, 0.666667, 0.814507]},
+      {"id": "Al9", "element": "Al", "fractional": [0.666667, 0.333333, 0.185493]},
+      {"id": "Al10", "element": "Al", "fractional": [0.666667, 0.333333, 0.481173]},
+      {"id": "Al11", "element": "Al", "fractional": [0.666667, 0.333333, 0.685493]},
+      {"id": "Al12", "element": "Al", "fractional": [0.666667, 0.333333, 0.981173]},
+      {"id": "O1", "element": "O", "fractional": [0.0, 0.30668, 0.25]},
+      {"id": "O2", "element": "O", "fractional": [0.0, 0.69332, 0.75]},
+      {"id": "O3", "element": "O", "fractional": [0.026653, 0.359987, 0.916667]},
+      {"id": "O4", "element": "O", "fractional": [0.026653, 0.666667, 0.416667]},
+      {"id": "O5", "element": "O", "fractional": [0.30668, 0.0, 0.25]},
+      {"id": "O6", "element": "O", "fractional": [0.30668, 0.30668, 0.75]},
+      {"id": "O7", "element": "O", "fractional": [0.333333, 0.359987, 0.416667]},
+      {"id": "O8", "element": "O", "fractional": [0.333333, 0.973347, 0.916667]},
+      {"id": "O9", "element": "O", "fractional": [0.359987, 0.026653, 0.583333]},
+      {"id": "O10", "element": "O", "fractional": [0.359987, 0.333333, 0.083333]},
+      {"id": "O11", "element": "O", "fractional": [0.640013, 0.666667, 0.916667]},
+      {"id": "O12", "element": "O", "fractional": [0.640013, 0.973347, 0.416667]},
+      {"id": "O13", "element": "O", "fractional": [0.666667, 0.026653, 0.083333]},
+      {"id": "O14", "element": "O", "fractional": [0.666667, 0.640013, 0.583333]},
+      {"id": "O15", "element": "O", "fractional": [0.69332, 0.0, 0.75]},
+      {"id": "O16", "element": "O", "fractional": [0.69332, 0.69332, 0.25]},
+      {"id": "O17", "element": "O", "fractional": [0.973347, 0.333333, 0.583333]},
+      {"id": "O18", "element": "O", "fractional": [0.973347, 0.640013, 0.083333]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 600,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": [
+      "MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading.",
+      "Sapphire is modeled here as an insulating substrate precursor for semiconductor workflow setup."
+    ]
+  },
+  "metadata": {
+    "source": "COD 1000032",
+    "source_reference": "Crystallography Open Database entry 1000032, corundum alpha-Al2O3, R-3c:H conventional hexagonal cell.",
+    "domain": "semiconductor",
+    "structure_family": "corundum sapphire substrate",
+    "material": "Al2O3",
+    "substrate": true,
+    "insulating_substrate": true,
+    "oxide_material": true,
+    "wide_bandgap_insulator": true,
+    "space_group": "R -3 c :H",
+    "space_group_number": 167,
+    "cell_formula_units_z": 6,
+    "substrate_orientation": "Al2O3(0001) c-plane",
+    "reference_lattice_angstrom": {
+      "a": 4.7605,
+      "c": 12.9956
+    },
+    "epitaxy_targets": [
+      {
+        "material": "GaN",
+        "film_orientation": "GaN(0001)",
+        "substrate_orientation": "Al2O3(0001)",
+        "relationship": "GaN[11-20] rotated 30 deg in-plane relative to Al2O3[10-10]",
+        "in_plane_rotation_deg": 30.0,
+        "film_reference_lattice_angstrom": 3.189,
+        "direct_substrate_spacing_angstrom": 2.748,
+        "domain_match": {
+          "film_repeats": 3,
+          "substrate_repeats": 2,
+          "film_period_angstrom": 9.567,
+          "substrate_period_angstrom": 9.521,
+          "notes": "Domain preflight uses 3 GaN a-periods against 2 sapphire a-periods; review buffer-layer physics before atomic interface construction."
+        },
+        "buffer_layer_hint": "AlN or low-temperature GaN nucleation layer commonly required before quantitative device modeling."
+      },
+      {
+        "material": "AlN",
+        "film_orientation": "AlN(0001)",
+        "substrate_orientation": "Al2O3(0001)",
+        "relationship": "AlN[11-20] rotated 30 deg in-plane relative to Al2O3[10-10]",
+        "in_plane_rotation_deg": 30.0,
+        "film_reference_lattice_angstrom": 3.112,
+        "direct_substrate_spacing_angstrom": 2.748,
+        "domain_match": {
+          "film_repeats": 3,
+          "substrate_repeats": 2,
+          "film_period_angstrom": 9.336,
+          "substrate_period_angstrom": 9.521,
+          "notes": "Domain preflight uses 3 AlN a-periods against 2 sapphire a-periods."
+        },
+        "buffer_layer_hint": "Treat as an AlN-on-sapphire template preflight; still validate termination, polarity, and thermal strain."
+      }
+    ],
+    "asymmetric_unit_fractional": {
+      "Al1": [0.0, 0.0, 0.35216],
+      "O1": [0.30668, 0.0, 0.25]
+    }
+  }
+}

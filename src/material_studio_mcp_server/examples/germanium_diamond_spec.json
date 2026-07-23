@@ -1,0 +1,32 @@
+{
+  "project_id": "germanium_diamond_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "germanium_diamond",
+    "lattice": {"a": 5.658, "b": 5.658, "c": 5.658, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Ge1", "element": "Ge", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "Ge2", "element": "Ge", "fractional": [0.25, 0.25, 0.25]},
+      {"id": "Ge3", "element": "Ge", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "Ge4", "element": "Ge", "fractional": [0.25, 0.75, 0.75]},
+      {"id": "Ge5", "element": "Ge", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "Ge6", "element": "Ge", "fractional": [0.75, 0.25, 0.75]},
+      {"id": "Ge7", "element": "Ge", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "Ge8", "element": "Ge", "fractional": [0.75, 0.75, 0.25]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]},
+  "metadata": {"source": "example", "domain": "semiconductor", "structure_family": "diamond cubic"}
+}

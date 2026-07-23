@@ -1,0 +1,32 @@
+{
+  "project_id": "carbon_dioxide_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "molecule",
+  "model": {
+    "name": "carbon_dioxide",
+    "atoms": [
+      {"id": "O1", "element": "O", "xyz_angstrom": [-1.160, 0.000, 0.000]},
+      {"id": "C1", "element": "C", "xyz_angstrom": [0.000, 0.000, 0.000]},
+      {"id": "O2", "element": "O", "xyz_angstrom": [1.160, 0.000, 0.000]}
+    ],
+    "bonds": [
+      {"atom1": "O1", "atom2": "C1", "type": "Double"},
+      {"atom1": "C1", "atom2": "O2", "type": "Double"}
+    ],
+    "total_charge": 0,
+    "spin_multiplicity": 1
+  },
+  "simulation": {
+    "module": "Forcite",
+    "task": "GeometryOptimization",
+    "forcefield": "COMPASS",
+    "quality": "Medium",
+    "charge_assignment": "Forcefield assigned",
+    "max_iterations": 200,
+    "convergence": "Medium"
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 0, "require_convergence": false, "notes": []},
+  "metadata": {"source": "example"}
+}

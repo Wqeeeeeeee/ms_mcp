@@ -1,0 +1,22 @@
+{
+  "project_id": "castep_import_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "imported_structure",
+  "model": {
+    "name": "imported_cif",
+    "source_file": {"path": "input.cif", "role": "structure"},
+    "format": "cif"
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoints": [3, 3, 1]
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": []},
+  "metadata": {"source": "example"}
+}

@@ -1,0 +1,44 @@
+{
+  "project_id": "aluminum_nitride_0001_slab_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "aluminum_nitride_0001_slab",
+    "lattice": {"a": 3.112, "b": 3.112, "c": 25.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "Al1", "element": "Al", "fractional": [0.333333, 0.666667, 0.0]},
+      {"id": "Al2", "element": "Al", "fractional": [0.666667, 0.333333, 0.09964]},
+      {"id": "N1", "element": "N", "fractional": [0.333333, 0.666667, 0.07612]},
+      {"id": "N2", "element": "N", "fractional": [0.666667, 0.333333, 0.17576]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 560,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["Unpassivated AlN(0001) slab starting point; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "wurtzite slab",
+    "material": "AlN",
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 4.982,
+    "vacuum_angstrom": 20.018,
+    "termination": "unpassivated",
+    "reference_lattice_angstrom": {"a": 3.112, "c": 4.982},
+    "internal_parameter_u": 0.382
+  }
+}

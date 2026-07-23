@@ -1,0 +1,59 @@
+{
+  "project_id": "black_phosphorus_2d_phosphorene_monolayer_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "black_phosphorus_2d_phosphorene_monolayer",
+    "lattice": {"a": 7.759, "b": 13.44, "c": 22.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Ptop1_00", "element": "P", "fractional": [0.0, 0.0, 0.515909]},
+      {"id": "Ptop2_00", "element": "P", "fractional": [0.0, 0.166667, 0.515909]},
+      {"id": "Pbot1_00", "element": "P", "fractional": [0.25, 0.25, 0.484091]},
+      {"id": "Pbot2_00", "element": "P", "fractional": [0.25, 0.416667, 0.484091]},
+      {"id": "Ptop1_01", "element": "P", "fractional": [0.0, 0.5, 0.515909]},
+      {"id": "Ptop2_01", "element": "P", "fractional": [0.0, 0.666667, 0.515909]},
+      {"id": "Pbot1_01", "element": "P", "fractional": [0.25, 0.75, 0.484091]},
+      {"id": "Pbot2_01", "element": "P", "fractional": [0.25, 0.916667, 0.484091]},
+      {"id": "Ptop1_10", "element": "P", "fractional": [0.5, 0.0, 0.515909]},
+      {"id": "Ptop2_10", "element": "P", "fractional": [0.5, 0.166667, 0.515909]},
+      {"id": "Pbot1_10", "element": "P", "fractional": [0.75, 0.25, 0.484091]},
+      {"id": "Pbot2_10", "element": "P", "fractional": [0.75, 0.416667, 0.484091]},
+      {"id": "Ptop1_11", "element": "P", "fractional": [0.5, 0.5, 0.515909]},
+      {"id": "Ptop2_11", "element": "P", "fractional": [0.5, 0.666667, 0.515909]},
+      {"id": "Pbot1_11", "element": "P", "fractional": [0.75, 0.75, 0.484091]},
+      {"id": "Pbot2_11", "element": "P", "fractional": [0.75, 0.916667, 0.484091]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 500,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 3,
+    "require_convergence": false,
+    "notes": ["Puckered phosphorene starting scaffold with vacuum along c; relax before quantitative electronic calculations."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "2d phosphorene monolayer",
+    "material": "black phosphorus",
+    "materials": ["phosphorene", "black phosphorus"],
+    "phosphorene_phase": "puckered_monolayer",
+    "puckered_layered_semiconductor": true,
+    "surface_orientation": "(010)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 1.4,
+    "vacuum_angstrom": 20.6,
+    "termination": "phosphorus_terminated",
+    "template_supercell": [2, 2, 1],
+    "reference_lattice_angstrom": {"a": 3.8795, "b": 6.72, "c": 22.0}
+  }
+}

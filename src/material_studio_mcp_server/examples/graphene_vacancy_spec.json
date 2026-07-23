@@ -1,0 +1,27 @@
+{
+  "project_id": "graphene_vacancy_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "graphene_vacancy",
+    "lattice": {"a": 7.38, "b": 7.38, "c": 20.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "C1", "element": "C", "fractional": [0.000, 0.000, 0.500]},
+      {"id": "C2", "element": "C", "fractional": [0.333, 0.667, 0.500]},
+      {"id": "C3", "element": "C", "fractional": [0.667, 0.333, 0.500]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 400,
+    "kpoint_separation": 0.05
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 1, "require_convergence": false, "notes": ["MaterialsScript lattice construction is preview-only; explicit execute materializes CIF for GUI hot-loading."]},
+  "metadata": {"source": "example"}
+}

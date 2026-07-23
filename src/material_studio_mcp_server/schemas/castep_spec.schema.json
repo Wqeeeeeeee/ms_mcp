@@ -1,0 +1,368 @@
+{
+  "$defs": {
+    "CastepCellOptimization": {
+      "description": "Geometry-optimization cell modes documented by MS 20.1.",
+      "enum": [
+        "None",
+        "Full",
+        "Fixed Volume",
+        "Fixed Shape"
+      ],
+      "title": "CastepCellOptimization",
+      "type": "string"
+    },
+    "CastepDipoleCorrection": {
+      "description": "Dipole-correction modes documented by Materials Studio 20.1.",
+      "enum": [
+        "None",
+        "Non self-consistent",
+        "Self-consistent"
+      ],
+      "title": "CastepDipoleCorrection",
+      "type": "string"
+    },
+    "CastepDosIntegrationMethod": {
+      "description": "DOS integration methods documented by Materials Studio 20.1.",
+      "enum": [
+        "Smearing",
+        "Interpolation"
+      ],
+      "title": "CastepDosIntegrationMethod",
+      "type": "string"
+    },
+    "CastepOptimizationAlgorithm": {
+      "description": "Geometry-optimization algorithms documented by MS 20.1.",
+      "enum": [
+        "LBFGS",
+        "BFGS",
+        "Damped MD",
+        "TPSD"
+      ],
+      "title": "CastepOptimizationAlgorithm",
+      "type": "string"
+    },
+    "CastepTask": {
+      "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
+      "enum": [
+        "Energy",
+        "GeometryOptimization",
+        "BandStructure",
+        "DensityOfStates",
+        "ProjectedDensityOfStates",
+        "Optics",
+        "Phonon",
+        "ElasticConstants"
+      ],
+      "title": "CastepTask",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "CASTEP task settings rendered against the Materials Studio 20.1 API.\n\nThe class name is retained for public compatibility. Property calculations\nare dispatched through the Energy task with documented property flags;\ngeometry optimization and elastic constants use their dedicated task APIs.\n``kpoint_separation`` controls the primary SCF grid, not the separate\nproperty-grid setting.",
+  "properties": {
+    "band_structure_energy_max_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Energy Max Ev"
+    },
+    "band_structure_energy_tolerance_ev": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Energy Tolerance Ev"
+    },
+    "band_structure_extra_bands": {
+      "anyOf": [
+        {
+          "maximum": 999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Extra Bands"
+    },
+    "cell_optimization": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepCellOptimization"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "cutoff_energy_ev": {
+      "anyOf": [
+        {
+          "maximum": 100000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cutoff Energy Ev"
+    },
+    "dipole_correction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepDipoleCorrection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "displacement_convergence_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Displacement Convergence Angstrom"
+    },
+    "dos_energy_max_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Energy Max Ev"
+    },
+    "dos_energy_tolerance_ev": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Energy Tolerance Ev"
+    },
+    "dos_extra_bands": {
+      "anyOf": [
+        {
+          "maximum": 999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Extra Bands"
+    },
+    "dos_integration_method": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepDosIntegrationMethod"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "dos_smearing_width_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0.005,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Smearing Width Ev"
+    },
+    "energy_convergence_ev_per_atom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-09,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Energy Convergence Ev Per Atom"
+    },
+    "force_convergence_ev_per_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-07,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Force Convergence Ev Per Angstrom"
+    },
+    "functional": {
+      "default": "PBE",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Functional",
+      "type": "string"
+    },
+    "kpoint_separation": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kpoint Separation"
+    },
+    "kpoints": {
+      "anyOf": [
+        {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Kpoints"
+    },
+    "max_iterations": {
+      "anyOf": [
+        {
+          "maximum": 1000000,
+          "minimum": 3,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Iterations"
+    },
+    "module": {
+      "const": "CASTEP",
+      "default": "CASTEP",
+      "title": "Module",
+      "type": "string"
+    },
+    "optimization_algorithm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepOptimizationAlgorithm"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "output_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output File"
+    },
+    "properties_kpoint_separation": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Properties Kpoint Separation"
+    },
+    "quality": {
+      "default": "Medium",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Quality",
+      "type": "string"
+    },
+    "task": {
+      "$ref": "#/$defs/CastepTask",
+      "default": "Energy"
+    }
+  },
+  "title": "CastepEnergySpec",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,204 @@
+{
+  "$defs": {
+    "DynamicsEnsemble": {
+      "description": "动力学系综枚举。",
+      "enum": [
+        "NVE",
+        "NVT",
+        "NPT"
+      ],
+      "title": "DynamicsEnsemble",
+      "type": "string"
+    },
+    "ForciteConvergence": {
+      "description": "Forcite 收敛枚举。",
+      "enum": [
+        "Coarse",
+        "Medium",
+        "Fine",
+        "Ultra-fine"
+      ],
+      "title": "ForciteConvergence",
+      "type": "string"
+    },
+    "ForciteDynamicsSpec": {
+      "additionalProperties": false,
+      "description": "Forcite 动力学规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    ensemble: 系综类型\n    temperature_K: 温度（开尔文）\n    pressure_GPa: 压力（吉帕斯卡）\n    timestep_fs: 时间步长（飞秒）\n    total_time_ps: 总时间（皮秒）\n    trajectory_output_frequency: 轨迹输出频率\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    output_file: 输出文件路径",
+      "properties": {
+        "module": {
+          "const": "Forcite",
+          "default": "Forcite",
+          "title": "Module",
+          "type": "string"
+        },
+        "task": {
+          "default": "Dynamics",
+          "title": "Task",
+          "type": "string"
+        },
+        "ensemble": {
+          "$ref": "#/$defs/DynamicsEnsemble"
+        },
+        "temperature_K": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature K"
+        },
+        "pressure_GPa": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pressure Gpa"
+        },
+        "timestep_fs": {
+          "exclusiveMinimum": 0,
+          "title": "Timestep Fs",
+          "type": "number"
+        },
+        "total_time_ps": {
+          "exclusiveMinimum": 0,
+          "title": "Total Time Ps",
+          "type": "number"
+        },
+        "trajectory_output_frequency": {
+          "default": 100,
+          "minimum": 1,
+          "title": "Trajectory Output Frequency",
+          "type": "integer"
+        },
+        "forcefield": {
+          "default": "COMPASS",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Forcefield",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/ForciteQuality",
+          "default": "Medium"
+        },
+        "charge_assignment": {
+          "default": "Forcefield assigned",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Charge Assignment",
+          "type": "string"
+        },
+        "output_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output File"
+        }
+      },
+      "required": [
+        "ensemble",
+        "timestep_fs",
+        "total_time_ps"
+      ],
+      "title": "ForciteDynamicsSpec",
+      "type": "object"
+    },
+    "ForciteOptimizationSpec": {
+      "additionalProperties": false,
+      "description": "Forcite 优化规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    max_iterations: 最大迭代次数\n    convergence: 收敛级别\n    output_file: 输出文件路径",
+      "properties": {
+        "module": {
+          "const": "Forcite",
+          "default": "Forcite",
+          "title": "Module",
+          "type": "string"
+        },
+        "task": {
+          "default": "GeometryOptimization",
+          "title": "Task",
+          "type": "string"
+        },
+        "forcefield": {
+          "default": "COMPASS",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Forcefield",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/ForciteQuality",
+          "default": "Medium"
+        },
+        "charge_assignment": {
+          "default": "Forcefield assigned",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Charge Assignment",
+          "type": "string"
+        },
+        "max_iterations": {
+          "default": 500,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "convergence": {
+          "$ref": "#/$defs/ForciteConvergence",
+          "default": "Medium"
+        },
+        "output_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output File"
+        }
+      },
+      "title": "ForciteOptimizationSpec",
+      "type": "object"
+    },
+    "ForciteQuality": {
+      "description": "Forcite 质量枚举。",
+      "enum": [
+        "Coarse",
+        "Medium",
+        "Fine",
+        "Ultra-fine"
+      ],
+      "title": "ForciteQuality",
+      "type": "string"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ForciteOptimizationSpec"
+    },
+    {
+      "$ref": "#/$defs/ForciteDynamicsSpec"
+    }
+  ],
+  "title": "ForciteSpec",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

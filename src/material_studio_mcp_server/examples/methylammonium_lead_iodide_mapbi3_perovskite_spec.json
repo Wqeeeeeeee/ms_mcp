@@ -1,0 +1,58 @@
+{
+  "project_id": "methylammonium_lead_iodide_mapbi3_perovskite_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "methylammonium_lead_iodide_mapbi3_perovskite",
+    "lattice": {"a": 6.31, "b": 6.31, "c": 6.31, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "Pb1", "element": "Pb", "fractional": [0.5, 0.5, 0.5]},
+      {"id": "I1", "element": "I", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "I2", "element": "I", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "I3", "element": "I", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "Cma", "element": "C", "fractional": [0.1, 0.1, 0.17]},
+      {"id": "Nma", "element": "N", "fractional": [0.1, 0.1, 0.4]},
+      {"id": "Hc1", "element": "H", "fractional": [0.24, 0.1, 0.15]},
+      {"id": "Hc2", "element": "H", "fractional": [0.08, 0.24, 0.15]},
+      {"id": "Hc3", "element": "H", "fractional": [0.04, 0.04, 0.12]},
+      {"id": "Hn1", "element": "H", "fractional": [0.21, 0.1, 0.44]},
+      {"id": "Hn2", "element": "H", "fractional": [0.1, 0.21, 0.44]},
+      {"id": "Hn3", "element": "H", "fractional": [0.04, 0.04, 0.36]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 500,
+    "kpoint_separation": 0.05
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 6,
+    "require_convergence": false,
+    "notes": [
+      "Conservative cubic MAPbI3 starting scaffold for visualization and preflight.",
+      "Relax geometry and review methylammonium orientation before quantitative electronic calculations."
+    ]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "hybrid halide perovskite solar absorber",
+    "material": "MAPbI3",
+    "materials": ["CH3NH3PbI3", "MAPbI3", "methylammonium lead iodide"],
+    "halide_perovskite": true,
+    "perovskite_abx3": true,
+    "solar_absorber": true,
+    "organic_cation": "methylammonium",
+    "framework_b_site": "Pb",
+    "framework_halide": "I",
+    "reference_lattice_angstrom": {"a": 6.31},
+    "template_supercell": [1, 1, 1],
+    "requires_geometry_relaxation": true
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "project_id": "hexagonal_boron_nitride_2d_hbn_monolayer_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "hexagonal_boron_nitride_2d_hbn_monolayer",
+    "lattice": {"a": 5.008, "b": 5.008, "c": 22.0, "alpha": 90.0, "beta": 90.0, "gamma": 120.0},
+    "basis_atoms": [
+      {"id": "B1_000", "element": "B", "fractional": [0.0, 0.0, 0.5]},
+      {"id": "B1_010", "element": "B", "fractional": [0.0, 0.5, 0.5]},
+      {"id": "B1_100", "element": "B", "fractional": [0.5, 0.0, 0.5]},
+      {"id": "B1_110", "element": "B", "fractional": [0.5, 0.5, 0.5]},
+      {"id": "N1_000", "element": "N", "fractional": [0.333333, 0.666667, 0.5]},
+      {"id": "N1_010", "element": "N", "fractional": [0.333333, 0.166667, 0.5]},
+      {"id": "N1_100", "element": "N", "fractional": [0.833333, 0.666667, 0.5]},
+      {"id": "N1_110", "element": "N", "fractional": [0.833333, 0.166667, 0.5]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 650,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 2,
+    "require_convergence": false,
+    "notes": ["2D h-BN monolayer template with vacuum along c; explicit execute materializes CIF for GUI hot-loading."]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "2d hbn monolayer",
+    "material": "h-BN",
+    "materials": ["h-BN"],
+    "surface_orientation": "(0001)",
+    "surface_axis": "c",
+    "slab_thickness_angstrom": 0.1,
+    "vacuum_angstrom": 21.9,
+    "termination": "bn_edge_free_periodic_monolayer",
+    "template_supercell": [2, 2, 1],
+    "reference_lattice_angstrom": {"a": 2.504, "c": 22.0},
+    "layered_insulator": true
+  }
+}

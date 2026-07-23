@@ -1,0 +1,34 @@
+{
+  "project_id": "ammonia_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "molecule",
+  "model": {
+    "name": "ammonia",
+    "atoms": [
+      {"id": "N1", "element": "N", "xyz_angstrom": [0.000, 0.000, 0.100]},
+      {"id": "H1", "element": "H", "xyz_angstrom": [0.937, 0.000, -0.267]},
+      {"id": "H2", "element": "H", "xyz_angstrom": [-0.469, 0.812, -0.267]},
+      {"id": "H3", "element": "H", "xyz_angstrom": [-0.469, -0.812, -0.267]}
+    ],
+    "bonds": [
+      {"atom1": "N1", "atom2": "H1", "type": "Single"},
+      {"atom1": "N1", "atom2": "H2", "type": "Single"},
+      {"atom1": "N1", "atom2": "H3", "type": "Single"}
+    ],
+    "total_charge": 0,
+    "spin_multiplicity": 1
+  },
+  "simulation": {
+    "module": "Forcite",
+    "task": "GeometryOptimization",
+    "forcefield": "COMPASS",
+    "quality": "Medium",
+    "charge_assignment": "Forcefield assigned",
+    "max_iterations": 200,
+    "convergence": "Medium"
+  },
+  "outputs": {},
+  "acceptance": {"max_warnings": 0, "require_convergence": false, "notes": []},
+  "metadata": {"source": "example"}
+}

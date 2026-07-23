@@ -1,0 +1,78 @@
+{
+  "project_id": "aluminum_silicon_100_schottky_contact_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "aluminum_silicon_100_schottky_contact",
+    "lattice": {"a": 5.431, "b": 5.431, "c": 28.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "SiSub1", "element": "Si", "fractional": [0.0, 0.0, 0.05]},
+      {"id": "SiSub2", "element": "Si", "fractional": [0.5, 0.5, 0.05]},
+      {"id": "SiSub3", "element": "Si", "fractional": [0.25, 0.25, 0.15]},
+      {"id": "SiSub4", "element": "Si", "fractional": [0.75, 0.75, 0.15]},
+      {"id": "SiSub5", "element": "Si", "fractional": [0.0, 0.5, 0.25]},
+      {"id": "SiSub6", "element": "Si", "fractional": [0.5, 0.0, 0.25]},
+      {"id": "SiSub7", "element": "Si", "fractional": [0.25, 0.75, 0.35]},
+      {"id": "SiSub8", "element": "Si", "fractional": [0.75, 0.25, 0.35]},
+      {"id": "AlContact1", "element": "Al", "fractional": [0.0, 0.0, 0.44]},
+      {"id": "AlContact2", "element": "Al", "fractional": [0.5, 0.5, 0.44]},
+      {"id": "AlContact3", "element": "Al", "fractional": [0.25, 0.25, 0.44]},
+      {"id": "AlContact4", "element": "Al", "fractional": [0.75, 0.75, 0.44]},
+      {"id": "AlContact5", "element": "Al", "fractional": [0.0, 0.5, 0.50]},
+      {"id": "AlContact6", "element": "Al", "fractional": [0.5, 0.0, 0.50]},
+      {"id": "AlContact7", "element": "Al", "fractional": [0.25, 0.75, 0.50]},
+      {"id": "AlContact8", "element": "Al", "fractional": [0.75, 0.25, 0.50]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 5,
+    "require_convergence": false,
+    "notes": [
+      "Al/Si(100) Schottky contact starting point; explicit execute materializes CIF for GUI hot-loading.",
+      "This deterministic matched-cell model is an idealized initial contact geometry for visual review and pre-optimization, not a relaxed production interface."
+    ]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "metal semiconductor schottky contact",
+    "materials": ["Si", "Al"],
+    "stack_sequence": ["Si", "Al"],
+    "interface": "Al/Si",
+    "interface_orientation": "Al contact / Si(100)",
+    "interface_axis": "c",
+    "substrate": "Si",
+    "surface_axis": "c",
+    "vacuum_angstrom": 14.0,
+    "in_plane_lattice_angstrom": 5.431,
+    "si_reference_lattice_angstrom": 5.431,
+    "al_reference_lattice_angstrom": 4.05,
+    "coherent_strain_model": "matched_to_si_100",
+    "metal_semiconductor_interface": true,
+    "schottky_contact": true,
+    "contact_type": "schottky",
+    "metal_contact_material": "Al",
+    "semiconductor_channel_material": "Si",
+    "schottky_barrier_model": "ideal_schottky_mott_metadata_reference",
+    "schottky_barrier_reference": "template_estimate_for_preflight_only",
+    "metal_work_function_ev": 4.28,
+    "semiconductor_electron_affinity_ev": 4.05,
+    "semiconductor_band_gap_ev": 1.12,
+    "interface_gap_angstrom": 2.52,
+    "silicon_slab_thickness_angstrom": 8.4,
+    "metal_contact_thickness_angstrom": 1.68,
+    "material_marker_map": {"Al": "Al", "Si": "Si"},
+    "layer_profile_tolerance_fractional": 0.0001
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "project_id": "indium_gallium_arsenide_indium_phosphide_001_heterostructure_001",
+  "revision": 0,
+  "software": "Materials Studio",
+  "model_type": "crystal",
+  "model": {
+    "name": "indium_gallium_arsenide_indium_phosphide_001_heterostructure",
+    "lattice": {"a": 5.8687, "b": 5.8687, "c": 11.7374, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "basis_atoms": [
+      {"id": "InWell1", "element": "In", "fractional": [0.0, 0.0, 0.0]},
+      {"id": "GaWell1", "element": "Ga", "fractional": [0.5, 0.5, 0.0]},
+      {"id": "AsWell1", "element": "As", "fractional": [0.25, 0.25, 0.124914]},
+      {"id": "AsWell2", "element": "As", "fractional": [0.75, 0.75, 0.124914]},
+      {"id": "InWell2", "element": "In", "fractional": [0.0, 0.5, 0.249828]},
+      {"id": "GaWell2", "element": "Ga", "fractional": [0.5, 0.0, 0.249828]},
+      {"id": "AsWell3", "element": "As", "fractional": [0.25, 0.75, 0.374742]},
+      {"id": "AsWell4", "element": "As", "fractional": [0.75, 0.25, 0.374742]},
+      {"id": "InBarrier1", "element": "In", "fractional": [0.0, 0.0, 0.499657]},
+      {"id": "InBarrier2", "element": "In", "fractional": [0.5, 0.5, 0.499657]},
+      {"id": "PBarrier1", "element": "P", "fractional": [0.25, 0.25, 0.624742]},
+      {"id": "PBarrier2", "element": "P", "fractional": [0.75, 0.75, 0.624742]},
+      {"id": "InBarrier3", "element": "In", "fractional": [0.0, 0.5, 0.749828]},
+      {"id": "InBarrier4", "element": "In", "fractional": [0.5, 0.0, 0.749828]},
+      {"id": "PBarrier3", "element": "P", "fractional": [0.25, 0.75, 0.874914]},
+      {"id": "PBarrier4", "element": "P", "fractional": [0.75, 0.25, 0.874914]}
+    ],
+    "operations": []
+  },
+  "simulation": {
+    "module": "CASTEP",
+    "task": "Energy",
+    "functional": "PBE",
+    "quality": "Medium",
+    "cutoff_energy_ev": 520,
+    "kpoint_separation": 0.04
+  },
+  "outputs": {},
+  "acceptance": {
+    "max_warnings": 4,
+    "require_convergence": false,
+    "notes": [
+      "In0.50Ga0.50As/InP(001) coherent zinc-blende quantum-well starting point; explicit execute materializes CIF for GUI hot-loading.",
+      "The InGaAs alloy sites are deterministic placeholders for setup and visual diagnostics, not a special-quasirandom structure."
+    ]
+  },
+  "metadata": {
+    "source": "example",
+    "domain": "semiconductor",
+    "structure_family": "zinc blende heterostructure",
+    "materials": ["In0.50Ga0.50As", "InP"],
+    "material_marker_map": {"Ga;In": "In0.50Ga0.50As", "In-Ga": "In0.50Ga0.50As", "In": "InP"},
+    "interface": "In0.50Ga0.50As/InP",
+    "interface_orientation": "(001)",
+    "interface_axis": "c",
+    "substrate": "In0.50Ga0.50As",
+    "strain_reference_substrate": "InP",
+    "in_plane_lattice_angstrom": 5.8687,
+    "inp_reference_lattice_angstrom": 5.8687,
+    "gaas_reference_lattice_angstrom": 5.6533,
+    "inas_reference_lattice_angstrom": 6.0583,
+    "in050ga050as_reference_lattice_angstrom": 5.8558,
+    "coherent_strain_model": "pseudomorphic_ingaas_on_inp",
+    "band_alignment_model": "electron_affinity_metadata_reference",
+    "band_alignment_reference": "template_estimate_for_preflight_only",
+    "material_electronic_properties": {
+      "In0.50Ga0.50As": {"electron_affinity_ev": 4.55, "band_gap_ev": 0.82},
+      "InP": {"electron_affinity_ev": 4.38, "band_gap_ev": 1.35}
+    },
+    "applied_alloy": [
+      {
+        "host_element": "Ga",
+        "alloy_element": "In",
+        "requested_fraction": 0.5,
+        "requested_percent": 50.0,
+        "actual_fraction": 0.5,
+        "actual_percent": 50.0,
+        "candidate_site_count": 4,
+        "substituted_site_count": 2,
+        "selected_atom_ids": ["InWell1", "InWell2"],
+        "rounding_error_fraction": 0.0,
+        "source": "example_ingaas_inp_heterostructure_well"
+      }
+    ],
+    "last_applied_alloy": {
+      "host_element": "Ga",
+      "alloy_element": "In",
+      "requested_fraction": 0.5,
+      "requested_percent": 50.0,
+      "actual_fraction": 0.5,
+      "actual_percent": 50.0,
+      "candidate_site_count": 4,
+      "substituted_site_count": 2,
+      "selected_atom_ids": ["InWell1", "InWell2"],
+      "rounding_error_fraction": 0.0,
+      "source": "example_ingaas_inp_heterostructure_well"
+    }
+  }
+}

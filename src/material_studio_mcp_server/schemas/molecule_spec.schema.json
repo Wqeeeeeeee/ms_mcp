@@ -1,0 +1,157 @@
+{
+  "$defs": {
+    "AtomSpec": {
+      "additionalProperties": false,
+      "description": "原子规格。\n\n属性:\n    id: 原子唯一标识符\n    element: 元素符号\n    xyz_angstrom: 笛卡尔坐标（埃）\n    charge: 电荷（可选）",
+      "properties": {
+        "id": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "element": {
+          "maxLength": 3,
+          "minLength": 1,
+          "title": "Element",
+          "type": "string"
+        },
+        "xyz_angstrom": {
+          "$ref": "#/$defs/Vector3"
+        },
+        "charge": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charge"
+        }
+      },
+      "required": [
+        "id",
+        "element",
+        "xyz_angstrom"
+      ],
+      "title": "AtomSpec",
+      "type": "object"
+    },
+    "BondSpec": {
+      "additionalProperties": false,
+      "description": "键规格。\n\n属性:\n    atom1: 第一个原子 ID\n    atom2: 第二个原子 ID\n    type: 键类型",
+      "properties": {
+        "atom1": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Atom1",
+          "type": "string"
+        },
+        "atom2": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Atom2",
+          "type": "string"
+        },
+        "type": {
+          "default": "Single",
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "atom1",
+        "atom2"
+      ],
+      "title": "BondSpec",
+      "type": "object"
+    },
+    "Vector3": {
+      "additionalProperties": false,
+      "description": "三维向量。",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "z": {
+          "title": "Z",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "title": "Vector3",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "分子规格。\n\n属性:\n    name: 分子名称\n    atoms: 原子列表\n    bonds: 键列表\n    total_charge: 总电荷（可选）\n    spin_multiplicity: 自旋多重度（可选）",
+  "properties": {
+    "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "atoms": {
+      "items": {
+        "$ref": "#/$defs/AtomSpec"
+      },
+      "minItems": 1,
+      "title": "Atoms",
+      "type": "array"
+    },
+    "bonds": {
+      "items": {
+        "$ref": "#/$defs/BondSpec"
+      },
+      "title": "Bonds",
+      "type": "array"
+    },
+    "total_charge": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Total Charge"
+    },
+    "spin_multiplicity": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Spin Multiplicity"
+    }
+  },
+  "required": [
+    "name",
+    "atoms"
+  ],
+  "title": "MoleculeSpec",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

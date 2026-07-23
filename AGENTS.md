@@ -243,6 +243,7 @@ Build reproducible Materials Studio modeling workflows through MCP tools, with o
 - Do not create a PR for a no-op or a trivial documentation-only correction unless the user explicitly requests it.
 - Keep `ms-mcp-config-doctor` read-only. `ms-mcp-config-register` also defaults to preview; active-config writes require the exact fresh plan ID and explicit apply intent, and existing or legacy Materials Studio registrations require manual review.
 - Do not register an ephemeral stacked worktree as the active Codex MCP checkout unless the user explicitly chooses that source path. Registration and rollback never restart Codex or touch the Materials Studio process.
+- For a durable active `@mcp` entry, use the preview-first managed-runtime deployment flow. Deploy only a tracked-clean commit equal to its configured upstream, review and explicitly apply the exact runtime deployment plan, require list-only protocol acceptance, then separately review and explicitly apply the returned config registration plan. Managed runtimes are commit-addressed, host-manifest-bound, never overwritten or automatically deleted, and must fail closed on any content drift. Deployment and registration must not launch, close, or send input to Materials Studio.
 
 ## Done When
 - Structure is generated or imported.

@@ -138,6 +138,25 @@ restarts Codex or touches Materials Studio. Restart Codex after an approved
 change, then call `material_studio_live_session_preflight`. If automatic append
 is blocked, review and merge the generated snippet manually.
 
+For a long-lived `@mcp` registration, deploy a clean pushed commit instead of
+pointing Codex at a temporary PR worktree:
+
+```powershell
+.\.venv\Scripts\python.exe deploy_runtime.py --source .
+.\.venv\Scripts\python.exe deploy_runtime.py --source . --apply `
+  --expected-plan-id <REVIEWED_RUNTIME_DEPLOYMENT_PLAN_ID>
+```
+
+The first command is read-only. The second publishes the exact Git archive
+under `%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>`, validates the
+stdio tool contract, and returns a separate fingerprint-bound registration
+plan and command. It does not edit the active Codex config, restart Codex, or
+touch Materials Studio. Review and explicitly apply the returned registration
+plan, then restart Codex while leaving the single Materials Studio window open.
+Managed runtimes are never overwritten or automatically deleted; their
+manifest and complete file snapshot are reverified at startup and during
+preflight.
+
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
 immediate session-control action and coordinates three revision-bound tracks:
 session control, visual diagnostics, and modeling. Follow

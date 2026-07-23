@@ -16,6 +16,10 @@ except ModuleNotFoundError:  # Python 3.10 compatibility.
     import tomli as tomllib
 
 from .protocol_smoke import REQUIRED_PROTOCOL_TOOLS, audit_codex_config
+from .managed_runtime import (
+    managed_runtime_server_args,
+    managed_runtime_status,
+)
 
 
 SERVER_NAME = "materials_studio"
@@ -104,11 +108,11 @@ def build_codex_config_snippet(
 ) -> str:
     root = Path(repo_root).expanduser().resolve()
     command = resolve_python_command(root, python_command)
-    run_server = (root / "run_server.py").resolve()
+    server_args = managed_runtime_server_args(root)
     lines = [
         f"[mcp_servers.{SERVER_NAME}]",
         f"command = {_toml_string(command)}",
-        f"args = [{_toml_string(run_server)}]",
+        f"args = [{', '.join(_toml_string(item) for item in server_args)}]",
         f"cwd = {_toml_string(root)}",
         "startup_timeout_sec = 30",
         "tool_timeout_sec = 1800",
@@ -147,6 +151,8 @@ def diagnose_codex_config(
     config = Path(config_path).expanduser().resolve() if config_path else default_active_config_path()
     command = resolve_python_command(root, python_command)
     run_server = (root / "run_server.py").resolve()
+    expected_args = managed_runtime_server_args(root)
+    managed_runtime = managed_runtime_status(root)
     snippet = build_codex_config_snippet(root, python_command=command)
     before_hash = _file_sha256(config)
     result: dict[str, Any] = {
@@ -163,10 +169,19 @@ def diagnose_codex_config(
         "recommended_entrypoint": {
             "server_name": SERVER_NAME,
             "command": str(command),
-            "args": [str(run_server)],
+            "args": expected_args,
             "cwd": str(root),
             "python_exists": command.exists(),
             "run_server_exists": run_server.exists(),
+        },
+        "managed_runtime": {
+            "status": managed_runtime.get("status"),
+            "managed": managed_runtime.get("managed"),
+            "integrity_verified": managed_runtime.get("integrity_verified"),
+            "manifest_path": managed_runtime.get("manifest_path"),
+            "manifest_sha256": managed_runtime.get("manifest_sha256"),
+            "source_commit": managed_runtime.get("source_commit"),
+            "errors": managed_runtime.get("errors") or [],
         },
         "required_protocol_tool_count": len(REQUIRED_PROTOCOL_TOOLS),
         "recommended_enabled_tool_count": len(SAFE_ENABLED_TOOLS),
@@ -183,6 +198,22 @@ def diagnose_codex_config(
                 "status": "repo_entrypoint_missing",
                 "error": "run_server_not_found",
                 "next_actions": ["Run the doctor from the Materials Studio MCP repository root."],
+            }
+        )
+        return result
+    if (
+        managed_runtime.get("managed") is True
+        and managed_runtime.get("integrity_verified") is not True
+    ):
+        result.update(
+            {
+                "ok": False,
+                "status": "managed_runtime_integrity_failed",
+                "error": "managed_runtime_integrity_failed",
+                "next_actions": [
+                    "Do not register or start the modified managed runtime.",
+                    "Deploy the reviewed commit to a new immutable runtime path.",
+                ],
             }
         )
         return result
@@ -228,7 +259,7 @@ def diagnose_codex_config(
     base_audit = audit_codex_config(config)
     command_matches = _same_path(server.get("command"), command)
     args = server.get("args") if isinstance(server.get("args"), list) else []
-    args_match = bool(args) and _same_path(args[0], run_server)
+    args_match = _same_server_args(args, expected_args)
     cwd_matches = _same_path(server.get("cwd"), root)
     missing_recommended = sorted(
         set(SAFE_ENABLED_TOOLS) - {str(item) for item in server.get("enabled_tools", []) or []}
@@ -260,7 +291,7 @@ def diagnose_codex_config(
             "observed_entrypoint": {
                 "server_name": SERVER_NAME,
                 "command": str(server.get("command") or "") or None,
-                "args": [str(args[0])] if args else [],
+                "args": [str(item) for item in args],
                 "additional_arg_count": max(0, len(args) - 1),
                 "cwd": str(server.get("cwd") or "") or None,
             },
@@ -461,6 +492,17 @@ def _same_path(left: Any, right: Any) -> bool:
     if os.name == "nt":
         return left_path.casefold() == right_path.casefold()
     return left_path == right_path
+
+
+def _same_server_args(observed: list[Any], expected: list[str]) -> bool:
+    if len(observed) != len(expected) or not observed:
+        return False
+    if not _same_path(observed[0], expected[0]):
+        return False
+    return all(
+        str(left) == str(right)
+        for left, right in zip(observed[1:], expected[1:])
+    )
 
 
 def _toml_string(value: str | Path) -> str:

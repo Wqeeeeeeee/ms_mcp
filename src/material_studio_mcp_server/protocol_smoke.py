@@ -347,6 +347,7 @@ async def run_protocol_acceptance(
     env = dict(os.environ)
     env["MATERIAL_STUDIO_MCP_WORKSPACE"] = str(workspace_path)
     env["MATERIAL_STUDIO_WORKSPACE"] = str(workspace_path)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     server = StdioServerParameters(
         command=str(command),
         args=[str(item) for item in args],

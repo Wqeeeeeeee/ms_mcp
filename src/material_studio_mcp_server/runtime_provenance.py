@@ -13,6 +13,11 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from .managed_runtime import (
+    RUNTIME_MANIFEST_ENV,
+    managed_runtime_status,
+)
+
 
 RUNTIME_PROVENANCE_SCHEMA = "material_studio_mcp_runtime_provenance_v1"
 RUNTIME_DEPLOYMENT_SCHEMA = "material_studio_mcp_runtime_deployment_binding_v1"
@@ -136,6 +141,15 @@ def runtime_deployment_status(
 
     package = Path(package_root or Path(__file__).resolve().parent).resolve()
     repository_root = _find_repository_root(package)
+    expected_manifest_sha256 = os.environ.get(RUNTIME_MANIFEST_ENV)
+    managed_runtime = (
+        managed_runtime_status(
+            repository_root,
+            expected_manifest_sha256=expected_manifest_sha256,
+        )
+        if repository_root is not None
+        else None
+    )
     expected_entrypoint = (
         (repository_root / "run_server.py") if repository_root else None
     )
@@ -155,7 +169,16 @@ def runtime_deployment_status(
         repository_root
         and package == repository_root / "src" / "material_studio_mcp_server"
     )
-    if repository_root is None:
+    if managed_runtime and (
+        managed_runtime.get("managed") is True
+        or expected_manifest_sha256 is not None
+    ):
+        deployment_status = (
+            "managed_immutable_runtime"
+            if managed_runtime.get("integrity_verified") is True
+            else "managed_runtime_integrity_failed"
+        )
+    elif repository_root is None:
         deployment_status = "installed_or_unmanaged_package"
     elif package_is_in_checkout:
         deployment_status = "source_checkout"
@@ -179,6 +202,20 @@ def runtime_deployment_status(
     except (OSError, RuntimeError):
         cwd_matches_repository = False
 
+    if managed_runtime and managed_runtime.get("managed") is True:
+        git = {
+            "status": "managed_runtime_manifest",
+            "head_commit": managed_runtime.get("source_commit"),
+            "branch": managed_runtime.get("source_branch"),
+            "remote": managed_runtime.get("source_remote"),
+            "worktree_dirty": False,
+            "dirty_scope": "immutable_runtime_manifest",
+            "untracked_files_included": False,
+            "error": None,
+        }
+    else:
+        git = _git_metadata(repository_root)
+
     return {
         "schema": RUNTIME_DEPLOYMENT_SCHEMA,
         "status": deployment_status,
@@ -193,7 +230,8 @@ def runtime_deployment_status(
         "process_cwd": str(observed_cwd),
         "cwd_matches_repository": cwd_matches_repository,
         "python_executable": str(Path(sys.executable).resolve()),
-        "git": _git_metadata(repository_root),
+        "git": git,
+        "managed_runtime": managed_runtime,
         "diagnostic_only": True,
         "materials_studio_process_started": False,
     }
@@ -288,6 +326,12 @@ class RuntimeProvenanceTracker:
         deployment_binding = runtime_deployment_status(root)
         git = deployment_binding.get("git")
         git_head = git.get("head_commit") if isinstance(git, dict) else None
+        managed_runtime = deployment_binding.get("managed_runtime")
+        managed_manifest_hash = (
+            managed_runtime.get("manifest_sha256")
+            if isinstance(managed_runtime, dict)
+            else None
+        )
         instance_material = "\0".join(
             (
                 str(pid),
@@ -295,6 +339,7 @@ class RuntimeProvenanceTracker:
                 str(snapshot.get("sha256") or "unavailable"),
                 str(root),
                 str(git_head or "unavailable"),
+                str(managed_manifest_hash or "unmanaged"),
             )
         ).encode("utf-8")
         instance_id = hashlib.sha256(instance_material).hexdigest()[:20]
@@ -319,13 +364,40 @@ class RuntimeProvenanceTracker:
             observed = observed.replace(tzinfo=timezone.utc)
         initial_complete = self.initial_snapshot.get("status") == "complete"
         current_complete = current.get("status") == "complete"
+        initial_managed = self.deployment_binding.get("managed_runtime")
+        managed_required = bool(
+            os.environ.get(RUNTIME_MANIFEST_ENV)
+            or (
+                isinstance(initial_managed, dict)
+                and initial_managed.get("managed") is True
+            )
+        )
+        repository_root = self.deployment_binding.get("repository_root")
+        current_managed = (
+            managed_runtime_status(
+                repository_root,
+                expected_manifest_sha256=os.environ.get(RUNTIME_MANIFEST_ENV),
+            )
+            if managed_required and repository_root
+            else None
+        )
+        managed_current = bool(
+            not managed_required
+            or (
+                isinstance(current_managed, dict)
+                and current_managed.get("integrity_verified") is True
+            )
+        )
         source_current = bool(
             initial_complete
             and current_complete
             and self.initial_snapshot.get("sha256") == current.get("sha256")
+            and managed_current
         )
         if source_current:
             status = "current"
+        elif managed_required and not managed_current:
+            status = "managed_runtime_integrity_failed"
         elif not initial_complete or not current_complete:
             status = "source_snapshot_unavailable"
         else:
@@ -348,6 +420,7 @@ class RuntimeProvenanceTracker:
             "deployment_binding": dict(self.deployment_binding),
             "source_snapshot_at_start": dict(self.initial_snapshot),
             "source_snapshot_current": dict(current),
+            "managed_runtime": current_managed,
             "restart_action": (
                 "restart_mcp_server_then_retry_preflight"
                 if not source_current

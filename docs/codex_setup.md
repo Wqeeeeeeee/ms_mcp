@@ -62,6 +62,53 @@ snippet manually without replacing unrelated servers or trusted-project
 entries. After either path, restart Codex and call
 `material_studio_live_session_preflight`.
 
+## Managed Runtime Deployment
+
+Use a source checkout for development and tests. For the long-lived active
+`@mcp` entry, deploy an immutable reviewed commit so the registration does not
+depend on a temporary stacked-PR worktree.
+
+The source must have no tracked changes, have an upstream, and have `HEAD`
+exactly equal to that upstream commit. Preview is read-only:
+
+```powershell
+.\.venv\Scripts\python.exe deploy_runtime.py `
+  --source .
+```
+
+Review `source_commit`, `source_upstream`, `target_runtime_path`,
+`archive_sha256`, `manifest_sha256`, and
+`runtime_deployment_plan_id`. Publish only that exact plan:
+
+```powershell
+.\.venv\Scripts\python.exe deploy_runtime.py `
+  --source . `
+  --apply `
+  --expected-plan-id <REVIEWED_RUNTIME_DEPLOYMENT_PLAN_ID>
+```
+
+The default destination is
+`%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>`. Deployment uses the
+committed Git archive only, rejects links and unsafe archive paths, stages on
+the destination volume, and publishes by rename. An existing commit directory
+is reused only when its manifest and full content snapshot match exactly. It is
+never overwritten, and older runtimes are never deleted automatically.
+
+After publication, the command runs list-only stdio protocol acceptance with
+bytecode writes disabled. A successful receipt contains a fresh
+`registration_plan` and `registration_handoff.apply_command` bound to the
+managed runtime path and manifest SHA-256. Deployment itself never writes the
+active Codex config. Review that separate registration plan, run its exact
+apply command only with explicit approval, and then restart Codex. Do not close
+or launch Materials Studio during this switch.
+
+The registered server arguments include
+`--runtime-manifest-sha256 <digest>`. The launcher disables bytecode writes and
+verifies that host-bound manifest plus every deployed file before importing the
+MCP server. A missing binding, changed manifest, added cache/file, or modified
+source fails closed. Deploy a new reviewed commit to a new commit-addressed
+directory instead of repairing or deleting an existing managed runtime.
+
 ## Protocol Acceptance
 
 Direct tool-function tests do not verify the MCP transport. Run the stdio

@@ -32,6 +32,10 @@ from .managed_runtime import (
     sha256_bytes,
 )
 from .protocol_smoke import run_protocol_acceptance
+from .python_runtime import (
+    probe_python_runtime_contract,
+    python_runtime_contract_summary,
+)
 
 
 RUNTIME_DEPLOYMENT_PLAN_SCHEMA = "material_studio_mcp_runtime_deployment_plan_v1"
@@ -39,6 +43,7 @@ _REQUIRED_ARCHIVE_PATHS = {
     "pyproject.toml",
     "register_codex.py",
     "run_server.py",
+    "src/material_studio_mcp_server/python_runtime.py",
     "src/material_studio_mcp_server/server.py",
 }
 
@@ -213,6 +218,9 @@ def apply_runtime_deployment(
             python_command=Path(plan["python_command"]),
             config_path=Path(plan["config_path"]),
             manifest_sha256=str(plan["manifest_sha256"]),
+            python_runtime_contract_sha256=str(
+                plan["python_runtime_contract_sha256"]
+            ),
             registration_plan=registration_plan,
         )
 
@@ -279,7 +287,8 @@ def _prepare_runtime_deployment(
         else default_active_config_path()
     )
     commit = str(source_probe.get("head_commit") or "unresolved")
-    target = (runtimes / commit).resolve()
+    commit_runtime_root = (runtimes / commit).resolve()
+    target = commit_runtime_root
     receipt: dict[str, Any] = {
         "schema": RUNTIME_DEPLOYMENT_PLAN_SCHEMA,
         "operation": "plan_runtime_deployment",
@@ -296,9 +305,12 @@ def _prepare_runtime_deployment(
         "source_tracked_clean": source_probe.get("tracked_clean"),
         "source_pushed_to_upstream": source_probe.get("pushed_to_upstream"),
         "runtime_root": str(runtimes),
+        "commit_runtime_root": str(commit_runtime_root),
         "target_runtime_path": str(target),
         "python_command": str(command),
         "python_exists": command.is_file(),
+        "python_runtime_probe": None,
+        "python_runtime_contract_sha256": None,
         "config_path": str(active_config),
         "deployment_required": False,
         "apply_ready": False,
@@ -315,6 +327,43 @@ def _prepare_runtime_deployment(
     if receipt["blocking_reasons"]:
         receipt.update({"ok": False, "status": "source_not_deployable"})
         return _PreparedDeployment(receipt, None, None)
+
+    runtime_probe = probe_python_runtime_contract(command, repository)
+    runtime_contract = runtime_probe.get("contract")
+    receipt.update(
+        {
+            "python_runtime_probe": {
+                "status": runtime_probe.get("status"),
+                "ok": runtime_probe.get("ok"),
+                "error": runtime_probe.get("error"),
+                "stderr_tail": runtime_probe.get("stderr_tail"),
+                "contract": python_runtime_contract_summary(runtime_contract),
+            },
+            "python_runtime_contract_sha256": runtime_probe.get(
+                "contract_sha256"
+            ),
+        }
+    )
+    if runtime_probe.get("ok") is not True or not isinstance(
+        runtime_contract, dict
+    ):
+        receipt.update(
+            {
+                "ok": False,
+                "status": "python_runtime_not_deployable",
+                "blocking_reasons": [
+                    str(
+                        runtime_probe.get("error")
+                        or "python_runtime_contract_unavailable"
+                    )
+                ],
+            }
+        )
+        return _PreparedDeployment(receipt, None, None)
+    target = (
+        commit_runtime_root / str(runtime_probe["contract_sha256"])
+    ).resolve()
+    receipt["target_runtime_path"] = str(target)
 
     try:
         archive = _git_archive(repository, str(source_probe["head_commit"]))
@@ -359,12 +408,14 @@ def _prepare_runtime_deployment(
         },
         "archive_sha256": sha256_bytes(archive),
         "content_snapshot": content_snapshot,
+        "python_runtime_contract": runtime_contract,
         "entrypoints": {
             "mcp_server": "run_server.py",
             "codex_registration": "register_codex.py",
         },
         "immutability": {
             "path_is_commit_addressed": True,
+            "path_is_python_runtime_addressed": True,
             "existing_runtime_never_overwritten": True,
             "old_runtimes_never_deleted": True,
         },
@@ -379,6 +430,9 @@ def _prepare_runtime_deployment(
             "manifest_schema": MANAGED_RUNTIME_SCHEMA,
             "manifest_path": str(target / MANAGED_RUNTIME_MANIFEST),
             "manifest_sha256": manifest_hash,
+            "python_runtime_contract": python_runtime_contract_summary(
+                runtime_contract
+            ),
             "server_args_after_deployment": [
                 str(target / "run_server.py"),
                 "--runtime-manifest-sha256",
@@ -672,6 +726,7 @@ def _registration_handoff(
     python_command: Path,
     config_path: Path,
     manifest_sha256: str,
+    python_runtime_contract_sha256: str,
     registration_plan: dict[str, Any],
 ) -> dict[str, Any]:
     plan_id = registration_plan.get("registration_plan_id")
@@ -697,6 +752,9 @@ def _registration_handoff(
         "config_path": str(config_path),
         "runtime_path": str(target),
         "runtime_manifest_sha256": manifest_sha256,
+        "python_runtime_contract_sha256": (
+            python_runtime_contract_sha256
+        ),
         "registration_plan_id": plan_id,
         "explicit_registration_confirmation_required": bool(command),
         "apply_command": command,
@@ -719,6 +777,9 @@ def _deployment_plan_id(receipt: dict[str, Any]) -> str:
         "archive_sha256": receipt.get("archive_sha256"),
         "content_sha256": (receipt.get("content_snapshot") or {}).get("sha256"),
         "manifest_sha256": receipt.get("manifest_sha256"),
+        "python_runtime_contract_sha256": receipt.get(
+            "python_runtime_contract_sha256"
+        ),
         "deployment_required": receipt.get("deployment_required"),
     }
     encoded = json.dumps(guard, sort_keys=True, separators=(",", ":"), ensure_ascii=True)

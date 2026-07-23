@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from material_studio_mcp_server import runtime_deployment as deployment_module
+
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10 compatibility.
@@ -45,6 +47,13 @@ from material_studio_mcp_server.runtime_provenance import (
     RuntimeProvenanceTracker,
     runtime_deployment_status,
 )
+from material_studio_mcp_server.python_runtime import (
+    python_runtime_contract,
+    python_runtime_contract_sha256,
+)
+
+
+_CURRENT_PYTHON_RUNTIME_CONTRACT = python_runtime_contract()
 
 
 def _write_minimal_runtime(root: Path) -> str:
@@ -57,6 +66,15 @@ def _write_minimal_runtime(root: Path) -> str:
         encoding="utf-8",
     )
     (package / "__init__.py").write_text("", encoding="utf-8")
+    source_runtime_module = (
+        Path(__file__).parents[1]
+        / "src"
+        / "material_studio_mcp_server"
+        / "python_runtime.py"
+    )
+    (package / "python_runtime.py").write_bytes(
+        source_runtime_module.read_bytes()
+    )
     (package / "server.py").write_text("VALUE = 1\n", encoding="utf-8")
     (package / "schema.json").write_text('{"version": 1}\n', encoding="utf-8")
     snapshot = runtime_content_snapshot(root)
@@ -73,6 +91,7 @@ def _write_minimal_runtime(root: Path) -> str:
         },
         "archive_sha256": "c" * 64,
         "content_snapshot": snapshot,
+        "python_runtime_contract": _CURRENT_PYTHON_RUNTIME_CONTRACT,
         "entrypoints": {
             "mcp_server": "run_server.py",
             "codex_registration": "register_codex.py",
@@ -114,6 +133,15 @@ def _pushed_repository(tmp_path: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     (package / "__init__.py").write_text("", encoding="utf-8")
+    source_runtime_module = (
+        Path(__file__).parents[1]
+        / "src"
+        / "material_studio_mcp_server"
+        / "python_runtime.py"
+    )
+    (package / "python_runtime.py").write_bytes(
+        source_runtime_module.read_bytes()
+    )
     (package / "server.py").write_text("VALUE = 1\n", encoding="utf-8")
     long_example = (
         package
@@ -257,8 +285,7 @@ def test_managed_runtime_config_binds_manifest_argument_and_detects_drift(
     tmp_path: Path,
 ) -> None:
     runtime = tmp_path / "runtime"
-    python = tmp_path / "python.exe"
-    python.write_bytes(b"python")
+    python = Path(sys.executable)
     manifest_hash = _write_minimal_runtime(runtime)
     config = tmp_path / "config.toml"
     snippet = build_codex_config_snippet(runtime, python_command=python)
@@ -303,8 +330,7 @@ def test_config_registration_rejects_tampered_managed_runtime(
     tmp_path: Path,
 ) -> None:
     runtime = tmp_path / "runtime"
-    python = tmp_path / "python.exe"
-    python.write_bytes(b"python")
+    python = Path(sys.executable)
     _write_minimal_runtime(runtime)
     (runtime / "run_server.py").write_text("print('tampered')\n", encoding="utf-8")
     config = tmp_path / "config.toml"
@@ -318,6 +344,74 @@ def test_config_registration_rejects_tampered_managed_runtime(
 
     assert result["ok"] is False
     assert result["status"] == "managed_runtime_integrity_failed"
+    assert result["active_config_modified"] is False
+
+
+def test_python_runtime_drift_blocks_launch_and_registration(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    _write_minimal_runtime(runtime)
+    manifest_path = runtime / MANAGED_RUNTIME_MANIFEST
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    contract = payload["python_runtime_contract"]
+    contract["python"]["version"] = "0.0.0-drifted"
+    contract["contract_sha256"] = python_runtime_contract_sha256(contract)
+    payload["python_runtime_contract"] = contract
+    manifest_content = manifest_bytes(payload)
+    manifest_path.write_bytes(manifest_content)
+    manifest_hash = sha256_bytes(manifest_content)
+
+    structural = managed_runtime_status(
+        runtime,
+        expected_manifest_sha256=manifest_hash,
+    )
+    runtime_verified = managed_runtime_status(
+        runtime,
+        expected_manifest_sha256=manifest_hash,
+        verify_python_runtime=True,
+    )
+    config = tmp_path / "config.toml"
+    config.write_text("[projects]\n", encoding="utf-8")
+    registration = diagnose_codex_config(
+        config_path=config,
+        repo_root=runtime,
+        python_command=sys.executable,
+    )
+
+    assert structural["integrity_verified"] is True
+    assert structural["python_runtime_verified"] is None
+    assert runtime_verified["integrity_verified"] is False
+    assert runtime_verified["python_runtime_verified"] is False
+    assert "python_runtime_contract_mismatch" in runtime_verified["errors"]
+    with pytest.raises(RuntimeError, match="integrity verification failed"):
+        require_managed_runtime_launcher_binding(runtime, manifest_hash)
+    assert registration["status"] == "managed_runtime_python_environment_mismatch"
+    assert registration["managed_runtime"]["python_runtime_command_matches"] is True
+    assert (
+        registration["managed_runtime"]["python_runtime_environment_matches"]
+        is False
+    )
+
+
+def test_config_registration_rejects_different_python_command(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    _write_minimal_runtime(runtime)
+    other_python = tmp_path / "python.exe"
+    other_python.write_bytes(b"not-the-bound-python")
+    config = tmp_path / "config.toml"
+    config.write_text("[projects]\n", encoding="utf-8")
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=runtime,
+        python_command=other_python,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "managed_runtime_python_command_mismatch"
     assert result["active_config_modified"] is False
 
 
@@ -392,7 +486,15 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
 
     assert plan["status"] == "runtime_deployment_ready"
     assert plan["source_pushed_to_upstream"] is True
-    assert result["ok"] is True
+    assert plan["python_runtime_probe"]["status"] == "complete"
+    assert plan["python_runtime_contract"]["status"] == "complete"
+    assert len(plan["python_runtime_contract_sha256"]) == 64
+    assert Path(plan["target_runtime_path"]).parent.name == plan["source_commit"]
+    assert (
+        Path(plan["target_runtime_path"]).name
+        == plan["python_runtime_contract_sha256"]
+    )
+    assert result["ok"] is True, json.dumps(result, indent=2)
     assert result["status"] == "runtime_deployed_registration_ready"
     assert result["runtime_written"] is True
     assert result["runtime_integrity"]["integrity_verified"] is True
@@ -401,6 +503,9 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
     assert result["registration_handoff"]["runtime_manifest_sha256"] == (
         result["runtime_integrity"]["manifest_sha256"]
     )
+    assert result["registration_handoff"][
+        "python_runtime_contract_sha256"
+    ] == plan["python_runtime_contract_sha256"]
     assert result["registration_handoff"]["apply_command"][2:4] == [
         RUNTIME_MANIFEST_ARGUMENT,
         result["runtime_integrity"]["manifest_sha256"],
@@ -415,6 +520,12 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
     assert filesystem_io_path(long_deployed_example).read_text(
         encoding="utf-8"
     ) == '{"kind": "long-path-fixture"}\n'
+    deployed_manifest = json.loads(
+        (target / MANAGED_RUNTIME_MANIFEST).read_text(encoding="utf-8")
+    )
+    assert deployed_manifest["python_runtime_contract"][
+        "contract_sha256"
+    ] == plan["python_runtime_contract_sha256"]
     assert _sha256(config) == config_before
     assert reused_plan["status"] == "runtime_already_deployed"
     assert reused["status"] == "runtime_reused_registration_ready"
@@ -449,6 +560,50 @@ def test_runtime_manifest_is_stable_across_branches_at_same_commit(
         main_plan["runtime_deployment_plan_id"]
         != review_plan["runtime_deployment_plan_id"]
     )
+
+
+def test_runtime_path_changes_with_python_environment_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repository, _ = _pushed_repository(tmp_path)
+    runtime_root = tmp_path / "runtimes"
+    first = plan_runtime_deployment(
+        source_root=repository,
+        runtime_root=runtime_root,
+        python_command=sys.executable,
+    )
+    changed_contract = json.loads(
+        json.dumps(_CURRENT_PYTHON_RUNTIME_CONTRACT)
+    )
+    changed_contract["python"]["machine"] = "different-runtime-machine"
+    changed_contract["contract_sha256"] = python_runtime_contract_sha256(
+        changed_contract
+    )
+    monkeypatch.setattr(
+        deployment_module,
+        "probe_python_runtime_contract",
+        lambda *args, **kwargs: {
+            "status": "complete",
+            "ok": True,
+            "error": None,
+            "stderr_tail": None,
+            "contract": changed_contract,
+            "contract_sha256": changed_contract["contract_sha256"],
+        },
+    )
+    changed = plan_runtime_deployment(
+        source_root=repository,
+        runtime_root=runtime_root,
+        python_command=sys.executable,
+    )
+
+    assert first["source_commit"] == changed["source_commit"]
+    assert first["commit_runtime_root"] == changed["commit_runtime_root"]
+    assert first["target_runtime_path"] != changed["target_runtime_path"]
+    assert Path(changed["target_runtime_path"]).name == changed_contract[
+        "contract_sha256"
+    ]
 
 
 def test_deployment_plan_rejects_dirty_unpushed_and_conflicting_runtime(
@@ -496,6 +651,27 @@ def test_deployment_plan_rejects_dirty_unpushed_and_conflicting_runtime(
     )
     assert unpushed_result["status"] == "source_not_deployable"
     assert "source_upstream_not_configured" in unpushed_result["blocking_reasons"]
+
+
+def test_deployment_plan_rejects_unusable_python_runtime(
+    tmp_path: Path,
+) -> None:
+    repository, _ = _pushed_repository(tmp_path)
+    runtime_root = tmp_path / "runtimes"
+    fake_python = tmp_path / "python.exe"
+    fake_python.write_bytes(b"not-an-executable")
+
+    result = plan_runtime_deployment(
+        source_root=repository,
+        runtime_root=runtime_root,
+        python_command=fake_python,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "python_runtime_not_deployable"
+    assert result["apply_ready"] is False
+    assert result["python_runtime_probe"]["ok"] is False
+    assert not runtime_root.exists()
 
 
 def test_stale_runtime_plan_never_writes_destination(tmp_path: Path) -> None:

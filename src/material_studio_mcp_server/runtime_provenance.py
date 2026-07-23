@@ -23,6 +23,25 @@ RUNTIME_PROVENANCE_SCHEMA = "material_studio_mcp_runtime_provenance_v1"
 RUNTIME_DEPLOYMENT_SCHEMA = "material_studio_mcp_runtime_deployment_binding_v1"
 
 
+def _portable_path_text(path: str | Path) -> str:
+    """Remove Windows I/O-only prefixes from paths used in identity receipts."""
+
+    text = str(path)
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
+
+
+def _same_path(first: str | Path, second: str | Path) -> bool:
+    first_text = os.path.normcase(os.path.normpath(_portable_path_text(first)))
+    second_text = os.path.normcase(os.path.normpath(_portable_path_text(second)))
+    return first_text == second_text
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -146,6 +165,7 @@ def runtime_deployment_status(
         managed_runtime_status(
             repository_root,
             expected_manifest_sha256=expected_manifest_sha256,
+            verify_python_runtime=expected_manifest_sha256 is not None,
         )
         if repository_root is not None
         else None
@@ -167,7 +187,10 @@ def runtime_deployment_status(
     observed_cwd = Path(process_cwd or os.getcwd()).expanduser().resolve()
     package_is_in_checkout = bool(
         repository_root
-        and package == repository_root / "src" / "material_studio_mcp_server"
+        and _same_path(
+            package,
+            repository_root / "src" / "material_studio_mcp_server",
+        )
     )
     if managed_runtime and (
         managed_runtime.get("managed") is True
@@ -187,7 +210,7 @@ def runtime_deployment_status(
 
     if observed_entrypoint is None:
         entrypoint_binding = "unobserved"
-    elif expected_entrypoint and observed_entrypoint == expected_entrypoint:
+    elif expected_entrypoint and _same_path(observed_entrypoint, expected_entrypoint):
         entrypoint_binding = "matched_source_run_server"
     elif repository_root is None:
         entrypoint_binding = "installed_or_external_entrypoint"
@@ -197,7 +220,7 @@ def runtime_deployment_status(
     try:
         cwd_matches_repository = bool(
             repository_root
-            and observed_cwd == repository_root
+            and _same_path(observed_cwd, repository_root)
         )
     except (OSError, RuntimeError):
         cwd_matches_repository = False
@@ -219,15 +242,19 @@ def runtime_deployment_status(
     return {
         "schema": RUNTIME_DEPLOYMENT_SCHEMA,
         "status": deployment_status,
-        "package_root": str(package),
-        "repository_root": str(repository_root) if repository_root else None,
+        "package_root": _portable_path_text(package),
+        "repository_root": (
+            _portable_path_text(repository_root) if repository_root else None
+        ),
         "source_layout": "checkout_src_package" if package_is_in_checkout else None,
-        "entrypoint": str(observed_entrypoint) if observed_entrypoint else None,
+        "entrypoint": (
+            _portable_path_text(observed_entrypoint) if observed_entrypoint else None
+        ),
         "expected_source_entrypoint": (
-            str(expected_entrypoint) if expected_entrypoint else None
+            _portable_path_text(expected_entrypoint) if expected_entrypoint else None
         ),
         "entrypoint_binding": entrypoint_binding,
-        "process_cwd": str(observed_cwd),
+        "process_cwd": _portable_path_text(observed_cwd),
         "cwd_matches_repository": cwd_matches_repository,
         "python_executable": str(Path(sys.executable).resolve()),
         "git": git,
@@ -377,6 +404,7 @@ class RuntimeProvenanceTracker:
             managed_runtime_status(
                 repository_root,
                 expected_manifest_sha256=os.environ.get(RUNTIME_MANIFEST_ENV),
+                verify_python_runtime=True,
             )
             if managed_required and repository_root
             else None

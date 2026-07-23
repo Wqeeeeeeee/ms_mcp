@@ -407,6 +407,7 @@ def _prepare_registration(
         "repo_root": str(root),
         "recommended_entrypoint": diagnosis.get("recommended_entrypoint"),
         "diagnosis_status": diagnosis.get("status"),
+        "managed_runtime": diagnosis.get("managed_runtime"),
         "recommended_snippet_sha256": snippet_hash,
         "change_required": True,
         "change_kind": None,

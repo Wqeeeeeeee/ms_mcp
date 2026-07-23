@@ -147,15 +147,19 @@ pointing Codex at a temporary PR worktree:
   --expected-plan-id <REVIEWED_RUNTIME_DEPLOYMENT_PLAN_ID>
 ```
 
-The first command is read-only. The second publishes the exact Git archive
-under `%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>`, validates the
-stdio tool contract, and returns a separate fingerprint-bound registration
-plan and command. It does not edit the active Codex config, restart Codex, or
-touch Materials Studio. Review and explicitly apply the returned registration
-plan, then restart Codex while leaving the single Materials Studio window open.
-Managed runtimes are never overwritten or automatically deleted; their
-manifest and complete file snapshot are reverified at startup and during
-preflight.
+The first command is read-only. It fingerprints the selected Python
+interpreter, its base runtime binaries, and the enabled transitive dependency
+closure. The second publishes the exact Git archive under
+`%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>\<python-contract-sha256>`,
+validates the stdio tool contract, and returns a separate fingerprint-bound
+registration plan and command. It does not create a virtual environment, edit
+the active Codex config, restart Codex, or touch Materials Studio. Review and
+explicitly apply the returned registration plan, then restart Codex while
+leaving the single Materials Studio window open. Managed runtimes are never
+overwritten or automatically deleted; their manifest, complete file snapshot,
+and Python runtime contract are reverified at startup and during preflight.
+Changing the interpreter or any bound dependency requires a fresh deployment
+plan and produces a different immutable runtime identity.
 
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
 immediate session-control action and coordinates three revision-bound tracks:

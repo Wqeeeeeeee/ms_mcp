@@ -77,7 +77,7 @@ exactly equal to that upstream commit. Preview is read-only:
 ```
 
 Review `source_commit`, `source_upstream`, `target_runtime_path`,
-`archive_sha256`, `manifest_sha256`, and
+`python_runtime_contract_sha256`, `archive_sha256`, `manifest_sha256`, and
 `runtime_deployment_plan_id`. Publish only that exact plan:
 
 ```powershell
@@ -88,9 +88,14 @@ Review `source_commit`, `source_upstream`, `target_runtime_path`,
 ```
 
 The default destination is
-`%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>`. Deployment uses the
-committed Git archive only, rejects links and unsafe archive paths, stages on
-the destination volume, and publishes by rename. An existing commit directory
+`%LOCALAPPDATA%\materials_studio_mcp\runtimes\<commit>\<python-contract-sha256>`.
+The Python contract binds the exact configured interpreter, base runtime
+binaries, platform identity, and the file content of the enabled transitive
+dependency closure. Deployment does not create or copy a virtual environment;
+it verifies the explicitly selected environment and records that environment
+as part of the immutable runtime identity. Deployment uses the committed Git
+archive only, rejects links and unsafe archive paths, stages on the destination
+volume, and publishes by rename. An existing commit-and-environment directory
 is reused only when its manifest and full content snapshot match exactly. It is
 never overwritten, and older runtimes are never deleted automatically.
 
@@ -104,10 +109,13 @@ or launch Materials Studio during this switch.
 
 The registered server arguments include
 `--runtime-manifest-sha256 <digest>`. The launcher disables bytecode writes and
-verifies that host-bound manifest plus every deployed file before importing the
-MCP server. A missing binding, changed manifest, added cache/file, or modified
-source fails closed. Deploy a new reviewed commit to a new commit-addressed
-directory instead of repairing or deleting an existing managed runtime.
+verifies the host-bound manifest, every deployed file, the Python executable
+and base runtime, and every bound dependency before importing the MCP server. A
+missing binding, changed manifest, added cache/file, modified source, different
+interpreter, or dependency drift fails closed. Even when the Git commit is
+unchanged, a dependency update requires a fresh reviewed deployment plan and a
+new Python-contract-addressed directory. Do not repair or delete an existing
+managed runtime.
 
 ## Protocol Acceptance
 

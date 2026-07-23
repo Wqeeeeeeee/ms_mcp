@@ -9,8 +9,14 @@ import re
 from pathlib import Path
 from typing import Any, MutableMapping, Sequence
 
+from .python_runtime import (
+    python_runtime_contract,
+    python_runtime_contract_summary,
+    validate_python_runtime_contract,
+)
 
-MANAGED_RUNTIME_SCHEMA = "material_studio_mcp_managed_runtime_v1"
+
+MANAGED_RUNTIME_SCHEMA = "material_studio_mcp_managed_runtime_v2"
 MANAGED_RUNTIME_MANIFEST = ".materials_studio_mcp_runtime.json"
 RUNTIME_MANIFEST_ARGUMENT = "--runtime-manifest-sha256"
 RUNTIME_MANIFEST_ENV = "MATERIAL_STUDIO_MCP_EXPECTED_RUNTIME_MANIFEST_SHA256"
@@ -112,6 +118,7 @@ def managed_runtime_status(
     runtime_root: str | Path,
     *,
     expected_manifest_sha256: str | None = None,
+    verify_python_runtime: bool = False,
 ) -> dict[str, Any]:
     """Verify a managed runtime against its manifest and optional host binding."""
 
@@ -138,6 +145,9 @@ def managed_runtime_status(
         "source_tree": None,
         "source_branch": None,
         "source_remote": None,
+        "declared_python_runtime": None,
+        "observed_python_runtime": None,
+        "python_runtime_verified": None,
         "errors": [],
     }
     if expected_manifest_sha256 is not None and expected_hash is None:
@@ -190,6 +200,7 @@ def managed_runtime_status(
         if isinstance(payload.get("content_snapshot"), dict)
         else {}
     )
+    declared_python_runtime = payload.get("python_runtime_contract")
     result.update(
         {
             "manifest_schema": payload.get("schema"),
@@ -200,6 +211,9 @@ def managed_runtime_status(
             "archive_sha256": payload.get("archive_sha256"),
             "declared_runtime_root": payload.get("runtime_root"),
             "declared_content_snapshot": expected_content,
+            "declared_python_runtime": python_runtime_contract_summary(
+                declared_python_runtime
+            ),
         }
     )
     errors: list[str] = []
@@ -213,11 +227,45 @@ def managed_runtime_status(
         errors.append("manifest_source_tree_invalid")
     if expected_hash and observed_manifest_hash != expected_hash:
         errors.append("manifest_sha256_binding_mismatch")
+    runtime_contract_errors = validate_python_runtime_contract(
+        declared_python_runtime
+    )
+    errors.extend(runtime_contract_errors)
+    if (
+        isinstance(declared_python_runtime, dict)
+        and declared_python_runtime.get("status") != "complete"
+    ):
+        errors.append("python_runtime_contract_incomplete")
+
+    if verify_python_runtime and not runtime_contract_errors:
+        observed_python_runtime = python_runtime_contract()
+        observed_summary = python_runtime_contract_summary(
+            observed_python_runtime
+        )
+        declared_hash = (
+            declared_python_runtime.get("contract_sha256")
+            if isinstance(declared_python_runtime, dict)
+            else None
+        )
+        observed_hash = observed_python_runtime.get("contract_sha256")
+        python_runtime_verified = bool(
+            observed_python_runtime.get("status") == "complete"
+            and observed_hash == declared_hash
+        )
+        result.update(
+            {
+                "observed_python_runtime": observed_summary,
+                "python_runtime_verified": python_runtime_verified,
+            }
+        )
+        if not python_runtime_verified:
+            errors.append("python_runtime_contract_mismatch")
 
     required_paths = (
         root / "run_server.py",
         root / "register_codex.py",
         root / "pyproject.toml",
+        root / "src" / "material_studio_mcp_server" / "python_runtime.py",
         root / "src" / "material_studio_mcp_server" / "server.py",
     )
     missing_required = [
@@ -312,6 +360,7 @@ def require_managed_runtime_launcher_binding(
     status = managed_runtime_status(
         root,
         expected_manifest_sha256=manifest_sha256,
+        verify_python_runtime=True,
     )
     if status.get("integrity_verified") is not True:
         errors = ", ".join(str(item) for item in status.get("errors") or [])

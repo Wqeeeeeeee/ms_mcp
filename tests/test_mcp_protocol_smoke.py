@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -36,7 +37,17 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
         )
     )
 
-    assert result["ok"] is True
+    failure_diagnostic = {
+        "ok": result.get("ok"),
+        "errors": result.get("errors"),
+        "warnings": result.get("warnings"),
+        "discovery": result.get("discovery"),
+        "calls_ok": (result.get("calls") or {}).get("ok"),
+        "call_errors": (result.get("calls") or {}).get("errors"),
+        "server_stderr_tail": result.get("server_stderr_tail"),
+        "config_audit": result.get("config_audit"),
+    }
+    assert result["ok"] is True, json.dumps(failure_diagnostic, indent=2)
     assert result["transport"] == "stdio"
     assert result["protocol_version"]
     assert result["tool_count"] >= len(REQUIRED_PROTOCOL_TOOLS)

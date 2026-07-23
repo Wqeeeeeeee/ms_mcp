@@ -20,6 +20,10 @@ from .managed_runtime import (
     managed_runtime_server_args,
     managed_runtime_status,
 )
+from .python_runtime import (
+    probe_python_runtime_contract,
+    python_runtime_contract_summary,
+)
 
 
 SERVER_NAME = "materials_studio"
@@ -153,6 +157,17 @@ def diagnose_codex_config(
     run_server = (root / "run_server.py").resolve()
     expected_args = managed_runtime_server_args(root)
     managed_runtime = managed_runtime_status(root)
+    declared_python_runtime = managed_runtime.get("declared_python_runtime")
+    declared_python_command = (
+        declared_python_runtime.get("python_executable")
+        if isinstance(declared_python_runtime, dict)
+        else None
+    )
+    python_runtime_command_matches = (
+        _same_path(declared_python_command, command)
+        if declared_python_command
+        else None
+    )
     snippet = build_codex_config_snippet(root, python_command=command)
     before_hash = _file_sha256(config)
     result: dict[str, Any] = {
@@ -181,6 +196,10 @@ def diagnose_codex_config(
             "manifest_path": managed_runtime.get("manifest_path"),
             "manifest_sha256": managed_runtime.get("manifest_sha256"),
             "source_commit": managed_runtime.get("source_commit"),
+            "python_runtime_contract": declared_python_runtime,
+            "python_runtime_command_matches": python_runtime_command_matches,
+            "python_runtime_probe": None,
+            "python_runtime_environment_matches": None,
             "errors": managed_runtime.get("errors") or [],
         },
         "required_protocol_tool_count": len(REQUIRED_PROTOCOL_TOOLS),
@@ -217,6 +236,62 @@ def diagnose_codex_config(
             }
         )
         return result
+    if (
+        managed_runtime.get("managed") is True
+        and python_runtime_command_matches is not True
+    ):
+        result.update(
+            {
+                "ok": False,
+                "status": "managed_runtime_python_command_mismatch",
+                "error": "managed_runtime_python_command_mismatch",
+                "next_actions": [
+                    "Do not register the managed runtime with a different Python executable.",
+                    "Deploy the reviewed commit using the intended long-lived Python environment.",
+                ],
+            }
+        )
+        return result
+    if managed_runtime.get("managed") is True:
+        runtime_probe = probe_python_runtime_contract(command, root)
+        observed_runtime = runtime_probe.get("contract")
+        observed_summary = python_runtime_contract_summary(observed_runtime)
+        declared_hash = (
+            declared_python_runtime.get("contract_sha256")
+            if isinstance(declared_python_runtime, dict)
+            else None
+        )
+        python_runtime_environment_matches = bool(
+            runtime_probe.get("ok") is True
+            and observed_summary.get("contract_sha256") == declared_hash
+        )
+        result["managed_runtime"].update(
+            {
+                "python_runtime_probe": {
+                    "status": runtime_probe.get("status"),
+                    "ok": runtime_probe.get("ok"),
+                    "error": runtime_probe.get("error"),
+                    "stderr_tail": runtime_probe.get("stderr_tail"),
+                    "contract": observed_summary,
+                },
+                "python_runtime_environment_matches": (
+                    python_runtime_environment_matches
+                ),
+            }
+        )
+        if not python_runtime_environment_matches:
+            result.update(
+                {
+                    "ok": False,
+                    "status": "managed_runtime_python_environment_mismatch",
+                    "error": "managed_runtime_python_environment_mismatch",
+                    "next_actions": [
+                        "Do not register or start the managed runtime with the changed Python environment.",
+                        "Deploy a reviewed commit using a fresh, explicitly reviewed runtime plan.",
+                    ],
+                }
+            )
+            return result
     if not config.exists():
         result.update(
             {

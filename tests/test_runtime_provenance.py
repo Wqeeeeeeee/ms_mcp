@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -108,6 +109,44 @@ def test_runtime_deployment_reports_different_source_entrypoint(
     assert result["status"] == "source_checkout"
     assert result["entrypoint_binding"] == "different_entrypoint"
     assert result["cwd_matches_repository"] is False
+
+
+def test_runtime_deployment_normalizes_windows_extended_path_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        return
+    root = tmp_path / "repo"
+    package_root = root / "src" / "material_studio_mcp_server"
+    package_root.mkdir(parents=True)
+    run_server = root / "run_server.py"
+    run_server.write_text("print('server')\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='test'\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runtime_module,
+        "_git_metadata",
+        lambda repository_root: {
+            "status": "available",
+            "head_commit": "a" * 40,
+            "branch": "codex/runtime-binding-test",
+            "worktree_dirty": False,
+            "error": None,
+        },
+    )
+    extended_package_root = Path("\\\\?\\" + str(package_root.resolve()))
+
+    result = runtime_deployment_status(
+        extended_package_root,
+        entrypoint=run_server,
+        process_cwd=root,
+    )
+
+    assert result["repository_root"] == str(root.resolve())
+    assert result["package_root"] == str(package_root.resolve())
+    assert result["expected_source_entrypoint"] == str(run_server.resolve())
+    assert result["entrypoint_binding"] == "matched_source_run_server"
+    assert result["cwd_matches_repository"] is True
 
 
 def test_runtime_codex_config_status_prefers_matching_repository_registration(

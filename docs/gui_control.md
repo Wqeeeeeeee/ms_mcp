@@ -809,6 +809,13 @@ geometry-review scaffolds, and no face-specific barrier is represented as a
 calculated result. Preview exports can be inspected without GUI input; explicit
 execute may materialize the current revision and hot-load it only into the
 verified single existing Materials Studio window.
+The same explicit 3C-SiC faces support SiO2 interface and Al/SiO2 MOS-capacitor
+starts. Their square-cell bridge-oxygen marker network is checked by
+`oxide_interface_geometry_summary`; zero short contacts and a matched declared
+boundary gap are scaffold preflight evidence, not proof of a relaxed interface.
+Oxide thickness and semiconductor-oxide or oxide-gate spacing changes remain
+semantic patches that create new revisions before any explicit same-window
+hot-load.
 Heterostructure and MQW templates with electronic metadata use
 `band_alignment_summary` and `semiconductor_band_alignment.csv` to expose
 electron-affinity band-offset preflight values, type-I confinement hints, and

@@ -6362,6 +6362,30 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     ]
     assert sic_3c_c_face_contact["surface_orientation"] == "3C-SiC(00-1) C-face"
     assert "surface_slab_polarity" in sic_3c_c_face_contact["default_diagnostic_focuses"]
+    sic_3c_si_face_oxide = virtual_profiles[
+        "silicon_dioxide_silicon_carbide_3c_001_si_face_interface"
+    ]
+    assert sic_3c_si_face_oxide["variant_kind"] == "interface_scaffold"
+    assert sic_3c_si_face_oxide["interface"] == "SiO2/3C-SiC"
+    assert sic_3c_si_face_oxide["surface_orientation"] == "3C-SiC(001) Si-face"
+    assert "semiconductor_oxide_interface" in sic_3c_si_face_oxide["default_diagnostic_focuses"]
+    sic_3c_c_face_oxide = virtual_profiles[
+        "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface"
+    ]
+    assert sic_3c_c_face_oxide["surface_orientation"] == "3C-SiC(00-1) C-face"
+    assert "semiconductor_oxide_interface_health_csv" in sic_3c_c_face_oxide["required_csv_keys"]
+    sic_3c_si_face_mos = virtual_profiles[
+        "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor"
+    ]
+    assert sic_3c_si_face_mos["variant_kind"] == "gate_stack_scaffold"
+    assert sic_3c_si_face_mos["interface"] == "Al/SiO2/3C-SiC"
+    assert sic_3c_si_face_mos["surface_orientation"] == "3C-SiC(001) Si-face"
+    assert "mos_gate_stack" in sic_3c_si_face_mos["default_diagnostic_focuses"]
+    sic_3c_c_face_mos = virtual_profiles[
+        "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor"
+    ]
+    assert sic_3c_c_face_mos["surface_orientation"] == "3C-SiC(00-1) C-face"
+    assert "semiconductor_gate_stack_csv" in sic_3c_c_face_mos["required_csv_keys"]
     sic_4h_contact = virtual_profiles["metal_silicon_carbide_4h_0001_schottky_contact"]
     assert sic_4h_contact["base_template_id"] == "silicon_carbide_4h_hexagonal"
     assert sic_4h_contact["variant_kind"] == "interface_scaffold"
@@ -7010,6 +7034,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert "nearest-neighbor divacancy" in patch_commands["crystal_divacancy"]["pattern"]
     assert "pn_junction_and_doping" in use_cases
     mos_gate_stack = use_cases["mos_gate_stack"]
+    assert (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor"
+        in mos_gate_stack["templates"]
+    )
+    assert (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor"
+        in mos_gate_stack["templates"]
+    )
     assert "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor" in mos_gate_stack["templates"]
     assert "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor" in mos_gate_stack["templates"]
     assert (
@@ -7029,6 +7061,8 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     oxide_interface = use_cases["semiconductor_oxide_interface"]
     assert oxide_interface["templates"] == [
         "silicon_silicon_dioxide_100_interface",
+        "silicon_dioxide_silicon_carbide_3c_001_si_face_interface",
+        "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface",
         "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface",
         "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface",
         "silicon_dioxide_silicon_carbide_6h_0001_interface",
@@ -29344,6 +29378,198 @@ def test_live_modeling_request_previews_and_single_window_hotloads_3c_sic_polar_
     assert hotload["execution_mode_source"] == "explicit_live_intent"
     assert hotload["nl_plan"]["template_id"] == (
         "metal_silicon_carbide_3c_001_si_face_schottky_contact"
+    )
+    assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
+    assert hotload["structure_artifact_validation"]["status"] == "matched"
+    assert hotload["gui_open"]["post_open_window_management"]["current_revision_loaded"] is True
+    assert hotload["single_window_policy_ok"] is True
+    assert hotload["mcp_same_window_hotload_ready"] is True
+    assert len(backend.list_processes()) == 1
+    assert len(backend.opened) == 1
+    assert backend.opened[0].suffix == ".stp"
+
+
+def test_3c_sic_oxide_and_mos_routing_preserves_face_polarity_and_fails_closed() -> None:
+    cases = (
+        (
+            "Build a SiO2/3C-SiC(001) Si-face interface.",
+            "silicon_dioxide_silicon_carbide_3c_001_si_face_interface",
+            "Si-face",
+            [0, 0, 1],
+            {"C": 8, "H": 4, "O": 8, "Si": 12},
+            ["3C-SiC", "SiO2"],
+            36.0,
+        ),
+        (
+            "\u6784\u5efa\u4e8c\u6c27\u5316\u7845/3C-\u78b3\u5316\u7845(00-1)\u78b3\u9762\u754c\u9762\u3002",
+            "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface",
+            "C-face",
+            [0, 0, -1],
+            {"C": 8, "H": 4, "O": 8, "Si": 12},
+            ["3C-SiC", "SiO2"],
+            36.0,
+        ),
+        (
+            "Build an Al/SiO2/3C-SiC(001) Si-face MOS capacitor.",
+            "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor",
+            "Si-face",
+            [0, 0, 1],
+            {"Al": 4, "C": 8, "H": 4, "O": 8, "Si": 12},
+            ["3C-SiC", "SiO2", "Al"],
+            44.0,
+        ),
+        (
+            "\u6784\u5efa Al/SiO2/3C-\u78b3\u5316\u7845(00-1)\u78b3\u9762 MOS \u7535\u5bb9\u3002",
+            "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor",
+            "C-face",
+            [0, 0, -1],
+            {"Al": 4, "C": 8, "H": 4, "O": 8, "Si": 12},
+            ["3C-SiC", "SiO2", "Al"],
+            44.0,
+        ),
+    )
+
+    for request, template_id, face, indices, elements, sequence, cell_c in cases:
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "spec"
+        assert plan.template_id == template_id
+        assert plan.payload is not None
+        assert Counter(atom["element"] for atom in plan.payload["model"]["basis_atoms"]) == elements
+        assert plan.payload["model"]["lattice"]["c"] == cell_c
+        metadata = plan.payload["metadata"]
+        assert metadata["polytype"] == "3C"
+        assert metadata["surface_face"] == face
+        assert metadata["surface_miller_indices"] == indices
+        assert metadata["stack_sequence"] == sequence
+        assert metadata["surface_context"] is False
+        assert metadata["semiconductor_back_surface_passivation"]["added_atom_count"] == 4
+        assert metadata["oxide_scaffold_model"]["in_plane_network"] == (
+            "square_3C_001_diagonal_bridge_oxygen"
+        )
+        assert metadata["oxide_scaffold_model"]["oxide_silicon_atom_count"] == 4
+        assert metadata["oxide_scaffold_model"]["oxygen_atom_count"] == 8
+        assert metadata["oxide_scaffold_model"]["amorphous_structure"] is False
+
+    for request in (
+        "Build a SiO2/3C-SiC interface.",
+        "Build an Al/SiO2/3C-SiC MOS capacitor.",
+        "Build a SiO2/3C-SiC(001) Si-face and (00-1) C-face interface.",
+        "Build an Al/SiO2/3C-SiC(001) Si-face and (00-1) C-face MOS capacitor.",
+        "Build a 3C-SiC(001) Si-face MOSFET device.",
+    ):
+        plan = infer_modeling_plan(request)
+        assert plan.kind == "unsupported"
+        assert plan.template_id is None
+        assert plan.payload is None
+        assert any("3C-SiC" in note for note in plan.notes)
+
+
+def test_3c_sic_oxide_and_mos_preview_patch_diagnostics_and_single_window_hotload(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend),
+    )
+
+    oxide = server.material_studio_live_modeling_request(
+        (
+            "Build a SiO2/3C-SiC(001) Si-face interface and export "
+            "semiconductor-oxide interface and view diagnostics."
+        ),
+        project_id="sic_3c_oxide",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(tmp_path / "oxide"),
+    )
+    assert oxide["ok"] is True
+    assert oxide["execution_mode"] == "preview"
+    assert oxide["nl_plan"]["template_id"] == (
+        "silicon_dioxide_silicon_carbide_3c_001_si_face_interface"
+    )
+    assert oxide["view_audit"]["model"]["elements"] == {"C": 8, "H": 4, "O": 8, "Si": 12}
+    oxide_health = oxide["modeling_report"]["inspection"]["semiconductor_health"]
+    oxide_geometry = oxide_health["oxide_interface_geometry_summary"]
+    assert oxide_geometry["status"] == "connected_pre_relaxation_scaffold"
+    assert oxide_geometry["boundary_neighbor_pair_count"] == 2
+    assert oxide_geometry["short_contact_count"] == 0
+    assert oxide_geometry["isolated_oxide_atom_count"] == 0
+    assert oxide_geometry["geometry_preflight_ready"] is True
+    assert oxide_health["oxide_interface_health_summary"]["stoichiometry_status"] == "matched"
+    assert oxide["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 26
+    assert not backend.opened
+
+    mos_root = tmp_path / "mos"
+    mos = server.material_studio_live_modeling_request(
+        (
+            "Build an Al/SiO2/3C-SiC(00-1) C-face MOS capacitor and export "
+            "gate-stack, interface, and view diagnostics."
+        ),
+        project_id="sic_3c_mos",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(mos_root),
+    )
+    assert mos["ok"] is True
+    assert mos["revision"] == 0
+    assert mos["view_audit"]["model"]["elements"] == {
+        "Al": 4,
+        "C": 8,
+        "H": 4,
+        "O": 8,
+        "Si": 12,
+    }
+    mos_health = mos["modeling_report"]["inspection"]["semiconductor_health"]
+    assert mos_health["gate_stack_summary"]["material_sequence"] == ["3C-SiC", "SiO2", "Al"]
+    assert mos_health["oxide_interface_geometry_summary"]["status"] == (
+        "connected_pre_relaxation_scaffold"
+    )
+    assert mos_health["oxide_interface_geometry_summary"]["short_contact_count"] == 0
+    assert mos["view_bundle_row_counts"]["semiconductor_oxide_interface_geometry"] == 27
+
+    patched = server.material_studio_live_modeling_request(
+        (
+            "Set oxide thickness to 10 angstrom, semiconductor-oxide interface gap to 2.0 angstrom, "
+            "and oxide-gate interface gap to 2.5 angstrom; export gate-stack diagnostics."
+        ),
+        project_id="sic_3c_mos",
+        execution_mode="preview",
+        open_in_gui=False,
+        take_snapshot=False,
+        working_dir=str(mos_root),
+    )
+    assert patched["ok"] is True
+    assert patched["workflow"] == "patch"
+    assert patched["base_revision"] == 0
+    assert patched["new_revision"] == 1
+    patched_metadata = patched["view_audit"]["metadata"]
+    assert patched_metadata["oxide_thickness_angstrom"] == 10.0
+    assert patched_metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.0
+    assert patched_metadata["oxide_gate_interface_gap_angstrom"] == 2.5
+    stored_base = store_module.ProjectStore(mos_root).get_revision("sic_3c_mos", 0)
+    assert stored_base.metadata["oxide_thickness_angstrom"] == 8.0
+    assert stored_base.metadata["semiconductor_oxide_interface_gap_angstrom"] == 2.2
+    assert stored_base.metadata["oxide_gate_interface_gap_angstrom"] == 2.2
+    assert not backend.opened
+
+    hotload = server.material_studio_live_modeling_request(
+        (
+            "Build an Al/SiO2/3C-SiC(001) Si-face MOS capacitor, hot-load it in the current "
+            "Materials Studio window, export all view parameters, and check whether the model is normal."
+        ),
+        working_dir=str(tmp_path / "hotload"),
+        take_snapshot=False,
+    )
+    assert hotload["ok"] is True
+    assert hotload["execution_mode"] == "execute"
+    assert hotload["execution_mode_source"] == "explicit_live_intent"
+    assert hotload["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor"
     )
     assert hotload["result"]["execution_backend"] == "crystal_cif_materialize"
     assert hotload["structure_artifact_validation"]["status"] == "matched"

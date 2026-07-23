@@ -737,16 +737,20 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
-For preview-only 3C-SiC polar-surface and Schottky-contact acceptance without
-touching the GUI, use `sic_3c_slab`, `sic_3c_c_face_slab`, `sic_3c_contact`, or
-`sic_3c_c_face_contact`. For example:
+For preview-only 3C-SiC polar-surface, Schottky-contact, oxide-interface, and
+MOS-capacitor acceptance without touching the GUI, use `sic_3c_slab`,
+`sic_3c_c_face_slab`, `sic_3c_contact`, `sic_3c_c_face_contact`,
+`sic_3c_oxide_interface`, `sic_3c_c_face_oxide_interface`, `sic_3c_mos`, or
+`sic_3c_c_face_mos`. For example:
 `ms-mcp-live-smoke --scenario sic_3c_slab --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_3c_slab`
 or
-`ms-mcp-live-smoke --scenario sic_3c_c_face_contact --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_3c_c_face_contact`.
+`ms-mcp-live-smoke --scenario sic_3c_c_face_mos --execution-mode preview --no-include-gui-status --no-take-snapshot --working-dir workspace/live_smoke_3c_c_face_mos`.
 The slab checks require four-bilayer polarity and termination diagnostics; the
 contact checks additionally require material sequence, declared-versus-measured
-gap, metal thickness, and metadata-only barrier preflight. The ideal exposed
-surface and metal interface remain unrelaxed review scaffolds, so a successful
+gap, metal thickness, and metadata-only barrier preflight. Oxide and MOS checks
+also require a connected square-cell bridge-oxygen marker network, matched
+oxide stoichiometry, and zero short contacts. Every derived request names one
+explicit face. All models remain unrelaxed review scaffolds, so a successful
 smoke run does not establish calculation readiness.
 
 For preview-only 4H-SiC polar-surface acceptance without touching the GUI, use

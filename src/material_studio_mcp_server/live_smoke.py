@@ -224,6 +224,46 @@ SCENARIO_REQUESTS = {
             "export contact and all-view diagnostics and check whether the model is normal."
         ),
     },
+    "sic_3c_oxide_interface": {
+        "preview": (
+            "Build a SiO2/3C-SiC(001) Si-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/3C-SiC(001) Si-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_3c_c_face_oxide_interface": {
+        "preview": (
+            "Build a SiO2/3C-SiC(00-1) C-face interface and export semiconductor-oxide interface "
+            "and view diagnostics."
+        ),
+        "hotload": (
+            "Build a SiO2/3C-SiC(00-1) C-face interface and hot-load it in Materials Studio, "
+            "export semiconductor-oxide interface and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_3c_mos": {
+        "preview": (
+            "Build an Al/SiO2/3C-SiC(001) Si-face MOS capacitor and export gate-stack, "
+            "interface, and view diagnostics."
+        ),
+        "hotload": (
+            "Build an Al/SiO2/3C-SiC(001) Si-face MOS capacitor and hot-load it in Materials Studio, "
+            "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
+        ),
+    },
+    "sic_3c_c_face_mos": {
+        "preview": (
+            "Build an Al/SiO2/3C-SiC(00-1) C-face MOS capacitor and export gate-stack, "
+            "interface, and view diagnostics."
+        ),
+        "hotload": (
+            "Build an Al/SiO2/3C-SiC(00-1) C-face MOS capacitor and hot-load it in Materials Studio, "
+            "export gate-stack, interface, and view diagnostics, and check whether the model is normal."
+        ),
+    },
     "sic_4h_contact": {
         "preview": "Build an Au/4H-SiC(0001) Si-face Schottky contact and export contact and view diagnostics.",
         "hotload": (
@@ -310,6 +350,10 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
     "sic_3c_c_face_slab": "silicon_carbide_3c_00m1_c_face_slab",
     "sic_3c_contact": "metal_silicon_carbide_3c_001_si_face_schottky_contact",
     "sic_3c_c_face_contact": "metal_silicon_carbide_3c_00m1_c_face_schottky_contact",
+    "sic_3c_oxide_interface": "silicon_dioxide_silicon_carbide_3c_001_si_face_interface",
+    "sic_3c_c_face_oxide_interface": "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface",
+    "sic_3c_mos": "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor",
+    "sic_3c_c_face_mos": "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor",
     "sic_4h_contact": "metal_silicon_carbide_4h_0001_schottky_contact",
     "sic_4h_c_face_contact": "metal_silicon_carbide_4h_000m1_c_face_schottky_contact",
     "sic_4h_slab": "silicon_carbide_4h_0001_si_face_slab",
@@ -611,6 +655,52 @@ SCENARIO_EXPECTATIONS = {
             "requested_diagnostic_focus_status_json",
         ],
     },
+    "sic_3c_mos": {
+        "row_counts": {
+            "semiconductor_gate_stack": 1,
+            "semiconductor_heterostructure": 1,
+            "semiconductor_interface_profile": 1,
+            "semiconductor_interface_quality": 1,
+            "semiconductor_oxide_interface_geometry": 27,
+            "semiconductor_oxide_interface_health": 3,
+            "semiconductor_calculation_preflight": 1,
+            "requested_diagnostic_focus_status": 2,
+            "view_summary": 1,
+            "view_quality": 1,
+            "view_projections": 1,
+        },
+        "files": [
+            "semiconductor_gate_stack_csv",
+            "semiconductor_heterostructure_csv",
+            "semiconductor_interface_profile_csv",
+            "semiconductor_interface_quality_csv",
+            "semiconductor_oxide_interface_geometry_csv",
+            "semiconductor_oxide_interface_health_csv",
+            "semiconductor_calculation_preflight_csv",
+            "requested_diagnostic_focus_status_json",
+        ],
+    },
+    "sic_3c_oxide_interface": {
+        "row_counts": {
+            "semiconductor_interface_profile": 1,
+            "semiconductor_interface_quality": 1,
+            "semiconductor_oxide_interface_geometry": 26,
+            "semiconductor_oxide_interface_health": 3,
+            "semiconductor_calculation_preflight": 1,
+            "requested_diagnostic_focus_status": 2,
+            "view_summary": 1,
+            "view_quality": 1,
+            "view_projections": 1,
+        },
+        "files": [
+            "semiconductor_interface_profile_csv",
+            "semiconductor_interface_quality_csv",
+            "semiconductor_oxide_interface_geometry_csv",
+            "semiconductor_oxide_interface_health_csv",
+            "semiconductor_calculation_preflight_csv",
+            "requested_diagnostic_focus_status_json",
+        ],
+    },
     "sic_6h_mos": {
         "row_counts": {
             "semiconductor_gate_stack": 1,
@@ -735,6 +825,8 @@ for _target_scenario, _source_scenario in (
     ("sic_3c_c_face_slab", "sic_6h_slab"),
     ("sic_3c_contact", "sic_4h_contact"),
     ("sic_3c_c_face_contact", "sic_4h_contact"),
+    ("sic_3c_c_face_oxide_interface", "sic_3c_oxide_interface"),
+    ("sic_3c_c_face_mos", "sic_3c_mos"),
     ("sic_4h_c_face_contact", "sic_4h_contact"),
     ("sic_4h_slab", "sic_6h_slab"),
     ("sic_4h_c_face_slab", "sic_6h_slab"),

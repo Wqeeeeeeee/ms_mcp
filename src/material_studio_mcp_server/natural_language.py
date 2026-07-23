@@ -1524,6 +1524,18 @@ SIC_3C_SI_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
 SIC_3C_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
     "metal_silicon_carbide_3c_00m1_c_face_schottky_contact"
 )
+SIC_3C_SI_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = (
+    "silicon_dioxide_silicon_carbide_3c_001_si_face_interface"
+)
+SIC_3C_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID = (
+    "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface"
+)
+SIC_3C_SI_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = (
+    "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor"
+)
+SIC_3C_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID = (
+    "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor"
+)
 SIC_4H_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = "metal_silicon_carbide_4h_0001_schottky_contact"
 SIC_4H_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID = (
     "metal_silicon_carbide_4h_000m1_c_face_schottky_contact"
@@ -1589,6 +1601,8 @@ SIC_3C_ELECTRON_AFFINITY_EV = 4.0
 SIC_3C_BAND_GAP_EV = 2.36
 SIC_3C_SURFACE_CELL_C_ANGSTROM = 28.0
 SIC_3C_CONTACT_CELL_C_ANGSTROM = 32.0
+SIC_3C_OXIDE_INTERFACE_CELL_C_ANGSTROM = 36.0
+SIC_3C_MOS_CELL_C_ANGSTROM = 44.0
 SIC_3C_SILICON_HYDROGEN_BOND_ANGSTROM = 1.48
 SIC_3C_CARBON_HYDROGEN_BOND_ANGSTROM = 1.09
 # Device-screening values for 4H-SiC; these are metadata, not calculated results.
@@ -1694,6 +1708,10 @@ class SicSurfaceAssembly:
 
 @dataclass(frozen=True)
 class Sic3cSurfaceFaceProfile:
+    polytype: str
+    bilayer_count: int
+    oxide_interface_cell_c_angstrom: float
+    mos_cell_c_angstrom: float
     face: str
     orientation: str
     plane_slug: str
@@ -1702,6 +1720,8 @@ class Sic3cSurfaceFaceProfile:
     top_element: str
     slab_template_id: str
     contact_template_id: str
+    oxide_interface_template_id: str
+    mos_capacitor_template_id: str
     axis_reorientation: str
 
 
@@ -1724,6 +1744,10 @@ class Sic3cSurfaceAssembly:
 
 SIC_3C_SURFACE_FACE_PROFILES: dict[str, Sic3cSurfaceFaceProfile] = {
     "Si-face": Sic3cSurfaceFaceProfile(
+        polytype="3C",
+        bilayer_count=4,
+        oxide_interface_cell_c_angstrom=SIC_3C_OXIDE_INTERFACE_CELL_C_ANGSTROM,
+        mos_cell_c_angstrom=SIC_3C_MOS_CELL_C_ANGSTROM,
         face="Si-face",
         orientation="3C-SiC(001) Si-face",
         plane_slug="001",
@@ -1732,9 +1756,15 @@ SIC_3C_SURFACE_FACE_PROFILES: dict[str, Sic3cSurfaceFaceProfile] = {
         top_element="Si",
         slab_template_id=SIC_3C_SI_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
         contact_template_id=SIC_3C_SI_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        oxide_interface_template_id=SIC_3C_SI_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        mos_capacitor_template_id=SIC_3C_SI_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
         axis_reorientation="bulk_fractional_z_reflected_to_place_3C-SiC_001_Si_face_at_top",
     ),
     "C-face": Sic3cSurfaceFaceProfile(
+        polytype="3C",
+        bilayer_count=4,
+        oxide_interface_cell_c_angstrom=SIC_3C_OXIDE_INTERFACE_CELL_C_ANGSTROM,
+        mos_cell_c_angstrom=SIC_3C_MOS_CELL_C_ANGSTROM,
         face="C-face",
         orientation="3C-SiC(00-1) C-face",
         plane_slug="00m1",
@@ -1743,6 +1773,8 @@ SIC_3C_SURFACE_FACE_PROFILES: dict[str, Sic3cSurfaceFaceProfile] = {
         top_element="C",
         slab_template_id=SIC_3C_C_FACE_SLAB_VIRTUAL_TEMPLATE_ID,
         contact_template_id=SIC_3C_C_FACE_SCHOTTKY_CONTACT_VIRTUAL_TEMPLATE_ID,
+        oxide_interface_template_id=SIC_3C_C_FACE_OXIDE_INTERFACE_VIRTUAL_TEMPLATE_ID,
+        mos_capacitor_template_id=SIC_3C_C_FACE_MOS_CAPACITOR_VIRTUAL_TEMPLATE_ID,
         axis_reorientation="bulk_fractional_z_preserved_to_place_3C-SiC_00m1_C_face_at_top",
     ),
 }
@@ -2297,6 +2329,106 @@ def _sic_3c_polar_virtual_template_profiles() -> list[dict[str, Any]]:
                         "semiconductor_surface_termination_csv",
                         "semiconductor_surface_polarity_csv",
                         "semiconductor_surface_model_csv",
+                        "semiconductor_calculation_preflight_csv",
+                        "view_quality_csv",
+                    ],
+                },
+                {
+                    **common,
+                    "template_id": face.oxide_interface_template_id,
+                    "variant_kind": "interface_scaffold",
+                    "response_template_id": face.oxide_interface_template_id,
+                    "example_request": (
+                        f"Build a SiO2/{face.orientation} interface and export interface diagnostics."
+                    ),
+                    "terms": [
+                        f"SiO2/{face.orientation} interface",
+                        f"3C-SiC {surface_face} oxide interface",
+                        f"silicon dioxide on 3C-SiC {face.plane_slug}",
+                    ],
+                    "notes": (
+                        f"Programmatic centered SiO2/{face.orientation} pre-relaxation interface scaffold. "
+                        "Its mixed Si/O marker planes support deterministic visualization and thickness edits; "
+                        "they are not amorphous or relaxed SiO2."
+                    ),
+                    "model_name": face.oxide_interface_template_id,
+                    "structure_family": f"3C-SiC {surface_face} semiconductor oxide interface scaffold",
+                    "materials": ["3C-SiC", "SiO2"],
+                    "interface": "SiO2/3C-SiC",
+                    "interface_orientation": f"SiO2 / {face.orientation}",
+                    "surface_orientation": face.orientation,
+                    "default_diagnostic_focuses": _unique_preserving_order(
+                        [
+                            "semiconductor_structure_health",
+                            "semiconductor_oxide_interface",
+                            "epitaxial_strain_preflight",
+                            "electronic_structure_preflight",
+                            "view_quality",
+                        ]
+                    ),
+                    "required_summary_keys": [
+                        "interface_profile_summary",
+                        "interface_quality_summary",
+                        "oxide_interface_geometry_summary",
+                        "oxide_interface_health_summary",
+                        "calculation_preflight_summary",
+                    ],
+                    "required_csv_keys": [
+                        "semiconductor_interface_profile_csv",
+                        "semiconductor_interface_quality_csv",
+                        "semiconductor_oxide_interface_geometry_csv",
+                        "semiconductor_oxide_interface_health_csv",
+                        "semiconductor_calculation_preflight_csv",
+                        "view_quality_csv",
+                    ],
+                },
+                {
+                    **common,
+                    "template_id": face.mos_capacitor_template_id,
+                    "variant_kind": "gate_stack_scaffold",
+                    "response_template_id": face.mos_capacitor_template_id,
+                    "example_request": (
+                        f"Build an Al/SiO2/{face.orientation} MOS capacitor and export diagnostics."
+                    ),
+                    "terms": [
+                        f"Al/SiO2/{face.orientation} MOS capacitor",
+                        f"3C-SiC {surface_face} MOS capacitor",
+                        f"3C-SiC {face.plane_slug} gate stack",
+                    ],
+                    "notes": (
+                        f"Programmatic centered Al/SiO2/{face.orientation} pre-relaxation gate-stack scaffold. "
+                        "Its mixed Si/O marker planes support deterministic visualization and thickness edits; "
+                        "they are not amorphous or relaxed SiO2."
+                    ),
+                    "model_name": face.mos_capacitor_template_id,
+                    "structure_family": f"3C-SiC {surface_face} MOS capacitor gate stack scaffold",
+                    "materials": ["3C-SiC", "SiO2", "Al"],
+                    "interface": "Al/SiO2/3C-SiC",
+                    "interface_orientation": f"Al gate / SiO2 / {face.orientation}",
+                    "surface_orientation": face.orientation,
+                    "default_diagnostic_focuses": _unique_preserving_order(
+                        [
+                            "semiconductor_structure_health",
+                            "mos_gate_stack",
+                            "epitaxial_strain_preflight",
+                            "electronic_structure_preflight",
+                            "view_quality",
+                        ]
+                    ),
+                    "required_summary_keys": [
+                        "gate_stack_summary",
+                        "interface_profile_summary",
+                        "interface_quality_summary",
+                        "oxide_interface_geometry_summary",
+                        "oxide_interface_health_summary",
+                        "calculation_preflight_summary",
+                    ],
+                    "required_csv_keys": [
+                        "semiconductor_gate_stack_csv",
+                        "semiconductor_interface_profile_csv",
+                        "semiconductor_interface_quality_csv",
+                        "semiconductor_oxide_interface_geometry_csv",
+                        "semiconductor_oxide_interface_health_csv",
                         "semiconductor_calculation_preflight_csv",
                         "view_quality_csv",
                     ],
@@ -6946,6 +7078,197 @@ def _infer_sic_3c_schottky_contact_template(
     )
 
 
+def _looks_like_sic_3c_mos_capacitor_request(text: str) -> bool:
+    if not _mentions_sic_3c(text):
+        return False
+    if _sic_mos_device_requested(text):
+        return True
+    explicit_stack = bool(
+        re.search(
+            r"(?<![A-Za-z0-9])(?:al|aluminum|aluminium)\s*[/\- ]\s*"
+            r"(?:sio2|silicon[-\s]+dioxide)\s*[/\- ]\s*"
+            r"(?:3c[-\s]*(?:sic|silicon[-\s]+carbide)|(?:sic|silicon[-\s]+carbide)[-\s]*3c)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or ("\u94dd" in text and ("sio2" in text or "\u4e8c\u6c27\u5316\u7845" in text))
+    )
+    english_intent = bool(
+        re.search(r"\bmos\s+(?:capacitor|capacitance|stack)\b", text, flags=re.IGNORECASE)
+        or re.search(r"\bgate[-\s]+(?:stack|oxide|dielectric)\b", text, flags=re.IGNORECASE)
+    )
+    cjk_intent = bool(
+        ("mos" in text and "\u7535\u5bb9" in text)
+        or "\u91d1\u6c27\u534a\u7535\u5bb9" in text
+        or "\u6805\u5806" in text
+        or "\u6805\u6781\u5806\u53e0" in text
+        or "\u6805\u6c27" in text
+        or "\u6805\u4ecb\u8d28" in text
+    )
+    return explicit_stack or english_intent or cjk_intent
+
+
+def _infer_sic_3c_mos_capacitor_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    if not _looks_like_sic_3c_mos_capacitor_request(text):
+        return None
+    if _sic_mos_device_requested(text):
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "A full 3C-SiC MOS device or transistor geometry was requested.",
+                "The reviewed local 3C-SiC MOS constructor covers only an Al/SiO2/3C-SiC capacitor gate-stack scaffold.",
+                "No capacitor scaffold was substituted for source, drain, channel, or device-scale geometry.",
+            ],
+        )
+    si_face_requested = _sic_3c_si_face_requested(text)
+    c_face_requested = _sic_3c_c_face_requested(text)
+    if si_face_requested and c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "The 3C-SiC MOS request names both the (001) Si-face and (00-1) C-face.",
+                "Select exactly one terminated surface before generating a gate-stack scaffold.",
+            ],
+        )
+    if not si_face_requested and not c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "A 3C-SiC MOS-capacitor request was recognized without an explicit (001) termination.",
+                "Choose 3C-SiC(001) Si-face or 3C-SiC(00-1) C-face; neither termination is selected implicitly.",
+            ],
+        )
+
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_3C_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.mos_capacitor_template_id, user_request)
+    model_spec = _sic_3c_mos_capacitor_spec(
+        user_request=user_request,
+        project_id=chosen_project_id,
+        surface_face=surface_face,
+    )
+    notes = [
+        f"Generated a deterministic centered Al/SiO2/{profile.orientation} MOS capacitor scaffold.",
+        "The mixed Si/O planes are a thickness-edit and visualization model, not amorphous or relaxed SiO2.",
+    ]
+    confidence = 0.89
+    composite = _apply_new_crystal_composite_operations(user_request, model_spec)
+    if isinstance(composite, NaturalLanguagePlan):
+        return composite
+    if composite is not None:
+        model_spec, diff = composite
+        metadata = {**dict(model_spec.metadata or {}), "nl_composite_operations": diff}
+        model_spec = model_spec.model_copy(update={"revision": 0, "metadata": metadata})
+        notes.append("Applied deterministic gate-stack patch operations during planning: " + ", ".join(diff) + ".")
+        confidence = 0.85
+
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=model_spec.model_dump(mode="json"),
+        confidence=confidence,
+        template_id=profile.mos_capacitor_template_id,
+        notes=notes,
+    )
+
+
+def _looks_like_sic_3c_oxide_interface_request(text: str) -> bool:
+    if not _mentions_sic_3c(text) or _sic_mos_device_requested(text):
+        return False
+    oxide_marker = bool(
+        re.search(
+            r"\b(?:sio2|silicon[-\s]+dioxide|silicon[-\s]+oxide|mos\s+interface)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(term in text for term in ("\u4e8c\u6c27\u5316\u7845", "\u7845\u6c27", "mos\u754c\u9762"))
+    )
+    interface_intent = bool(
+        re.search(r"\b(?:interface|heterointerface)\b", text, flags=re.IGNORECASE)
+        or "\u754c\u9762" in text
+    )
+    return oxide_marker and interface_intent
+
+
+def _infer_sic_3c_oxide_interface_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    if not _looks_like_sic_3c_oxide_interface_request(text):
+        return None
+    si_face_requested = _sic_3c_si_face_requested(text)
+    c_face_requested = _sic_3c_c_face_requested(text)
+    if si_face_requested and c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "The 3C-SiC oxide-interface request names both the (001) Si-face and (00-1) C-face.",
+                "Select exactly one terminated surface before generating an oxide-interface scaffold.",
+            ],
+        )
+    if not si_face_requested and not c_face_requested:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=None,
+            notes=[
+                "A 3C-SiC oxide-interface request was recognized without an explicit (001) termination.",
+                "Choose 3C-SiC(001) Si-face or 3C-SiC(00-1) C-face; neither termination is selected implicitly.",
+            ],
+        )
+
+    surface_face = "C-face" if c_face_requested else "Si-face"
+    profile = SIC_3C_SURFACE_FACE_PROFILES[surface_face]
+    chosen_project_id = project_id or _project_id(profile.oxide_interface_template_id, user_request)
+    model_spec = _sic_3c_oxide_interface_spec(
+        user_request=user_request,
+        project_id=chosen_project_id,
+        surface_face=surface_face,
+    )
+    notes = [
+        f"Generated a deterministic centered SiO2/{profile.orientation} interface scaffold.",
+        "The mixed Si/O planes are a thickness-edit and visualization model, not amorphous or relaxed SiO2.",
+        "No metal gate or MOS-capacitor geometry was added.",
+    ]
+    confidence = 0.89
+    composite = _apply_new_crystal_composite_operations(user_request, model_spec)
+    if isinstance(composite, NaturalLanguagePlan):
+        return composite
+    if composite is not None:
+        model_spec, diff = composite
+        metadata = {**dict(model_spec.metadata or {}), "nl_composite_operations": diff}
+        model_spec = model_spec.model_copy(update={"revision": 0, "metadata": metadata})
+        notes.append("Applied deterministic oxide-interface patch operations during planning: " + ", ".join(diff) + ".")
+        confidence = 0.85
+
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=model_spec.model_dump(mode="json"),
+        confidence=confidence,
+        template_id=profile.oxide_interface_template_id,
+        notes=notes,
+    )
+
+
 def _infer_unsupported_sic_3c_derived_structure_request(text: str) -> NaturalLanguagePlan | None:
     if not _mentions_sic_3c(text):
         return None
@@ -6980,9 +7303,12 @@ def _infer_unsupported_sic_3c_derived_structure_request(text: str) -> NaturalLan
         template_id=None,
         notes=[
             "A 3C-SiC derived-geometry request was recognized outside the reviewed local template set.",
-            "Reviewed 3C-SiC starts cover F-43m bulk plus explicit (001) Si-face and (00-1) C-face four-bilayer slabs and Schottky contacts.",
+            (
+                "Reviewed 3C-SiC starts cover F-43m bulk plus explicit (001) Si-face and (00-1) C-face "
+                "four-bilayer slabs, Schottky contacts, SiO2 interfaces, and Al/SiO2 MOS capacitors."
+            ),
             "No 4H-SiC, 6H-SiC, or silicon substitute was selected.",
-            "Provide a reviewed ModelSpec for oxide interfaces, MOS stacks, other surfaces, heterostructures, or device geometries before live loading.",
+            "Provide a reviewed ModelSpec for other surfaces, heterostructures, full devices, or unlisted geometries before live loading.",
         ],
     )
 
@@ -8633,8 +8959,41 @@ def _sic_6h_c_face_slab_spec(*, user_request: str, project_id: str) -> ModelSpec
     )
 
 
+SicDeviceSurfaceProfile = SicSurfaceFaceProfile | Sic3cSurfaceFaceProfile
+SicDeviceSurfaceAssembly = SicSurfaceAssembly | Sic3cSurfaceAssembly
+
+
+def _sic_device_surface_assembly(
+    *,
+    cell_c: float,
+    profile: SicDeviceSurfaceProfile,
+) -> SicDeviceSurfaceAssembly:
+    if isinstance(profile, Sic3cSurfaceFaceProfile):
+        return _sic_3c_surface_assembly(cell_c=cell_c, profile=profile)
+    return _sic_surface_assembly(cell_c=cell_c, profile=profile)
+
+
+def _sic_device_common_surface_metadata(
+    assembly: SicDeviceSurfaceAssembly,
+    *,
+    center_shift: float,
+    assembly_extent: float,
+) -> dict[str, Any]:
+    if isinstance(assembly, Sic3cSurfaceAssembly):
+        return _sic_3c_common_surface_metadata(
+            assembly,
+            center_shift=center_shift,
+            assembly_extent=assembly_extent,
+        )
+    return _sic_common_surface_metadata(
+        assembly,
+        center_shift=center_shift,
+        assembly_extent=assembly_extent,
+    )
+
+
 def _append_sic_oxide_layers(
-    assembly: SicSurfaceAssembly,
+    assembly: SicDeviceSurfaceAssembly,
     atoms: Sequence[BasisAtomSpec],
 ) -> tuple[list[BasisAtomSpec], list[float]]:
     updated_atoms = list(atoms)
@@ -8649,16 +9008,29 @@ def _append_sic_oxide_layers(
     if not assembly.top_registry:
         raise ValueError("SiC oxide scaffolds require a deterministic surface registry.")
     registry_shift_x, registry_shift_y = assembly.top_registry[0]
-    oxide_layer_sites = (
-        (
-            ((0.0, 0.0), (0.5, 0.5)),
-            ((0.25, 0.0), (0.0, 0.25), (0.75, 0.5), (0.5, 0.75)),
-        ),
-        (
-            ((0.25, 0.25), (0.75, 0.75)),
-            ((0.25, 0.5), (0.5, 0.25), (0.75, 0.0), (0.0, 0.75)),
-        ),
-    )
+    if isinstance(assembly, Sic3cSurfaceAssembly):
+        # Bridge each O between the nearest diagonal Si sites in the square 3C(001) surface cell.
+        oxide_layer_sites = (
+            (
+                ((0.0, 0.0), (0.5, 0.5)),
+                ((0.25, 0.25), (0.25, 0.75), (0.75, 0.25), (0.75, 0.75)),
+            ),
+            (
+                ((0.25, 0.25), (0.75, 0.75)),
+                ((0.0, 0.0), (0.0, 0.5), (0.5, 0.0), (0.5, 0.5)),
+            ),
+        )
+    else:
+        oxide_layer_sites = (
+            (
+                ((0.0, 0.0), (0.5, 0.5)),
+                ((0.25, 0.0), (0.0, 0.25), (0.75, 0.5), (0.5, 0.75)),
+            ),
+            (
+                ((0.25, 0.25), (0.75, 0.75)),
+                ((0.25, 0.5), (0.5, 0.25), (0.75, 0.0), (0.0, 0.75)),
+            ),
+        )
     oxide_si_index = 1
     oxide_o_index = 1
     for z_value, (silicon_sites, oxygen_sites) in zip(oxide_layer_positions, oxide_layer_sites):
@@ -8689,16 +9061,17 @@ def _append_sic_oxide_layers(
 
 def _sic_oxide_interface_spec(
     *,
-    profile: SicSurfaceFaceProfile,
+    profile: SicDeviceSurfaceProfile,
     user_request: str,
     project_id: str,
 ) -> ModelSpec:
-    assembly = _sic_surface_assembly(
+    assembly = _sic_device_surface_assembly(
         cell_c=profile.oxide_interface_cell_c_angstrom,
         profile=profile,
     )
     material = f"{profile.polytype}-SiC"
     bilayer_label = "four" if profile.bilayer_count == 4 else "six"
+    surface_cell_label = "1x1" if profile.polytype == "3C" else "2x2"
     top_name = "Si" if profile.top_element == "Si" else "C"
     bottom_name = "C" if profile.bottom_element == "C" else "Si"
     atoms, _ = _append_sic_oxide_layers(assembly, assembly.atoms)
@@ -8706,7 +9079,7 @@ def _sic_oxide_interface_spec(
         atoms,
         cell_c=assembly.cell_c,
     )
-    common_metadata = _sic_common_surface_metadata(
+    common_metadata = _sic_device_common_surface_metadata(
         assembly,
         center_shift=center_shift,
         assembly_extent=assembly_extent,
@@ -8753,6 +9126,11 @@ def _sic_oxide_interface_spec(
         "oxide_scaffold_model": {
             "kind": "two_mixed_planar_SiO2_marker_layers",
             "interface_registry": "whole_oxide_marker_registry_translated_to_first_surface_site",
+            "in_plane_network": (
+                "square_3C_001_diagonal_bridge_oxygen"
+                if profile.polytype == "3C"
+                else "hexagonal_surface_marker_registry"
+            ),
             "oxide_silicon_atom_count": 4,
             "oxygen_atom_count": 8,
             "purpose": "deterministic_visualization_thickness_edit_and_diagnostic_segmentation",
@@ -8777,7 +9155,10 @@ def _sic_oxide_interface_spec(
         "nl_user_request": user_request,
         "scaffold_notes": [
             f"Deterministic centered SiO2/{profile.orientation} interface scaffold for live visualization and diagnostics.",
-            f"The 2x2 {bilayer_label}-bilayer {material} substrate retains a hydrogen-saturated {bottom_name} back face.",
+            (
+                f"The {surface_cell_label} {bilayer_label}-bilayer {material} substrate retains a "
+                f"hydrogen-saturated {bottom_name} back face."
+            ),
             "The two planar mixed Si/O marker layers encode oxide sequence and thickness but are not an amorphous SiO2 network.",
             "Relax and reconstruct the oxide interface before quantitative band-offset, trap-state, or device conclusions.",
             "No metal gate or MOS-capacitor geometry is included.",
@@ -8831,6 +9212,19 @@ def _sic_oxide_interface_spec(
     )
 
 
+def _sic_3c_oxide_interface_spec(
+    *,
+    user_request: str,
+    project_id: str,
+    surface_face: str,
+) -> ModelSpec:
+    return _sic_oxide_interface_spec(
+        profile=_sic_3c_surface_face_profile(surface_face=surface_face),
+        user_request=user_request,
+        project_id=project_id,
+    )
+
+
 def _sic_4h_oxide_interface_spec(
     *,
     user_request: str,
@@ -8859,16 +9253,17 @@ def _sic_6h_oxide_interface_spec(
 
 def _sic_mos_capacitor_spec(
     *,
-    profile: SicSurfaceFaceProfile,
+    profile: SicDeviceSurfaceProfile,
     user_request: str,
     project_id: str,
 ) -> ModelSpec:
-    assembly = _sic_surface_assembly(
+    assembly = _sic_device_surface_assembly(
         cell_c=profile.mos_cell_c_angstrom,
         profile=profile,
     )
     material = f"{profile.polytype}-SiC"
     bilayer_label = "four" if profile.bilayer_count == 4 else "six"
+    surface_cell_label = "1x1" if profile.polytype == "3C" else "2x2"
     top_name = "Si" if profile.top_element == "Si" else "C"
     bottom_name = "C" if profile.bottom_element == "C" else "Si"
     atoms, oxide_layer_positions = _append_sic_oxide_layers(assembly, assembly.atoms)
@@ -8898,7 +9293,7 @@ def _sic_mos_capacitor_spec(
         atoms,
         cell_c=assembly.cell_c,
     )
-    common_metadata = _sic_common_surface_metadata(
+    common_metadata = _sic_device_common_surface_metadata(
         assembly,
         center_shift=center_shift,
         assembly_extent=assembly_extent,
@@ -8950,6 +9345,11 @@ def _sic_mos_capacitor_spec(
         "oxide_scaffold_model": {
             "kind": "two_mixed_planar_SiO2_marker_layers",
             "interface_registry": "whole_oxide_marker_registry_translated_to_first_surface_site",
+            "in_plane_network": (
+                "square_3C_001_diagonal_bridge_oxygen"
+                if profile.polytype == "3C"
+                else "hexagonal_surface_marker_registry"
+            ),
             "oxide_silicon_atom_count": 4,
             "oxygen_atom_count": 8,
             "purpose": "deterministic_visualization_thickness_edit_and_diagnostic_segmentation",
@@ -8975,7 +9375,10 @@ def _sic_mos_capacitor_spec(
         "nl_user_request": user_request,
         "scaffold_notes": [
             f"Deterministic centered Al/SiO2/{profile.orientation} MOS capacitor scaffold for live visualization and diagnostics.",
-            f"The 2x2 {bilayer_label}-bilayer {material} channel retains a hydrogen-saturated {bottom_name} back face.",
+            (
+                f"The {surface_cell_label} {bilayer_label}-bilayer {material} channel retains a "
+                f"hydrogen-saturated {bottom_name} back face."
+            ),
             "The two planar mixed Si/O marker layers encode oxide sequence and thickness but are not an amorphous SiO2 network.",
             "Relax and reconstruct the oxide and both interfaces before quantitative band-offset, trap-state, or device conclusions.",
             "The structure is a capacitor preflight model, not a transistor or device-scale geometry.",
@@ -9026,6 +9429,19 @@ def _sic_mos_capacitor_spec(
             },
             "metadata": metadata,
         }
+    )
+
+
+def _sic_3c_mos_capacitor_spec(
+    *,
+    user_request: str,
+    project_id: str,
+    surface_face: str,
+) -> ModelSpec:
+    return _sic_mos_capacitor_spec(
+        profile=_sic_3c_surface_face_profile(surface_face=surface_face),
+        user_request=user_request,
+        project_id=project_id,
     )
 
 
@@ -10537,6 +10953,22 @@ def _infer_template(text: str, *, user_request: str, project_id: str | None) -> 
     )
     if tmd_heterobilayer_plan is not None:
         return tmd_heterobilayer_plan
+
+    sic_3c_mos_plan = _infer_sic_3c_mos_capacitor_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if sic_3c_mos_plan is not None:
+        return sic_3c_mos_plan
+
+    sic_3c_oxide_interface_plan = _infer_sic_3c_oxide_interface_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if sic_3c_oxide_interface_plan is not None:
+        return sic_3c_oxide_interface_plan
 
     sic_3c_contact_plan = _infer_sic_3c_schottky_contact_template(
         text,

@@ -239,6 +239,74 @@ def test_default_sic_3c_polar_surface_and_contact_scenarios_are_discoverable() -
     )
 
 
+def test_default_sic_3c_oxide_and_mos_scenarios_are_discoverable() -> None:
+    si_oxide = live_smoke.default_request_for_scenario("sic_3c_oxide_interface")
+    c_oxide = live_smoke.default_request_for_scenario(
+        "sic_3c_c_face_oxide_interface",
+        hotload=True,
+    )
+    si_mos = live_smoke.default_request_for_scenario("sic_3c_mos")
+    c_mos = live_smoke.default_request_for_scenario("sic_3c_c_face_mos", hotload=True)
+
+    assert "SiO2/3C-SiC(001) Si-face interface" in si_oxide
+    assert "SiO2/3C-SiC(00-1) C-face interface" in c_oxide
+    assert "Al/SiO2/3C-SiC(001) Si-face MOS capacitor" in si_mos
+    assert "Al/SiO2/3C-SiC(00-1) C-face MOS capacitor" in c_mos
+    assert "hot-load it in Materials Studio" in c_oxide
+    assert "hot-load it in Materials Studio" in c_mos
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_3c_001_si_face_interface"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_c_face_oxide_interface"] == (
+        "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_mos"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor"
+    )
+    assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["sic_3c_c_face_mos"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor"
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_c_face_oxide_interface"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_3c_oxide_interface"]
+    )
+    assert live_smoke.SCENARIO_EXPECTATIONS["sic_3c_c_face_mos"] == (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_3c_mos"]
+    )
+    assert (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_3c_oxide_interface"]["row_counts"][
+            "semiconductor_oxide_interface_geometry"
+        ]
+        == 26
+    )
+    assert (
+        live_smoke.SCENARIO_EXPECTATIONS["sic_3c_mos"]["row_counts"][
+            "semiconductor_oxide_interface_geometry"
+        ]
+        == 27
+    )
+
+
+def test_live_smoke_previews_sic_3c_c_face_mos(tmp_path: Path) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="sic_3c_c_face_mos",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+    )
+
+    assert result["ok"] is True
+    assert result["live"]["nl_plan"]["template_id"] == (
+        "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor"
+    )
+    assert result["live"]["view_audit"]["metadata"]["surface_orientation"] == (
+        "3C-SiC(00-1) C-face"
+    )
+    assert result["summary"]["scenario_expected_diagnostics_ok"] is True
+    assert result["bundle"]["row_counts"]["semiconductor_gate_stack"] == 3
+    assert result["bundle"]["row_counts"]["semiconductor_oxide_interface_geometry"] == 27
+
+
 def test_default_sic_4h_contact_scenario_requires_contact_surface_and_view_diagnostics() -> None:
     preview = live_smoke.default_request_for_scenario("sic_4h_contact")
     hotload = live_smoke.default_request_for_scenario("sic_4h_contact", hotload=True)

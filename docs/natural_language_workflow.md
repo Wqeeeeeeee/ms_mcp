@@ -323,6 +323,8 @@ hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face sla
 "build GaAs(001) surface", or
 "build a 3C-SiC(001) Si-face slab",
 "build a 3C-SiC(00-1) C-face slab",
+"build a SiO2/3C-SiC(001) Si-face interface",
+"build an Al/SiO2/3C-SiC(00-1) C-face MOS capacitor",
 "build a 4H-SiC(000-1) C-face slab",
 "build a 6H-SiC(0001) Si-face slab", or
 "build ZnO(0001) surface slab" can be routed
@@ -351,10 +353,20 @@ inputs from [DOI 10.1134/S1063782607060152](https://doi.org/10.1134/S10637826070
 and [DOI 10.1002/eem2.12678](https://doi.org/10.1002/eem2.12678); neither they
 nor the derived Schottky-Mott values are calculation results.
 
-An explicit 3C-SiC surface or contact request must name exactly one face.
-Unoriented requests, requests that name both faces, and 3C-SiC oxide, MOS,
-heterostructure, or device geometries outside this reviewed set fail closed.
-They never fall back to 4H-SiC, 6H-SiC, or silicon.
+Each explicit face also supports a bare SiO2 interface and an Al/SiO2 MOS
+capacitor scaffold. The bare interface contains 32 atoms; the gated stack
+contains 36. Both retain the four back-surface H atoms. Their two mixed Si/O
+planes use a square `(001)` registry in which O bridges the nearest diagonal
+Si sites, giving an in-plane marker Si-O distance of about 1.54 Angstrom
+instead of the short contacts produced by reusing a hexagonal `2x2` registry.
+These planes support deterministic visualization, segmentation, oxide
+thickness edits, dual-interface gap edits, and oxide health diagnostics. They
+are not amorphous SiO2, relaxed interfaces, or production device models.
+
+Every derived 3C-SiC request must name exactly one face. Unoriented requests,
+requests that name both faces, full MOSFET/device requests, heterostructures,
+and other geometries outside this reviewed set fail closed. They never fall
+back to 4H-SiC, 6H-SiC, or silicon.
 
 The 4H-SiC polar workflow is programmatic and preview-first. It starts from the
 P63mc hP8 bulk example and generates centered `2x2` four-bilayer slabs for

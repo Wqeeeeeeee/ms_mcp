@@ -2646,6 +2646,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "execution_policy": "preview_by_default_execute_only_for_explicit_hotload_or_execution_mode_execute",
             "templates": [
                 "silicon_silicon_dioxide_100_interface",
+                "silicon_dioxide_silicon_carbide_3c_001_si_face_interface",
+                "silicon_dioxide_silicon_carbide_3c_00m1_c_face_interface",
                 "silicon_dioxide_silicon_carbide_4h_0001_si_face_interface",
                 "silicon_dioxide_silicon_carbide_4h_000m1_c_face_interface",
                 "silicon_dioxide_silicon_carbide_6h_0001_interface",
@@ -2654,6 +2656,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "request_terms": [
                 "semiconductor oxide interface",
                 "Si/SiO2 interface",
+                "SiO2/3C-SiC Si-face interface",
+                "SiO2/3C-SiC C-face interface",
                 "SiO2/4H-SiC Si-face interface",
                 "SiO2/4H-SiC C-face interface",
                 "SiO2/6H-SiC interface",
@@ -2666,6 +2670,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "\u7845\u6c27\u754c\u9762",
             ],
             "examples": [
+                "Build a SiO2/3C-SiC(001) Si-face interface and export interface diagnostics.",
+                "Build a SiO2/3C-SiC(00-1) C-face interface and export interface diagnostics.",
                 "Build a SiO2/4H-SiC(0001) Si-face interface and export interface diagnostics.",
                 "Build a SiO2/4H-SiC(000-1) C-face interface and export interface diagnostics.",
                 "Build a SiO2/6H-SiC(0001) Si-face interface and export interface diagnostics.",
@@ -2695,6 +2701,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             "templates": [
                 "titanium_nitride_hafnium_dioxide_silicon_high_k_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_mos_capacitor",
+                "aluminum_silicon_dioxide_silicon_carbide_3c_001_si_face_mos_capacitor",
+                "aluminum_silicon_dioxide_silicon_carbide_3c_00m1_c_face_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_carbide_4h_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_carbide_4h_000m1_c_face_mos_capacitor",
                 "aluminum_silicon_dioxide_silicon_carbide_6h_mos_capacitor",
@@ -2705,6 +2713,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
                 "HfO2 gate stack",
                 "gate stack diagnostics",
                 "Al/SiO2/Si MOS capacitor",
+                "Al/SiO2/3C-SiC Si-face MOS capacitor",
+                "Al/SiO2/3C-SiC C-face MOS capacitor",
                 "Al/SiO2/4H-SiC Si-face MOS capacitor",
                 "Al/SiO2/4H-SiC C-face MOS capacitor",
                 "Al/SiO2/6H-SiC C-face MOS capacitor",
@@ -2723,6 +2733,8 @@ def _semiconductor_use_case_capabilities() -> list[dict[str, Any]]:
             ],
             "examples": [
                 "Build a TiN/HfO2/Si high-k MOS capacitor and export diagnostics.",
+                "Build an Al/SiO2/3C-SiC(001) Si-face MOS capacitor and export diagnostics.",
+                "Build an Al/SiO2/3C-SiC(00-1) C-face MOS capacitor and export diagnostics.",
                 "Build an Al/SiO2/4H-SiC(0001) Si-face MOS capacitor and export diagnostics.",
                 "Build an Al/SiO2/4H-SiC(000-1) C-face MOS capacitor and export diagnostics.",
                 "Build an Al/SiO2/6H-SiC(000-1) C-face MOS capacitor and export diagnostics.",
@@ -38766,10 +38778,6 @@ def _compact_capabilities_natural_language(value: Any) -> dict[str, Any]:
             "session_command_project_requirement_overrides": session_project_requirement_overrides or None,
             "new_structure_inline_modifiers": compact_inline,
             "unsupported_next_step": value.get("unsupported_next_step"),
-            "full_catalog_hint": {
-                "tool": "material_studio_live_capabilities",
-                "arguments": {"response_mode": McpResponseMode.FULL.value},
-            },
         }
     )
 
@@ -41680,8 +41688,11 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
     """Guarantee a bounded discovery receipt as capability catalogs grow."""
 
     bounded = dict(compact)
-    receipt = _compact_response_receipt(detail_paths={})
-    receipt["full_detail_tool"] = "material_studio_live_capabilities"
+    receipt = {
+        "budget_bytes": COMPACT_RESPONSE_MAX_BYTES,
+        "hard_budget_applied": False,
+        "omitted_fields": [],
+    }
     bounded["response_compaction"] = receipt
     if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
         return bounded
@@ -43028,6 +43039,45 @@ def _compact_capabilities_response(
             "safety",
         ),
     )
+    replay_policy = compact.get("view_replay_automation_policy")
+    if isinstance(replay_policy, dict):
+        replay_policy = dict(replay_policy)
+        implementation = replay_policy.get("local_uia_implementation_contract")
+        if isinstance(implementation, dict):
+            recipe_classes = implementation.get("recipe_classes")
+            compact_recipe_classes: dict[str, Any] = {}
+            if isinstance(recipe_classes, dict):
+                for recipe_name, recipe in recipe_classes.items():
+                    compact_recipe_classes[str(recipe_name)] = _mapping_subset(
+                        recipe,
+                        (
+                            "implemented",
+                            "view_names",
+                            "view_name_pattern",
+                            "recipe_kind",
+                            "eligibility_status",
+                            "runtime_gate",
+                            "staged_keyboard_recipe",
+                            "requires_automation_ready_recipe",
+                            "requires_exact_viewport_restoration",
+                            "requires_direct_lattice_direction_match_evidence",
+                            "reviewed_camera_backend_required",
+                        ),
+                    )
+            replay_policy["local_uia_implementation_contract"] = _drop_none_values(
+                {
+                    "schema_version": implementation.get("schema_version"),
+                    "backend": implementation.get("backend"),
+                    "execute_tool": implementation.get("execute_tool"),
+                    "runtime_support_fields": implementation.get("runtime_support_fields"),
+                    "recipe_classes": compact_recipe_classes,
+                    "full_detail_hint": {
+                        "tool": "material_studio_live_capabilities",
+                        "arguments": {"response_mode": McpResponseMode.FULL.value},
+                    },
+                }
+            )
+        compact["view_replay_automation_policy"] = replay_policy
     runtime_contract = compact.get("runtime_provenance_contract")
     if isinstance(runtime_contract, dict):
         compact["runtime_provenance_contract"] = _mapping_subset(

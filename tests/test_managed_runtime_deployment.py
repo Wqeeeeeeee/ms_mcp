@@ -26,6 +26,7 @@ from material_studio_mcp_server.managed_runtime import (
     RUNTIME_MANIFEST_ARGUMENT,
     RUNTIME_MANIFEST_ENV,
     consume_runtime_manifest_argument,
+    filesystem_io_path,
     managed_runtime_status,
     manifest_bytes,
     require_managed_runtime_launcher_binding,
@@ -114,6 +115,13 @@ def _pushed_repository(tmp_path: Path) -> tuple[Path, Path]:
     )
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "server.py").write_text("VALUE = 1\n", encoding="utf-8")
+    long_example = (
+        package
+        / "examples"
+        / "aluminum_gallium_nitride_gallium_nitride_0001_heterostructure_spec.json"
+    )
+    long_example.parent.mkdir()
+    long_example.write_text('{"kind": "long-path-fixture"}\n', encoding="utf-8")
     _git(repository, "init")
     _git(repository, "config", "user.email", "test@example.com")
     _git(repository, "config", "user.name", "Runtime Test")
@@ -397,6 +405,16 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
         RUNTIME_MANIFEST_ARGUMENT,
         result["runtime_integrity"]["manifest_sha256"],
     ]
+    long_deployed_example = (
+        target
+        / "src"
+        / "material_studio_mcp_server"
+        / "examples"
+        / "aluminum_gallium_nitride_gallium_nitride_0001_heterostructure_spec.json"
+    )
+    assert filesystem_io_path(long_deployed_example).read_text(
+        encoding="utf-8"
+    ) == '{"kind": "long-path-fixture"}\n'
     assert _sha256(config) == config_before
     assert reused_plan["status"] == "runtime_already_deployed"
     assert reused["status"] == "runtime_reused_registration_ready"

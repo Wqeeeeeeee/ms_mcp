@@ -24,6 +24,7 @@ from .managed_runtime import (
     MANAGED_RUNTIME_MANIFEST,
     MANAGED_RUNTIME_SCHEMA,
     default_managed_runtime_root,
+    filesystem_io_path,
     managed_runtime_server_args,
     managed_runtime_status,
     manifest_bytes,
@@ -132,24 +133,21 @@ def apply_runtime_deployment(
             if prepared.archive_bytes is None or prepared.manifest_content is None:
                 raise _DeploymentError("prepared deployment content is unavailable")
             parent = target.parent
-            parent.mkdir(parents=True, exist_ok=True)
-            staging = Path(
-                tempfile.mkdtemp(
-                    prefix=f".{target.name}.staging-",
-                    dir=parent,
-                )
-            ).resolve()
+            filesystem_io_path(parent).mkdir(parents=True, exist_ok=True)
+            staging = _create_staging_directory(parent, target.name)
             _extract_archive_safely(prepared.archive_bytes, staging)
             extracted = runtime_content_snapshot(staging)
             if extracted != plan.get("content_snapshot"):
                 raise _DeploymentError("staging content does not match the reviewed plan")
             manifest_path = staging / MANAGED_RUNTIME_MANIFEST
             _write_new_file(manifest_path, prepared.manifest_content)
-            if sha256_bytes(manifest_path.read_bytes()) != plan.get("manifest_sha256"):
+            if sha256_bytes(
+                filesystem_io_path(manifest_path).read_bytes()
+            ) != plan.get("manifest_sha256"):
                 raise _DeploymentError("staging manifest hash verification failed")
-            if target.exists():
+            if filesystem_io_path(target).exists():
                 raise _DeploymentError("runtime destination appeared during publication")
-            staging.rename(target)
+            filesystem_io_path(staging).rename(filesystem_io_path(target))
             staging = None
             deployed_now = True
         integrity = managed_runtime_status(
@@ -165,13 +163,13 @@ def apply_runtime_deployment(
             "runtime_written": deployed_now,
             "runtime_integrity": (
                 managed_runtime_status(target)
-                if target.exists()
+                if filesystem_io_path(target).exists()
                 else None
             ),
         }
     finally:
         if staging is not None:
-            _remove_staging_directory(staging, target.parent)
+            _remove_staging_directory(staging, target.parent, target.name)
 
     if integrity.get("integrity_verified") is not True:
         return {
@@ -389,7 +387,7 @@ def _prepare_runtime_deployment(
         }
     )
 
-    if target.exists():
+    if filesystem_io_path(target).exists():
         existing = managed_runtime_status(
             target,
             expected_manifest_sha256=manifest_hash,
@@ -584,19 +582,20 @@ def _extract_archive_safely(archive: bytes, destination: Path) -> None:
         for member in bundle:
             relative = _validated_archive_path(member)
             target = _archive_destination(destination, relative)
+            io_target = filesystem_io_path(target)
             if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
+                io_target.mkdir(parents=True, exist_ok=True)
                 continue
             if relative in seen:
                 raise _DeploymentError(f"duplicate archive path: {relative}")
             seen.add(relative)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
+            filesystem_io_path(target.parent).mkdir(parents=True, exist_ok=True)
+            if io_target.exists():
                 raise _DeploymentError(f"archive path already exists: {relative}")
             stream = bundle.extractfile(member)
             if stream is None:
                 raise _DeploymentError(f"archive file is unreadable: {relative}")
-            with target.open("xb") as handle:
+            with io_target.open("xb") as handle:
                 shutil.copyfileobj(stream, handle)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -740,18 +739,59 @@ def _normalized_path(value: str | Path) -> str:
 
 
 def _write_new_file(path: Path, content: bytes) -> None:
-    with path.open("xb") as handle:
+    with filesystem_io_path(path).open("xb") as handle:
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())
 
 
-def _remove_staging_directory(staging: Path, parent: Path) -> None:
+def _create_staging_directory(parent: Path, target_name: str) -> Path:
+    for _ in range(20):
+        staging = (
+            parent / f".{target_name}.staging-{uuid.uuid4().hex[:12]}"
+        ).resolve()
+        try:
+            filesystem_io_path(staging).mkdir()
+        except FileExistsError:
+            continue
+        return staging
+    raise _DeploymentError("could not allocate a unique staging directory")
+
+
+def _remove_staging_directory(
+    staging: Path,
+    parent: Path,
+    target_name: str,
+) -> None:
     resolved = staging.resolve()
     expected_parent = parent.resolve()
-    if resolved.parent != expected_parent or ".staging-" not in resolved.name:
+    expected_prefix = f".{target_name}.staging-"
+    suffix = (
+        resolved.name[len(expected_prefix) :]
+        if resolved.name.startswith(expected_prefix)
+        else ""
+    )
+    if (
+        resolved.parent != expected_parent
+        or len(suffix) != 12
+        or any(character not in "0123456789abcdef" for character in suffix)
+    ):
         raise _DeploymentError("refusing to remove an unrecognized staging directory")
-    shutil.rmtree(resolved)
+    _remove_tree(filesystem_io_path(resolved))
+
+
+def _remove_tree(root: Path) -> None:
+    with os.scandir(root) as entries:
+        children = list(entries)
+    for entry in children:
+        child = root / entry.name
+        if entry.is_symlink():
+            child.unlink()
+        elif entry.is_dir(follow_symlinks=False):
+            _remove_tree(child)
+        else:
+            child.unlink()
+    root.rmdir()
 
 
 def _bounded_error(exc: Exception) -> str:

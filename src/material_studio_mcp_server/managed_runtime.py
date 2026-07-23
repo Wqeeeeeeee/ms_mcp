@@ -17,6 +17,21 @@ RUNTIME_MANIFEST_ENV = "MATERIAL_STUDIO_MCP_EXPECTED_RUNTIME_MANIFEST_SHA256"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
+def filesystem_io_path(path: str | Path) -> Path:
+    """Return an absolute path suitable for long-path I/O on Windows."""
+
+    candidate = Path(path)
+    if os.name != "nt":
+        return candidate
+    value = str(candidate)
+    if value.startswith("\\\\?\\"):
+        return candidate
+    absolute = str(candidate.resolve())
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
+
+
 def default_managed_runtime_root() -> Path:
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or str(
@@ -32,6 +47,7 @@ def runtime_content_snapshot(runtime_root: str | Path) -> dict[str, Any]:
     """Hash all immutable runtime files except the self-describing manifest."""
 
     root = Path(runtime_root).expanduser().resolve()
+    io_root = filesystem_io_path(root)
     result: dict[str, Any] = {
         "status": "unavailable",
         "sha256": None,
@@ -40,22 +56,23 @@ def runtime_content_snapshot(runtime_root: str | Path) -> dict[str, Any]:
         "unreadable_files": [],
         "unexpected_links": [],
     }
-    if not root.is_dir():
+    if not io_root.is_dir():
         result["error"] = f"runtime_root_not_found: {root}"
         return result
 
-    files: list[Path] = []
+    files: list[tuple[str, Path]] = []
     unexpected_links: list[str] = []
     try:
-        for path in root.rglob("*"):
-            relative = path.relative_to(root)
+        for path in io_root.rglob("*"):
+            relative = path.relative_to(io_root)
             if relative.as_posix() == MANAGED_RUNTIME_MANIFEST:
                 continue
-            if path.is_symlink():
+            io_path = filesystem_io_path(path)
+            if io_path.is_symlink():
                 unexpected_links.append(relative.as_posix())
                 continue
-            if path.is_file():
-                files.append(path)
+            if io_path.is_file():
+                files.append((relative.as_posix(), io_path))
     except OSError as exc:
         result["error"] = f"runtime_walk_failed: {exc}"
         return result
@@ -63,8 +80,7 @@ def runtime_content_snapshot(runtime_root: str | Path) -> dict[str, Any]:
     digest = hashlib.sha256()
     total_bytes = 0
     unreadable: list[str] = []
-    for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
-        relative = path.relative_to(root).as_posix()
+    for relative, path in sorted(files, key=lambda item: item[0]):
         try:
             content = path.read_bytes()
         except OSError:
@@ -101,6 +117,7 @@ def managed_runtime_status(
 
     root = Path(runtime_root).expanduser().resolve()
     manifest_path = root / MANAGED_RUNTIME_MANIFEST
+    manifest_exists = filesystem_io_path(manifest_path).is_file()
     observed_manifest_hash = _file_sha256(manifest_path)
     expected_hash = _normalize_sha256(expected_manifest_sha256)
     result: dict[str, Any] = {
@@ -109,7 +126,7 @@ def managed_runtime_status(
         "managed": False,
         "runtime_root": str(root),
         "manifest_path": str(manifest_path),
-        "manifest_exists": manifest_path.is_file(),
+        "manifest_exists": manifest_exists,
         "manifest_sha256": observed_manifest_hash,
         "expected_manifest_sha256": expected_hash,
         "manifest_binding_matches": (
@@ -132,7 +149,7 @@ def managed_runtime_status(
             }
         )
         return result
-    if not manifest_path.is_file():
+    if not manifest_exists:
         if expected_hash:
             result.update(
                 {
@@ -145,7 +162,9 @@ def managed_runtime_status(
 
     result["managed"] = True
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            filesystem_io_path(manifest_path).read_text(encoding="utf-8")
+        )
     except Exception as exc:
         result.update(
             {
@@ -204,7 +223,7 @@ def managed_runtime_status(
     missing_required = [
         path.relative_to(root).as_posix()
         for path in required_paths
-        if not path.is_file()
+        if not filesystem_io_path(path).is_file()
     ]
     if missing_required:
         errors.append("managed_runtime_required_files_missing")
@@ -283,7 +302,7 @@ def require_managed_runtime_launcher_binding(
     """Reject an unbound or modified managed runtime before server import."""
 
     root = Path(runtime_root).expanduser().resolve()
-    manifest_exists = (root / MANAGED_RUNTIME_MANIFEST).is_file()
+    manifest_exists = filesystem_io_path(root / MANAGED_RUNTIME_MANIFEST).is_file()
     if manifest_exists and manifest_sha256 is None:
         raise RuntimeError(
             "managed runtime server launch requires --runtime-manifest-sha256"
@@ -335,9 +354,10 @@ def _same_path(left: Any, right: str | Path) -> bool:
 
 
 def _file_sha256(path: Path) -> str | None:
-    if not path.is_file():
+    io_path = filesystem_io_path(path)
+    if not io_path.is_file():
         return None
-    return sha256_bytes(path.read_bytes())
+    return sha256_bytes(io_path.read_bytes())
 
 
 def _bounded_error(exc: Exception) -> str:
@@ -352,6 +372,7 @@ __all__: Sequence[str] = (
     "RUNTIME_MANIFEST_ENV",
     "consume_runtime_manifest_argument",
     "default_managed_runtime_root",
+    "filesystem_io_path",
     "managed_runtime_server_args",
     "managed_runtime_status",
     "manifest_bytes",

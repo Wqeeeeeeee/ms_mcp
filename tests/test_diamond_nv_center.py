@@ -18,6 +18,9 @@ from material_studio_mcp_server.natural_language import (
     supported_semiconductor_virtual_template_profiles,
 )
 from material_studio_mcp_server.semiconductor_contracts import (
+    DIAMOND_NV_CENTER_DEFAULT_SUPERCELL,
+    DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+    DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
     DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
     DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
 )
@@ -84,6 +87,42 @@ def test_diamond_nv_requests_build_dedicated_structural_scaffold(
 
 
 @pytest.mark.parametrize(
+    ("prompt", "repeat"),
+    [
+        ("Build a diamond NV- center in a 2x2x2 supercell.", 2),
+        ("Build a diamond NV- center in a 3x3x3 supercell.", 3),
+        ("Build a diamond NV- center in a 4x4x4 supercell.", 4),
+        (
+            "\u6784\u5efa\u91d1\u521a\u77f3 NV- \u4e2d\u5fc3\uff0c"
+            "\u4f7f\u7528 3\u00d73\u00d73 \u8d85\u80de\u3002",
+            3,
+        ),
+    ],
+)
+def test_diamond_nv_reviewed_cubic_supercells_are_deterministic(
+    prompt: str,
+    repeat: int,
+) -> None:
+    spec = _nv_spec(prompt)
+    atoms = {atom.id: atom.element for atom in spec.model.basis_atoms}
+    contract = spec.metadata["diamond_nv_supercell_contract"]
+    expected_host_sites = 8 * repeat**3
+
+    assert len(atoms) == expected_host_sites - 1
+    assert list(atoms.values()).count("C") == expected_host_sites - 2
+    assert list(atoms.values()).count("N") == 1
+    assert atoms["C1_000"] == "N"
+    assert "C2_000" not in atoms
+    assert contract["matrix"] == [repeat, repeat, repeat]
+    assert contract["cubic_repeat"] == repeat
+    assert contract["host_site_count_before_defect"] == expected_host_sites
+    assert contract["atom_count_after_defect"] == expected_host_sites - 1
+    assert spec.metadata["nl_composite_operations"][0] == (
+        f"make_supercell {repeat}x{repeat}x{repeat}"
+    )
+
+
+@pytest.mark.parametrize(
     "prompt",
     [
         "Build a diamond NV+ center.",
@@ -91,7 +130,9 @@ def test_diamond_nv_requests_build_dedicated_structural_scaffold(
         "Build a charged diamond NV center.",
         "Build a diamond NV0 and NV- center.",
         "Build a diamond NV center with charge +2.",
-        "Build a diamond NV center in a 3x3x3 supercell.",
+        "Build a diamond NV center in a 1x1x1 supercell.",
+        "Build a diamond NV center in a 3x3x2 supercell.",
+        "Build a diamond NV center in a 5x5x5 supercell.",
     ],
 )
 def test_diamond_nv_unsupported_requests_fail_closed_without_pristine_fallback(
@@ -184,6 +225,92 @@ def test_diamond_nv_diagnostics_bind_geometry_charge_and_csvs(
     assert {row["charge_adjusted_electron_count_parity"] for row in charge_rows} == {
         "even"
     }
+
+
+def test_larger_diamond_nv_supercell_clears_default_finite_size_warning(
+    tmp_path: Path,
+) -> None:
+    small = _nv_spec("Build a diamond NV- center in a 2x2x2 supercell.")
+    larger = _nv_spec("Build a diamond NV- center in a 3x3x3 supercell.")
+    small_finite = model_view_audit(small, views=["front"])["health"][
+        "semiconductor_health"
+    ]["finite_size_summary"]
+    larger_audit = model_view_audit(larger, views=["front"])
+    larger_finite = larger_audit["health"]["semiconductor_health"][
+        "finite_size_summary"
+    ]
+
+    assert small_finite["non_passivant_atom_count"] == 63
+    assert small_finite["small_cell_warning"] is True
+    assert small_finite["finite_size_warning"] is True
+    assert larger_finite["non_passivant_atom_count"] == 215
+    assert larger_finite["max_isolated_fraction"] < 0.01
+    assert larger_finite["small_cell_warning"] is False
+    assert larger_finite["high_concentration_warning"] is False
+    assert larger_finite["finite_size_warning"] is False
+    assert larger_finite["supercell_matrix"] == [3, 3, 3]
+    assert larger_finite["supercell_cubic_repeat"] == 3
+    assert larger_finite["supercell_host_site_count_before_defect"] == 216
+    assert larger_finite["supercell_atom_count_after_defect"] == 215
+    assert larger_finite["supercell_contract_integrity_ok"] is True
+    assert larger_finite["supercell_contract_errors"] == []
+
+    bundle = write_view_audit_bundle(tmp_path, larger, larger_audit)
+    finite_rows = list(
+        csv.DictReader(
+            Path(bundle["files"]["semiconductor_finite_size_csv"]).open(
+                encoding="utf-8"
+            )
+        )
+    )
+    assert finite_rows[0]["supercell_matrix"] == "3;3;3"
+    assert finite_rows[0]["supercell_cubic_repeat"] == "3"
+    assert finite_rows[0]["supercell_contract_integrity_ok"] == "True"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_error"),
+    [
+        ("matrix", [3, 3, 2], "invalid_matrix:"),
+        ("host_site_count_before_defect", 215, "host_site_count_mismatch"),
+        ("atom_count_after_defect", 214, "current_atom_count_mismatch"),
+    ],
+)
+def test_diamond_nv_supercell_contract_tampering_is_reported(
+    field: str,
+    value: object,
+    expected_error: str,
+) -> None:
+    payload = copy.deepcopy(
+        _nv_spec(
+            "Build a diamond NV- center in a 3x3x3 supercell."
+        ).model_dump(mode="json")
+    )
+    payload["metadata"]["diamond_nv_supercell_contract"][field] = value
+    tampered = ModelSpec.model_validate(payload)
+    audit = model_view_audit(tampered, views=["front"])
+    finite = audit["health"]["semiconductor_health"]["finite_size_summary"]
+    health = build_modeling_health(
+        {
+            "validation": {"valid": True, "errors": [], "warnings": []},
+            "view_audit": audit,
+        },
+        execution_mode="preview",
+    )
+
+    assert finite["supercell_contract_integrity_ok"] is False
+    assert any(
+        error.startswith(expected_error)
+        for error in finite["supercell_contract_errors"]
+    )
+    assert (
+        health["checks"]["semiconductor_nv_supercell_contract_integrity_ok"]
+        is False
+    )
+    assert any(
+        "supercell metadata failed" in warning
+        for warning in health["warnings"]
+    )
 
 
 def test_current_diamond_nv_charge_state_patch_changes_only_simulation_and_metadata() -> None:
@@ -369,6 +496,15 @@ def test_diamond_nv_capabilities_and_live_smoke_are_discoverable() -> None:
 
     assert profile["base_template_id"] == "diamond_cubic"
     assert profile["variant_kind"] == "defect_complex_scaffold"
+    assert profile["default_supercell"] == list(
+        DIAMOND_NV_CENTER_DEFAULT_SUPERCELL
+    )
+    assert profile["supported_supercell_contract"] == {
+        "shape": "cubic",
+        "min_repeat": DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
+        "max_repeat": DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+        "base_cell": "diamond_conventional_8_atom",
+    }
     assert "defects" in profile["default_diagnostic_focuses"]
     assert "spin_charge_preflight" in profile["default_diagnostic_focuses"]
     assert live_smoke.SCENARIO_VIRTUAL_TEMPLATE_IDS["diamond_nv_center"] == (

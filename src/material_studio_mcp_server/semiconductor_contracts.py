@@ -7,7 +7,12 @@ from typing import Any
 
 DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID = "diamond_nitrogen_vacancy_center"
 DIAMOND_NV_CENTER_BASE_TEMPLATE_ID = "diamond_cubic"
-DIAMOND_NV_CENTER_SUPERCELL = (2, 2, 2)
+DIAMOND_NV_CENTER_DEFAULT_SUPERCELL = (2, 2, 2)
+# Compatibility alias for revisions and callers created before configurable
+# diamond NV supercells were introduced.
+DIAMOND_NV_CENTER_SUPERCELL = DIAMOND_NV_CENTER_DEFAULT_SUPERCELL
+DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT = 2
+DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT = 4
 # Retained for revisions created before structured CASTEP charge/spin support.
 DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS = (
     "unsupported_in_current_castep_schema"
@@ -43,6 +48,35 @@ DIAMOND_NV_REVIEWED_BACKEND_STATUSES = frozenset(
         DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
     }
 )
+
+
+def normalize_diamond_nv_supercell(
+    matrix: tuple[int, int, int] | None,
+) -> tuple[int, int, int]:
+    """Return a reviewed cubic diamond NV supercell matrix."""
+
+    selected = matrix or DIAMOND_NV_CENTER_DEFAULT_SUPERCELL
+    if len(selected) != 3:
+        raise ValueError("Diamond NV-center supercell must contain three repeats.")
+    normalized = tuple(int(value) for value in selected)
+    if len(set(normalized)) != 1:
+        label = "x".join(str(value) for value in normalized)
+        raise ValueError(
+            "Diamond NV-center supercells must be cubic; "
+            f"{label} is anisotropic."
+        )
+    repeat = normalized[0]
+    if not (
+        DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT
+        <= repeat
+        <= DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT
+    ):
+        raise ValueError(
+            "Diamond NV-center cubic repeat must be between "
+            f"{DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT} and "
+            f"{DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT}; received {repeat}."
+        )
+    return normalized
 
 
 def diamond_nv_expected_castep_settings(

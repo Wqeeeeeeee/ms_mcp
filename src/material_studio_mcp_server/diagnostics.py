@@ -30,6 +30,7 @@ from .semiconductor_contracts import (
     DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
     DIAMOND_NV_REVIEWED_BACKEND_STATUSES,
     diamond_nv_castep_binding_receipt,
+    normalize_diamond_nv_supercell,
 )
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
@@ -2467,6 +2468,12 @@ def write_view_audit_bundle(
                 "small_cell_warning",
                 "high_concentration_warning",
                 "finite_size_warning",
+                "supercell_matrix",
+                "supercell_cubic_repeat",
+                "supercell_host_site_count_before_defect",
+                "supercell_atom_count_after_defect",
+                "supercell_contract_integrity_ok",
+                "supercell_contract_errors",
                 "warnings",
             ],
             finite_rows,
@@ -6538,6 +6545,20 @@ def _semiconductor_finite_size_csv_rows(summary: dict[str, Any]) -> list[dict[st
             "small_cell_warning": summary.get("small_cell_warning"),
             "high_concentration_warning": summary.get("high_concentration_warning"),
             "finite_size_warning": summary.get("finite_size_warning"),
+            "supercell_matrix": _join_vector(summary.get("supercell_matrix")),
+            "supercell_cubic_repeat": summary.get("supercell_cubic_repeat"),
+            "supercell_host_site_count_before_defect": summary.get(
+                "supercell_host_site_count_before_defect"
+            ),
+            "supercell_atom_count_after_defect": summary.get(
+                "supercell_atom_count_after_defect"
+            ),
+            "supercell_contract_integrity_ok": summary.get(
+                "supercell_contract_integrity_ok"
+            ),
+            "supercell_contract_errors": _join_vector(
+                summary.get("supercell_contract_errors")
+            ),
             "warnings": ";".join(str(value) for value in summary.get("warnings", []) or []),
         }
     ]
@@ -17783,6 +17804,70 @@ def _finite_size_summary(
 
     lattice_summary = lattice_summary or {}
     non_passivant_atom_count = _optional_int(lattice_summary.get("non_passivant_atom_count"))
+    supercell_contract_input = (spec.metadata or {}).get(
+        "diamond_nv_supercell_contract"
+    )
+    supercell_contract: dict[str, Any] | None = None
+    if isinstance(supercell_contract_input, dict):
+        contract_errors: list[str] = []
+        raw_matrix = supercell_contract_input.get("matrix")
+        matrix: tuple[int, int, int] | None = None
+        try:
+            if not isinstance(raw_matrix, (list, tuple)) or len(raw_matrix) != 3:
+                raise ValueError("matrix must contain three integer repeats")
+            matrix = normalize_diamond_nv_supercell(
+                tuple(int(value) for value in raw_matrix)
+            )
+        except (TypeError, ValueError) as exc:
+            contract_errors.append(f"invalid_matrix:{exc}")
+        cubic_repeat = _optional_int(
+            supercell_contract_input.get("cubic_repeat")
+        )
+        if matrix is not None and cubic_repeat != matrix[0]:
+            contract_errors.append("cubic_repeat_mismatch")
+        base_atom_count = _optional_int(
+            supercell_contract_input.get("base_conventional_cell_atom_count")
+        )
+        host_site_count = _optional_int(
+            supercell_contract_input.get("host_site_count_before_defect")
+        )
+        atom_count_after_defect = _optional_int(
+            supercell_contract_input.get("atom_count_after_defect")
+        )
+        if (
+            matrix is not None
+            and base_atom_count is not None
+            and host_site_count
+            != base_atom_count * matrix[0] * matrix[1] * matrix[2]
+        ):
+            contract_errors.append("host_site_count_mismatch")
+        if (
+            atom_count_after_defect is not None
+            and non_passivant_atom_count is not None
+            and atom_count_after_defect != non_passivant_atom_count
+        ):
+            contract_errors.append("current_atom_count_mismatch")
+        vacancy_count = _optional_int(
+            (defect_summary or {}).get("vacancy_count")
+        )
+        if (
+            host_site_count is not None
+            and atom_count_after_defect is not None
+            and vacancy_count is not None
+            and atom_count_after_defect != host_site_count - vacancy_count
+        ):
+            contract_errors.append("defect_adjusted_atom_count_mismatch")
+        supercell_contract = {
+            "schema_version": supercell_contract_input.get("schema_version"),
+            "matrix": list(matrix) if matrix is not None else raw_matrix,
+            "cubic_repeat": cubic_repeat,
+            "base_conventional_cell_atom_count": base_atom_count,
+            "host_site_count_before_defect": host_site_count,
+            "atom_count_after_defect": atom_count_after_defect,
+            "current_non_passivant_atom_count": non_passivant_atom_count,
+            "integrity_ok": not contract_errors,
+            "integrity_errors": contract_errors,
+        }
     lengths = [spec.model.lattice.a, spec.model.lattice.b, spec.model.lattice.c]
     max_item = max(items, key=lambda item: float(item.get("fraction") or 0.0))
     max_fraction = _optional_float(max_item.get("fraction")) or 0.0
@@ -17800,6 +17885,11 @@ def _finite_size_summary(
         warnings.append(
             "Semiconductor isolated dopant/defect concentration is high for dilute-defect interpretation; inspect finite_size_summary."
         )
+    if supercell_contract is not None and not supercell_contract["integrity_ok"]:
+        warnings.append(
+            "Diamond NV supercell metadata does not match the current structure; "
+            "inspect the supercell contract before continuing."
+        )
     return {
         "available": True,
         "model": "isolated_dopant_defect_finite_size_heuristic",
@@ -17815,6 +17905,37 @@ def _finite_size_summary(
         "small_cell_warning": small_cell_warning,
         "high_concentration_warning": high_concentration_warning,
         "finite_size_warning": bool(small_cell_warning or high_concentration_warning),
+        "supercell_contract": supercell_contract,
+        "supercell_matrix": (
+            supercell_contract.get("matrix")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_cubic_repeat": (
+            supercell_contract.get("cubic_repeat")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_host_site_count_before_defect": (
+            supercell_contract.get("host_site_count_before_defect")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_atom_count_after_defect": (
+            supercell_contract.get("atom_count_after_defect")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_contract_integrity_ok": (
+            supercell_contract.get("integrity_ok")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_contract_errors": (
+            supercell_contract.get("integrity_errors")
+            if supercell_contract is not None
+            else []
+        ),
         "warnings": warnings,
     }
 

@@ -173,11 +173,11 @@ SCENARIO_REQUESTS = {
     },
     "diamond_nv_center": {
         "preview": (
-            "Build a diamond NV- center in a 2x2x2 supercell and export defect, "
+            "Build a diamond NV- center in a 3x3x3 supercell and export defect, "
             "charge-state, finite-size, and view diagnostics."
         ),
         "hotload": (
-            "Build a diamond NV- center in a 2x2x2 supercell and hot-load it in "
+            "Build a diamond NV- center in a 3x3x3 supercell and hot-load it in "
             "Materials Studio, then export defect, charge-state, finite-size, "
             "and view diagnostics and check whether the model is normal."
         ),

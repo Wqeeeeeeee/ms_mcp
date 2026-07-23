@@ -997,8 +997,22 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_finite_size_non_passivant_atom_count"] = finite_size.get("non_passivant_atom_count")
         checks["semiconductor_finite_size_max_isolated_fraction"] = finite_size.get("max_isolated_fraction")
         checks["semiconductor_finite_size_max_isolated_kind"] = (finite_size.get("max_isolated_item") or {}).get("kind")
+        checks["semiconductor_nv_supercell_matrix"] = finite_size.get(
+            "supercell_matrix"
+        )
+        checks["semiconductor_nv_supercell_cubic_repeat"] = finite_size.get(
+            "supercell_cubic_repeat"
+        )
+        checks["semiconductor_nv_supercell_contract_integrity_ok"] = (
+            finite_size.get("supercell_contract_integrity_ok")
+        )
         if finite_size.get("finite_size_warning"):
             warnings.append("Semiconductor finite-size/dilution preflight has warnings; inspect finite_size_summary before quantitative defect or dopant calculations.")
+        if finite_size.get("supercell_contract_integrity_ok") is False:
+            warnings.append(
+                "Diamond NV supercell metadata failed current-structure "
+                "consistency checks; inspect finite_size_summary."
+            )
 
     dopant_fraction_summary = semiconductor.get("dopant_fraction_summary") or {}
     if dopant_fraction_summary:

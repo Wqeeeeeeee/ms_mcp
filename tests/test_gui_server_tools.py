@@ -20172,7 +20172,7 @@ def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_windo
     )
 
     result = server.material_studio_live_modeling_request(
-        "Build a diamond NV- center in a 2x2x2 supercell and hot-load it in "
+        "Build a diamond NV- center in a 3x3x3 supercell and hot-load it in "
         "Materials Studio, then export defect, charge-state, finite-size, and "
         "view diagnostics.",
         working_dir=str(tmp_path),
@@ -20201,10 +20201,24 @@ def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_windo
     assert charge["defect_charge_state_label"] == "NV-"
     assert charge["charge_adjusted_electron_count_parity"] == "even"
     assert charge["charge_spin_backend_binding_ready"] is True
+    finite_size = semiconductor["finite_size_summary"]
+    assert result["view_audit"]["model"]["atom_count"] == 215
+    assert finite_size["supercell_matrix"] == [3, 3, 3]
+    assert finite_size["supercell_contract_integrity_ok"] is True
+    assert finite_size["finite_size_warning"] is False
+    assert (
+        result["modeling_health"]["checks"][
+            "semiconductor_nv_supercell_cubic_repeat"
+        ]
+        == 3
+    )
     assert "nitrogen_vacancy_center" in result["semiconductor_intent"][
         "domain_tags"
     ]
     assert "defect_charge_spin_backend_unbound" not in result["modeling_report"][
+        "semiconductor_review"
+    ]["risk_flags"]
+    assert "finite_size_or_dilution_warning" not in result["modeling_report"][
         "semiconductor_review"
     ]["risk_flags"]
 

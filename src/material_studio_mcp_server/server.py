@@ -177,6 +177,7 @@ class McpResponseMode(str, Enum):
 
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
+NORMALITY_DECISION_SCHEMA = "material_studio_normality_decision_v1"
 LIVE_WATCHDOG_STATUS_SCHEMA = "material_studio_live_watchdog_status_v1"
 LIVE_WATCHDOG_COMPACTION_SCHEMA = "material_studio_live_watchdog_compaction_v1"
 COMPACT_RESPONSE_MAX_BYTES = 48_000
@@ -303,6 +304,7 @@ LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
     "visual_diagnostics_next_action_plan",
     "coordinated_next_action_plan",
     "next_action_tracks",
+    "normality_decision",
     "normality_gate",
     "normality_explanation",
     "visual_normality_summary",
@@ -3605,6 +3607,13 @@ _TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS = (
     "normality_summary",
     "normality_primary_reason",
     "normality_next_action",
+    "normality_decision",
+    "normality_decision_status",
+    "normality_decision_primary_reason",
+    "normality_decision_can_claim_model_normal",
+    "normality_decision_can_claim_live_gui_normal",
+    "normality_decision_next_action",
+    "normality_decision_authoritative_source",
     "normality_gate_status",
     "can_claim_model_normal",
     "can_claim_live_gui_normal",
@@ -5837,6 +5846,22 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "material_studio_live_project_status",
             ],
         },
+        "normality_decision_contract": {
+            "schema_version": NORMALITY_DECISION_SCHEMA,
+            "response_field": "normality_decision",
+            "authoritative_source": "normality_gate",
+            "legacy_explanation_field": "normality_explanation",
+            "project_revision_bound": True,
+            "claim_fields": [
+                "can_claim_model_normal",
+                "can_claim_live_gui_normal",
+            ],
+            "difference_fields": [
+                "explanation_primary_reason_differs",
+                "explanation_next_action_differs",
+            ],
+            "watchdog_prefers_decision": True,
+        },
         "response_semiconductor_diagnostics": {
             "top_level_shortcut_fields": list(_TOP_LEVEL_SEMICONDUCTOR_DIAGNOSTIC_FIELDS),
             "source": "live_summary, semiconductor_review, inspection.semiconductor_health, and modeling_health.checks",
@@ -6426,6 +6451,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "normality",
                 "normality_explanation",
                 "normality_gate",
+                "normality_decision",
                 "live_readiness",
                 "mcp_client_readiness",
                 "mcp_modeling_session_contract",
@@ -6559,6 +6585,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "normality",
                 "normality_explanation",
                 "normality_gate",
+                "normality_decision",
+                "normality_decision_status",
+                "normality_decision_primary_reason",
+                "normality_decision_can_claim_model_normal",
+                "normality_decision_can_claim_live_gui_normal",
+                "normality_decision_next_action",
+                "normality_decision_authoritative_source",
                 "live_hotload_preflight",
                 "live_hotload_preflight_status",
                 "live_hotload_preflight_safe_to_attempt",
@@ -6788,6 +6821,20 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "normality_summary",
                 "normality_primary_reason",
                 "normality_next_action",
+                "normality_decision_schema_version",
+                "normality_decision_authoritative_source",
+                "normality_decision_status",
+                "normality_decision_primary_reason",
+                "normality_decision_can_claim_model_normal",
+                "normality_decision_can_claim_live_gui_normal",
+                "normality_decision_next_action",
+                "normality_decision_explanation_status",
+                "normality_decision_explanation_primary_reason",
+                "normality_decision_explanation_next_action",
+                "normality_decision_explanation_primary_reason_differs",
+                "normality_decision_explanation_next_action_differs",
+                "normality_decision_binding_verified",
+                "normality_decision_consistency_ok",
                 "visual_normality_status",
                 "visual_can_report_model_normal",
                 "visual_clean_view_available",
@@ -7195,6 +7242,12 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "change_receipt_health_check_fields": [
                 "normality",
                 "health_verdict",
+                "normality_decision_status",
+                "normality_decision_primary_reason",
+                "normality_decision_can_claim_model_normal",
+                "normality_decision_can_claim_live_gui_normal",
+                "normality_decision_next_action",
+                "normality_decision_authoritative_source",
                 "normality_gate_status",
                 "can_claim_model_normal",
                 "can_claim_live_gui_normal",
@@ -7263,6 +7316,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "normality_summary",
                 "normality_primary_reason",
                 "normality_next_action",
+                "normality_decision",
+                "normality_decision_status",
+                "normality_decision_primary_reason",
+                "normality_decision_can_claim_model_normal",
+                "normality_decision_can_claim_live_gui_normal",
+                "normality_decision_next_action",
+                "normality_decision_authoritative_source",
                 "visual_normality_summary",
                 "visual_normality_status",
                 "visual_normality_ok",
@@ -10259,6 +10319,11 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
         else {}
     )
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
+    normality_decision = (
+        report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), dict) else {}
     diagnostic_manifest = (
         report.get("diagnostic_export_manifest")
@@ -10757,6 +10822,22 @@ def _modeling_report_mcp_client_readiness(report: dict[str, Any]) -> dict[str, A
             "visible_followup_recommended_tool": visible_followup_recommended_tool,
             "visible_followup_recommended_action": visible_followup_recommended_action,
             "visible_followup_payload_hint": _drop_none_values(visible_followup_payload_hint),
+            "normality_decision": normality_decision,
+            "normality_decision_ref": "normality_decision" if normality_decision else None,
+            "normality_decision_status": normality_decision.get("status"),
+            "normality_decision_primary_reason": normality_decision.get(
+                "primary_reason"
+            ),
+            "normality_decision_can_claim_model_normal": normality_decision.get(
+                "can_claim_model_normal"
+            ),
+            "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+                "can_claim_live_gui_normal"
+            ),
+            "normality_decision_next_action": normality_decision.get("next_action"),
+            "normality_decision_authoritative_source": normality_decision.get(
+                "authoritative_source"
+            ),
             "can_claim_model_normal": normality_gate.get("can_claim_model_normal"),
             "can_claim_live_gui_normal": normality_gate.get("can_claim_live_gui_normal"),
             "ready_for_calculation": readiness.get("ready_for_calculation"),
@@ -16817,6 +16898,9 @@ def _attach_modeling_health(
     response["semiconductor_diagnostic_gate"] = response["modeling_report"].get("semiconductor_diagnostic_gate")
     response["diagnostic_acceptance"] = response["modeling_report"].get("diagnostic_acceptance")
     response["normality_gate"] = response["modeling_report"].get("normality_gate")
+    response["normality_decision"] = response["modeling_report"].get(
+        "normality_decision"
+    )
     response["semiconductor_template_profile"] = response["modeling_report"].get("semiconductor_template_profile")
     response["semiconductor_virtual_template_profile"] = response["modeling_report"].get(
         "semiconductor_virtual_template_profile"
@@ -17210,6 +17294,7 @@ def _write_modeling_report_summary(response: dict[str, Any]) -> None:
     report["diagnostic_acceptance"] = _diagnostic_acceptance_summary(report)
     response["diagnostic_acceptance"] = report["diagnostic_acceptance"]
     report["normality_gate"] = _normality_gate(report)
+    report["normality_decision"] = _normality_decision(report)
     report["live_delivery"] = _live_delivery_summary(report)
     report["live_modeling_contract"] = _live_modeling_contract(report)
     report["change_receipt"] = _change_receipt_summary(response, report)
@@ -17218,6 +17303,7 @@ def _write_modeling_report_summary(response: dict[str, Any]) -> None:
     if isinstance(report.get("gui_current_revision"), dict):
         report["live_summary"].update(_gui_current_revision_live_summary(report["gui_current_revision"]))
     response["normality_gate"] = report["normality_gate"]
+    response["normality_decision"] = report["normality_decision"]
     response["live_delivery"] = report["live_delivery"]
     response["change_receipt"] = report["change_receipt"]
     response["live_modeling_contract"] = report["live_modeling_contract"]
@@ -17472,6 +17558,11 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         else {}
     )
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
+    normality_decision = (
+        report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     visual_normality = (
         report.get("visual_normality_summary")
         if isinstance(report.get("visual_normality_summary"), dict)
@@ -17636,6 +17727,44 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "normality_summary": normality_explanation.get("summary"),
         "normality_primary_reason": normality_explanation.get("primary_reason"),
         "normality_next_action": normality_explanation.get("next_action"),
+        "normality_decision_schema_version": normality_decision.get(
+            "schema_version"
+        ),
+        "normality_decision_authoritative_source": normality_decision.get(
+            "authoritative_source"
+        ),
+        "normality_decision_status": normality_decision.get("status"),
+        "normality_decision_primary_reason": normality_decision.get(
+            "primary_reason"
+        ),
+        "normality_decision_can_claim_model_normal": normality_decision.get(
+            "can_claim_model_normal"
+        ),
+        "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+            "can_claim_live_gui_normal"
+        ),
+        "normality_decision_next_action": normality_decision.get("next_action"),
+        "normality_decision_explanation_status": (
+            normality_decision.get("explanation") or {}
+        ).get("status"),
+        "normality_decision_explanation_primary_reason": (
+            normality_decision.get("explanation") or {}
+        ).get("primary_reason"),
+        "normality_decision_explanation_next_action": (
+            normality_decision.get("explanation") or {}
+        ).get("next_action"),
+        "normality_decision_explanation_primary_reason_differs": normality_decision.get(
+            "explanation_primary_reason_differs"
+        ),
+        "normality_decision_explanation_next_action_differs": normality_decision.get(
+            "explanation_next_action_differs"
+        ),
+        "normality_decision_binding_verified": normality_decision.get(
+            "binding_verified"
+        ),
+        "normality_decision_consistency_ok": (
+            normality_decision.get("consistency") or {}
+        ).get("ok"),
         "visual_normality_status": visual_normality.get("status"),
         "visual_can_report_model_normal": visual_normality.get("can_report_model_normal"),
         "visual_clean_view_available": visual_normality.get("clean_view_available"),
@@ -18387,6 +18516,7 @@ def _refresh_response_summaries(response: dict[str, Any]) -> None:
     modeling_report["live_delivery"] = _live_delivery_summary(modeling_report)
     modeling_report["change_receipt"] = _change_receipt_summary(response, modeling_report)
     modeling_report["normality_gate"] = _normality_gate(modeling_report)
+    modeling_report["normality_decision"] = _normality_decision(modeling_report)
     modeling_report["live_delivery"] = _live_delivery_summary(modeling_report)
     modeling_report["semiconductor_normality_diagnosis"] = _semiconductor_normality_diagnosis(modeling_report)
     modeling_report["semiconductor_diagnostic_gate"] = _semiconductor_diagnostic_gate(modeling_report)
@@ -18433,6 +18563,7 @@ def _refresh_response_summaries(response: dict[str, Any]) -> None:
     response["semiconductor_diagnostic_gate"] = modeling_report["semiconductor_diagnostic_gate"]
     response["diagnostic_acceptance"] = modeling_report["diagnostic_acceptance"]
     response["normality_gate"] = modeling_report["normality_gate"]
+    response["normality_decision"] = modeling_report["normality_decision"]
     response["semiconductor_template_profile"] = modeling_report.get("semiconductor_template_profile")
     response["semiconductor_virtual_template_profile"] = modeling_report.get("semiconductor_virtual_template_profile")
     response["semiconductor_virtual_template_id"] = modeling_report.get("semiconductor_virtual_template_id")
@@ -18958,6 +19089,13 @@ def _promote_response_model_diagnostics(response: dict[str, Any]) -> None:
         if isinstance(report.get("normality_gate"), dict)
         else {}
     )
+    normality_decision = (
+        response.get("normality_decision")
+        if isinstance(response.get("normality_decision"), dict)
+        else report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     visual_normality = (
         response.get("visual_normality_summary")
         if isinstance(response.get("visual_normality_summary"), dict)
@@ -19091,6 +19229,21 @@ def _promote_response_model_diagnostics(response: dict[str, Any]) -> None:
                 live_summary.get("normality_next_action"),
                 normality_explanation.get("next_action"),
                 normality_gate.get("next_action"),
+            ),
+            "normality_decision": normality_decision or None,
+            "normality_decision_status": normality_decision.get("status"),
+            "normality_decision_primary_reason": normality_decision.get(
+                "primary_reason"
+            ),
+            "normality_decision_can_claim_model_normal": normality_decision.get(
+                "can_claim_model_normal"
+            ),
+            "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+                "can_claim_live_gui_normal"
+            ),
+            "normality_decision_next_action": normality_decision.get("next_action"),
+            "normality_decision_authoritative_source": normality_decision.get(
+                "authoritative_source"
             ),
             "normality_gate_status": _first_not_none(
                 live_summary.get("normality_gate_status"),
@@ -23587,6 +23740,8 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     report["semiconductor_normality_diagnosis"] = _semiconductor_normality_diagnosis(report)
     report["change_receipt"] = _change_receipt_summary(response, report)
     report["normality_gate"] = _normality_gate(report)
+    report["normality_decision"] = _normality_decision(report)
+    response["normality_decision"] = report["normality_decision"]
     report["live_delivery"] = _live_delivery_summary(report)
     report["semiconductor_normality_diagnosis"] = _semiconductor_normality_diagnosis(report)
     report["semiconductor_diagnostic_gate"] = _semiconductor_diagnostic_gate(report)
@@ -28055,6 +28210,115 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normality_decision(report: dict[str, Any]) -> dict[str, Any]:
+    """Bind the authoritative normality gate to one project revision."""
+
+    gate = (
+        report.get("normality_gate")
+        if isinstance(report.get("normality_gate"), dict)
+        else {}
+    )
+    explanation = (
+        report.get("normality_explanation")
+        if isinstance(report.get("normality_explanation"), dict)
+        else {}
+    )
+    project_id = report.get("project_id")
+    revision = report.get("revision")
+    project_revision_bound = bool(
+        isinstance(project_id, str)
+        and project_id.strip()
+        and isinstance(revision, int)
+        and not isinstance(revision, bool)
+        and revision >= 0
+    )
+    required_gate_fields = (
+        "status",
+        "can_claim_model_normal",
+        "can_claim_live_gui_normal",
+        "next_action",
+    )
+    required_fields_present = all(gate.get(key) is not None for key in required_gate_fields)
+    mirrored_fields = (
+        "status",
+        "primary_reason",
+        "can_claim_model_normal",
+        "can_claim_live_gui_normal",
+        "ready_for_next_edit",
+        "ready_for_calculation",
+        "next_action",
+        "must_not_claim_normal_reasons",
+        "must_not_claim_live_gui_normal_reasons",
+        "all_must_not_claim_reasons",
+        "review_reasons",
+        "calculation_only_review_reasons",
+    )
+    decision_values = {
+        "status": gate.get("status"),
+        "primary_reason": gate.get("primary_reason"),
+        "can_claim_model_normal": gate.get("can_claim_model_normal"),
+        "can_claim_live_gui_normal": gate.get("can_claim_live_gui_normal"),
+        "ready_for_next_edit": gate.get("ready_for_next_edit"),
+        "ready_for_calculation": gate.get("ready_for_calculation"),
+        "next_action": gate.get("next_action"),
+        "must_not_claim_normal_reasons": list(
+            gate.get("must_not_claim_normal_reasons") or []
+        ),
+        "must_not_claim_live_gui_normal_reasons": list(
+            gate.get("must_not_claim_live_gui_normal_reasons") or []
+        ),
+        "all_must_not_claim_reasons": list(
+            gate.get("all_must_not_claim_reasons") or []
+        ),
+        "review_reasons": list(gate.get("review_reasons") or []),
+        "calculation_only_review_reasons": list(
+            gate.get("calculation_only_review_reasons") or []
+        ),
+    }
+    mirrors_normality_gate = bool(gate) and all(
+        decision_values[key]
+        == (list(gate.get(key) or []) if key.endswith("reasons") else gate.get(key))
+        for key in mirrored_fields
+    )
+    explanation_status = explanation.get("status")
+    explanation_primary_reason = explanation.get("primary_reason")
+    explanation_next_action = explanation.get("next_action")
+    consistency_ok = bool(
+        gate
+        and project_revision_bound
+        and required_fields_present
+        and mirrors_normality_gate
+    )
+
+    return {
+        "schema_version": NORMALITY_DECISION_SCHEMA,
+        "available": bool(gate),
+        "authoritative_source": "normality_gate",
+        "project_id": project_id,
+        "revision": revision,
+        "binding_verified": project_revision_bound,
+        **decision_values,
+        "explanation": {
+            "status": explanation_status,
+            "primary_reason": explanation_primary_reason,
+            "next_action": explanation_next_action,
+        },
+        "explanation_primary_reason_differs": (
+            explanation_primary_reason != decision_values["primary_reason"]
+        ),
+        "explanation_next_action_differs": (
+            explanation_next_action != decision_values["next_action"]
+        ),
+        "consistency": {
+            "gate_available": bool(gate),
+            "project_revision_bound": project_revision_bound,
+            "required_fields_present": required_fields_present,
+            "mirrors_normality_gate": mirrors_normality_gate,
+            "ok": consistency_ok,
+        },
+    }
+
+
 def _live_action_summary(report: dict[str, Any]) -> dict[str, Any]:
     """Return a single object telling live MCP clients what to do next."""
 
@@ -31107,6 +31371,11 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
     semiconductor_health = inspection.get("semiconductor_health") if isinstance(inspection.get("semiconductor_health"), dict) else {}
     normality_explanation = report.get("normality_explanation") if isinstance(report.get("normality_explanation"), dict) else {}
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
+    normality_decision = (
+        report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     live_action = report.get("live_action_summary") if isinstance(report.get("live_action_summary"), dict) else {}
     live_hotload_preflight = (
         report.get("live_hotload_preflight")
@@ -31334,6 +31603,21 @@ def _change_receipt_summary(response: dict[str, Any], report: dict[str, Any]) ->
         "normality": report.get("normality"),
         "normality_explanation": normality_explanation,
         "normality_gate": normality_gate,
+        "normality_decision": normality_decision,
+        "normality_decision_status": normality_decision.get("status"),
+        "normality_decision_primary_reason": normality_decision.get(
+            "primary_reason"
+        ),
+        "normality_decision_can_claim_model_normal": normality_decision.get(
+            "can_claim_model_normal"
+        ),
+        "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+            "can_claim_live_gui_normal"
+        ),
+        "normality_decision_next_action": normality_decision.get("next_action"),
+        "normality_decision_authoritative_source": normality_decision.get(
+            "authoritative_source"
+        ),
         "normality_gate_status": normality_gate.get("status"),
         "can_claim_model_normal": normality_gate.get("can_claim_model_normal"),
         "can_claim_live_gui_normal": normality_gate.get("can_claim_live_gui_normal"),
@@ -31551,6 +31835,11 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
+    normality_decision = (
+        report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     visual_normality = (
         report.get("visual_normality_summary")
         if isinstance(report.get("visual_normality_summary"), dict)
@@ -31934,6 +32223,21 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
             "normality_summary": normality_explanation.get("summary"),
             "normality_primary_reason": normality_explanation.get("primary_reason"),
             "normality_next_action": normality_explanation.get("next_action"),
+            "normality_decision": normality_decision,
+            "normality_decision_status": normality_decision.get("status"),
+            "normality_decision_primary_reason": normality_decision.get(
+                "primary_reason"
+            ),
+            "normality_decision_can_claim_model_normal": normality_decision.get(
+                "can_claim_model_normal"
+            ),
+            "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+                "can_claim_live_gui_normal"
+            ),
+            "normality_decision_next_action": normality_decision.get("next_action"),
+            "normality_decision_authoritative_source": normality_decision.get(
+                "authoritative_source"
+            ),
             "semiconductor_normality_diagnosis": semiconductor_normality_diagnosis,
             "semiconductor_diagnostic_gate": semiconductor_diagnostic_gate,
             "semiconductor_diagnostic_gate_status": semiconductor_diagnostic_gate.get("status"),
@@ -33988,6 +34292,11 @@ def _change_receipt_health_check(
         else {}
     )
     normality_gate = report.get("normality_gate") if isinstance(report.get("normality_gate"), dict) else {}
+    normality_decision = (
+        report.get("normality_decision")
+        if isinstance(report.get("normality_decision"), dict)
+        else {}
+    )
     live_gui_acceptance = (
         report.get("live_gui_acceptance")
         if isinstance(report.get("live_gui_acceptance"), dict)
@@ -34021,6 +34330,20 @@ def _change_receipt_health_check(
     return {
         "normality": report.get("normality"),
         "health_verdict": report.get("health_verdict"),
+        "normality_decision_status": normality_decision.get("status"),
+        "normality_decision_primary_reason": normality_decision.get(
+            "primary_reason"
+        ),
+        "normality_decision_can_claim_model_normal": normality_decision.get(
+            "can_claim_model_normal"
+        ),
+        "normality_decision_can_claim_live_gui_normal": normality_decision.get(
+            "can_claim_live_gui_normal"
+        ),
+        "normality_decision_next_action": normality_decision.get("next_action"),
+        "normality_decision_authoritative_source": normality_decision.get(
+            "authoritative_source"
+        ),
         "normality_gate_status": normality_gate.get("status"),
         "can_claim_model_normal": normality_gate.get("can_claim_model_normal"),
         "can_claim_live_gui_normal": normality_gate.get("can_claim_live_gui_normal"),
@@ -37669,16 +37992,105 @@ def _compact_gui_current_revision(value: Any) -> dict[str, Any] | None:
     return compact
 
 
-def _compact_normality_gate(value: Any) -> dict[str, Any] | None:
-    """Return normality decisions without the duplicated evidence tree."""
+def _compact_normality_decision(value: Any) -> dict[str, Any] | None:
+    """Return the complete bounded authoritative normality receipt."""
 
     if not isinstance(value, dict):
         return None
     compact = _mapping_subset(
         value,
-        tuple(key for key in value if key != "evidence"),
+        (
+            "schema_version",
+            "available",
+            "authoritative_source",
+            "project_id",
+            "revision",
+            "binding_verified",
+            "status",
+            "primary_reason",
+            "can_claim_model_normal",
+            "can_claim_live_gui_normal",
+            "ready_for_next_edit",
+            "ready_for_calculation",
+            "next_action",
+            "must_not_claim_normal_reasons",
+            "must_not_claim_live_gui_normal_reasons",
+            "review_reasons",
+            "calculation_only_review_reasons",
+            "explanation",
+            "explanation_primary_reason_differs",
+            "explanation_next_action_differs",
+            "consistency",
+        ),
     )
-    if compact.pop("trusted_clean_view_names", None) is not None:
+    if value.get("all_must_not_claim_reasons"):
+        compact["all_must_not_claim_reasons_derived_from"] = [
+            "must_not_claim_normal_reasons",
+            "must_not_claim_live_gui_normal_reasons",
+        ]
+    return compact
+
+
+def _compact_normality_gate(
+    value: Any,
+    *,
+    normality_decision: Any = None,
+) -> dict[str, Any] | None:
+    """Return normality decisions without the duplicated evidence tree."""
+
+    if not isinstance(value, dict):
+        return None
+    decision_available = bool(
+        isinstance(normality_decision, dict)
+        and normality_decision.get("schema_version") == NORMALITY_DECISION_SCHEMA
+    )
+    if decision_available:
+        compact = _mapping_subset(
+            value,
+            (
+                "available",
+                "status",
+                "can_claim_model_normal",
+                "can_claim_live_gui_normal",
+                "normality",
+                "trust_level",
+                "primary_reason",
+                "ready_for_next_edit",
+                "ready_for_calculation",
+                "hot_loaded",
+                "gui_loaded_current_revision",
+                "gui_current_revision_status",
+                "gui_visual_validation",
+                "gui_single_window_policy_ok",
+                "diagnostic_export_manifest_status",
+                "change_verification_status",
+                "semiconductor_intent_status",
+                "next_action",
+                "trusted_clean_view_replay_status",
+                "trusted_clean_view_replay_ok",
+            ),
+        )
+        compact["authoritative_decision_ref"] = "normality_decision"
+        compact["full_detail_ref"] = "modeling_report.normality_gate"
+        for key in (
+            "must_not_claim_normal_reasons",
+            "must_not_claim_live_gui_normal_reasons",
+            "all_must_not_claim_reasons",
+            "review_reasons",
+            "calculation_only_review_reasons",
+        ):
+            if value.get(key):
+                compact[f"{key}_ref"] = f"normality_decision.{key}"
+    else:
+        compact = _mapping_subset(
+            value,
+            tuple(key for key in value if key != "evidence"),
+        )
+    trusted_clean_view_names = compact.pop(
+        "trusted_clean_view_names",
+        value.get("trusted_clean_view_names"),
+    )
+    if trusted_clean_view_names is not None:
         compact["trusted_clean_view_replay_ref"] = "trusted_clean_view_replay"
     for key in (
         "must_not_claim_normal_reasons",
@@ -37922,15 +38334,40 @@ def _compact_live_gui_acceptance(value: Any) -> dict[str, Any] | None:
     return compact
 
 
-def _compact_normality_explanation(value: Any) -> dict[str, Any] | None:
+def _compact_normality_explanation(
+    value: Any,
+    *,
+    normality_decision: Any = None,
+) -> dict[str, Any] | None:
     """Return the normality explanation without its duplicated evidence tree."""
 
     if not isinstance(value, dict):
         return None
-    compact = _mapping_subset(
-        value,
-        tuple(key for key in value if key not in {"evidence", "ready_for_hotload"}),
+    decision_available = bool(
+        isinstance(normality_decision, dict)
+        and normality_decision.get("schema_version") == NORMALITY_DECISION_SCHEMA
     )
+    if decision_available:
+        compact = _mapping_subset(
+            value,
+            (
+                "available",
+                "status",
+                "summary",
+                "primary_reason",
+                "trust_level",
+                "next_action",
+                "next_action_tool",
+                "needs_user_confirmation",
+            ),
+        )
+        compact["authoritative_decision_ref"] = "normality_decision"
+        compact["full_detail_ref"] = "modeling_report.normality_explanation"
+    else:
+        compact = _mapping_subset(
+            value,
+            tuple(key for key in value if key not in {"evidence", "ready_for_hotload"}),
+        )
     if compact.get("blocking_reasons") == []:
         compact.pop("blocking_reasons", None)
     if compact.get("review_reasons") == compact.get("calculation_blocking_reasons"):
@@ -40827,6 +41264,12 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "requested_diagnostic_focuses",
             "normality",
             "health_verdict",
+            "normality_decision_status",
+            "normality_decision_primary_reason",
+            "normality_decision_can_claim_model_normal",
+            "normality_decision_can_claim_live_gui_normal",
+            "normality_decision_next_action",
+            "normality_decision_authoritative_source",
             "ready_for_next_edit",
             "next_edit_status",
             "next_edit_requires_reaudit",
@@ -40891,6 +41334,7 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "planned_outputs",
             "validation",
             "live_summary",
+            "normality_decision",
             "normality_gate",
             "normality_explanation",
             "visual_normality_summary",
@@ -41220,6 +41664,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_status_tool",
             "live_watchdog_tool",
             "live_watchdog_contract",
+            "normality_decision_contract",
             "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
@@ -41577,6 +42022,12 @@ def _compact_live_response(
             "auto_completed_diagnostic_focuses",
             "normality",
             "health_verdict",
+            "normality_decision_status",
+            "normality_decision_primary_reason",
+            "normality_decision_can_claim_model_normal",
+            "normality_decision_can_claim_live_gui_normal",
+            "normality_decision_next_action",
+            "normality_decision_authoritative_source",
             "ready_for_next_edit",
             "ready_for_calculation",
             "can_claim_model_normal",
@@ -41924,6 +42375,12 @@ def _compact_live_response(
             "normality_check_requested",
             "normality",
             "health_verdict",
+            "normality_decision_status",
+            "normality_decision_primary_reason",
+            "normality_decision_can_claim_model_normal",
+            "normality_decision_can_claim_live_gui_normal",
+            "normality_decision_next_action",
+            "normality_decision_authoritative_source",
             "normality_gate_status",
             "normality_primary_reason",
             "can_claim_model_normal",
@@ -42053,9 +42510,16 @@ def _compact_live_response(
             value = report.get(key)
         if value is not None:
             compact[key] = value
+    normality_decision_value = response.get("normality_decision")
+    if not isinstance(normality_decision_value, dict):
+        normality_decision_value = report.get("normality_decision")
     compact_projectors = {
         "next_action_plan": _compact_next_action_plan,
-        "normality_gate": _compact_normality_gate,
+        "normality_decision": _compact_normality_decision,
+        "normality_gate": lambda value: _compact_normality_gate(
+            value,
+            normality_decision=normality_decision_value,
+        ),
         "semiconductor_normality_diagnosis": _compact_semiconductor_normality_diagnosis,
         "gui_current_revision": _compact_gui_current_revision,
         "live_gui_acceptance": _compact_live_gui_acceptance,
@@ -42067,11 +42531,15 @@ def _compact_live_response(
         "view_parameter_summary": _compact_view_parameter_summary,
         "diagnostic_focus_plan": _compact_diagnostic_focus_plan,
         "requested_diagnostic_focus_status": _compact_requested_diagnostic_focus_status,
-        "normality_explanation": _compact_normality_explanation,
+        "normality_explanation": lambda value: _compact_normality_explanation(
+            value,
+            normality_decision=normality_decision_value,
+        ),
         "gui_view_replay": _compact_gui_view_replay,
     }
     for key in (
         "next_action_plan",
+        "normality_decision",
         "normality_gate",
         "semiconductor_normality_diagnosis",
         "gui_current_revision",
@@ -42193,6 +42661,8 @@ def _compact_live_response(
             "model_trust_blocked",
             "model_trust_blocking_reasons",
             "ready_for_calculation",
+            "normality_decision_ref",
+            "normality_decision_status",
             "current_revision_loaded_in_gui",
             "visible_followup_ready",
             "visible_followup_status",
@@ -42473,6 +42943,7 @@ def _compact_capabilities_response(
             "live_status_tool",
             "live_watchdog_tool",
             "live_watchdog_contract",
+            "normality_decision_contract",
             "view_replay_progress_contract",
             "live_update_tool",
             "runtime_provenance_contract",
@@ -42526,6 +42997,17 @@ def _compact_capabilities_response(
                 "max_response_bytes",
                 "automatic_polling_allowed",
                 "automatic_non_poll_action_allowed",
+            ),
+        )
+    normality_decision_contract = compact.get("normality_decision_contract")
+    if isinstance(normality_decision_contract, dict):
+        compact["normality_decision_contract"] = _mapping_subset(
+            normality_decision_contract,
+            (
+                "schema_version",
+                "authoritative_source",
+                "project_revision_bound",
+                "watchdog_prefers_decision",
             ),
         )
     replay_progress_contract = compact.get("view_replay_progress_contract")
@@ -44500,44 +44982,70 @@ def _watchdog_view_replay_receipt(value: Any) -> dict[str, Any]:
     )
 
 
-def _watchdog_normality_receipt(value: Any) -> dict[str, Any]:
+def _watchdog_normality_receipt(
+    value: Any,
+    *,
+    fallback_gate: Any = None,
+) -> dict[str, Any]:
     """Return the model, live-GUI, and calculation decisions independently."""
 
-    if not isinstance(value, dict):
+    preferred = value if isinstance(value, dict) else {}
+    gate = fallback_gate if isinstance(fallback_gate, dict) else {}
+    if not preferred and not gate:
         return {"available": False, "status": "unavailable"}
+    source = preferred or gate
+
+    def selected(key: str) -> Any:
+        return source.get(key) if source.get(key) is not None else gate.get(key)
+
+    uses_authoritative_decision = bool(
+        preferred.get("schema_version") == NORMALITY_DECISION_SCHEMA
+        and preferred.get("authoritative_source") == "normality_gate"
+    )
     return _drop_none_values(
         {
-            "available": value.get("available"),
-            "status": value.get("status"),
-            "normality": value.get("normality"),
-            "trust_level": value.get("trust_level"),
-            "can_claim_model_normal": value.get("can_claim_model_normal"),
-            "can_claim_live_gui_normal": value.get(
+            "available": selected("available"),
+            "schema_version": preferred.get("schema_version"),
+            "authoritative_source": preferred.get("authoritative_source"),
+            "uses_authoritative_decision": uses_authoritative_decision,
+            "project_id": preferred.get("project_id"),
+            "revision": preferred.get("revision"),
+            "binding_verified": preferred.get("binding_verified"),
+            "status": selected("status"),
+            "normality": selected("normality"),
+            "trust_level": selected("trust_level"),
+            "can_claim_model_normal": selected("can_claim_model_normal"),
+            "can_claim_live_gui_normal": selected(
                 "can_claim_live_gui_normal"
             ),
-            "ready_for_next_edit": value.get("ready_for_next_edit"),
-            "ready_for_calculation": value.get("ready_for_calculation"),
-            "hot_loaded": value.get("hot_loaded"),
-            "gui_loaded_current_revision": value.get(
+            "ready_for_next_edit": selected("ready_for_next_edit"),
+            "ready_for_calculation": selected("ready_for_calculation"),
+            "hot_loaded": selected("hot_loaded"),
+            "gui_loaded_current_revision": selected(
                 "gui_loaded_current_revision"
             ),
-            "trusted_clean_view_replay_ok": value.get(
+            "trusted_clean_view_replay_ok": selected(
                 "trusted_clean_view_replay_ok"
             ),
-            "primary_reason": value.get("primary_reason"),
+            "primary_reason": selected("primary_reason"),
+            "next_action": selected("next_action"),
             "must_not_claim_live_gui_normal_reasons": _watchdog_reason_list(
-                value.get("must_not_claim_live_gui_normal_reasons")
+                selected("must_not_claim_live_gui_normal_reasons")
             ),
             "calculation_blocking_reasons": _watchdog_reason_list(
-                value.get("calculation_blocking_reasons")
+                selected("calculation_blocking_reasons")
             ),
             "review_reasons": _watchdog_reason_list(
-                value.get("review_reasons")
+                selected("review_reasons")
             ),
             "resolved_visual_review_reasons": _watchdog_reason_list(
-                value.get("resolved_visual_review_reasons")
+                selected("resolved_visual_review_reasons")
             ),
-            "detail_ref": "material_studio_live_project_status.normality_gate",
+            "detail_ref": (
+                "material_studio_live_project_status.normality_decision"
+                if uses_authoritative_decision
+                else "material_studio_live_project_status.normality_gate"
+            ),
         }
     )
 
@@ -44715,12 +45223,18 @@ def _finalize_watchdog_receipt(payload: dict[str, Any]) -> dict[str, Any]:
                 compact_normality,
                 (
                     "available",
+                    "schema_version",
+                    "authoritative_source",
+                    "uses_authoritative_decision",
+                    "binding_verified",
                     "status",
                     "can_claim_model_normal",
                     "can_claim_live_gui_normal",
                     "ready_for_next_edit",
                     "ready_for_calculation",
                     "primary_reason",
+                    "next_action",
+                    "detail_ref",
                 ),
             ),
             "primary_action": {
@@ -44932,7 +45446,10 @@ def _live_watchdog_status_payload(
     replay_container = status.get("gui_view_replay")
     replay_container = replay_container if isinstance(replay_container, dict) else {}
     replay = _watchdog_view_replay_receipt(replay_container.get("progress"))
-    normality = _watchdog_normality_receipt(status.get("normality_gate"))
+    normality = _watchdog_normality_receipt(
+        status.get("normality_decision"),
+        fallback_gate=status.get("normality_gate"),
+    )
     readiness = status.get("mcp_client_readiness")
     readiness = readiness if isinstance(readiness, dict) else {}
     primary_action = _watchdog_action_receipt(

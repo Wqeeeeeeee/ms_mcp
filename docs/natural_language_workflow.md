@@ -193,10 +193,14 @@ rotation still requires Computer Use or reviewed Materials Studio Copy Script
 output.
 
 For requests that ask whether the current model is normal, client code should
-read `modeling_report.normality_gate` before answering. A preview can be
-`preview_ready` while `normality_gate.can_claim_model_normal=false`; live GUI
-answers should require `can_claim_live_gui_normal=true` and otherwise report
-the gate reasons and next action.
+read `modeling_report.normality_decision` before answering. This
+`material_studio_normality_decision_v1` receipt binds the authoritative
+`normality_gate` outcome to the exact project and revision. A preview can be
+`preview_ready` while `can_claim_model_normal=false`; live GUI answers should
+require `can_claim_live_gui_normal=true` and otherwise report the receipt's
+reason and next action. `normality_explanation` remains useful diagnostic
+context and its reason or action may differ; legacy reports may fall back to
+`normality_gate`.
 
 ### Dopant Metadata Reconciliation
 

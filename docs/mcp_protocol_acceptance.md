@@ -21,7 +21,11 @@ The command verifies:
 - Complete paginated `tools/list` discovery.
 - Required live, GUI, view replay, and repair tools.
 - Selected input schema fields and safety annotations.
-- Preview-only silicon creation, project status, history, and three-view export.
+- A UTF-8 Chinese preview-only silicon request, exact request echo, structured
+  template selection, project status, history, and front/top/isometric export.
+- A revision-bound `material_studio_normality_decision_v1` receipt that mirrors
+  `normality_gate`, remains authoritative when the diagnostic explanation
+  differs, and is preferred by the bounded watchdog receipt.
 - Isolated view-replay manifest preparation followed by a resumed-session
   preflight with a revision-bound `visual_diagnostics` action track.
 - One coordinated sequence reference, with the callable visual payload kept in
@@ -78,6 +82,10 @@ is intended for interactive @mcp work and returns the decision receipt plus
 camera parameters and artifact entry points. Full mode preserves the previous
 in-band response shape. Neither mode changes persisted diagnostics or execution
 behavior.
+
+Compact live responses preserve `normality_decision` as semantic core. Use its
+claim booleans and `next_action` for the final normality answer; treat
+`normality_explanation` as supporting diagnostic context.
 
 Compact schema v2 removes repeated evidence trees and full capability catalogs
 from the in-band receipt. It targets 45 KB below the hard 48 KB limit, keeps one

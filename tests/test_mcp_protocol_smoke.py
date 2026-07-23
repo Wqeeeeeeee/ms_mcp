@@ -49,8 +49,14 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     }
     calls = result["calls"]
     assert calls["ok"] is True
+    assert calls["cjk_request_echo_preserved"] is True
+    assert calls["user_request_echo"] == calls["user_request"]
+    assert "构建硅晶体" in calls["user_request"]
+    assert calls["nl_plan_kind"] == "spec"
     assert calls["template_id"] == "silicon_diamond"
     assert calls["execution_mode"] == "preview"
+    assert calls["diagnostic_export_requested"] is True
+    assert calls["normality_check_requested"] is True
     assert calls["response_mode"] == "compact"
     assert calls["artifact_status"] == "not_materialized"
     assert calls["planned_structure_exists"] is False
@@ -218,11 +224,33 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     )
     assert calls["watchdog_contract_max_response_bytes"] == 12_000
     assert calls["watchdog_contract_poll_interval_seconds"] == 1_200
+    assert calls["normality_decision_contract_schema"] == (
+        "material_studio_normality_decision_v1"
+    )
+    assert calls["normality_decision_contract_authoritative_source"] == (
+        "normality_gate"
+    )
+    assert calls["normality_decision_contract_project_revision_bound"] is True
+    decision = calls["normality_decision"]
+    assert calls["normality_decision_schema"] == (
+        "material_studio_normality_decision_v1"
+    )
+    assert calls["normality_decision_authoritative_source"] == "normality_gate"
+    assert calls["normality_decision_binding_verified"] is True
+    assert calls["normality_decision_consistency_ok"] is True
+    assert decision["project_id"] == calls["project_id"]
+    assert decision["revision"] == calls["revision"]
+    assert decision["status"] == calls["normality_decision_status"]
+    assert decision["primary_reason"] == calls["normality_decision_primary_reason"]
     assert calls["watchdog_revision_matches_expected"] is True
     assert len(calls["watchdog_state_fingerprint"]) == 64
     assert calls["watchdog_repeat_changed_since_previous"] is False
     assert calls["watchdog_automatic_poll_allowed"] is True
     assert calls["watchdog_automatic_non_poll_action_allowed"] is False
+    assert calls["watchdog_normality_uses_authoritative_decision"] is True
+    assert calls["watchdog_normality_detail_ref"] == (
+        "material_studio_live_project_status.normality_decision"
+    )
     watchdog_compaction = calls["watchdog_response_compaction"]
     assert watchdog_compaction["schema_version"] == (
         "material_studio_live_watchdog_compaction_v1"

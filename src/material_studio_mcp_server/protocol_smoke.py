@@ -55,6 +55,7 @@ COMPACT_RESPONSE_MAX_BYTES = 48_000
 COMPACT_RESPONSE_TARGET_BYTES = 45_000
 EXPECTED_CAPABILITIES_COMPACT_SCHEMA = "material_studio_capabilities_compact_v2"
 EXPECTED_LIVE_COMPACT_SCHEMA = "material_studio_live_compact_v2"
+EXPECTED_NORMALITY_DECISION_SCHEMA = "material_studio_normality_decision_v1"
 EXPECTED_LIVE_WATCHDOG_SCHEMA = "material_studio_live_watchdog_status_v1"
 EXPECTED_LIVE_WATCHDOG_MAX_BYTES = 12_000
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
@@ -766,7 +767,10 @@ async def _run_preview_calls(
     timeout: timedelta,
 ) -> dict[str, Any]:
     nonce = uuid.uuid4().hex[:10]
-    request = f"Build silicon crystal and prepare preview for MCP protocol acceptance {nonce}."
+    request = (
+        "构建硅晶体并准备预览，导出正视、俯视和等轴测视角参数并检查模型是否正常。"
+        f"协议验收标识 {nonce}。"
+    )
     calls: dict[str, Any] = {"ok": False, "errors": []}
     try:
         capabilities = await _call_tool(
@@ -923,6 +927,22 @@ async def _run_preview_calls(
 
         planned_structure = Path(str((created.get("planned_outputs") or {}).get("structure") or ""))
         view_names = list((created.get("live_summary") or {}).get("view_names") or [])
+        nl_plan = created.get("nl_plan") if isinstance(created.get("nl_plan"), dict) else {}
+        normality_decision = (
+            created.get("normality_decision")
+            if isinstance(created.get("normality_decision"), dict)
+            else {}
+        )
+        normality_gate = (
+            created.get("normality_gate")
+            if isinstance(created.get("normality_gate"), dict)
+            else {}
+        )
+        status_normality_decision = (
+            status.get("normality_decision")
+            if isinstance(status.get("normality_decision"), dict)
+            else {}
+        )
         roundtrip_acceptance = _protocol_roundtrip_preview_acceptance(
             created=created,
             status=status,
@@ -1405,6 +1425,34 @@ async def _run_preview_calls(
             validation_errors.append(
                 "capabilities_view_replay_progress_fail_closed_missing"
             )
+        normality_decision_contract = capabilities.get(
+            "normality_decision_contract"
+        )
+        if not isinstance(normality_decision_contract, dict):
+            validation_errors.append(
+                "capabilities_normality_decision_contract_missing"
+            )
+            normality_decision_contract = {}
+        if normality_decision_contract.get("schema_version") != (
+            EXPECTED_NORMALITY_DECISION_SCHEMA
+        ):
+            validation_errors.append(
+                "capabilities_normality_decision_schema_mismatch"
+            )
+        if normality_decision_contract.get("authoritative_source") != (
+            "normality_gate"
+        ):
+            validation_errors.append(
+                "capabilities_normality_decision_source_mismatch"
+            )
+        if normality_decision_contract.get("project_revision_bound") is not True:
+            validation_errors.append(
+                "capabilities_normality_decision_binding_missing"
+            )
+        if normality_decision_contract.get("watchdog_prefers_decision") is not True:
+            validation_errors.append(
+                "capabilities_normality_decision_watchdog_preference_missing"
+            )
         watchdog_contract = capabilities.get("live_watchdog_contract")
         if not isinstance(watchdog_contract, dict):
             validation_errors.append("capabilities_live_watchdog_contract_missing")
@@ -1539,6 +1587,75 @@ async def _run_preview_calls(
             validation_errors.append("preview_unexpectedly_materialized_structure")
         if created.get("gui_open") is not None:
             validation_errors.append("preview_unexpectedly_opened_gui")
+        if created.get("user_request") != request:
+            validation_errors.append("preview_cjk_request_echo_mismatch")
+        if not any("\u4e00" <= character <= "\u9fff" for character in request):
+            validation_errors.append("preview_cjk_request_fixture_missing_cjk")
+        if nl_plan.get("kind") != "spec":
+            validation_errors.append("preview_cjk_nl_plan_kind_mismatch")
+        if nl_plan.get("template_id") != "silicon_diamond":
+            validation_errors.append("preview_cjk_template_mismatch")
+        if created.get("diagnostic_export_requested") is not True:
+            validation_errors.append("preview_cjk_diagnostic_export_not_requested")
+        if created.get("normality_check_requested") is not True:
+            validation_errors.append("preview_cjk_normality_check_not_requested")
+        if normality_decision.get("schema_version") != (
+            EXPECTED_NORMALITY_DECISION_SCHEMA
+        ):
+            validation_errors.append("preview_normality_decision_schema_mismatch")
+        if normality_decision.get("authoritative_source") != "normality_gate":
+            validation_errors.append("preview_normality_decision_source_mismatch")
+        if normality_decision.get("project_id") != project_id:
+            validation_errors.append("preview_normality_decision_project_mismatch")
+        if normality_decision.get("revision") != created.get("revision"):
+            validation_errors.append("preview_normality_decision_revision_mismatch")
+        if normality_decision.get("binding_verified") is not True:
+            validation_errors.append("preview_normality_decision_binding_unverified")
+        decision_consistency = normality_decision.get("consistency")
+        if not isinstance(decision_consistency, dict):
+            validation_errors.append("preview_normality_decision_consistency_missing")
+            decision_consistency = {}
+        if decision_consistency.get("ok") is not True:
+            validation_errors.append("preview_normality_decision_inconsistent")
+        for decision_key in (
+            "status",
+            "primary_reason",
+            "can_claim_model_normal",
+            "can_claim_live_gui_normal",
+            "ready_for_next_edit",
+            "ready_for_calculation",
+            "next_action",
+        ):
+            if normality_decision.get(decision_key) != normality_gate.get(
+                decision_key
+            ):
+                validation_errors.append(
+                    f"preview_normality_decision_gate_mismatch:{decision_key}"
+                )
+        if created.get("normality_decision_primary_reason") != (
+            normality_decision.get("primary_reason")
+        ):
+            validation_errors.append(
+                "preview_normality_decision_top_level_reason_mismatch"
+            )
+        if status_normality_decision.get("schema_version") != (
+            EXPECTED_NORMALITY_DECISION_SCHEMA
+        ):
+            validation_errors.append("status_normality_decision_schema_mismatch")
+        if status_normality_decision.get("project_id") != project_id:
+            validation_errors.append("status_normality_decision_project_mismatch")
+        if status_normality_decision.get("revision") != created.get("revision"):
+            validation_errors.append("status_normality_decision_revision_mismatch")
+        if status_normality_decision.get("status") != normality_decision.get(
+            "status"
+        ):
+            validation_errors.append("status_normality_decision_status_mismatch")
+        if created.get("runner_invoked") not in {None, False}:
+            validation_errors.append("preview_cjk_unexpected_runner_invocation")
+        if created.get("structure_materialization_started") not in {None, False}:
+            validation_errors.append("preview_cjk_unexpected_materialization")
+        if created.get("gui_input_started") not in {None, False}:
+            validation_errors.append("preview_cjk_unexpected_gui_input")
         if status.get("ok") is not True or status.get("project_id") != project_id:
             validation_errors.append("status_call_did_not_resolve_created_project")
         if status.get("response_mode") != "compact":
@@ -1557,6 +1674,22 @@ async def _run_preview_calls(
             validation_errors.append("watchdog_status_revision_binding_failed")
         if watchdog.get("read_only") is not True:
             validation_errors.append("watchdog_status_not_read_only")
+        watchdog_normality = watchdog.get("normality")
+        if not isinstance(watchdog_normality, dict):
+            validation_errors.append("watchdog_normality_receipt_missing")
+            watchdog_normality = {}
+        if watchdog_normality.get("schema_version") != (
+            EXPECTED_NORMALITY_DECISION_SCHEMA
+        ):
+            validation_errors.append("watchdog_normality_decision_schema_mismatch")
+        if watchdog_normality.get("uses_authoritative_decision") is not True:
+            validation_errors.append("watchdog_normality_decision_not_preferred")
+        if watchdog_normality.get("binding_verified") is not True:
+            validation_errors.append("watchdog_normality_decision_binding_unverified")
+        if watchdog_normality.get("detail_ref") != (
+            "material_studio_live_project_status.normality_decision"
+        ):
+            validation_errors.append("watchdog_normality_decision_ref_mismatch")
         watchdog_safety = watchdog.get("safety")
         if not isinstance(watchdog_safety, dict):
             validation_errors.append("watchdog_status_safety_missing")
@@ -1799,7 +1932,40 @@ async def _run_preview_calls(
                 "project_id": project_id,
                 "revision": created.get("revision"),
                 "execution_mode": created.get("execution_mode"),
-                "template_id": (created.get("nl_plan") or {}).get("template_id"),
+                "user_request": request,
+                "user_request_echo": created.get("user_request"),
+                "cjk_request_echo_preserved": created.get("user_request") == request,
+                "nl_plan_kind": nl_plan.get("kind"),
+                "template_id": nl_plan.get("template_id"),
+                "diagnostic_export_requested": created.get(
+                    "diagnostic_export_requested"
+                ),
+                "normality_check_requested": created.get(
+                    "normality_check_requested"
+                ),
+                "normality_decision": normality_decision,
+                "normality_decision_schema": normality_decision.get(
+                    "schema_version"
+                ),
+                "normality_decision_authoritative_source": normality_decision.get(
+                    "authoritative_source"
+                ),
+                "normality_decision_binding_verified": normality_decision.get(
+                    "binding_verified"
+                ),
+                "normality_decision_status": normality_decision.get("status"),
+                "normality_decision_primary_reason": normality_decision.get(
+                    "primary_reason"
+                ),
+                "normality_decision_consistency_ok": decision_consistency.get(
+                    "ok"
+                ),
+                "normality_decision_explanation_primary_reason_differs": normality_decision.get(
+                    "explanation_primary_reason_differs"
+                ),
+                "normality_decision_explanation_next_action_differs": normality_decision.get(
+                    "explanation_next_action_differs"
+                ),
                 "artifact_status": created.get("structure_artifact_validation_status"),
                 "planned_structure": str(planned_structure),
                 "planned_structure_exists": planned_structure.exists(),
@@ -1935,6 +2101,15 @@ async def _run_preview_calls(
                 "watchdog_contract_poll_interval_seconds": watchdog_contract.get(
                     "default_poll_interval_seconds"
                 ),
+                "normality_decision_contract_schema": normality_decision_contract.get(
+                    "schema_version"
+                ),
+                "normality_decision_contract_authoritative_source": normality_decision_contract.get(
+                    "authoritative_source"
+                ),
+                "normality_decision_contract_project_revision_bound": normality_decision_contract.get(
+                    "project_revision_bound"
+                ),
                 "watchdog_status": watchdog.get("status"),
                 "watchdog_revision_matches_expected": watchdog.get(
                     "revision_matches_expected"
@@ -1950,6 +2125,12 @@ async def _run_preview_calls(
                 ),
                 "watchdog_automatic_non_poll_action_allowed": (
                     watchdog_safety.get("automatic_non_poll_action_allowed")
+                ),
+                "watchdog_normality_uses_authoritative_decision": watchdog_normality.get(
+                    "uses_authoritative_decision"
+                ),
+                "watchdog_normality_detail_ref": watchdog_normality.get(
+                    "detail_ref"
                 ),
                 "watchdog_response_compaction": watchdog_compaction,
                 "history_count": len(history.get("history") or []),

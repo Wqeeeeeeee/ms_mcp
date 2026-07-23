@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 from . import server
 from .roundtrip import ROUNDTRIP_AUDIT_PROFILE, ROUNDTRIP_AUDIT_SCHEMA_VERSION
+from .semiconductor_contracts import DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID
 from .specs.common import ExecutionMode
 
 
@@ -168,6 +169,17 @@ SCENARIO_REQUESTS = {
         "hotload": (
             "Build diamond semiconductor crystal and hot-load it in Materials Studio, "
             "export current view parameters and check whether the model is normal."
+        ),
+    },
+    "diamond_nv_center": {
+        "preview": (
+            "Build a diamond NV- center in a 2x2x2 supercell and export defect, "
+            "charge-state, finite-size, and view diagnostics."
+        ),
+        "hotload": (
+            "Build a diamond NV- center in a 2x2x2 supercell and hot-load it in "
+            "Materials Studio, then export defect, charge-state, finite-size, "
+            "and view diagnostics and check whether the model is normal."
         ),
     },
     "silicon_pn_junction": {
@@ -339,6 +351,7 @@ SCENARIO_REQUESTS = {
 
 
 SCENARIO_VIRTUAL_TEMPLATE_IDS = {
+    "diamond_nv_center": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
     "aln_sapphire_interface": "aluminum_nitride_on_sapphire_interface_scaffold",
     "aln_sapphire_interface_cjk": "aluminum_nitride_on_sapphire_interface_scaffold",
     "gan_sapphire_interface": "gallium_nitride_on_sapphire_interface_scaffold",
@@ -373,6 +386,29 @@ SCENARIO_VIRTUAL_TEMPLATE_IDS = {
 
 
 SCENARIO_EXPECTATIONS = {
+    "diamond_nv_center": {
+        "row_counts": {
+            "semiconductor_defects": 1,
+            "semiconductor_defect_complexes": 1,
+            "semiconductor_dopant_sites": 1,
+            "semiconductor_charge_balance": 2,
+            "semiconductor_finite_size": 1,
+            "semiconductor_calculation_preflight": 1,
+            "requested_diagnostic_focus_status": 2,
+            "view_summary": 1,
+            "view_quality": 1,
+            "view_projections": 1,
+        },
+        "files": [
+            "semiconductor_defects_csv",
+            "semiconductor_defect_complexes_csv",
+            "semiconductor_dopant_sites_csv",
+            "semiconductor_charge_balance_csv",
+            "semiconductor_finite_size_csv",
+            "semiconductor_calculation_preflight_csv",
+            "requested_diagnostic_focus_status_json",
+        ],
+    },
     "sic_mos": {
         "row_counts": {
             "semiconductor_gate_stack": 1,

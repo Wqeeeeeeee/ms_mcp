@@ -650,6 +650,36 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_spin_polarization_review_required"] = charge_balance.get(
             "spin_polarization_review_required"
         )
+        checks["semiconductor_defect_charge_state_label"] = charge_balance.get(
+            "defect_charge_state_label"
+        )
+        checks["semiconductor_defect_charge_state_explicit"] = charge_balance.get(
+            "defect_charge_state_explicit"
+        )
+        checks["semiconductor_defect_charge_state_unresolved"] = charge_balance.get(
+            "defect_charge_state_unresolved"
+        )
+        checks["semiconductor_requested_net_charge_e"] = charge_balance.get(
+            "requested_net_charge_e"
+        )
+        checks["semiconductor_reference_spin_multiplicity"] = charge_balance.get(
+            "reference_spin_multiplicity"
+        )
+        checks["semiconductor_charge_adjusted_valence_electron_count"] = (
+            charge_balance.get("charge_adjusted_valence_electron_count")
+        )
+        checks["semiconductor_charge_adjusted_electron_count_parity"] = (
+            charge_balance.get("charge_adjusted_electron_count_parity")
+        )
+        checks["semiconductor_charge_spin_backend_binding_ready"] = (
+            charge_balance.get("charge_spin_backend_binding_ready")
+        )
+        checks["semiconductor_backend_charge_binding_status"] = (
+            charge_balance.get("backend_charge_binding_status")
+        )
+        checks["semiconductor_backend_spin_binding_status"] = (
+            charge_balance.get("backend_spin_binding_status")
+        )
         checks["semiconductor_recommended_spin_treatment"] = charge_balance.get("recommended_spin_treatment")
         checks["semiconductor_charge_balance_next_action"] = charge_balance.get("next_action")
         checks["semiconductor_nominal_dopant_delta_electrons"] = charge_balance.get("nominal_dopant_delta_electrons")
@@ -662,7 +692,20 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_carrier_type_hint_source"] = charge_balance.get("carrier_type_hint_source")
         checks["semiconductor_carrier_type_hint"] = charge_balance.get("carrier_type_hint")
         if charge_balance.get("odd_electron_warning"):
-            warnings.append("Semiconductor nominal valence-electron count is odd; inspect charge_balance_summary before spin-sensitive calculations.")
+            electron_basis = (
+                "charge-adjusted nominal"
+                if charge_balance.get("defect_charge_state_explicit") is True
+                else "nominal"
+            )
+            warnings.append(
+                f"Semiconductor {electron_basis} valence-electron count is odd; "
+                "inspect charge_balance_summary before spin-sensitive calculations."
+            )
+        if charge_balance.get("charge_spin_backend_binding_ready") is False:
+            warnings.append(
+                "Semiconductor defect charge/spin request is not bound to the "
+                "current CASTEP schema; calculation execution must remain blocked."
+            )
 
     calculation = semiconductor.get("calculation_preflight_summary") or {}
     if calculation:
@@ -786,6 +829,19 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_total_antisite_fraction"] = defect_summary.get("total_antisite_fraction")
         checks["semiconductor_defect_complex_count"] = defect_summary.get("complex_count", 0)
         checks["semiconductor_divacancy_count"] = defect_summary.get("divacancy_count", 0)
+        checks["semiconductor_nitrogen_vacancy_count"] = defect_summary.get(
+            "nitrogen_vacancy_count",
+            0,
+        )
+        checks["semiconductor_defect_charge_state_unresolved_count"] = (
+            defect_summary.get("defect_charge_state_unresolved_count", 0)
+        )
+        checks["semiconductor_defect_charge_spin_backend_unbound_count"] = (
+            defect_summary.get(
+                "defect_charge_spin_backend_unbound_count",
+                0,
+            )
+        )
         checks["semiconductor_defect_complex_integrity_ok"] = defect_summary.get(
             "defect_complex_integrity_ok",
             True,

@@ -10,6 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from .semiconductor_contracts import (
+    DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
+    DIAMOND_NV_CENTER_SUPERCELL,
+    DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+    DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+)
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     select_periodic_maximin_sites,
@@ -2902,6 +2908,64 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
     sapphire_base_template_id = "alpha_alumina_sapphire_substrate"
     sapphire_base = base_profiles.get(sapphire_base_template_id, {})
     return [
+        {
+            "template_id": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+            "base_template_id": DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
+            "variant_kind": "defect_complex_scaffold",
+            "generated_by_tool": "material_studio_live_modeling_request",
+            "response_template_id": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+            "example_request": (
+                "Build a diamond NV- center in a 2x2x2 supercell and export "
+                "defect diagnostics."
+            ),
+            "terms": [
+                "diamond NV center",
+                "diamond NV0 center",
+                "diamond NV- center",
+                "nitrogen-vacancy center in diamond",
+                "\u91d1\u521a\u77f3 NV \u4e2d\u5fc3",
+                "\u91d1\u521a\u77f3\u6c2e\u7a7a\u4f4d\u4e2d\u5fc3",
+            ],
+            "notes": (
+                "Deterministic 2x2x2 diamond conventional-cell scaffold with "
+                "one substitutional N and one verified nearest-neighbor C vacancy. "
+                "NV0/NV- labels are request metadata only until the Materials Studio "
+                "20.1 CASTEP charge and spin settings are explicitly bound."
+            ),
+            "model_type": "crystal",
+            "model_name": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+            "structure_family": "diamond nitrogen vacancy defect complex",
+            "materials": ["diamond", "N", "vacancy"],
+            "simulation_module": "CASTEP",
+            "simulation_task": "Energy",
+            "execute_backend": "crystal_cif_materialize_for_gui_hotload",
+            "default_diagnostic_focuses": _unique_preserving_order(
+                [
+                    "semiconductor_structure_health",
+                    "defects",
+                    "dopant_site_preflight",
+                    "spin_charge_preflight",
+                    "electronic_structure_preflight",
+                    "view_quality",
+                ]
+            ),
+            "required_summary_keys": [
+                "defect_summary",
+                "dopant_site_summary",
+                "charge_balance_summary",
+                "finite_size_summary",
+                "calculation_preflight_summary",
+            ],
+            "required_csv_keys": [
+                "semiconductor_defects_csv",
+                "semiconductor_defect_complexes_csv",
+                "semiconductor_dopant_sites_csv",
+                "semiconductor_charge_balance_csv",
+                "semiconductor_finite_size_csv",
+                "semiconductor_calculation_preflight_csv",
+                "view_quality_csv",
+            ],
+        },
         *_sic_3c_polar_virtual_template_profiles(),
         *_sic_4h_polar_virtual_template_profiles(),
         *_sic_6h_c_face_virtual_template_profiles(),
@@ -10945,7 +11009,600 @@ def _is_semiconductor_heterostructure_request(text: str) -> bool:
     )
 
 
+def _looks_like_diamond_nv_center_request(text: str) -> bool:
+    """Return whether the request explicitly names a diamond NV center."""
+
+    return bool(
+        re.search(
+            r"\b(?:diamond\s+)?nv\s*"
+            r"(?:\^?\s*(?:[0-9]+\s*[-+\u2212]|[0+\-\u2212\u207a\u207b\u2070]))?\s*"
+            r"(?:center|centre|defect)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"(?:\u91d1\u521a\u77f3)?nv\s*"
+            r"(?:\^?\s*(?:[0-9]+\s*[-+\u2212]|[0+\-\u2212\u207a\u207b\u2070]))?\s*"
+            r"\u4e2d\u5fc3",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\bnitrogen[- ]vacanc(?:y|ies)\s+(?:center|centre|defect)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(
+            term in text
+            for term in (
+                "\u91d1\u521a\u77f3nv\u4e2d\u5fc3",
+                "\u91d1\u521a\u77f3 nv \u4e2d\u5fc3",
+                "\u91d1\u521a\u77f3\u6c2e\u7a7a\u4f4d\u4e2d\u5fc3",
+                "\u6c2e\u7a7a\u4f4d\u4e2d\u5fc3",
+            )
+        )
+    )
+
+
+def _diamond_nv_charge_state_request(text: str) -> dict[str, Any]:
+    """Parse only the supported structural NV charge-state labels."""
+
+    normalized = (
+        text.replace("\u2212", "-")
+        .replace("\u207b", "-")
+        .replace("\u207a", "+")
+        .replace("\u2070", "0")
+    )
+    numeric_charge_match = re.search(
+        r"\b(?:net\s+)?charge(?:\s+state)?\s*(?:=|is|of|to|:)?\s*([+-]?\d+)\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if numeric_charge_match is None:
+        numeric_charge_match = re.search(
+            r"(?:\u51c0)?\u7535\u8377(?:\u6001)?\s*(?:\u8bbe\u4e3a|\u4e3a|=|:)?\s*([+-]?\d+)",
+            normalized,
+        )
+    numeric_charge = (
+        int(numeric_charge_match.group(1))
+        if numeric_charge_match is not None
+        else None
+    )
+    negative = bool(
+        re.search(
+            r"(?<![a-z0-9_])nv\s*(?:\^?\s*)?-(?![a-z0-9_])",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:negative|negatively[- ]charged|minus)\s+(?:diamond\s+)?nv\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or numeric_charge == -1
+        or any(
+            term in normalized
+            for term in (
+                "nv\u8d1f\u7535\u8377",
+                "\u8d1f\u7535nv",
+                "\u8d1f\u7535\u8377nv",
+                "\u8d1f\u7535\u8377\u6c2e\u7a7a\u4f4d",
+            )
+        )
+    )
+    neutral = bool(
+        re.search(
+            r"(?<![a-z0-9_])nv\s*(?:\^?\s*)?0(?![a-z0-9_])",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:neutral|zero[- ]charge)\s+(?:diamond\s+)?nv\b",
+            normalized,
+        )
+        or numeric_charge == 0
+        or any(
+            term in normalized
+            for term in (
+                "\u4e2d\u6027nv",
+                "nv\u4e2d\u6027",
+                "\u4e2d\u6027\u6c2e\u7a7a\u4f4d",
+            )
+        )
+    )
+    positive_or_other = bool(
+        re.search(
+            r"(?<![a-z0-9_])nv\s*(?:\^?\s*)?(?:\+|[2-9]\s*-)(?![a-z0-9_])",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:positive|positively[- ]charged)\s+(?:diamond\s+)?nv\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or numeric_charge not in {None, -1, 0}
+    )
+    generic_charged = bool(
+        re.search(
+            r"\bcharged\s+(?:diamond\s+)?(?:nv|nitrogen[- ]vacanc(?:y|ies))\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+    if positive_or_other:
+        raise ValueError(
+            "Diamond NV-center v1 supports an unresolved structural center, "
+            "explicit NV0, or explicit NV- only."
+        )
+    if negative and neutral:
+        raise ValueError("The request contains conflicting NV0 and NV- charge states.")
+    if generic_charged and not (negative or neutral):
+        raise ValueError(
+            "A charged NV-center request must explicitly state NV0 or NV-."
+        )
+    if negative:
+        return {
+            "charge_state_label": "NV-",
+            "charge_state_explicit": True,
+            "requested_net_charge_e": -1,
+            "reference_spin_multiplicity": 3,
+            "reference_spin_state": "triplet",
+        }
+    if neutral:
+        return {
+            "charge_state_label": "NV0",
+            "charge_state_explicit": True,
+            "requested_net_charge_e": 0,
+            "reference_spin_multiplicity": 2,
+            "reference_spin_state": "doublet",
+        }
+    return {
+        "charge_state_label": "unspecified",
+        "charge_state_explicit": False,
+        "requested_net_charge_e": None,
+        "reference_spin_multiplicity": None,
+        "reference_spin_state": None,
+    }
+
+
+def _infer_diamond_nv_charge_state_patch(
+    text: str,
+    current_spec: ModelSpec,
+) -> NaturalLanguagePlan | None:
+    """Update only the declared NV charge/spin contract on the current revision."""
+
+    metadata = dict(current_spec.metadata or {})
+    complex_inputs = [
+        dict(item)
+        for item in metadata.get("defect_complexes", []) or []
+        if isinstance(item, dict)
+        and str(item.get("type") or "").lower() == "nitrogen_vacancy"
+    ]
+    if not complex_inputs:
+        return None
+    update_intent = bool(
+        _looks_like_diamond_nv_center_request(text)
+        or re.search(
+            r"\bnv\s*(?:\^?\s*)?(?:0|[-+\u2212\u207a\u207b]|[2-9]\s*-)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            r"\b(?:net\s+)?charge(?:\s+state)?\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        or any(
+            term in text
+            for term in (
+                "\u7535\u8377\u6001",
+                "\u51c0\u7535\u8377",
+                "\u4e2d\u6027nv",
+                "nv\u8d1f\u7535\u8377",
+            )
+        )
+    )
+    if not update_intent:
+        return None
+    try:
+        charge_state = _diamond_nv_charge_state_request(text)
+        if charge_state.get("charge_state_explicit") is not True:
+            return None
+        if len(complex_inputs) != 1:
+            raise ValueError(
+                "Diamond NV-center charge-state updates require exactly one "
+                "verified nitrogen-vacancy complex."
+            )
+    except ValueError as exc:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id="diamond_nv_charge_state",
+            notes=[
+                "A current diamond NV charge-state update matched but could "
+                "not satisfy the reviewed metadata contract.",
+                str(exc),
+                "Select exactly NV0 or NV-; this changes metadata only and "
+                "does not claim a computed electronic state.",
+            ],
+        )
+
+    complex_record = {
+        **complex_inputs[0],
+        **charge_state,
+        "backend": "Materials Studio 20.1 CASTEP",
+        "backend_charge_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+        "backend_spin_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+        "calculation_execution_ready": False,
+        "structure_hotload_allowed": True,
+        "state_result_computed": False,
+    }
+    charge_spin_request = {
+        key: complex_record.get(key)
+        for key in (
+            "complex_id",
+            "charge_state_label",
+            "charge_state_explicit",
+            "requested_net_charge_e",
+            "reference_spin_multiplicity",
+            "reference_spin_state",
+            "backend",
+            "backend_charge_binding_status",
+            "backend_spin_binding_status",
+            "calculation_execution_ready",
+            "structure_hotload_allowed",
+            "state_result_computed",
+        )
+    }
+    charge_label = str(charge_state["charge_state_label"])
+    return _patch_plan(
+        [
+            {
+                "type": "set_metadata",
+                "metadata_updates": {
+                    "defect_complexes": [complex_record],
+                    "last_defect_complex": complex_record,
+                    "defect_charge_spin_request": charge_spin_request,
+                    "last_defect_charge_state_update": {
+                        "complex_id": complex_record.get("complex_id"),
+                        "charge_state_label": charge_label,
+                        "source": "natural_language_diamond_nv_charge_state",
+                        "state_result_computed": False,
+                    },
+                },
+            }
+        ],
+        "diamond_nv_charge_state",
+        (
+            f"Record {charge_label} as the requested NV charge-state metadata; "
+            "keep CASTEP charge/spin execution blocked until backend binding."
+        ),
+    )
+
+
+def _infer_diamond_nv_center_template(
+    text: str,
+    *,
+    user_request: str,
+    project_id: str | None,
+) -> NaturalLanguagePlan | None:
+    """Create a deterministic diamond nitrogen-vacancy structural scaffold."""
+
+    if not _looks_like_diamond_nv_center_request(text):
+        return None
+    try:
+        charge_state = _diamond_nv_charge_state_request(text)
+        requested_supercell = _match_make_supercell(text)
+        if (
+            requested_supercell is not None
+            and requested_supercell != DIAMOND_NV_CENTER_SUPERCELL
+        ):
+            requested_label = "x".join(str(value) for value in requested_supercell)
+            raise ValueError(
+                "Diamond NV-center v1 supports only the reviewed 2x2x2 "
+                f"conventional-cell scaffold, not {requested_label}."
+            )
+        spec = _diamond_nv_center_spec(
+            user_request=user_request,
+            project_id=project_id,
+            charge_state=charge_state,
+        )
+    except ValueError as exc:
+        return NaturalLanguagePlan(
+            kind="unsupported",
+            payload=None,
+            confidence=0.0,
+            template_id=DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+            notes=[
+                "A diamond nitrogen-vacancy request matched but could not be "
+                "constructed under the reviewed structural contract.",
+                str(exc),
+                "Use NV center, NV0, or NV- with the deterministic 2x2x2 "
+                "diamond scaffold.",
+            ],
+        )
+    charge_label = str(charge_state["charge_state_label"])
+    return NaturalLanguagePlan(
+        kind="spec",
+        payload=spec.model_dump(mode="json"),
+        confidence=0.94,
+        template_id=DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+        notes=[
+            "Generated a deterministic 2x2x2 diamond supercell with one "
+            "substitutional N and one verified nearest-neighbor C vacancy.",
+            (
+                "Charge state remains unresolved and no electronic charge or "
+                "spin state was assumed."
+                if charge_label == "unspecified"
+                else f"Recorded {charge_label} as requested metadata; the "
+                "current CASTEP schema does not bind net charge or spin."
+            ),
+            "CIF materialization and same-window GUI hot-loading remain "
+            "available; CASTEP execution is blocked by charge/spin preflight.",
+        ],
+    )
+
+
+def _diamond_nv_center_spec(
+    *,
+    user_request: str,
+    project_id: str | None,
+    charge_state: dict[str, Any],
+) -> ModelSpec:
+    payload = _load_example("diamond_cubic_spec.json")
+    chosen_project_id = project_id or _project_id(
+        DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+        user_request,
+    )
+    base_metadata = {
+        **dict(payload.get("metadata") or {}),
+        "domain": "semiconductor",
+        "material": "diamond",
+        "structure_family": "diamond nitrogen vacancy defect complex",
+        "nl_template": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+        "nl_virtual_template": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
+        "nl_base_template": DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
+        "nl_source": "diamond_nv_center_structural_scaffold_template",
+        "nl_user_request": user_request,
+    }
+    base = ModelSpec.model_validate(
+        {
+            **payload,
+            "project_id": chosen_project_id,
+            "revision": 0,
+            "metadata": base_metadata,
+        }
+    )
+    supercell, _ = apply_semantic_patch(
+        base,
+        SemanticPatch(
+            project_id=chosen_project_id,
+            base_revision=base.revision,
+            operations=[
+                {
+                    "type": "make_supercell",
+                    "matrix": list(DIAMOND_NV_CENTER_SUPERCELL),
+                }
+            ],
+        ),
+    )
+    if not isinstance(supercell.model, CrystalSpec):
+        raise ValueError("The diamond NV-center base template is not a crystal.")
+
+    carbon_sites = sorted(
+        (
+            atom
+            for atom in supercell.model.basis_atoms
+            if atom.element == "C"
+        ),
+        key=lambda atom: _crystal_atom_sort_key(atom.id),
+    )
+    if len(carbon_sites) < 2:
+        raise ValueError("The diamond supercell has fewer than two carbon sites.")
+    nitrogen_site = carbon_sites[0]
+    nitrogen_fractional = (
+        nitrogen_site.fractional.x,
+        nitrogen_site.fractional.y,
+        nitrogen_site.fractional.z,
+    )
+    vacancy_candidates = []
+    for atom in carbon_sites[1:]:
+        fractional = (
+            atom.fractional.x,
+            atom.fractional.y,
+            atom.fractional.z,
+        )
+        vacancy_candidates.append(
+            (
+                _minimum_image_fractional_distance(
+                    supercell.model,
+                    nitrogen_fractional,
+                    fractional,
+                ),
+                _crystal_atom_sort_key(atom.id),
+                atom,
+            )
+        )
+    pair_distance, _, vacancy_site = min(
+        vacancy_candidates,
+        key=lambda item: (round(float(item[0]), 9), item[1]),
+    )
+    neighbor_threshold = _crystal_neighbor_threshold("N", "C")
+    if pair_distance > neighbor_threshold + 1e-6:
+        raise ValueError(
+            "The deterministic N and vacancy sites are not nearest neighbors "
+            "under the current covalent-radius rule."
+        )
+
+    complex_id = "nitrogen_vacancy_001"
+    selection_rule = (
+        "lowest_carbon_atom_id_then_minimum_periodic_distance_then_atom_id"
+    )
+    nitrogen_position = [
+        _round_fractional(nitrogen_site.fractional.x),
+        _round_fractional(nitrogen_site.fractional.y),
+        _round_fractional(nitrogen_site.fractional.z),
+    ]
+    vacancy_position = [
+        _round_fractional(vacancy_site.fractional.x),
+        _round_fractional(vacancy_site.fractional.y),
+        _round_fractional(vacancy_site.fractional.z),
+    ]
+    rounded_distance = round(float(pair_distance), 6)
+    rounded_threshold = round(float(neighbor_threshold), 6)
+    charge_spin_request = {
+        **charge_state,
+        "complex_id": complex_id,
+        "backend": "Materials Studio 20.1 CASTEP",
+        "backend_charge_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+        "backend_spin_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+        "calculation_execution_ready": False,
+        "structure_hotload_allowed": True,
+        "state_result_computed": False,
+    }
+    dopant_record = {
+        **_dopant_site_record(
+            atom_id=nitrogen_site.id,
+            site_element="C",
+            dopant_element="N",
+            fractional=nitrogen_position,
+            auto_selected=True,
+            source="natural_language_diamond_nv_center",
+        ),
+        "complex_id": complex_id,
+        "complex_type": "nitrogen_vacancy",
+        "pair_site_id": vacancy_site.id,
+        "pair_distance_angstrom": rounded_distance,
+        "nearest_neighbor_verified": True,
+    }
+    vacancy_record = {
+        "type": "vacancy",
+        "site_id": vacancy_site.id,
+        "site_element": "C",
+        "fractional": vacancy_position,
+        "source": "natural_language_diamond_nv_center",
+        "complex_id": complex_id,
+        "complex_type": "nitrogen_vacancy",
+        "pair_site_id": nitrogen_site.id,
+        "pair_distance_angstrom": rounded_distance,
+        "nearest_neighbor_verified": True,
+        "auto_selected_site": True,
+    }
+    complex_record = {
+        "complex_id": complex_id,
+        "type": "nitrogen_vacancy",
+        "member_site_ids": [nitrogen_site.id, vacancy_site.id],
+        "member_site_elements": ["N", "C"],
+        "member_fractionals": [nitrogen_position, vacancy_position],
+        "substitution_site_id": nitrogen_site.id,
+        "substitution_host_element": "C",
+        "substitution_element": "N",
+        "vacancy_site_id": vacancy_site.id,
+        "vacancy_site_element": "C",
+        "pair_distance_angstrom": rounded_distance,
+        "nearest_neighbor_threshold_angstrom": rounded_threshold,
+        "nearest_neighbor_verified": True,
+        "periodic_minimum_image": True,
+        "selection": "deterministic_nitrogen_then_nearest_vacancy",
+        "selection_rule": selection_rule,
+        "source": "natural_language_diamond_nv_center",
+        **charge_spin_request,
+    }
+    metadata_updates = {
+        "semiconductor_dopant_sites": [dopant_record],
+        "last_semiconductor_dopant_site": dopant_record,
+        "defects": [vacancy_record],
+        "defect_count": 1,
+        "defect_types": ["vacancy"],
+        "defect_complexes": [complex_record],
+        "defect_complex_count": 1,
+        "divacancy_count": 0,
+        "nitrogen_vacancy_count": 1,
+        "last_defect_complex": complex_record,
+        "defect_charge_spin_request": charge_spin_request,
+        "nl_auto_selected_sites": [
+            {
+                "operation": "nitrogen_vacancy_substitution",
+                "atom_id": nitrogen_site.id,
+                "site_element": "C",
+                "new_element": "N",
+                "complex_id": complex_id,
+                "selection_rule": selection_rule,
+                "source": "natural_language_auto_site",
+            },
+            {
+                "operation": "nitrogen_vacancy_vacancy",
+                "atom_id": vacancy_site.id,
+                "site_element": "C",
+                "complex_id": complex_id,
+                "selection_rule": selection_rule,
+                "source": "natural_language_auto_site",
+            },
+        ],
+        "nl_composite_operations": [
+            "make_supercell 2x2x2",
+            f"substitute_atom {nitrogen_site.id}->N",
+            f"delete_atom {vacancy_site.id}",
+            f"bind_defect_complex {complex_id}",
+        ],
+    }
+    defect_spec, _ = apply_semantic_patch(
+        supercell,
+        SemanticPatch(
+            project_id=chosen_project_id,
+            base_revision=supercell.revision,
+            operations=[
+                {
+                    "type": "substitute_atom",
+                    "atom_id": nitrogen_site.id,
+                    "new_element": "N",
+                },
+                {"type": "delete_atom", "atom_id": vacancy_site.id},
+                {
+                    "type": "set_metadata",
+                    "metadata_updates": metadata_updates,
+                },
+            ],
+        ),
+    )
+    assert isinstance(defect_spec.model, CrystalSpec)
+    model = defect_spec.model.model_copy(
+        update={"name": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID}
+    )
+    acceptance = defect_spec.acceptance.model_copy(
+        update={
+            "max_warnings": max(defect_spec.acceptance.max_warnings, 12),
+            "notes": [
+                *defect_spec.acceptance.notes,
+                (
+                    "NV-center structure is an unrelaxed defect scaffold; "
+                    "CASTEP charge and spin execution remains blocked until "
+                    "backend settings are explicitly bound."
+                ),
+            ],
+        }
+    )
+    normalized = defect_spec.model_copy(
+        update={
+            "revision": 0,
+            "model": model,
+            "acceptance": acceptance,
+        }
+    )
+    return ModelSpec.model_validate(normalized.model_dump(mode="json"))
+
+
 def _infer_template(text: str, *, user_request: str, project_id: str | None) -> NaturalLanguagePlan | None:
+    diamond_nv_plan = _infer_diamond_nv_center_template(
+        text,
+        user_request=user_request,
+        project_id=project_id,
+    )
+    if diamond_nv_plan is not None:
+        return diamond_nv_plan
+
     tmd_heterobilayer_plan = _infer_commensurate_tmd_heterobilayer_template(
         text,
         user_request=user_request,
@@ -15377,6 +16034,13 @@ def _infer_patch(text: str, current_spec: ModelSpec) -> NaturalLanguagePlan | No
         return None
 
     if isinstance(current_spec.model, CrystalSpec):
+        nv_charge_state_patch = _infer_diamond_nv_charge_state_patch(
+            text,
+            current_spec,
+        )
+        if nv_charge_state_patch is not None:
+            return nv_charge_state_patch
+
         dopant_metadata_reconcile = _infer_dopant_metadata_reconcile_patch(text, current_spec)
         if dopant_metadata_reconcile is not None:
             return dopant_metadata_reconcile
@@ -16632,7 +17296,7 @@ def _match_castep_kpoint_separation(text: str) -> float | None:
 def _match_make_supercell(text: str) -> tuple[int, int, int] | None:
     patterns = [
         r"\b(?:make|create|build|generate|set)\s+(?:a\s+)?(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\s+supercell\b",
-        r"\b(?:as|into|to|with)\s+(?:a\s+)?(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\s+supercell\b",
+        r"\b(?:as|in|into|to|with)\s+(?:a\s+)?(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\s+supercell\b",
         r"\bsupercell\s+(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\b",
         r"(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\s*(?:n\s*\u578b|p\s*\u578b)?\s*(?:\u7845)?\s*\u8d85\u80de",
         r"(?P<x>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<y>\d+)\s*[xX\u00d7\uff0a*]\s*(?P<z>\d+)\s*(?:[A-Za-z0-9/()._-]{1,32}\s*)+supercell",

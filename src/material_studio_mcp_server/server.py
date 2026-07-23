@@ -91,6 +91,9 @@ from .roundtrip import (
     not_applicable_roundtrip_receipt,
     plan_roundtrip_audit,
 )
+from .semiconductor_contracts import (
+    DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+)
 from .runtime_provenance import (
     RUNTIME_DEPLOYMENT_SCHEMA,
     RUNTIME_PROVENANCE_SCHEMA,
@@ -26084,6 +26087,8 @@ def _semiconductor_calculation_readiness_summary(report: dict[str, Any]) -> dict
             "semiconductor:prior_relaxed_structure_required",
             "semiconductor:kpoint_reciprocal_lattice_warnings",
             "semiconductor:band_path_requires_materials_studio_review",
+            "semiconductor:defect_charge_state_unresolved",
+            "semiconductor:defect_charge_spin_backend_unbound",
         }
         for reason in semiconductor_blocking_reasons
     )
@@ -26373,6 +26378,64 @@ def _semiconductor_calculation_action_hint(
                     "surface_model_status": surface_model.get("status"),
                     "surface_model_blocking_reasons": surface_model.get("blocking_reasons") or [],
                     "surface_model_next_action": surface_model.get("next_action"),
+                }
+            ),
+        }
+
+    defect_charge_reasons = {
+        "semiconductor:defect_charge_state_unresolved",
+        "semiconductor:defect_charge_spin_backend_unbound",
+    } & set(semiconductor_blocking_reasons)
+    if defect_charge_reasons:
+        unresolved = (
+            "semiconductor:defect_charge_state_unresolved"
+            in defect_charge_reasons
+        )
+        action = (
+            "select_explicit_nv0_or_nv_minus_state_before_castep_setup"
+            if unresolved
+            else "bind_reviewed_castep_defect_charge_and_spin_settings_before_execution"
+        )
+        return {
+            "action_id": "review_defect_charge_spin_backend_contract",
+            "next_action": action,
+            "recommended_tool": "material_studio_live_project_status",
+            "recommended_action": action,
+            "payload_hint": _drop_none_values(
+                {
+                    "project_id": project_id,
+                    "include_gui_status": False,
+                }
+            ),
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+            "action_reason": (
+                "semiconductor:defect_charge_state_unresolved"
+                if unresolved
+                else "semiconductor:defect_charge_spin_backend_unbound"
+            ),
+            "action_context": _drop_none_values(
+                {
+                    "defect_charge_state_label": charge_balance.get(
+                        "defect_charge_state_label"
+                    ),
+                    "defect_charge_state_explicit": charge_balance.get(
+                        "defect_charge_state_explicit"
+                    ),
+                    "requested_net_charge_e": charge_balance.get(
+                        "requested_net_charge_e"
+                    ),
+                    "reference_spin_multiplicity": charge_balance.get(
+                        "reference_spin_multiplicity"
+                    ),
+                    "backend_charge_binding_status": charge_balance.get(
+                        "backend_charge_binding_status"
+                    ),
+                    "backend_spin_binding_status": charge_balance.get(
+                        "backend_spin_binding_status"
+                    ),
+                    "structure_hotload_remains_allowed": True,
+                    "blocking_reasons": semiconductor_blocking_reasons,
                 }
             ),
         }
@@ -26674,6 +26737,8 @@ _SEMICONDUCTOR_NORMALITY_REASON_PRIORITY = (
     "semiconductor:calculation_preflight_warnings",
     "semiconductor:calculation_settings_review_required",
     "semiconductor:prior_relaxed_structure_required",
+    "semiconductor:defect_charge_state_unresolved",
+    "semiconductor:defect_charge_spin_backend_unbound",
     "semiconductor:finite_size_or_dilution_warning",
     "semiconductor:odd_valence_electron_count",
 )
@@ -26698,6 +26763,9 @@ def _semiconductor_reason_category(reason: str | None) -> str | None:
             "relaxed",
             "dipole",
             "electrostatic",
+            "charge_state",
+            "charge_spin",
+            "spin",
         )
     ):
         return "calculation_settings"
@@ -27987,6 +28055,8 @@ _CALCULATION_ONLY_NORMALITY_REVIEW_REASONS = {
     "semiconductor:band_path_requires_materials_studio_review",
     "semiconductor:calculation_preflight_warnings",
     "semiconductor:calculation_settings_review_required",
+    "semiconductor:defect_charge_state_unresolved",
+    "semiconductor:defect_charge_spin_backend_unbound",
     "semiconductor:finite_size_or_dilution_warning",
     "semiconductor:kpoint_reciprocal_lattice_warnings",
     "semiconductor:odd_valence_electron_count",
@@ -35148,6 +35218,18 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
             [
                 "total_valence_electron_count",
                 "electron_count_parity",
+                "nominal_composition_electron_count_parity",
+                "nominal_composition_odd_electron_warning",
+                "defect_charge_state_label",
+                "defect_charge_state_explicit",
+                "defect_charge_state_unresolved",
+                "requested_net_charge_e",
+                "reference_spin_multiplicity",
+                "charge_adjusted_valence_electron_count",
+                "charge_adjusted_electron_count_parity",
+                "backend_charge_binding_status",
+                "backend_spin_binding_status",
+                "charge_spin_backend_binding_ready",
                 "odd_electron_warning",
                 "spin_charge_review_required",
                 "spin_polarization_review_required",
@@ -35991,6 +36073,13 @@ def _semiconductor_defect_review(defect: dict[str, Any], finite_size: dict[str, 
         "antisite_count": defect.get("antisite_count"),
         "defect_complex_count": defect.get("complex_count"),
         "divacancy_count": defect.get("divacancy_count"),
+        "nitrogen_vacancy_count": defect.get("nitrogen_vacancy_count"),
+        "defect_charge_state_unresolved_count": defect.get(
+            "defect_charge_state_unresolved_count"
+        ),
+        "defect_charge_spin_backend_unbound_count": defect.get(
+            "defect_charge_spin_backend_unbound_count"
+        ),
         "defect_complex_integrity_ok": defect.get("defect_complex_integrity_ok"),
         "max_isolated_fraction": finite_size.get("max_isolated_fraction"),
         "max_isolated_kind": finite_size.get("max_isolated_kind"),
@@ -36417,6 +36506,12 @@ def _semiconductor_review_risk_flags(
         flags.append("defect_model")
     if defect.get("complex_count"):
         flags.append("defect_complex_model")
+    if defect.get("nitrogen_vacancy_count"):
+        flags.append("nitrogen_vacancy_center")
+    if defect.get("defect_charge_state_unresolved_count"):
+        flags.append("defect_charge_state_unresolved")
+    if defect.get("defect_charge_spin_backend_unbound_count"):
+        flags.append("defect_charge_spin_backend_unbound")
     if defect.get("defect_complex_integrity_ok") is False:
         flags.append("defect_complex_metadata_inconsistent")
     if finite_size.get("finite_size_warning"):
@@ -36504,6 +36599,10 @@ def _semiconductor_review_next_action(
         return "review_or_relax_semiconductor_oxide_interface_before_quantitative_use"
     if "oxide_interface_geometry_relaxation_unverified" in risk_flags:
         return "verify_geometry_relaxation_before_quantitative_interface_use"
+    if "defect_charge_state_unresolved" in risk_flags:
+        return "select_explicit_nv0_or_nv_minus_state_before_castep_setup"
+    if "defect_charge_spin_backend_unbound" in risk_flags:
+        return "bind_reviewed_castep_defect_charge_and_spin_settings_before_execution"
     if risk_flags:
         return "review_semiconductor_risk_flags_before_calculation_or_claiming_normality"
     if castep_convergence.get("calculation_result_review_required") is True:
@@ -37029,6 +37128,13 @@ def _semiconductor_intent_summary(response: dict[str, Any], report: dict[str, An
             "antisite_count": defects.get("antisite_count"),
             "defect_complex_count": defects.get("defect_complex_count"),
             "divacancy_count": defects.get("divacancy_count"),
+            "nitrogen_vacancy_count": defects.get("nitrogen_vacancy_count"),
+            "defect_charge_state_unresolved_count": defects.get(
+                "defect_charge_state_unresolved_count"
+            ),
+            "defect_charge_spin_backend_unbound_count": defects.get(
+                "defect_charge_spin_backend_unbound_count"
+            ),
             "defect_complex_integrity_ok": defects.get("defect_complex_integrity_ok"),
             "pn_junction_count": junction.get("pn_junction_count"),
             "junction_count": junction.get("junction_count"),
@@ -37106,6 +37212,8 @@ def _semiconductor_intent_domain_tags(
         tags.append("defect_complex")
     if defects.get("divacancy_count"):
         tags.append("divacancy")
+    if defects.get("nitrogen_vacancy_count"):
+        tags.append("nitrogen_vacancy_center")
     if junction.get("junction_count"):
         tags.append("junction")
     if junction.get("pn_junction_count"):
@@ -48491,6 +48599,77 @@ def _effective_castep_relaxation_spec(
     )
 
 
+def _castep_defect_charge_spin_preflight(
+    spec: ModelSpec,
+) -> dict[str, Any]:
+    """Return the fail-closed CASTEP gate for charged/spin defect models."""
+
+    metadata = dict(spec.metadata or {})
+    complexes = [
+        dict(item)
+        for item in metadata.get("defect_complexes", []) or []
+        if isinstance(item, dict)
+        and str(item.get("type") or "").lower() == "nitrogen_vacancy"
+    ]
+    if not complexes:
+        return {
+            "applicable": False,
+            "execution_ready": True,
+            "blocking_reasons": [],
+        }
+
+    request = (
+        dict(metadata.get("defect_charge_spin_request"))
+        if isinstance(metadata.get("defect_charge_spin_request"), dict)
+        else {}
+    )
+    charge_state_label = str(request.get("charge_state_label") or "")
+    charge_state_explicit = request.get("charge_state_explicit") is True
+    backend_charge_status = str(
+        request.get("backend_charge_binding_status") or ""
+    )
+    backend_spin_status = str(
+        request.get("backend_spin_binding_status") or ""
+    )
+    metadata_fail_closed = bool(
+        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+        and request.get("calculation_execution_ready") is False
+        and request.get("state_result_computed") is False
+    )
+    blockers = []
+    if not charge_state_explicit:
+        blockers.append("defect_charge_state_unresolved")
+    blockers.append(
+        "defect_charge_spin_settings_not_supported_by_current_castep_schema"
+    )
+    if not metadata_fail_closed:
+        blockers.append("defect_charge_spin_metadata_contract_invalid")
+    return {
+        "applicable": True,
+        "defect_complex_type": "nitrogen_vacancy",
+        "defect_complex_count": len(complexes),
+        "charge_state_label": charge_state_label or None,
+        "charge_state_explicit": charge_state_explicit,
+        "requested_net_charge_e": request.get("requested_net_charge_e"),
+        "reference_spin_multiplicity": request.get(
+            "reference_spin_multiplicity"
+        ),
+        "backend_charge_binding_status": backend_charge_status or None,
+        "backend_spin_binding_status": backend_spin_status or None,
+        "metadata_fail_closed": metadata_fail_closed,
+        "execution_ready": False,
+        "blocking_reasons": blockers,
+        "required_next_step": (
+            "Bind reviewed Materials Studio 20.1 CASTEP net-charge and "
+            "spin-polarization settings in the structured schema before "
+            "any CASTEP execution."
+        ),
+        "structure_materialization_allowed": True,
+        "same_window_gui_hotload_allowed": True,
+    }
+
+
 def _castep_relaxation_preflight(
     spec: ModelSpec,
     simulation: CastepEnergySpec,
@@ -48543,6 +48722,7 @@ def _castep_relaxation_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
         "task_is_geometry_optimization": (
@@ -48556,6 +48736,9 @@ def _castep_relaxation_preflight(
         "slab_cell_fixed": fixed_slab_cell,
         "self_consistent_dipole_correction_for_asymmetric_slab": dipole_ready,
         "minimum_8_angstrom_vacuum_for_dipole_correction": vacuum_ready,
+        "defect_charge_spin_backend_bound": (
+            defect_charge_spin.get("execution_ready") is True
+        ),
     }
     blockers = [
         reason
@@ -48580,11 +48763,16 @@ def _castep_relaxation_preflight(
         )
         if condition
     ]
+    blockers.extend(
+        str(reason)
+        for reason in defect_charge_spin.get("blocking_reasons", []) or []
+    )
     return {
         "schema_version": "material_studio_castep_relaxation_preflight_v1",
         "execution_ready": not blockers,
         "checks": checks,
         "blocking_reasons": blockers,
+        "defect_charge_spin_preflight": defect_charge_spin,
         "vacuum_angstrom": vacuum_value,
         "input_structure": str(input_structure),
         "input_structure_exists": input_structure.is_file(),
@@ -48891,6 +49079,7 @@ def _castep_electronic_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
     expected_document = RESULT_DOCUMENT_BY_TASK[simulation.task]
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
@@ -48911,6 +49100,9 @@ def _castep_electronic_preflight(
         "slab_surface_normal_kpoint_count_is_one": slab_kpoint_ready,
         "asymmetric_slab_self_consistent_dipole_correction": dipole_ready,
         "asymmetric_slab_minimum_8_angstrom_vacuum": vacuum_ready,
+        "defect_charge_spin_backend_bound": (
+            defect_charge_spin.get("execution_ready") is True
+        ),
     }
     blockers = [
         reason
@@ -48948,6 +49140,10 @@ def _castep_electronic_preflight(
         )
         if condition
     ]
+    blockers.extend(
+        str(reason)
+        for reason in defect_charge_spin.get("blocking_reasons", []) or []
+    )
     warnings = [
         "The MS 20.1 Energy Results object does not expose an independent SCF convergence boolean.",
         "Chart Documents do not expose documented Export/SaveAs support; after execution the MCP will inspect a hash-bound native .bands file instead.",
@@ -48961,6 +49157,7 @@ def _castep_electronic_preflight(
         "execution_ready": not blockers,
         "checks": checks,
         "blocking_reasons": blockers,
+        "defect_charge_spin_preflight": defect_charge_spin,
         "warnings": warnings,
         "property_task": property_task,
         "prior_relaxation_verified": prior_relaxation_verified,

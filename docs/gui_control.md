@@ -859,6 +859,14 @@ receipt verifies the deterministic structural edit only; it does not establish
 a relaxed geometry, charge state, or formation energy. Preview remains the
 default, while explicit execute/hot-load continues through the existing
 single-window GUI path.
+Diamond NV-center scaffolds follow the same single-window hot-load path. The
+deterministic 2x2x2 structure may be materialized and opened in the verified
+existing Materials Studio window, while the NV, NV0, or NV- state remains
+explicit metadata. The audit exports the bound N-vacancy pair and charge-state
+contract in `semiconductor_defect_complexes.csv` and
+`semiconductor_charge_balance.csv`. CASTEP execution remains fail-closed until
+net-charge and spin-polarization settings are available in the structured
+CASTEP schema; GUI hot-loading does not relax that calculation gate.
 Explicitly distributed alloy or dopant-fraction requests use a deterministic
 periodic maximin site-selection receipt. The receipt binds the full candidate
 site geometry, 3x3 minimum-image distance mode, selected IDs, each farthest-point

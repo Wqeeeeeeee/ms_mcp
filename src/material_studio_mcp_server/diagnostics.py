@@ -24,6 +24,7 @@ from .diagnostic_contract import (
     DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
     VIEW_BUNDLE_SCHEMA_VERSION,
 )
+from .semiconductor_contracts import DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     analyze_periodic_site_pair_distribution,
@@ -922,6 +923,18 @@ def write_view_audit_bundle(
                 "total_valence_electrons",
                 "valence_fraction",
                 "dopant_delta_electrons",
+                "defect_charge_state_label",
+                "defect_charge_state_explicit",
+                "defect_charge_state_unresolved",
+                "requested_net_charge_e",
+                "reference_spin_multiplicity",
+                "nominal_composition_electron_count_parity",
+                "charge_adjusted_valence_electron_count",
+                "charge_adjusted_electron_count_parity",
+                "backend_charge_binding_status",
+                "backend_spin_binding_status",
+                "charge_spin_backend_binding_ready",
+                "spin_charge_review_required",
             ],
             charge_rows,
         )
@@ -2366,6 +2379,12 @@ def write_view_audit_bundle(
                     "member_site_elements",
                     "member_count",
                     "member_vacancy_record_count",
+                    "member_dopant_record_count",
+                    "substitution_site_id",
+                    "substitution_host_element",
+                    "substitution_element",
+                    "vacancy_site_id",
+                    "vacancy_site_element",
                     "pair_distance_angstrom_recorded",
                     "pair_distance_angstrom_recomputed",
                     "distance_delta_angstrom",
@@ -2377,6 +2396,17 @@ def write_view_audit_bundle(
                     "image_offset",
                     "selection",
                     "selection_rule",
+                    "charge_state_label",
+                    "charge_state_explicit",
+                    "requested_net_charge_e",
+                    "reference_spin_multiplicity",
+                    "reference_spin_state",
+                    "backend_charge_binding_status",
+                    "backend_spin_binding_status",
+                    "charge_spin_backend_binding_ready",
+                    "calculation_execution_ready",
+                    "structure_hotload_allowed",
+                    "state_result_computed",
                     "metadata_consistent",
                     "integrity_errors",
                     "source",
@@ -3849,6 +3879,26 @@ def _semiconductor_charge_balance_csv_rows(summary: dict[str, Any]) -> list[dict
                 "total_valence_electrons": element.get("total_valence_electrons"),
                 "valence_fraction": element.get("valence_fraction"),
                 "dopant_delta_electrons": element.get("dopant_delta_electrons"),
+                "defect_charge_state_label": summary.get("defect_charge_state_label"),
+                "defect_charge_state_explicit": summary.get("defect_charge_state_explicit"),
+                "defect_charge_state_unresolved": summary.get("defect_charge_state_unresolved"),
+                "requested_net_charge_e": summary.get("requested_net_charge_e"),
+                "reference_spin_multiplicity": summary.get("reference_spin_multiplicity"),
+                "nominal_composition_electron_count_parity": summary.get(
+                    "nominal_composition_electron_count_parity"
+                ),
+                "charge_adjusted_valence_electron_count": summary.get(
+                    "charge_adjusted_valence_electron_count"
+                ),
+                "charge_adjusted_electron_count_parity": summary.get(
+                    "charge_adjusted_electron_count_parity"
+                ),
+                "backend_charge_binding_status": summary.get("backend_charge_binding_status"),
+                "backend_spin_binding_status": summary.get("backend_spin_binding_status"),
+                "charge_spin_backend_binding_ready": summary.get(
+                    "charge_spin_backend_binding_ready"
+                ),
+                "spin_charge_review_required": summary.get("spin_charge_review_required"),
             }
         )
     return rows
@@ -6349,6 +6399,12 @@ def _semiconductor_defect_complex_csv_rows(summary: dict[str, Any]) -> list[dict
                 "member_site_elements": _join_vector(complex_row.get("member_site_elements")),
                 "member_count": complex_row.get("member_count"),
                 "member_vacancy_record_count": complex_row.get("member_vacancy_record_count"),
+                "member_dopant_record_count": complex_row.get("member_dopant_record_count"),
+                "substitution_site_id": complex_row.get("substitution_site_id"),
+                "substitution_host_element": complex_row.get("substitution_host_element"),
+                "substitution_element": complex_row.get("substitution_element"),
+                "vacancy_site_id": complex_row.get("vacancy_site_id"),
+                "vacancy_site_element": complex_row.get("vacancy_site_element"),
                 "pair_distance_angstrom_recorded": complex_row.get("pair_distance_angstrom_recorded"),
                 "pair_distance_angstrom_recomputed": complex_row.get("pair_distance_angstrom_recomputed"),
                 "distance_delta_angstrom": complex_row.get("distance_delta_angstrom"),
@@ -6360,6 +6416,17 @@ def _semiconductor_defect_complex_csv_rows(summary: dict[str, Any]) -> list[dict
                 "image_offset": _join_vector(complex_row.get("image_offset")),
                 "selection": complex_row.get("selection"),
                 "selection_rule": complex_row.get("selection_rule"),
+                "charge_state_label": complex_row.get("charge_state_label"),
+                "charge_state_explicit": complex_row.get("charge_state_explicit"),
+                "requested_net_charge_e": complex_row.get("requested_net_charge_e"),
+                "reference_spin_multiplicity": complex_row.get("reference_spin_multiplicity"),
+                "reference_spin_state": complex_row.get("reference_spin_state"),
+                "backend_charge_binding_status": complex_row.get("backend_charge_binding_status"),
+                "backend_spin_binding_status": complex_row.get("backend_spin_binding_status"),
+                "charge_spin_backend_binding_ready": complex_row.get("charge_spin_backend_binding_ready"),
+                "calculation_execution_ready": complex_row.get("calculation_execution_ready"),
+                "structure_hotload_allowed": complex_row.get("structure_hotload_allowed"),
+                "state_result_computed": complex_row.get("state_result_computed"),
                 "metadata_consistent": complex_row.get("metadata_consistent"),
                 "integrity_errors": _join_vector(complex_row.get("integrity_errors")),
                 "source": complex_row.get("source"),
@@ -14023,16 +14090,114 @@ def _charge_balance_summary(
             total_dopant_delta = site_adjusted_delta
             carrier_hint = dopant_site_summary.get("carrier_type_hint") or average_host_carrier_hint
             carrier_hint_source = "dopant_site_summary"
-    odd_electron_warning = bool(total_valence % 2)
+    defect_charge_spin_request = (
+        dict(metadata.get("defect_charge_spin_request"))
+        if isinstance(metadata.get("defect_charge_spin_request"), dict)
+        else {}
+    )
+    if defect_charge_spin_request:
+        carrier_hint = "defect_charge_state_dependent"
+        carrier_hint_source = "defect_charge_spin_request"
+    charge_state_label = (
+        str(defect_charge_spin_request.get("charge_state_label") or "")
+        or None
+    )
+    charge_state_explicit = (
+        defect_charge_spin_request.get("charge_state_explicit") is True
+    )
+    requested_net_charge = _optional_int(
+        defect_charge_spin_request.get("requested_net_charge_e")
+    )
+    reference_spin_multiplicity = _optional_int(
+        defect_charge_spin_request.get("reference_spin_multiplicity")
+    )
+    charge_adjusted_electron_count = (
+        total_valence - requested_net_charge
+        if charge_state_explicit and requested_net_charge is not None
+        else total_valence
+    )
+    nominal_composition_odd = bool(total_valence % 2)
+    odd_electron_warning = bool(charge_adjusted_electron_count % 2)
+    charge_spin_backend_binding_ready = (
+        None
+        if not defect_charge_spin_request
+        else False
+    )
+    charge_state_unresolved = bool(
+        defect_charge_spin_request and not charge_state_explicit
+    )
+    spin_charge_review_required = bool(
+        odd_electron_warning
+        or charge_state_unresolved
+        or charge_spin_backend_binding_ready is False
+    )
+    if charge_spin_backend_binding_ready is False:
+        recommended_spin_treatment = (
+            "bind_reviewed_castep_net_charge_and_spin_settings_before_execution"
+        )
+        calculation_readiness_impact = (
+            "defect_charge_spin_backend_binding_required"
+        )
+        next_action = (
+            "review_defect_charge_state_and_bind_castep_charge_spin_backend"
+        )
+    elif odd_electron_warning:
+        recommended_spin_treatment = (
+            "review_spin_polarized_calculation_or_explicit_charge_state"
+        )
+        calculation_readiness_impact = (
+            "review_before_spin_sensitive_or_closed_shell_calculation"
+        )
+        next_action = (
+            "review_spin_polarization_or_charge_state_before_castep_execution"
+        )
+    else:
+        recommended_spin_treatment = (
+            "closed_shell_or_non_spin_polarized_default_reasonable"
+        )
+        calculation_readiness_impact = (
+            "no_odd_electron_charge_spin_warning"
+        )
+        next_action = (
+            "charge_balance_preflight_passed_for_nominal_electron_parity"
+        )
     return {
         "available": True,
-        "model": "site_adjusted_nominal_valence_electron_heuristic"
-        if carrier_hint_source == "dopant_site_summary"
-        else "nominal_valence_electron_heuristic",
+        "model": (
+            "defect_charge_state_aware_nominal_valence_electron_heuristic"
+            if carrier_hint_source == "defect_charge_spin_request"
+            else "site_adjusted_nominal_valence_electron_heuristic"
+            if carrier_hint_source == "dopant_site_summary"
+            else "nominal_valence_electron_heuristic"
+        ),
         "total_atom_count": sum(counts.values()),
         "known_valence_atom_count": sum(known_elements.values()),
         "unknown_valence_elements": unknown_elements,
         "total_valence_electron_count": total_valence,
+        "nominal_composition_electron_count_parity": (
+            "odd" if nominal_composition_odd else "even"
+        ),
+        "nominal_composition_odd_electron_warning": nominal_composition_odd,
+        "defect_charge_state_label": charge_state_label,
+        "defect_charge_state_explicit": charge_state_explicit,
+        "defect_charge_state_unresolved": charge_state_unresolved,
+        "requested_net_charge_e": requested_net_charge,
+        "reference_spin_multiplicity": reference_spin_multiplicity,
+        "charge_adjusted_valence_electron_count": (
+            charge_adjusted_electron_count
+        ),
+        "charge_adjusted_electron_count_parity": (
+            "odd" if charge_adjusted_electron_count % 2 else "even"
+        ),
+        "backend_charge_binding_status": (
+            defect_charge_spin_request.get("backend_charge_binding_status")
+        ),
+        "backend_spin_binding_status": (
+            defect_charge_spin_request.get("backend_spin_binding_status")
+        ),
+        "charge_spin_backend_binding_ready": (
+            charge_spin_backend_binding_ready
+        ),
         "non_passivant_valence_electron_count": non_passivant_valence,
         "passivant_valence_electron_count": passivant_valence,
         "valence_electrons_per_non_passivant_atom": _round(non_passivant_valence / non_passivant_count)
@@ -14040,24 +14205,18 @@ def _charge_balance_summary(
         else None,
         "electron_count_parity": "even" if total_valence % 2 == 0 else "odd",
         "odd_electron_warning": odd_electron_warning,
-        "spin_charge_review_required": odd_electron_warning,
-        "spin_polarization_review_required": odd_electron_warning,
-        "minimum_unpaired_electron_count_hint": 1 if odd_electron_warning else 0,
-        "recommended_spin_treatment": (
-            "review_spin_polarized_calculation_or_explicit_charge_state"
+        "spin_charge_review_required": spin_charge_review_required,
+        "spin_polarization_review_required": spin_charge_review_required,
+        "minimum_unpaired_electron_count_hint": (
+            reference_spin_multiplicity - 1
+            if reference_spin_multiplicity is not None
+            else 1
             if odd_electron_warning
-            else "closed_shell_or_non_spin_polarized_default_reasonable"
+            else 0
         ),
-        "calculation_readiness_impact": (
-            "review_before_spin_sensitive_or_closed_shell_calculation"
-            if odd_electron_warning
-            else "no_odd_electron_charge_spin_warning"
-        ),
-        "next_action": (
-            "review_spin_polarization_or_charge_state_before_castep_execution"
-            if odd_electron_warning
-            else "charge_balance_preflight_passed_for_nominal_electron_parity"
-        ),
+        "recommended_spin_treatment": recommended_spin_treatment,
+        "calculation_readiness_impact": calculation_readiness_impact,
+        "next_action": next_action,
         "host_reference_valence_electrons": _round(host_reference_valence) if host_reference_valence is not None else None,
         "average_host_reference_valence_electrons": _round(host_reference_valence)
         if host_reference_valence is not None
@@ -16445,6 +16604,11 @@ def _defect_summary(
         for item in metadata.get("defect_complexes", []) or []
         if isinstance(item, dict)
     ]
+    dopant_site_inputs = [
+        dict(item)
+        for item in metadata.get("semiconductor_dopant_sites", []) or []
+        if isinstance(item, dict)
+    ]
     if not vacancy_inputs and not interstitial_inputs and not antisite_inputs and not complex_inputs:
         return None
 
@@ -16681,7 +16845,12 @@ def _defect_summary(
         )
 
     defect_rows = vacancy_rows + interstitial_rows + antisite_rows
-    complex_rows = _defect_complex_rows(spec, complex_inputs, vacancy_inputs)
+    complex_rows = _defect_complex_rows(
+        spec,
+        complex_inputs,
+        vacancy_inputs,
+        dopant_site_inputs,
+    )
     complex_integrity_errors = [
         str(error)
         for complex_row in complex_rows
@@ -16709,6 +16878,21 @@ def _defect_summary(
         "antisite_count": len(antisite_rows),
         "complex_count": len(complex_rows),
         "divacancy_count": sum(1 for item in complex_rows if str(item.get("type") or "").lower() == "divacancy"),
+        "nitrogen_vacancy_count": sum(
+            1
+            for item in complex_rows
+            if str(item.get("type") or "").lower() == "nitrogen_vacancy"
+        ),
+        "defect_charge_state_unresolved_count": sum(
+            1
+            for item in complex_rows
+            if item.get("charge_state_explicit") is False
+        ),
+        "defect_charge_spin_backend_unbound_count": sum(
+            1
+            for item in complex_rows
+            if item.get("charge_spin_backend_binding_ready") is False
+        ),
         "defect_complex_integrity_ok": not complex_integrity_errors,
         "defect_complex_integrity_errors": complex_integrity_errors,
         "total_lattice_site_count_estimate": total_sites,
@@ -16738,6 +16922,7 @@ def _defect_complex_rows(
     spec: ModelSpec,
     complex_inputs: list[dict[str, Any]],
     vacancy_inputs: list[dict[str, Any]],
+    dopant_site_inputs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     vectors = _lattice_vectors(spec.model.lattice) if isinstance(spec.model, CrystalSpec) else None
     complex_id_counts = Counter(
@@ -16761,6 +16946,19 @@ def _defect_complex_rows(
             )
         errors: list[str] = []
         label = complex_id or f"defect_complex[{index}]"
+
+        if complex_type == "nitrogen_vacancy":
+            rows.append(
+                _nitrogen_vacancy_complex_row(
+                    spec,
+                    complex_input,
+                    vacancy_inputs,
+                    dopant_site_inputs,
+                    complex_id_count=complex_id_counts[complex_id],
+                    fallback_label=label,
+                )
+            )
+            continue
 
         if not complex_id:
             errors.append(f"{label} is missing complex_id.")
@@ -16894,6 +17092,445 @@ def _defect_complex_rows(
             }
         )
     return rows
+
+
+def _nitrogen_vacancy_complex_row(
+    spec: ModelSpec,
+    complex_input: dict[str, Any],
+    vacancy_inputs: list[dict[str, Any]],
+    dopant_site_inputs: list[dict[str, Any]],
+    *,
+    complex_id_count: int,
+    fallback_label: str,
+) -> dict[str, Any]:
+    """Recompute and verify one substitutional-N plus C-vacancy complex."""
+
+    complex_id = str(complex_input.get("complex_id") or complex_input.get("id") or "")
+    label = complex_id or fallback_label
+    member_site_ids = [
+        str(item) for item in complex_input.get("member_site_ids", []) or []
+    ]
+    member_site_elements = [
+        str(item)
+        for item in complex_input.get("member_site_elements", []) or []
+    ]
+    member_fractionals = [
+        _coerce_fractional(item)
+        for item in complex_input.get("member_fractionals", []) or []
+    ]
+    substitution_site_id = str(complex_input.get("substitution_site_id") or "")
+    substitution_host_element = str(
+        complex_input.get("substitution_host_element") or ""
+    )
+    substitution_element = str(complex_input.get("substitution_element") or "")
+    vacancy_site_id = str(complex_input.get("vacancy_site_id") or "")
+    vacancy_site_element = str(complex_input.get("vacancy_site_element") or "")
+    errors: list[str] = []
+
+    if not complex_id:
+        errors.append(f"{label} is missing complex_id.")
+    elif complex_id_count != 1:
+        errors.append(f"Defect complex id {complex_id} is duplicated in metadata.")
+    if len(member_site_ids) != 2 or len(set(member_site_ids)) != 2:
+        errors.append(
+            f"{label} must reference one substitution site and one distinct vacancy site."
+        )
+    if len(member_site_elements) != 2:
+        errors.append(f"{label} must record two member site elements.")
+    if len(member_fractionals) != 2 or any(
+        item is None for item in member_fractionals
+    ):
+        errors.append(
+            f"{label} must record two valid fractional-coordinate triples."
+        )
+    if (
+        member_site_ids[:2]
+        != [substitution_site_id, vacancy_site_id]
+    ):
+        errors.append(
+            f"{label} member order must be substitution site then vacancy site."
+        )
+    if member_site_elements[:2] != [
+        substitution_element,
+        vacancy_site_element,
+    ]:
+        errors.append(
+            f"{label} member elements do not match the substitution/vacancy fields."
+        )
+    if substitution_host_element != "C" or substitution_element != "N":
+        errors.append(
+            f"{label} must bind a substitutional N on an original C site."
+        )
+    if vacancy_site_element != "C":
+        errors.append(f"{label} vacancy member must be an original C site.")
+
+    atoms_by_id = (
+        {atom.id: atom for atom in spec.model.basis_atoms}
+        if isinstance(spec.model, CrystalSpec)
+        else {}
+    )
+    substitution_atom = atoms_by_id.get(substitution_site_id)
+    if substitution_atom is None:
+        errors.append(
+            f"{label} substitution site {substitution_site_id or 'missing'} "
+            "is absent from the current structure."
+        )
+    elif substitution_atom.element != "N":
+        errors.append(
+            f"{label} substitution site {substitution_site_id} is not N "
+            "in the current structure."
+        )
+    if vacancy_site_id and vacancy_site_id in atoms_by_id:
+        errors.append(
+            f"{label} vacancy site {vacancy_site_id} still exists in the "
+            "current structure."
+        )
+
+    member_dopants = [
+        item
+        for item in dopant_site_inputs
+        if str(item.get("complex_id") or "") == complex_id
+    ]
+    member_vacancies = [
+        item
+        for item in vacancy_inputs
+        if str(item.get("complex_id") or "") == complex_id
+    ]
+    if len(member_dopants) != 1:
+        errors.append(
+            f"{label} must bind exactly one substitutional dopant record; "
+            f"found {len(member_dopants)}."
+        )
+    if len(member_vacancies) != 1:
+        errors.append(
+            f"{label} must bind exactly one vacancy record; "
+            f"found {len(member_vacancies)}."
+        )
+
+    substitution_fractional = (
+        member_fractionals[0] if len(member_fractionals) > 0 else None
+    )
+    vacancy_fractional = (
+        member_fractionals[1] if len(member_fractionals) > 1 else None
+    )
+    if len(member_dopants) == 1:
+        dopant = member_dopants[0]
+        if str(dopant.get("atom_id") or dopant.get("site_id") or "") != (
+            substitution_site_id
+        ):
+            errors.append(
+                f"{label} substitutional dopant record has a different site id."
+            )
+        if str(dopant.get("site_element") or "") != substitution_host_element:
+            errors.append(
+                f"{label} substitutional dopant record has a different host element."
+            )
+        if str(
+            dopant.get("dopant_element")
+            or dopant.get("new_element")
+            or ""
+        ) != substitution_element:
+            errors.append(
+                f"{label} substitutional dopant record has a different dopant element."
+            )
+        dopant_fractional = _coerce_fractional(dopant.get("fractional"))
+        if (
+            dopant_fractional is None
+            or substitution_fractional is None
+            or any(
+                abs(dopant_fractional[axis] - substitution_fractional[axis])
+                > 1e-6
+                for axis in range(3)
+            )
+        ):
+            errors.append(
+                f"{label} substitutional dopant fractional coordinates differ "
+                "from the complex record."
+            )
+        if str(dopant.get("pair_site_id") or "") != vacancy_site_id:
+            errors.append(
+                f"{label} substitutional dopant has an inconsistent pair_site_id."
+            )
+    if len(member_vacancies) == 1:
+        vacancy = member_vacancies[0]
+        if str(vacancy.get("site_id") or vacancy.get("atom_id") or "") != (
+            vacancy_site_id
+        ):
+            errors.append(f"{label} vacancy record has a different site id.")
+        if str(vacancy.get("site_element") or vacancy.get("element") or "") != (
+            vacancy_site_element
+        ):
+            errors.append(f"{label} vacancy record has a different site element.")
+        recorded_vacancy_fractional = _coerce_fractional(
+            vacancy.get("fractional")
+        )
+        if (
+            recorded_vacancy_fractional is None
+            or vacancy_fractional is None
+            or any(
+                abs(recorded_vacancy_fractional[axis] - vacancy_fractional[axis])
+                > 1e-6
+                for axis in range(3)
+            )
+        ):
+            errors.append(
+                f"{label} vacancy fractional coordinates differ from the "
+                "complex record."
+            )
+        if str(vacancy.get("pair_site_id") or "") != substitution_site_id:
+            errors.append(f"{label} vacancy has an inconsistent pair_site_id.")
+
+    recomputed_distance = None
+    image_offset = None
+    threshold = None
+    nearest_neighbor_recomputed = False
+    if (
+        isinstance(spec.model, CrystalSpec)
+        and substitution_fractional is not None
+        and vacancy_fractional is not None
+    ):
+        recomputed_distance, image_offset = _minimum_image_distance(
+            substitution_fractional,
+            vacancy_fractional,
+            _lattice_vectors(spec.model.lattice),
+        )
+        threshold = _crystal_neighbor_threshold(
+            substitution_element,
+            vacancy_site_element,
+        )
+        nearest_neighbor_recomputed = (
+            recomputed_distance <= threshold + 1e-6
+        )
+
+    recorded_distance = _optional_float(
+        complex_input.get("pair_distance_angstrom")
+    )
+    if recorded_distance is None or not math.isfinite(recorded_distance):
+        errors.append(f"{label} pair_distance_angstrom must be finite.")
+        recorded_distance = None
+    if recomputed_distance is None:
+        errors.append(
+            f"{label} pair distance could not be recomputed from current lattice metadata."
+        )
+    distance_delta = (
+        abs(recorded_distance - recomputed_distance)
+        if recorded_distance is not None and recomputed_distance is not None
+        else None
+    )
+    if distance_delta is not None and distance_delta > 1e-5:
+        errors.append(
+            f"{label} recorded pair distance does not match the current lattice."
+        )
+    threshold_claim = _optional_float(
+        complex_input.get("nearest_neighbor_threshold_angstrom")
+    )
+    if (
+        threshold is not None
+        and (
+            threshold_claim is None
+            or not math.isfinite(threshold_claim)
+            or abs(threshold_claim - threshold) > 1e-5
+        )
+    ):
+        errors.append(
+            f"{label} nearest-neighbor threshold metadata is inconsistent."
+        )
+    if not nearest_neighbor_recomputed:
+        errors.append(
+            f"{label} members are not a nearest-neighbor pair under the "
+            "current distance rule."
+        )
+    nearest_neighbor_metadata_claim = (
+        complex_input.get("nearest_neighbor_verified") is True
+    )
+    if not nearest_neighbor_metadata_claim:
+        errors.append(
+            f"{label} does not carry a positive nearest-neighbor verification claim."
+        )
+    periodic_minimum_image = (
+        complex_input.get("periodic_minimum_image") is True
+    )
+    if not periodic_minimum_image:
+        errors.append(
+            f"{label} is not bound to periodic minimum-image distance semantics."
+        )
+
+    charge_state_label = str(
+        complex_input.get("charge_state_label") or ""
+    )
+    expected_states: dict[
+        str, tuple[bool, int | None, int | None, str | None]
+    ] = {
+        "unspecified": (False, None, None, None),
+        "NV0": (True, 0, 2, "doublet"),
+        "NV-": (True, -1, 3, "triplet"),
+    }
+    state_contract = expected_states.get(charge_state_label)
+    if state_contract is None:
+        errors.append(
+            f"{label} has unsupported charge_state_label "
+            f"{charge_state_label or 'missing'}."
+        )
+        state_contract = (False, None, None, None)
+    (
+        expected_explicit,
+        expected_charge,
+        expected_multiplicity,
+        expected_spin_state,
+    ) = state_contract
+    charge_state_explicit = (
+        complex_input.get("charge_state_explicit") is True
+    )
+    if charge_state_explicit != expected_explicit:
+        errors.append(f"{label} charge-state explicitness is inconsistent.")
+    raw_charge = complex_input.get("requested_net_charge_e")
+    requested_net_charge = _optional_int(raw_charge)
+    if (
+        (expected_charge is None and raw_charge is not None)
+        or (
+            expected_charge is not None
+            and requested_net_charge != expected_charge
+        )
+    ):
+        errors.append(f"{label} requested net charge is inconsistent.")
+    raw_multiplicity = complex_input.get("reference_spin_multiplicity")
+    reference_spin_multiplicity = _optional_int(raw_multiplicity)
+    if (
+        (expected_multiplicity is None and raw_multiplicity is not None)
+        or (
+            expected_multiplicity is not None
+            and reference_spin_multiplicity != expected_multiplicity
+        )
+    ):
+        errors.append(f"{label} reference spin multiplicity is inconsistent.")
+    reference_spin_state = complex_input.get("reference_spin_state")
+    if reference_spin_state != expected_spin_state:
+        errors.append(f"{label} reference spin state is inconsistent.")
+
+    metadata = dict(spec.metadata or {})
+    charge_spin_request = (
+        dict(metadata.get("defect_charge_spin_request"))
+        if isinstance(metadata.get("defect_charge_spin_request"), dict)
+        else {}
+    )
+    charge_spin_contract_fields = (
+        "complex_id",
+        "charge_state_label",
+        "charge_state_explicit",
+        "requested_net_charge_e",
+        "reference_spin_multiplicity",
+        "reference_spin_state",
+        "backend",
+        "backend_charge_binding_status",
+        "backend_spin_binding_status",
+        "calculation_execution_ready",
+        "structure_hotload_allowed",
+        "state_result_computed",
+    )
+    if not charge_spin_request:
+        errors.append(f"{label} is missing the top-level defect charge/spin request.")
+    else:
+        for field in charge_spin_contract_fields:
+            if field not in charge_spin_request:
+                errors.append(
+                    f"{label} top-level defect charge/spin request is missing {field}."
+                )
+            elif charge_spin_request.get(field) != complex_input.get(field):
+                errors.append(
+                    f"{label} top-level defect charge/spin request differs at {field}."
+                )
+
+    backend_charge_status = str(
+        complex_input.get("backend_charge_binding_status") or ""
+    )
+    backend_spin_status = str(
+        complex_input.get("backend_spin_binding_status") or ""
+    )
+    if backend_charge_status != DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS:
+        errors.append(
+            f"{label} charge backend binding status is not the reviewed "
+            "fail-closed value."
+        )
+    if backend_spin_status != DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS:
+        errors.append(
+            f"{label} spin backend binding status is not the reviewed "
+            "fail-closed value."
+        )
+    if complex_input.get("calculation_execution_ready") is not False:
+        errors.append(
+            f"{label} must keep CASTEP calculation execution blocked."
+        )
+    if complex_input.get("state_result_computed") is not False:
+        errors.append(
+            f"{label} must not claim a computed charge or spin state."
+        )
+    if complex_input.get("structure_hotload_allowed") is not True:
+        errors.append(
+            f"{label} must preserve the reviewed structure-hotload allowance."
+        )
+    if complex_input.get("backend") != "Materials Studio 20.1 CASTEP":
+        errors.append(f"{label} is not bound to the reviewed CASTEP backend label.")
+
+    metadata_consistent = not errors
+    return {
+        "complex_id": complex_id or None,
+        "type": "nitrogen_vacancy",
+        "member_site_ids": member_site_ids,
+        "member_site_elements": member_site_elements,
+        "member_fractionals": [
+            list(item) if item is not None else None
+            for item in member_fractionals
+        ],
+        "member_count": len(member_site_ids),
+        "member_vacancy_record_count": len(member_vacancies),
+        "member_dopant_record_count": len(member_dopants),
+        "substitution_site_id": substitution_site_id or None,
+        "substitution_host_element": substitution_host_element or None,
+        "substitution_element": substitution_element or None,
+        "vacancy_site_id": vacancy_site_id or None,
+        "vacancy_site_element": vacancy_site_element or None,
+        "pair_distance_angstrom_recorded": (
+            _round(recorded_distance)
+            if recorded_distance is not None
+            else None
+        ),
+        "pair_distance_angstrom_recomputed": (
+            _round(recomputed_distance)
+            if recomputed_distance is not None
+            else None
+        ),
+        "distance_delta_angstrom": (
+            _round(distance_delta) if distance_delta is not None else None
+        ),
+        "nearest_neighbor_threshold_angstrom": (
+            _round(threshold) if threshold is not None else None
+        ),
+        "nearest_neighbor_metadata_claim": nearest_neighbor_metadata_claim,
+        "nearest_neighbor_recomputed": nearest_neighbor_recomputed,
+        "nearest_neighbor_verified": bool(
+            metadata_consistent and nearest_neighbor_recomputed
+        ),
+        "periodic_minimum_image": periodic_minimum_image,
+        "image_offset": list(image_offset) if image_offset is not None else None,
+        "selection": complex_input.get("selection"),
+        "selection_rule": complex_input.get("selection_rule"),
+        "charge_state_label": charge_state_label or None,
+        "charge_state_explicit": charge_state_explicit,
+        "requested_net_charge_e": requested_net_charge,
+        "reference_spin_multiplicity": reference_spin_multiplicity,
+        "reference_spin_state": reference_spin_state,
+        "backend_charge_binding_status": backend_charge_status or None,
+        "backend_spin_binding_status": backend_spin_status or None,
+        "charge_spin_backend_binding_ready": False,
+        "calculation_execution_ready": False,
+        "structure_hotload_allowed": (
+            complex_input.get("structure_hotload_allowed") is True
+        ),
+        "state_result_computed": False,
+        "metadata_consistent": metadata_consistent,
+        "integrity_errors": errors,
+        "source": complex_input.get("source"),
+    }
 
 
 def _finite_size_summary(

@@ -283,6 +283,13 @@ GaAs/AlAs(001) zinc-blende, Al0.25Ga0.75N/GaN(0001), AlN/GaN(0001), and
 In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
+Diamond nitrogen-vacancy requests use the discoverable virtual template
+`diamond_nitrogen_vacancy_center`. The v1 route always builds the reviewed
+2x2x2 conventional diamond scaffold, substitutes `C1_000` with N, removes the
+nearest periodic `C2_000`, and exports defect, charge-balance, finite-size, and
+view diagnostics. Explicit NV0 and NV- labels are metadata contracts, not
+calculated electronic states. Unsupported charge labels or supercells are
+rejected rather than falling back to pristine diamond.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
 InN(0001), ZnO(0001), hydrogen-backed 3C-SiC `(001)` Si/C-face slabs,
 hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as
@@ -989,6 +996,15 @@ member bindings, threshold, and minimum-image status. The view bundle exports
 `semiconductor_defect_complexes.csv`. This is an unrelaxed structural starting
 point, not a defect charge-state or formation-energy result; relaxation,
 finite-size, and charge-state review remain required before quantitative use.
+For a current diamond NV revision, requests such as `set the NV center to NV-`
+or `set net charge to 0` create a metadata-only `SemanticPatch` revision. The
+atom identities and coordinates remain unchanged. The view bundle binds the
+selected state and electron-count parity in
+`semiconductor_defect_complexes.csv` and
+`semiconductor_charge_balance.csv`. CIF materialization and same-window GUI
+hot-loading remain available, but CASTEP energy, band, DOS/PDOS, and relaxation
+execution stay blocked until reviewed Materials Studio 20.1 net-charge and
+spin-polarization settings are represented by the structured CASTEP schema.
 When a vacancy or dopant request omits the exact crystal atom ID, the planner
 can choose the first deterministic matching semiconductor site and records that
 choice in `metadata.nl_auto_selected_sites`. If the user supplies a site-like

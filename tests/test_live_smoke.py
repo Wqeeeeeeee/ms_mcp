@@ -66,6 +66,38 @@ def test_default_diamond_scenario_and_follow_up_presets() -> None:
     assert "defect diagnostics" in vacancy
 
 
+def test_live_smoke_previews_diamond_nv_center_with_fail_closed_castep(
+    tmp_path: Path,
+) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="diamond_nv_center",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        include_gui_status=False,
+        take_snapshot=False,
+        export_bundle=True,
+        views=["front"],
+    )
+    summary = result["summary"]
+
+    assert result["ok"] is True
+    assert summary["nl_plan_template_id"] == "diamond_nitrogen_vacancy_center"
+    assert summary["diagnostic_acceptance_status"] == "diagnostics_ready"
+    assert summary["scenario_expected_diagnostic_failures"] == []
+    assert summary["ready_for_calculation"] is False
+    assert (
+        "semiconductor:defect_charge_spin_backend_unbound"
+        in summary["normality_gate_calculation_only_reasons"]
+    )
+    assert summary["view_bundle_row_counts"]["semiconductor_defects"] == 1
+    assert (
+        summary["view_bundle_row_counts"]["semiconductor_defect_complexes"]
+        == 1
+    )
+    assert summary["view_bundle_row_counts"]["semiconductor_charge_balance"] == 2
+    assert summary["view_bundle_row_counts"]["view_projections"] == 63
+
+
 def test_default_p_gan_hemt_scenario_and_follow_up_presets() -> None:
     preview = live_smoke.default_request_for_scenario("p_gan_hemt")
     hotload = live_smoke.default_request_for_scenario("p_gan_hemt", hotload=True)

@@ -20152,6 +20152,63 @@ def test_live_modeling_request_previews_nearest_neighbor_divacancy_with_bound_di
     ] == str(complex_csv)
 
 
+def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_window(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectWindowFakeGuiBackend()
+
+    def unexpected_launch():
+        raise AssertionError("diamond NV hot-load must not launch another MS process")
+
+    backend.launch_app = unexpected_launch
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: MaterialsStudioGuiController(
+            working_dir,
+            backend=backend,
+        ),
+    )
+
+    result = server.material_studio_live_modeling_request(
+        "Build a diamond NV- center in a 2x2x2 supercell and hot-load it in "
+        "Materials Studio, then export defect, charge-state, finite-size, and "
+        "view diagnostics.",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert result["workflow"] == "create"
+    assert result["execution_mode"] == "execute"
+    assert result["execution_mode_source"] == "explicit_live_intent"
+    assert result["nl_plan"]["template_id"] == "diamond_nitrogen_vacancy_center"
+    assert result["revision"] == 0
+    assert len(backend.opened) == 1
+    assert backend.opened[0].suffix == ".stp"
+    assert len(backend.list_processes()) == 1
+    gui = result["modeling_report"]["gui"]
+    assert gui["hot_loaded"] is True
+    assert gui["loaded_current_revision"] is True
+    assert gui["window_identity_verification"] == "verified"
+    semiconductor = result["modeling_report"]["inspection"][
+        "semiconductor_health"
+    ]
+    defect = semiconductor["defect_summary"]
+    charge = semiconductor["charge_balance_summary"]
+    assert defect["nitrogen_vacancy_count"] == 1
+    assert defect["defect_complex_integrity_ok"] is True
+    assert charge["defect_charge_state_label"] == "NV-"
+    assert charge["charge_adjusted_electron_count_parity"] == "even"
+    assert charge["charge_spin_backend_binding_ready"] is False
+    assert "nitrogen_vacancy_center" in result["semiconductor_intent"][
+        "domain_tags"
+    ]
+    assert "defect_charge_spin_backend_unbound" in result["modeling_report"][
+        "semiconductor_review"
+    ]["risk_flags"]
+
+
 def test_live_modeling_request_hotloads_semiconductor_vacancy_followup_current_revision(
     monkeypatch,
     tmp_path: Path,

@@ -680,6 +680,15 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_backend_spin_binding_status"] = (
             charge_balance.get("backend_spin_binding_status")
         )
+        checks["semiconductor_expected_castep_charge_spin_settings"] = (
+            charge_balance.get("expected_castep_charge_spin_settings")
+        )
+        checks["semiconductor_observed_castep_charge_spin_settings"] = (
+            charge_balance.get("observed_castep_charge_spin_settings")
+        )
+        checks["semiconductor_castep_charge_spin_field_matches"] = (
+            charge_balance.get("castep_charge_spin_field_matches")
+        )
         checks["semiconductor_recommended_spin_treatment"] = charge_balance.get("recommended_spin_treatment")
         checks["semiconductor_charge_balance_next_action"] = charge_balance.get("next_action")
         checks["semiconductor_nominal_dopant_delta_electrons"] = charge_balance.get("nominal_dopant_delta_electrons")
@@ -704,7 +713,7 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         if charge_balance.get("charge_spin_backend_binding_ready") is False:
             warnings.append(
                 "Semiconductor defect charge/spin request is not bound to the "
-                "current CASTEP schema; calculation execution must remain blocked."
+                "exact reviewed CASTEP settings; calculation execution must remain blocked."
             )
 
     calculation = semiconductor.get("calculation_preflight_summary") or {}
@@ -726,6 +735,14 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_calculation_kpoint_mode"] = calculation.get("kpoint_mode")
         checks["semiconductor_calculation_kpoint_separation"] = calculation.get("kpoint_separation")
         checks["semiconductor_calculation_kpoints"] = calculation.get("kpoints")
+        checks["semiconductor_calculation_total_charge"] = calculation.get("total_charge")
+        checks["semiconductor_calculation_spin_treatment"] = calculation.get("spin_treatment")
+        checks["semiconductor_calculation_use_formal_spin"] = calculation.get("use_formal_spin")
+        checks["semiconductor_calculation_initial_spin"] = calculation.get("initial_spin")
+        checks["semiconductor_calculation_optimize_total_spin"] = calculation.get("optimize_total_spin")
+        checks["semiconductor_calculation_charge_spin_settings_configured"] = calculation.get(
+            "charge_spin_settings_configured"
+        )
         checks["semiconductor_calculation_warning_count"] = calculation.get("warning_count", 0)
         if int(calculation.get("warning_count") or 0) > 0:
             warnings.append("Semiconductor calculation preflight has warnings; inspect calculation_preflight_summary before expensive calculations.")

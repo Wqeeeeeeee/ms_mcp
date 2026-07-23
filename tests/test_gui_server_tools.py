@@ -20200,11 +20200,11 @@ def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_windo
     assert defect["defect_complex_integrity_ok"] is True
     assert charge["defect_charge_state_label"] == "NV-"
     assert charge["charge_adjusted_electron_count_parity"] == "even"
-    assert charge["charge_spin_backend_binding_ready"] is False
+    assert charge["charge_spin_backend_binding_ready"] is True
     assert "nitrogen_vacancy_center" in result["semiconductor_intent"][
         "domain_tags"
     ]
-    assert "defect_charge_spin_backend_unbound" in result["modeling_report"][
+    assert "defect_charge_spin_backend_unbound" not in result["modeling_report"][
         "semiconductor_review"
     ]["risk_flags"]
 

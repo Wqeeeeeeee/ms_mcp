@@ -20,6 +20,7 @@ from .castep import (
     CastepDosIntegrationMethodValue,
     CastepEnergySpec,
     CastepOptimizationAlgorithmValue,
+    CastepSpinTreatmentValue,
     CastepTask,
     CastepTaskValue,
 )
@@ -112,6 +113,11 @@ class SemanticPatchOperation(StrictModel):
     convergence: str | None = None
     task: CastepTaskValue | None = None
     functional: str | None = None
+    total_charge: int | None = Field(default=None, ge=-9999, le=9999)
+    spin_treatment: CastepSpinTreatmentValue | None = None
+    use_formal_spin: bool | None = None
+    initial_spin: int | None = Field(default=None, ge=-9999, le=9999)
+    optimize_total_spin: bool | None = None
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
@@ -235,6 +241,8 @@ class SemanticPatchOperation(StrictModel):
             raise ValueError(
                 "Non self-consistent CASTEP dipole correction is supported only for the Energy task"
             )
+        if self.operation == "set_castep_energy":
+            _castep_from_operation(self)
         if self.operation == "translate_crystal_atoms":
             if not self.atom_ids or self.axis is None or self.distance_angstrom is None:
                 raise ValueError("translate_crystal_atoms requires atom_ids, axis, and distance_angstrom")
@@ -3375,6 +3383,11 @@ def _castep_from_operation(operation: SemanticPatchOperation) -> CastepEnergySpe
         task=operation.task or "Energy",
         functional=operation.functional or "PBE",
         quality=operation.quality or "Medium",
+        total_charge=operation.total_charge,
+        spin_treatment=operation.spin_treatment,
+        use_formal_spin=operation.use_formal_spin,
+        initial_spin=operation.initial_spin,
+        optimize_total_spin=operation.optimize_total_spin,
         cutoff_energy_ev=operation.cutoff_energy_ev,
         kpoint_separation=operation.kpoint_separation,
         kpoints=operation.kpoints,

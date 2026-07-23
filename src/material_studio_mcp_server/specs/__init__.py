@@ -23,11 +23,13 @@ from .castep import (
     CastepDosIntegrationMethod,
     CastepEnergySpec,
     CastepOptimizationAlgorithm,
+    CastepSpinTreatment,
     CastepTask,
     normalize_castep_cell_optimization,
     normalize_castep_dipole_correction,
     normalize_castep_dos_integration_method,
     normalize_castep_optimization_algorithm,
+    normalize_castep_spin_treatment,
     normalize_castep_task,
 )
 from .molecule import AtomSpec, BondSpec, MoleculeSpec
@@ -49,6 +51,7 @@ __all__ = [
     "CastepDipoleCorrection",
     "CastepDosIntegrationMethod",
     "CastepOptimizationAlgorithm",
+    "CastepSpinTreatment",
     "CastepTask",
     "CrystalOperation",
     "CrystalSpec",
@@ -80,4 +83,5 @@ __all__ = [
     "normalize_castep_dipole_correction",
     "normalize_castep_dos_integration_method",
     "normalize_castep_optimization_algorithm",
+    "normalize_castep_spin_treatment",
 ]

@@ -19,7 +19,7 @@ from material_studio_mcp_server.natural_language import (
 )
 from material_studio_mcp_server.semiconductor_contracts import (
     DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
-    DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
 )
 from material_studio_mcp_server.specs.patch import (
     SemanticPatch,
@@ -76,7 +76,9 @@ def test_diamond_nv_requests_build_dedicated_structural_scaffold(
     assert charge["charge_state_label"] == charge_label
     assert charge["requested_net_charge_e"] == net_charge
     assert charge["reference_spin_multiplicity"] == multiplicity
-    assert charge["calculation_execution_ready"] is False
+    assert charge["calculation_execution_ready"] is (
+        charge_label != "unspecified"
+    )
     assert charge["structure_hotload_allowed"] is True
     assert charge["state_result_computed"] is False
 
@@ -142,7 +144,7 @@ def test_diamond_nv_diagnostics_bind_geometry_charge_and_csvs(
     assert defect["nitrogen_vacancy_count"] == 1
     assert defect["defect_complex_integrity_ok"] is True
     assert defect["defect_charge_state_unresolved_count"] == 0
-    assert defect["defect_charge_spin_backend_unbound_count"] == 1
+    assert defect["defect_charge_spin_backend_unbound_count"] == 0
     assert complex_row["member_site_ids"] == ["C1_000", "C2_000"]
     assert complex_row["member_dopant_record_count"] == 1
     assert complex_row["member_vacancy_record_count"] == 1
@@ -156,13 +158,13 @@ def test_diamond_nv_diagnostics_bind_geometry_charge_and_csvs(
     assert charge["charge_adjusted_valence_electron_count"] == 254
     assert charge["charge_adjusted_electron_count_parity"] == "even"
     assert charge["odd_electron_warning"] is False
-    assert charge["charge_spin_backend_binding_ready"] is False
+    assert charge["charge_spin_backend_binding_ready"] is True
     assert health["checks"]["semiconductor_nitrogen_vacancy_count"] == 1
     assert (
         health["checks"]["semiconductor_charge_spin_backend_binding_ready"]
-        is False
+        is True
     )
-    assert any(
+    assert not any(
         "charge/spin request is not bound" in warning
         for warning in health["warnings"]
     )
@@ -178,13 +180,13 @@ def test_diamond_nv_diagnostics_bind_geometry_charge_and_csvs(
     assert complex_rows[0]["complex_type"] == "nitrogen_vacancy"
     assert complex_rows[0]["member_site_ids"] == "C1_000;C2_000"
     assert complex_rows[0]["charge_state_label"] == "NV-"
-    assert complex_rows[0]["calculation_execution_ready"] == "False"
+    assert complex_rows[0]["calculation_execution_ready"] == "True"
     assert {row["charge_adjusted_electron_count_parity"] for row in charge_rows} == {
         "even"
     }
 
 
-def test_current_diamond_nv_charge_state_patch_changes_metadata_only() -> None:
+def test_current_diamond_nv_charge_state_patch_changes_only_simulation_and_metadata() -> None:
     base = _nv_spec("Build a diamond NV center.")
     atoms_before = [
         atom.model_dump(mode="json") for atom in base.model.basis_atoms
@@ -218,6 +220,8 @@ def test_current_diamond_nv_charge_state_patch_changes_metadata_only() -> None:
     assert charge["charge_state_label"] == "NV-"
     assert charge["requested_net_charge_e"] == -1
     assert charge["reference_spin_multiplicity"] == 3
+    assert patched.simulation.total_charge == -1
+    assert patched.simulation.initial_spin == 2
     assert defect["defect_complex_integrity_ok"] is True
     assert base.metadata["defect_charge_spin_request"]["charge_state_label"] == (
         "unspecified"
@@ -255,7 +259,7 @@ def test_diamond_nv_metadata_tampering_fails_diagnostic_integrity(
     assert defect["defect_complex_integrity_errors"]
 
 
-def test_diamond_nv_castep_gate_allows_structure_but_blocks_calculation() -> None:
+def test_diamond_nv_castep_gate_blocks_unresolved_and_accepts_bound_state() -> None:
     unresolved = _nv_spec("Build a diamond NV center.")
     negative = _nv_spec("Build a diamond NV- center.")
 
@@ -266,23 +270,24 @@ def test_diamond_nv_castep_gate_allows_structure_but_blocks_calculation() -> Non
     assert unresolved_gate["structure_materialization_allowed"] is True
     assert unresolved_gate["same_window_gui_hotload_allowed"] is True
     assert "defect_charge_state_unresolved" in unresolved_gate["blocking_reasons"]
-    assert (
-        "defect_charge_spin_settings_not_supported_by_current_castep_schema"
-        in unresolved_gate["blocking_reasons"]
-    )
+    assert unresolved_gate["blocking_reasons"] == [
+        "defect_charge_state_unresolved"
+    ]
     assert negative_gate["charge_state_label"] == "NV-"
     assert "defect_charge_state_unresolved" not in negative_gate["blocking_reasons"]
+    assert negative_gate["execution_ready"] is True
+    assert negative_gate["blocking_reasons"] == []
     assert negative_gate["backend_charge_binding_status"] == (
-        DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+        DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
     )
 
 
-def test_diamond_nv_public_castep_previews_and_executes_fail_before_runner(
+def test_unresolved_diamond_nv_public_castep_paths_fail_before_runner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     project_id = "diamond_nv_castep_gate"
-    spec = _nv_spec("Build a diamond NV- center.", project_id=project_id)
+    spec = _nv_spec("Build a diamond NV center.", project_id=project_id)
     created = server.material_studio_model_create_from_spec(
         spec.model_dump(mode="json"),
         execution_mode="preview",
@@ -333,9 +338,7 @@ def test_diamond_nv_public_castep_previews_and_executes_fail_before_runner(
         working_dir=str(tmp_path),
     )
 
-    blocker = (
-        "defect_charge_spin_settings_not_supported_by_current_castep_schema"
-    )
+    blocker = "defect_charge_state_unresolved"
     assert electronic_preview["ok"] is True
     assert electronic_preview["status"] == "castep_electronic_preflight_blocked"
     assert blocker in electronic_preview["preflight"]["blocking_reasons"]

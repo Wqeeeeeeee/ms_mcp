@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import json
 import re
 import shutil
+import stat
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -39,6 +41,7 @@ from .castep_relaxation import (
     build_relaxed_revision_spec,
     crystal_structure_sha256,
 )
+from .cif_sources import CifSourceError, fetch_cif_source, search_cod
 from .codex_config import (
     RUNTIME_CODEX_CONFIG_SCHEMA,
     diagnose_runtime_codex_config,
@@ -85,7 +88,7 @@ from .natural_language import (
     supported_semiconductor_virtual_template_profiles,
     supported_templates,
 )
-from .runner import MaterialStudioError, MaterialStudioRunner
+from .runner import DEFAULT_JOBS_DIR, MaterialStudioError, MaterialStudioRunner
 from .roundtrip import (
     execute_roundtrip_audit,
     not_applicable_roundtrip_receipt,
@@ -106,7 +109,20 @@ from .parsers.castep_log import (
 )
 from .parsers.castep_native import audit_castep_native_artifacts
 from .parsers.cif import parse_crystal_cif, validate_crystal_cif_against_spec
+from .parsers.dmol3_log import validate_dmol3_geometry_result
 from .parsers.structure_summary import parse_structure_summary
+from .dmol3_relaxation import build_dmol3_relaxed_revision_spec
+from .remote_handoff import (
+    prepare_remote_castep_bundle,
+    read_remote_job_status,
+    record_remote_status,
+    record_remote_submission,
+)
+from .read_only_dashboard import (
+    DashboardError,
+    DashboardLimits,
+    WorkspaceSnapshotService,
+)
 from .scripts import (
     build_molecule_script,
     castep_energy_script,
@@ -129,9 +145,21 @@ from .specs.castep import (
     CastepTaskValue,
 )
 from .specs.forcite import ForciteDynamicsSpec
+from .specs.dmol3 import (
+    DMol3GeometryOptimizationSpec,
+    DMol3Quality,
+    DMol3TheoryLevel,
+    DMol3YesNo,
+)
+from .specs.molecule import MoleculeSpec
 from .specs.patch import SemanticPatch, apply_semantic_patch
 from .specs.crystal import CrystalSpec
 from .specs.project import ImportedStructureSpec, ModelSpec
+from .specs.remote_job import (
+    RemoteJobState,
+    RemoteSchedulerKind,
+    RemoteSubmissionChannel,
+)
 from .state import store as state_store_module
 from .state.diff import summarize_spec_delta
 from .state.execution import (
@@ -149,9 +177,11 @@ from .state.store import (
     ProjectStateBusyError,
     ProjectStore,
     atomic_write_text,
+    default_workspace_root,
 )
 from .translators import (
     crystal_cif_summary,
+    render_dmol3_geometry_optimization_script,
     render_castep_electronic_script,
     render_castep_geometry_optimization_script,
     render_model_to_perl,
@@ -192,6 +222,8 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
     {
         "material_studio_castep_relax_current",
         "material_studio_castep_run_current",
+        "material_studio_cif_source_ingest",
+        "material_studio_dmol3_relax_current",
         "material_studio_gui_activate",
         "material_studio_gui_apply_current_revision",
         "material_studio_gui_execute_view_replay",
@@ -208,6 +240,11 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
         "material_studio_model_export_view_audit",
         "material_studio_model_export_view_bundle",
         "material_studio_model_preview_script",
+        "material_studio_remote_castep_prepare",
+        "material_studio_remote_job_record",
+        "material_studio_remote_job_status",
+        "material_studio_workspace_artifact_read",
+        "material_studio_workspace_snapshot",
         "material_studio_project_reconcile_dopant_metadata",
     }
 )
@@ -1078,6 +1115,10 @@ RUNTIME_SOURCE_GUARDED_TOOL_NAMES = (
     "material_studio_live_update_with_patch",
     "material_studio_castep_run_current",
     "material_studio_castep_relax_current",
+    "material_studio_cif_source_ingest",
+    "material_studio_dmol3_relax_current",
+    "material_studio_remote_castep_prepare",
+    "material_studio_remote_job_record",
     "material_studio_live_modeling_request",
     "material_studio_gui_launch",
     "material_studio_gui_activate",
@@ -3463,6 +3504,7 @@ def _schema_capability_paths() -> dict[str, dict[str, str]]:
         "crystal_spec": "crystal_spec.schema.json",
         "forcite_spec": "forcite_spec.schema.json",
         "castep_spec": "castep_spec.schema.json",
+        "dmol3_spec": "dmol3_spec.schema.json",
         "semantic_patch": "patch_spec.schema.json",
     }
     return {
@@ -4485,6 +4527,49 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "does_not_change_execution_or_hotload_gates": True,
             "restart_required_after_config_change": True,
         },
+        "external_capability_absorption": {
+            "source_project": "DrYe1109/MS-MCP",
+            "architecture_preserved": True,
+            "arbitrary_shared_gui_script_queue_adopted": False,
+            "caller_selected_current_document_adopted": False,
+            "capabilities": {
+                "secure_cif_sources": {
+                    "search_tool": "material_studio_cif_source_search",
+                    "ingest_tool": "material_studio_cif_source_ingest",
+                    "default_execution_mode": "preview",
+                    "https_allowlist": True,
+                    "redirect_and_dns_revalidation": True,
+                    "immutable_provenance_record": True,
+                    "structured_project_import": True,
+                },
+                "dmol3_geometry_optimization": {
+                    "tool": "material_studio_dmol3_relax_current",
+                    "default_execution_mode": "preview",
+                    "molecule_only": True,
+                    "singlet_only": True,
+                    "promotion_requires_converged": True,
+                    "promotion_requires_atom_identity_preserved": True,
+                    "gui_input_performed": False,
+                },
+                "remote_castep_handoff": {
+                    "prepare_tool": "material_studio_remote_castep_prepare",
+                    "record_tool": "material_studio_remote_job_record",
+                    "status_tool": "material_studio_remote_job_status",
+                    "submission_implemented": False,
+                    "ssh_or_shell_execution_implemented": False,
+                    "immutable_bundle": True,
+                    "hash_linked_local_event_journal": True,
+                },
+                "read_only_workspace_dashboard": {
+                    "snapshot_tool": "material_studio_workspace_snapshot",
+                    "artifact_tool": "material_studio_workspace_artifact_read",
+                    "cli": "ms-mcp-dashboard",
+                    "http_methods": ["GET", "HEAD"],
+                    "loopback_only": True,
+                    "filesystem_write_performed": False,
+                },
+            },
+        },
         "live_status_project_id_optional": True,
         "live_update_tool": "material_studio_live_update_with_patch",
         "dopant_metadata_reconcile_tool": "material_studio_project_reconcile_dopant_metadata",
@@ -4512,8 +4597,21 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "ProjectedDensityOfStates": "material_studio_castep_run_current",
                 "Optics": None,
                 "Phonon": None,
+                "Frequency": None,
+                "BandStructureAndDOS": None,
+                "ChargeDensity": None,
+                "DensityDifference": None,
                 "ElasticConstants": None,
             },
+            "preview_only_tasks": [
+                "Optics",
+                "Phonon",
+                "Frequency",
+                "BandStructureAndDOS",
+                "ChargeDensity",
+                "DensityDifference",
+                "ElasticConstants",
+            ],
             "unsupported_execution_status": (
                 "preview_only_no_dedicated_execution_tool"
             ),
@@ -43453,6 +43551,39 @@ def _execute_structured_script(
 ) -> dict[str, Any]:
     """Run one generated script and return metadata for the owning publisher."""
 
+    source_integrity: dict[str, Any] | None = None
+    if isinstance(spec.model, ImportedStructureSpec):
+        source = spec.model.source_file
+        expected_sha256 = source.sha256
+        source_path = source.as_path().resolve()
+        if expected_sha256 is not None:
+            if source.role == "immutable_cif_source":
+                _require_link_free_workspace_path(
+                    source_path,
+                    workspace_root=store.workspace_root,
+                    label="Immutable imported structure source",
+                )
+            if _path_is_link_or_reparse(source_path):
+                raise ValueError(
+                    "Imported structure source must not be a symbolic link, "
+                    "junction, or reparse point."
+                )
+            if not source_path.is_file():
+                raise ValueError("Imported structure source is not a regular file.")
+            observed_sha256 = _sha256_file(source_path)
+            if observed_sha256 != expected_sha256:
+                raise ValueError(
+                    "Imported structure source SHA-256 mismatch before "
+                    "MaterialsScript execution."
+                )
+            source_integrity = {
+                "status": "verified_before_runner",
+                "source_path": str(source_path),
+                "expected_sha256": expected_sha256,
+                "observed_sha256": observed_sha256,
+                "verified": True,
+                "materials_script_rechecks_immediately_before_import": True,
+            }
     result = runner.run_script(
         script,
         working_dir=store.outputs_dir(spec.project_id, spec.revision),
@@ -43461,6 +43592,36 @@ def _execute_structured_script(
         keep_script_name=f"r{spec.revision:03d}_build.pl",
     )
     result_dict = result.to_dict()
+    if source_integrity is not None:
+        if (
+            spec.model.source_file.role == "immutable_cif_source"
+            and result_dict.get("success")
+        ):
+            verified_stage = (
+                store.outputs_dir(spec.project_id, spec.revision) / "in.cif"
+            )
+            if (
+                _path_is_link_or_reparse(verified_stage)
+                or not verified_stage.is_file()
+            ):
+                raise ValueError(
+                    "MaterialsScript reported success without a regular "
+                    "hash-verified CIF staging artifact."
+                )
+            stage_sha256 = _sha256_file(verified_stage)
+            if stage_sha256 != source_integrity["expected_sha256"]:
+                raise ValueError(
+                    "Hash-verified CIF staging artifact changed during import."
+                )
+            source_integrity.update(
+                {
+                    "status": "verified_before_runner_and_after_import",
+                    "verified_stage_path": str(verified_stage),
+                    "verified_stage_sha256": stage_sha256,
+                    "verified_stage_rechecked_after_import": True,
+                }
+            )
+        result_dict["imported_source_integrity"] = source_integrity
     return {"result": result_dict}
 
 
@@ -44021,6 +44182,12 @@ def _execute_or_materialize_structure(
                 }
             response = {
                 **execution,
+                "ok": bool(result.get("success")),
+                "status": (
+                    "revision_execution_completed"
+                    if result.get("success")
+                    else "revision_execution_failed"
+                ),
                 "execution_started": True,
                 "execution_transaction": transaction,
                 "execution_attempt": completed_attempt.model_dump(mode="json"),
@@ -56629,6 +56796,1562 @@ def material_studio_gui_apply_current_revision(
         return finish(_validation_error(exc))
     except Exception as exc:
         return finish(_error(exc))
+
+
+def _resolved_workspace_without_creation(working_dir: str | None) -> Path:
+    """Resolve a workspace path without creating it during preview."""
+
+    return (
+        Path(working_dir).expanduser().resolve()
+        if working_dir is not None
+        else default_workspace_root()
+    )
+
+
+def _existing_structured_store(working_dir: str | None) -> ProjectStore:
+    """Open an existing structured workspace without preview-time creation."""
+
+    workspace_root = _resolved_workspace_without_creation(working_dir)
+    if not workspace_root.is_dir():
+        raise ValueError(
+            f"Structured workspace does not exist: {workspace_root}"
+        )
+    return ProjectStore(workspace_root)
+
+
+def _cif_ingest_model_spec(
+    *,
+    project_id: str,
+    structure_name: str,
+    source_path: str,
+    source_receipt: dict[str, Any] | None,
+) -> ModelSpec:
+    metadata: dict[str, Any] = {
+        "source_kind": "secure_cif_ingest",
+        "source_path_is_content_addressed": source_receipt is not None,
+    }
+    content_sha256: str | None = None
+    if source_receipt is not None:
+        record = source_receipt.get("record")
+        digest_value = source_receipt.get("content_sha256")
+        if not isinstance(digest_value, str):
+            raise CifSourceError(
+                "Executed CIF source receipt is missing its content SHA-256."
+            )
+        content_sha256 = digest_value
+        metadata["cif_source"] = {
+            "schema_version": source_receipt.get("schema_version"),
+            "requested_url": source_receipt.get("requested_url"),
+            "final_url": source_receipt.get("final_url"),
+            "content_sha256": source_receipt.get("content_sha256"),
+            "record_id": (
+                record.get("record_id") if isinstance(record, dict) else None
+            ),
+            "provenance_path": (
+                record.get("provenance_path") if isinstance(record, dict) else None
+            ),
+        }
+    return ModelSpec(
+        project_id=project_id,
+        revision=0,
+        model_type=ModelType.IMPORTED_STRUCTURE,
+        model=ImportedStructureSpec(
+            name=structure_name,
+            source_file={
+                "path": source_path,
+                "role": (
+                    "immutable_cif_source"
+                    if source_receipt is not None
+                    else "planned_immutable_cif_source"
+                ),
+                "sha256": content_sha256,
+            },
+            format="cif",
+        ),
+        metadata=metadata,
+    )
+
+
+@mcp.tool(
+    name="material_studio_cif_source_search",
+    annotations={
+        "title": "Preview or search the Crystallography Open Database",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+def material_studio_cif_source_search(
+    query: Annotated[
+        str | None,
+        Field(
+            description="Optional bounded COD free-text query.",
+            min_length=1,
+            max_length=200,
+        ),
+    ] = None,
+    formula: Annotated[
+        str | None,
+        Field(
+            description="Optional bounded chemical formula query.",
+            min_length=1,
+            max_length=200,
+        ),
+    ] = None,
+    max_results: Annotated[
+        int,
+        Field(description="Maximum candidates to return.", ge=1, le=100),
+    ] = 10,
+    execution_mode: Annotated[
+        ExecutionMode,
+        Field(
+            description=(
+                "preview performs no DNS/network access; execute performs a "
+                "bounded read-only COD request."
+            )
+        ),
+    ] = ExecutionMode.PREVIEW,
+) -> dict[str, Any]:
+    """Search COD through the reviewed HTTPS/DNS/redirect boundary."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        return {
+            "ok": True,
+            **search_cod(
+                query=query,
+                formula=formula,
+                max_results=max_results,
+                execution_mode=mode.value,
+            ),
+        }
+    except (CifSourceError, ValidationError) as exc:
+        return _error(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_cif_source_ingest",
+    annotations={
+        "title": "Securely ingest a CIF as a structured project",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+@_require_current_runtime_source
+def material_studio_cif_source_ingest(
+    project_id: Annotated[
+        str,
+        Field(
+            description="New structured project ID.",
+            min_length=1,
+            max_length=120,
+            pattern=r"^[A-Za-z0-9_-]+$",
+        ),
+    ],
+    structure_name: Annotated[
+        str,
+        Field(description="Reader-facing structure name.", min_length=1, max_length=120),
+    ],
+    cod_id: Annotated[
+        str | None,
+        Field(
+            description="Exact COD numeric identifier; mutually exclusive with source_url.",
+            pattern=r"^[0-9]{6,9}$",
+        ),
+    ] = None,
+    source_url: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Allowlisted HTTPS CIF URL; mutually exclusive with cod_id. "
+                "Credentials, custom ports, private addresses, and unapproved "
+                "redirects are rejected."
+            ),
+            min_length=1,
+            max_length=2048,
+        ),
+    ] = None,
+    execution_mode: Annotated[
+        ExecutionMode,
+        Field(
+            description=(
+                "preview performs no DNS, network, or filesystem write; execute "
+                "publishes an immutable source record and imports it through the "
+                "structured revision workflow."
+            )
+        ),
+    ] = ExecutionMode.PREVIEW,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+    max_bytes: Annotated[
+        int,
+        Field(description="Maximum accepted CIF body size.", ge=1024, le=64 * 1024 * 1024),
+    ] = 8 * 1024 * 1024,
+    network_timeout_seconds: Annotated[
+        float,
+        Field(description="Per-request HTTPS timeout.", gt=0, le=120),
+    ] = 30.0,
+    materials_timeout_seconds: Annotated[
+        int | None,
+        Field(description="MaterialsScript import timeout.", ge=1, le=24 * 3600),
+    ] = None,
+) -> dict[str, Any]:
+    """Fetch an allowlisted CIF and create one provenance-bound project."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        workspace_root = _resolved_workspace_without_creation(working_dir)
+        artifact_root = workspace_root / ".reference_sources" / "cif"
+        placeholder_source = (
+            artifact_root
+            / "records"
+            / "<content-addressed-record-id>"
+            / "source.cif"
+        )
+        template = _cif_ingest_model_spec(
+            project_id=project_id,
+            structure_name=structure_name,
+            source_path=str(placeholder_source),
+            source_receipt=None,
+        )
+        if mode is ExecutionMode.EXECUTE:
+            preflight_store = _structured_store(str(workspace_root))
+            project_dir = preflight_store.project_dir(project_id)
+            if (project_dir / "current.json").exists() or (
+                project_dir / "revisions"
+            ).exists():
+                raise ValueError(
+                    f"Project already exists; CIF fetch was not started: {project_id}"
+                )
+        fetch_receipt = fetch_cif_source(
+            artifact_root=artifact_root,
+            source_url=source_url,
+            cod_id=cod_id,
+            execution_mode=mode.value,
+            max_bytes=max_bytes,
+            timeout_seconds=network_timeout_seconds,
+        )
+        response: dict[str, Any] = {
+            "ok": True,
+            "status": (
+                "ready_for_explicit_execute"
+                if mode is ExecutionMode.PREVIEW
+                else "cif_source_fetched"
+            ),
+            "execution_mode": mode.value,
+            "project_id": project_id,
+            "workspace_root": str(workspace_root),
+            "fetch": fetch_receipt,
+            "model_spec_template": template.model_dump(mode="json"),
+            "network_performed": bool(fetch_receipt.get("network_performed")),
+            "project_created": False,
+            "materials_studio_execution_performed": False,
+            "gui_input_performed": False,
+        }
+        if mode is ExecutionMode.PREVIEW:
+            response["execute_action"] = {
+                "recommended_tool": "material_studio_cif_source_ingest",
+                "payload_hint": {
+                    "project_id": project_id,
+                    "structure_name": structure_name,
+                    "cod_id": cod_id,
+                    "source_url": source_url,
+                    "execution_mode": "execute",
+                    "working_dir": str(workspace_root),
+                    "max_bytes": max_bytes,
+                    "network_timeout_seconds": network_timeout_seconds,
+                    "materials_timeout_seconds": materials_timeout_seconds,
+                },
+                "needs_user_confirmation": True,
+            }
+            return response
+
+        record = fetch_receipt.get("record")
+        if not isinstance(record, dict) or not isinstance(
+            record.get("source_path"), str
+        ):
+            raise CifSourceError("Executed CIF fetch returned no immutable source path.")
+        exact_spec = _cif_ingest_model_spec(
+            project_id=project_id,
+            structure_name=structure_name,
+            source_path=record["source_path"],
+            source_receipt=fetch_receipt,
+        )
+        imported = material_studio_model_create_from_spec(
+            spec=exact_spec.model_dump(mode="json"),
+            user_text=(
+                "Secure CIF ingest from "
+                + str(fetch_receipt.get("final_url") or fetch_receipt.get("requested_url"))
+            ),
+            execution_mode=ExecutionMode.EXECUTE,
+            working_dir=str(workspace_root),
+            timeout_seconds=materials_timeout_seconds,
+            verify_ms_roundtrip=False,
+        )
+        response.update(
+            {
+                "status": (
+                    "cif_ingest_completed"
+                    if imported.get("ok") is True
+                    else "cif_import_failed"
+                ),
+                "ok": imported.get("ok") is True,
+                "project_created": imported.get("revision") is not None,
+                "revision": imported.get("revision"),
+                "model_spec": exact_spec.model_dump(mode="json"),
+                "structured_import": imported,
+                "materials_studio_execution_performed": bool(
+                    imported.get("execution_attempt")
+                    or imported.get("execution_started")
+                    or imported.get("result")
+                ),
+            }
+        )
+        return response
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+def _dashboard_error_response(exc: DashboardError) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "workspace_read_blocked",
+        "error_type": exc.__class__.__name__,
+        "error_code": exc.code,
+        "http_status": exc.status,
+        "error": str(exc),
+        "read_only": True,
+        "filesystem_write_performed": False,
+    }
+
+
+@mcp.tool(
+    name="material_studio_workspace_snapshot",
+    annotations={
+        "title": "Read a bounded workspace and artifact snapshot",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def material_studio_workspace_snapshot(
+    working_dir: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Existing structured workspace root. Missing workspaces are never created."
+            )
+        ),
+    ] = None,
+    max_projects: Annotated[
+        int,
+        Field(description="Maximum project directories to summarize.", ge=1, le=1000),
+    ] = 100,
+    max_artifacts_per_revision: Annotated[
+        int,
+        Field(description="Maximum indexed artifacts per current revision.", ge=1, le=2000),
+    ] = 200,
+) -> dict[str, Any]:
+    """Return a bounded, link-safe, byte-for-byte read-only workspace view."""
+
+    try:
+        workspace_root = _resolved_workspace_without_creation(working_dir)
+        service = WorkspaceSnapshotService(
+            workspace_root,
+            limits=DashboardLimits(
+                max_projects=max_projects,
+                max_artifacts_per_revision=max_artifacts_per_revision,
+            ),
+        )
+        return {
+            "ok": True,
+            **service.snapshot(),
+            "filesystem_write_performed": False,
+        }
+    except DashboardError as exc:
+        return _dashboard_error_response(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_workspace_artifact_read",
+    annotations={
+        "title": "Read one allowlisted revision artifact",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def material_studio_workspace_artifact_read(
+    project_id: Annotated[
+        str,
+        Field(
+            description="Exact structured project ID.",
+            min_length=1,
+            max_length=120,
+            pattern=r"^[A-Za-z0-9_-]+$",
+        ),
+    ],
+    revision: Annotated[
+        int,
+        Field(description="Exact revision whose output directory is read.", ge=0),
+    ],
+    relative_path: Annotated[
+        str,
+        Field(
+            description=(
+                "POSIX-style path relative to outputs/rNNN. Traversal, links, "
+                "HTML, scripts, and unapproved types are rejected."
+            ),
+            min_length=1,
+            max_length=1024,
+        ),
+    ],
+    working_dir: Annotated[
+        str | None,
+        Field(description="Existing structured workspace root."),
+    ] = None,
+    max_bytes: Annotated[
+        int,
+        Field(description="Maximum artifact bytes to return.", ge=1, le=4 * 1024 * 1024),
+    ] = 2 * 1024 * 1024,
+) -> dict[str, Any]:
+    """Read one verified UTF-8 text/JSON/CIF or raster artifact."""
+
+    try:
+        workspace_root = _resolved_workspace_without_creation(working_dir)
+        service = WorkspaceSnapshotService(
+            workspace_root,
+            limits=DashboardLimits(
+                max_artifact_bytes=max_bytes,
+                max_http_response_bytes=max(4 * 1024 * 1024, max_bytes),
+            ),
+        )
+        artifact = service.read_artifact(project_id, revision, relative_path)
+        content_type = artifact.content_type
+        is_text = (
+            "charset=utf-8" in content_type
+            or content_type.startswith("application/json")
+            or content_type.startswith("application/x-ndjson")
+            or content_type.startswith("text/")
+            or content_type.startswith("chemical/")
+        )
+        if is_text:
+            content = artifact.payload.decode("utf-8-sig", errors="strict")
+            encoding = "utf-8"
+        else:
+            content = base64.b64encode(artifact.payload).decode("ascii")
+            encoding = "base64"
+        return {
+            "ok": True,
+            "schema_version": "materials-studio-workspace-artifact/v1",
+            "read_only": True,
+            "filesystem_write_performed": False,
+            "workspace_root": str(workspace_root),
+            "project_id": artifact.project_id,
+            "revision": artifact.revision,
+            "relative_path": artifact.relative_path,
+            "content_type": content_type,
+            "encoding": encoding,
+            "size_bytes": len(artifact.payload),
+            "content_sha256": artifact.content_sha256,
+            "mtime_ns": artifact.mtime_ns,
+            "content": content,
+        }
+    except DashboardError as exc:
+        return _dashboard_error_response(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            block = handle.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _path_is_link_or_reparse(path: Path) -> bool:
+    """Return true for a symbolic link, junction, or Windows reparse point."""
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    attributes = int(getattr(metadata, "st_file_attributes", 0))
+    reparse_flag = int(
+        getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+    return path.is_symlink() or bool(attributes & reparse_flag)
+
+
+def _require_link_free_workspace_path(
+    path: Path,
+    *,
+    workspace_root: Path,
+    label: str,
+) -> None:
+    """Reject existing link/reparse ancestors inside one workspace."""
+
+    root = workspace_root.absolute()
+    target = path.absolute()
+    try:
+        relative = target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes the structured workspace.") from exc
+    candidates = [root]
+    current = root
+    for part in relative.parts:
+        current = current / part
+        candidates.append(current)
+    for candidate in candidates:
+        if _path_is_link_or_reparse(candidate):
+            raise ValueError(
+                f"{label} contains a symbolic link, junction, or reparse "
+                f"point: {candidate}"
+            )
+
+
+@mcp.tool(
+    name="material_studio_remote_castep_prepare",
+    annotations={
+        "title": "Prepare an immutable remote CASTEP handoff bundle",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_remote_castep_prepare(
+    project_id: Annotated[
+        str,
+        Field(description="Structured CASTEP project ID.", min_length=1, max_length=120),
+    ],
+    expected_revision: Annotated[
+        int,
+        Field(description="Exact current revision to bind.", ge=0),
+    ],
+    calculation_name: Annotated[
+        str,
+        Field(
+            description="Stable local handoff name.",
+            min_length=1,
+            max_length=120,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$",
+        ),
+    ],
+    requested_cores: Annotated[
+        int | None,
+        Field(
+            description="Advisory requested core count; no scheduler is invoked.",
+            ge=1,
+            le=1_000_000,
+        ),
+    ] = None,
+    expected_preview_manifest_sha256: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Exact manifest SHA-256 returned by preview; required for execute."
+            ),
+            pattern=r"^[0-9a-fA-F]{64}$",
+        ),
+    ] = None,
+    execution_mode: Annotated[
+        ExecutionMode,
+        Field(
+            description=(
+                "preview validates and hashes the exact current artifacts without "
+                "writing; execute publishes a content-bound local bundle."
+            )
+        ),
+    ] = ExecutionMode.PREVIEW,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+) -> dict[str, Any]:
+    """Prepare files for an external scheduler without shell, SSH, or submission."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        store = _existing_structured_store(working_dir)
+        spec, current_pointer = store.resolve_current(project_id)
+        if spec.revision != expected_revision:
+            return {
+                "ok": False,
+                "status": "remote_handoff_revision_binding_block",
+                "project_id": project_id,
+                "expected_revision": expected_revision,
+                "current_revision": spec.revision,
+                "current_pointer": current_pointer,
+                "write_performed": False,
+            }
+        if not isinstance(spec.simulation, CastepEnergySpec):
+            raise ValueError(
+                "Remote CASTEP handoff requires a current structured CASTEP spec."
+            )
+        project_dir = store.project_dir(project_id)
+        revision_label = f"r{spec.revision:03d}"
+        spec_path = project_dir / "revisions" / f"{revision_label}_model_spec.json"
+        script_path = project_dir / "scripts" / f"{revision_label}_castep_task.pl"
+        generated = _generate_structured_script(spec, store)
+        input_value = (generated.get("planned_outputs") or {}).get("structure")
+        if not isinstance(input_value, str):
+            raise ValueError("Current CASTEP revision has no planned input structure.")
+        input_path = Path(input_value).expanduser().resolve()
+        missing = [
+            str(path)
+            for path in (spec_path, script_path, input_path)
+            if not path.is_file()
+        ]
+        if missing:
+            raise ValueError(
+                "Remote handoff requires materialized current artifacts; missing: "
+                + ", ".join(missing)
+            )
+        result = prepare_remote_castep_bundle(
+            {
+                "workspace_root": str(store.workspace_root),
+                "project_id": project_id,
+                "expected_revision": expected_revision,
+                "calculation_name": calculation_name,
+                "task": spec.simulation.task.value,
+                "spec_path": str(spec_path),
+                "script_path": str(script_path),
+                "input_path": str(input_path),
+                "expected_spec_sha256": _sha256_file(spec_path),
+                "expected_script_sha256": _sha256_file(script_path),
+                "expected_input_sha256": _sha256_file(input_path),
+                "expected_preview_manifest_sha256": (
+                    expected_preview_manifest_sha256.lower()
+                    if expected_preview_manifest_sha256 is not None
+                    else None
+                ),
+                "requested_cores": requested_cores,
+                "execution_mode": mode.value,
+            }
+        )
+        response = {
+            **result,
+            "project_resolution": _explicit_project_resolution(
+                spec, current_pointer
+            ),
+            "submission_performed": False,
+            "remote_query_performed": False,
+        }
+        if mode is ExecutionMode.PREVIEW and result.get("ok") is True:
+            response["execute_action"] = {
+                "tool": "material_studio_remote_castep_prepare",
+                "payload": {
+                    "project_id": project_id,
+                    "expected_revision": expected_revision,
+                    "calculation_name": calculation_name,
+                    "requested_cores": requested_cores,
+                    "expected_preview_manifest_sha256": result[
+                        "manifest_sha256"
+                    ],
+                    "execution_mode": ExecutionMode.EXECUTE.value,
+                    "working_dir": str(store.workspace_root),
+                },
+                "payload_hint_is_directly_callable": True,
+                "needs_user_confirmation": True,
+            }
+            response["needs_user_confirmation"] = True
+        return response
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_remote_job_record",
+    annotations={
+        "title": "Record externally observed remote job evidence",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_remote_job_record(
+    project_id: Annotated[
+        str,
+        Field(description="Project owning the handoff bundle.", min_length=1, max_length=120),
+    ],
+    bundle_id: Annotated[
+        str,
+        Field(description="Exact prepared bundle ID.", min_length=1, max_length=200),
+    ],
+    expected_manifest_sha256: Annotated[
+        str,
+        Field(description="Exact immutable manifest digest.", pattern=r"^[0-9a-fA-F]{64}$"),
+    ],
+    event_type: Annotated[
+        str,
+        Field(description="submission or status.", pattern=r"^(submission|status)$"),
+    ],
+    scheduler_kind: Annotated[
+        RemoteSchedulerKind,
+        Field(description="Externally observed scheduler family."),
+    ],
+    scheduler_id: Annotated[
+        str,
+        Field(description="Explicit scheduler instance ID.", min_length=1, max_length=128),
+    ],
+    job_id: Annotated[
+        str,
+        Field(description="Scheduler-assigned job ID.", min_length=1, max_length=128),
+    ],
+    recorded_at: Annotated[
+        str,
+        Field(description="Timezone-aware ISO-8601 submission or observation time.", min_length=1, max_length=80),
+    ],
+    channel: Annotated[
+        RemoteSubmissionChannel | None,
+        Field(description="Required for submission evidence."),
+    ] = None,
+    state: Annotated[
+        RemoteJobState | None,
+        Field(description="Required for status evidence."),
+    ] = None,
+    detail: Annotated[
+        str | None,
+        Field(description="Optional bounded note or scheduler detail.", max_length=2000),
+    ] = None,
+    scheduler_message_id: Annotated[
+        str | None,
+        Field(description="Optional scheduler observation message ID.", max_length=128),
+    ] = None,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+) -> dict[str, Any]:
+    """Append one identity-bound event to the local hash-linked journal."""
+
+    try:
+        workspace_root = _existing_structured_store(working_dir).workspace_root
+        identity = {
+            "scheduler_kind": RemoteSchedulerKind(scheduler_kind).value,
+            "scheduler_id": scheduler_id,
+            "job_id": job_id,
+        }
+        common = {
+            "workspace_root": str(workspace_root),
+            "project_id": project_id,
+            "bundle_id": bundle_id,
+            "expected_manifest_sha256": expected_manifest_sha256.lower(),
+            "identity": identity,
+        }
+        if event_type == "submission":
+            if channel is None or state is not None or scheduler_message_id is not None:
+                raise ValueError(
+                    "Submission evidence requires channel and forbids status-only fields."
+                )
+            return record_remote_submission(
+                {
+                    **common,
+                    "submitted_at": recorded_at,
+                    "channel": RemoteSubmissionChannel(channel).value,
+                    "note": detail,
+                }
+            )
+        if event_type == "status":
+            if state is None or channel is not None:
+                raise ValueError(
+                    "Status evidence requires state and forbids submission channel."
+                )
+            return record_remote_status(
+                {
+                    **common,
+                    "observed_at": recorded_at,
+                    "state": RemoteJobState(state).value,
+                    "detail": detail,
+                    "scheduler_message_id": scheduler_message_id,
+                }
+            )
+        raise ValueError("event_type must be submission or status.")
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_remote_job_status",
+    annotations={
+        "title": "Read local remote job evidence",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+def material_studio_remote_job_status(
+    project_id: Annotated[
+        str,
+        Field(description="Project owning the handoff bundle.", min_length=1, max_length=120),
+    ],
+    bundle_id: Annotated[
+        str,
+        Field(description="Exact prepared bundle ID.", min_length=1, max_length=200),
+    ],
+    expected_manifest_sha256: Annotated[
+        str,
+        Field(description="Exact immutable manifest digest.", pattern=r"^[0-9a-fA-F]{64}$"),
+    ],
+    scheduler_kind: Annotated[
+        RemoteSchedulerKind,
+        Field(description="Recorded scheduler family."),
+    ],
+    scheduler_id: Annotated[
+        str,
+        Field(description="Recorded scheduler instance ID.", min_length=1, max_length=128),
+    ],
+    job_id: Annotated[
+        str,
+        Field(description="Recorded scheduler-assigned job ID.", min_length=1, max_length=128),
+    ],
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+) -> dict[str, Any]:
+    """Read a verified local projection; never contact a scheduler."""
+
+    try:
+        workspace_root = _resolved_workspace_without_creation(working_dir)
+        return read_remote_job_status(
+            {
+                "workspace_root": str(workspace_root),
+                "project_id": project_id,
+                "bundle_id": bundle_id,
+                "expected_manifest_sha256": expected_manifest_sha256.lower(),
+                "identity": {
+                    "scheduler_kind": RemoteSchedulerKind(scheduler_kind).value,
+                    "scheduler_id": scheduler_id,
+                    "job_id": job_id,
+                },
+            }
+        )
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except Exception as exc:
+        return _error(exc)
+
+
+def _effective_dmol3_geometry_spec(
+    base_spec: ModelSpec,
+    *,
+    quality: DMol3Quality | None,
+    theory_level: DMol3TheoryLevel | None,
+    geometry_optimization_quality: DMol3Quality | None,
+    charge: int | None,
+    use_symmetry: DMol3YesNo | None,
+    create_energy_evolution_chart: DMol3YesNo | None,
+) -> DMol3GeometryOptimizationSpec:
+    if not isinstance(base_spec.model, MoleculeSpec):
+        raise ValueError("DMol3 geometry optimization requires a molecule project.")
+    current = (
+        base_spec.simulation
+        if isinstance(base_spec.simulation, DMol3GeometryOptimizationSpec)
+        else None
+    )
+
+    def choose(name: str, override: Any, default: Any) -> Any:
+        if override is not None:
+            return override
+        if current is not None:
+            return getattr(current, name)
+        return default
+
+    molecule_charge = base_spec.model.total_charge
+    selected_charge = choose(
+        "charge",
+        charge,
+        molecule_charge if molecule_charge is not None else 0,
+    )
+    if molecule_charge is not None and selected_charge != molecule_charge:
+        raise ValueError(
+            "DMol3 charge must equal the molecule total_charge for identity-safe promotion."
+        )
+    if base_spec.model.spin_multiplicity not in {None, 1}:
+        raise ValueError(
+            "The current strict DMol3 workflow supports singlet molecules only."
+        )
+    return DMol3GeometryOptimizationSpec(
+        quality=choose("quality", quality, DMol3Quality.MEDIUM),
+        theory_level=choose("theory_level", theory_level, DMol3TheoryLevel.GGA),
+        geometry_optimization_quality=choose(
+            "geometry_optimization_quality",
+            geometry_optimization_quality,
+            None,
+        ),
+        charge=selected_charge,
+        use_symmetry=choose("use_symmetry", use_symmetry, DMol3YesNo.NO),
+        create_energy_evolution_chart=choose(
+            "create_energy_evolution_chart",
+            create_energy_evolution_chart,
+            DMol3YesNo.YES,
+        ),
+    )
+
+
+@mcp.tool(
+    name="material_studio_dmol3_relax_current",
+    annotations={
+        "title": "Preview or run DMol3 molecular geometry optimization",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_dmol3_relax_current(
+    project_id: Annotated[
+        str | None,
+        Field(
+            description="Current molecule project; omitted uses the latest current project.",
+            min_length=1,
+            max_length=120,
+        ),
+    ] = None,
+    expected_revision: Annotated[
+        int | None,
+        Field(description="Optional exact revision binding from preview.", ge=0),
+    ] = None,
+    execution_mode: Annotated[
+        ExecutionMode,
+        Field(
+            description=(
+                "preview returns the deterministic script and gates; execute runs "
+                "DMol3 and promotes only a converged identity-preserving result."
+            )
+        ),
+    ] = ExecutionMode.PREVIEW,
+    quality: Annotated[
+        DMol3Quality | None,
+        Field(description="Reviewed DMol3 quality preset."),
+    ] = None,
+    theory_level: Annotated[
+        DMol3TheoryLevel | None,
+        Field(description="Reviewed DMol3 theory level."),
+    ] = None,
+    geometry_optimization_quality: Annotated[
+        DMol3Quality | None,
+        Field(description="Optional geometry convergence quality preset."),
+    ] = None,
+    charge: Annotated[
+        int | None,
+        Field(description="Molecular charge; must match ModelSpec total_charge.", ge=-1000, le=1000),
+    ] = None,
+    use_symmetry: Annotated[
+        DMol3YesNo | None,
+        Field(description="Reviewed Yes/No symmetry setting."),
+    ] = None,
+    create_energy_evolution_chart: Annotated[
+        DMol3YesNo | None,
+        Field(description="Reviewed Yes/No energy-chart setting."),
+    ] = None,
+    working_dir: Annotated[
+        str | None,
+        Field(description="Optional structured workspace root."),
+    ] = None,
+    timeout_seconds: Annotated[
+        int | None,
+        Field(description="DMol3 execution timeout.", ge=1, le=7 * 24 * 3600),
+    ] = None,
+) -> dict[str, Any]:
+    """Run a revision-bound DMol3 relaxation without touching the open GUI."""
+
+    try:
+        mode = ExecutionMode(execution_mode)
+        store = _existing_structured_store(working_dir)
+        if project_id is None:
+            latest = _latest_live_project(store)
+            if latest is None:
+                raise ValueError("No current structured project exists.")
+            base_spec, project_resolution = latest
+            project_id = base_spec.project_id
+        else:
+            base_spec, current_pointer = store.resolve_current(project_id)
+            project_resolution = _explicit_project_resolution(
+                base_spec, current_pointer
+            )
+        if expected_revision is not None and base_spec.revision != expected_revision:
+            return {
+                "ok": False,
+                "status": "dmol3_revision_binding_block",
+                "project_id": base_spec.project_id,
+                "expected_revision": expected_revision,
+                "current_revision": base_spec.revision,
+                "project_resolution": project_resolution,
+                "execution_started": False,
+                "revision_created": False,
+            }
+        if not isinstance(base_spec.model, MoleculeSpec):
+            raise ValueError("DMol3 geometry optimization requires a molecule project.")
+        simulation = _effective_dmol3_geometry_spec(
+            base_spec,
+            quality=quality,
+            theory_level=theory_level,
+            geometry_optimization_quality=geometry_optimization_quality,
+            charge=charge,
+            use_symmetry=use_symmetry,
+            create_energy_evolution_chart=create_energy_evolution_chart,
+        )
+        generated_current = _generate_structured_script(base_spec, store)
+        input_value = (generated_current.get("planned_outputs") or {}).get(
+            "structure"
+        )
+        if not isinstance(input_value, str):
+            raise ValueError("Current molecule revision has no planned XSD structure.")
+        input_structure = Path(input_value).expanduser().resolve()
+        revision_output_dir = (
+            store.project_dir(base_spec.project_id)
+            / "outputs"
+            / f"r{base_spec.revision:03d}"
+        )
+        calculation_dir = revision_output_dir / "dmol3_geometry_optimization"
+        execution_input_structure = calculation_dir / "in.xsd"
+        output_structure = calculation_dir / "optimized_structure.xsd"
+        output_report = calculation_dir / "dmol3_geometry_optimization.outmol"
+        script_path = calculation_dir / "run_geometry_optimization.pl"
+        result_metadata_path = calculation_dir / "result_metadata.json"
+        execution_key = hashlib.sha256(
+            (
+                f"{store.workspace_root}|{base_spec.project_id}|"
+                f"{base_spec.revision}|dmol3"
+            ).encode("utf-8")
+        ).hexdigest()[:12]
+        runner_working_dir = store.workspace_root
+        execution_job_root = runner_working_dir / DEFAULT_JOBS_DIR
+        execution_job_prefix = (
+            f"d3_{execution_key}_r{base_spec.revision:03d}"
+        )
+        predicted_internal_task_path = (
+            execution_job_root
+            / f"{execution_job_prefix}-YYYYMMDD-HHMMSS-xxxxxxxx"
+            / "~TASK_99999_9999999999"
+            / execution_input_structure.name
+        )
+        _require_link_free_workspace_path(
+            calculation_dir,
+            workspace_root=store.workspace_root,
+            label="DMol3 calculation directory",
+        )
+        _require_link_free_workspace_path(
+            input_structure,
+            workspace_root=store.workspace_root,
+            label="DMol3 current-revision input structure",
+        )
+        if _path_is_link_or_reparse(input_structure):
+            raise ValueError(
+                "DMol3 current-revision input structure must not be a link "
+                "or reparse point."
+            )
+        _require_link_free_workspace_path(
+            execution_job_root,
+            workspace_root=store.workspace_root,
+            label="DMol3 runner job directory",
+        )
+        legacy_path_limit = 260
+        path_length_checks = {
+            "execution_input_structure": len(str(execution_input_structure)),
+            "output_structure": len(str(output_structure)),
+            "output_report": len(str(output_report)),
+            "saved_script": len(str(script_path)),
+            "predicted_internal_task_path": len(
+                str(predicted_internal_task_path)
+            ),
+        }
+        path_length_safe = all(
+            length < legacy_path_limit
+            for length in path_length_checks.values()
+        )
+        script = render_dmol3_geometry_optimization_script(
+            simulation,
+            execution_input_structure,
+            output_structure,
+            output_report,
+            project_id=base_spec.project_id,
+            base_revision=base_spec.revision,
+            source_molecule=base_spec.model,
+        )
+        script_validation = validate_generated_script(script)
+        preflight = {
+            "schema_version": "material_studio_dmol3_preflight_v1",
+            "execution_ready": bool(
+                script_validation.get("valid")
+                and input_structure.is_file()
+                and path_length_safe
+            ),
+            "blocking_reasons": [
+                reason
+                for condition, reason in (
+                    (
+                        not script_validation.get("valid"),
+                        "generated_script_validation_failed",
+                    ),
+                    (
+                        not input_structure.is_file(),
+                        "current_molecule_xsd_not_materialized",
+                    ),
+                    (
+                        not path_length_safe,
+                        "materials_studio_legacy_path_limit_exceeded",
+                    ),
+                )
+                if condition
+            ],
+            "input_structure": str(input_structure),
+            "input_structure_exists": input_structure.is_file(),
+            "execution_input_structure": str(execution_input_structure),
+            "execution_input_is_hash_verified_copy": False,
+            "execution_input_copy_status": "planned_not_performed",
+            "runner_working_dir": str(runner_working_dir),
+            "execution_job_root": str(execution_job_root),
+            "execution_job_prefix": execution_job_prefix,
+            "legacy_path_limit_characters": legacy_path_limit,
+            "path_length_checks": path_length_checks,
+            "path_length_safe": path_length_safe,
+            "output_structure": str(output_structure),
+            "output_report": str(output_report),
+            "script_path": str(script_path),
+            "result_contract": {
+                "api": "Modules->DMol3->GeometryOptimization->Run",
+                "materials_studio_api_contract": "Materials Studio 20.1",
+                "promotion_requires_converged": True,
+                "promotion_requires_atom_identity_preserved": True,
+                "promotion_requires_element_identity_preserved": True,
+            },
+        }
+        response: dict[str, Any] = {
+            "ok": True,
+            "status": (
+                "ready_for_explicit_execute"
+                if preflight["execution_ready"]
+                else "dmol3_preflight_blocked"
+            ),
+            "project_id": base_spec.project_id,
+            "revision": base_spec.revision,
+            "base_revision": base_spec.revision,
+            "project_resolution": project_resolution,
+            "execution_mode": mode.value,
+            "simulation": simulation.model_dump(mode="json"),
+            "script": script,
+            "script_sha256": text_sha256(script),
+            "script_validation": script_validation,
+            "preflight": preflight,
+            "execution_started": False,
+            "revision_created": False,
+            "gui_input_performed": False,
+            "open_in_gui": False,
+        }
+        if mode is ExecutionMode.PREVIEW:
+            response["execute_action"] = {
+                "recommended_tool": "material_studio_dmol3_relax_current",
+                "payload_hint": {
+                    "project_id": base_spec.project_id,
+                    "expected_revision": base_spec.revision,
+                    "execution_mode": "execute",
+                    "quality": simulation.quality.value,
+                    "theory_level": simulation.theory_level.value,
+                    "geometry_optimization_quality": (
+                        simulation.geometry_optimization_quality.value
+                        if simulation.geometry_optimization_quality is not None
+                        else None
+                    ),
+                    "charge": simulation.charge,
+                    "use_symmetry": simulation.use_symmetry.value,
+                    "create_energy_evolution_chart": (
+                        simulation.create_energy_evolution_chart.value
+                    ),
+                    "working_dir": str(store.workspace_root),
+                    "timeout_seconds": timeout_seconds,
+                },
+                "needs_user_confirmation": True,
+            }
+            return response
+        if not preflight["execution_ready"]:
+            return {
+                **response,
+                "ok": False,
+                "status": "dmol3_preflight_blocked",
+                "error": "DMol3 execution preflight failed.",
+            }
+
+        runner_result: dict[str, Any] | None = None
+        result_validation: dict[str, Any] | None = None
+        execution_metadata: dict[str, Any] | None = None
+        terminal_attempt: dict[str, Any] | None = None
+        terminal_receipt: dict[str, Any] | None = None
+        current_revision_after_execution: int | None = None
+        current_revision_still_current: bool | None = None
+        with _revision_execution_transaction(
+            store=store,
+            spec=base_spec,
+            coverage=(
+                "dmol3_geometry_optimization",
+                "immutable_revision_binding",
+                "current_revision_revalidation",
+                "converged_identity_preserving_result",
+            ),
+        ) as execution_transaction:
+            calculation_dir.mkdir(parents=True, exist_ok=True)
+            execution_job_root.mkdir(parents=True, exist_ok=True)
+            _require_link_free_workspace_path(
+                calculation_dir,
+                workspace_root=store.workspace_root,
+                label="DMol3 calculation directory",
+            )
+            _require_link_free_workspace_path(
+                execution_job_root,
+                workspace_root=store.workspace_root,
+                label="DMol3 runner job directory",
+            )
+            canonical_input_sha256 = _sha256_file(input_structure)
+            if execution_input_structure.exists():
+                if (
+                    _path_is_link_or_reparse(execution_input_structure)
+                    or not execution_input_structure.is_file()
+                    or _sha256_file(execution_input_structure)
+                    != canonical_input_sha256
+                ):
+                    raise ValueError(
+                        "Existing DMol3 short-name execution input differs from "
+                        "the immutable current-revision structure."
+                    )
+            else:
+                with input_structure.open("rb") as source_handle:
+                    with execution_input_structure.open("xb") as target_handle:
+                        shutil.copyfileobj(source_handle, target_handle)
+                if _sha256_file(execution_input_structure) != canonical_input_sha256:
+                    raise ValueError(
+                        "DMol3 short-name execution input hash verification failed."
+                    )
+            if _sha256_file(input_structure) != canonical_input_sha256:
+                raise ValueError(
+                    "DMol3 current-revision input changed during staging."
+                )
+            preflight.update(
+                {
+                    "execution_input_is_hash_verified_copy": True,
+                    "execution_input_copy_status": "verified_during_execute",
+                    "execution_input_sha256": canonical_input_sha256,
+                }
+            )
+            if script_path.exists():
+                if script_path.read_text(encoding="utf-8") != script:
+                    raise ValueError(
+                        "Existing DMol3 script differs from the exact requested script."
+                    )
+            else:
+                atomic_write_text(script_path, script)
+            if output_structure.exists() or output_report.exists():
+                raise ValueError(
+                    "DMol3 output already exists for this revision; refusing to "
+                    "overwrite prior calculation evidence."
+                )
+            spec_path = (
+                store.project_dir(base_spec.project_id)
+                / "revisions"
+                / f"r{base_spec.revision:03d}_model_spec.json"
+            )
+            attempt_receipt = begin_execution_attempt(
+                calculation_dir,
+                project_id=base_spec.project_id,
+                revision=base_spec.revision,
+                backend="dmol3_geometry_optimization",
+                lock_path=Path(str(execution_transaction["path"])),
+                spec_path=spec_path,
+                spec_payload=base_spec.model_dump(mode="json"),
+                script_path=script_path,
+                script=script,
+                planned_structure_path=str(output_structure),
+                current_revision_at_start=base_spec.revision,
+            )
+            running_attempt = attempt_receipt["attempt"]
+            attempt_id = str(running_attempt["attempt_id"])
+            execution_transaction["execution_started"] = True
+            try:
+                run = runner.run_script(
+                    script,
+                    working_dir=runner_working_dir,
+                    timeout_seconds=timeout_seconds,
+                    job_prefix=execution_job_prefix,
+                    keep_script_name="run_geometry_optimization.pl",
+                )
+                runner_result = run.to_dict()
+                atomic_write_text(
+                    calculation_dir / f"stdout_{attempt_id}.log",
+                    str(
+                        runner_result.get("stdout")
+                        or runner_result.get("materials_output")
+                        or ""
+                    ),
+                )
+                atomic_write_text(
+                    calculation_dir / f"stderr_{attempt_id}.log",
+                    str(
+                        runner_result.get("stderr")
+                        or runner_result.get("materials_log")
+                        or ""
+                    ),
+                )
+                result_validation = validate_dmol3_geometry_result(
+                    runner_result.get("parsed_json"),
+                    project_id=base_spec.project_id,
+                    base_revision=base_spec.revision,
+                    source_molecule=base_spec.model,
+                    input_structure=execution_input_structure,
+                    output_structure=output_structure,
+                    output_report=output_report,
+                )
+                current_after_run, _ = store.resolve_current(base_spec.project_id)
+                current_revision_after_execution = current_after_run.revision
+                current_revision_still_current = (
+                    current_after_run.revision == base_spec.revision
+                )
+                calculation_success = bool(
+                    runner_result.get("success")
+                    and result_validation.get("ok")
+                    and result_validation.get("converged")
+                    and current_revision_still_current
+                )
+                execution_metadata = {
+                    "schema_version": "material_studio_dmol3_execution_v1",
+                    "project_id": base_spec.project_id,
+                    "base_revision": base_spec.revision,
+                    "script_path": str(script_path),
+                    "script_sha256": text_sha256(script),
+                    "input_structure": str(input_structure),
+                    "input_structure_sha256": canonical_input_sha256,
+                    "execution_input_structure": str(
+                        execution_input_structure
+                    ),
+                    "execution_input_structure_sha256": _sha256_file(
+                        execution_input_structure
+                    ),
+                    "execution_job_root": str(execution_job_root),
+                    "runner_working_dir": str(runner_working_dir),
+                    "path_length_checks": path_length_checks,
+                    "simulation": simulation.model_dump(mode="json"),
+                    "runner": runner_result,
+                    "result_validation": result_validation,
+                    "success": calculation_success,
+                }
+                terminal_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=(
+                        current_revision_after_execution
+                    ),
+                    current_revision_still_current=(
+                        current_revision_still_current
+                    ),
+                    result_success=calculation_success,
+                    result_metadata_path=result_metadata_path,
+                )
+                terminal_attempt = terminal_model.model_dump(mode="json")
+                terminal_receipt = publish_terminal_execution_attempt(
+                    calculation_dir, terminal_attempt
+                )
+                execution_metadata["execution_attempt"] = terminal_attempt
+                _write_json_artifact(result_metadata_path, execution_metadata)
+            except Exception as exc:
+                try:
+                    current_after_error, _ = store.resolve_current(
+                        base_spec.project_id
+                    )
+                    current_revision_after_execution = current_after_error.revision
+                    current_revision_still_current = (
+                        current_after_error.revision == base_spec.revision
+                    )
+                except Exception:
+                    current_revision_after_execution = None
+                    current_revision_still_current = None
+                failed_model = finish_execution_attempt(
+                    running_attempt,
+                    current_revision_after_execution=(
+                        current_revision_after_execution
+                    ),
+                    current_revision_still_current=(
+                        current_revision_still_current
+                    ),
+                    result_success=None,
+                    result_metadata_path=None,
+                    error=exc,
+                )
+                terminal_attempt = failed_model.model_dump(mode="json")
+                terminal_receipt = publish_terminal_execution_attempt(
+                    calculation_dir, terminal_attempt
+                )
+                raise
+            response.update(
+                {
+                    "execution_started": True,
+                    "execution_transaction": execution_transaction,
+                    "execution_attempt": terminal_attempt,
+                    "execution_attempt_state_path": (
+                        terminal_receipt or {}
+                    ).get("state_path"),
+                    "execution_attempt_events_path": (
+                        terminal_receipt or {}
+                    ).get("events_path"),
+                    "runner_result": runner_result,
+                    "result_validation": result_validation,
+                    "result_metadata_path": str(result_metadata_path),
+                }
+            )
+
+        assert runner_result is not None
+        assert result_validation is not None
+        assert execution_metadata is not None
+        if not runner_result.get("success") or not result_validation.get("ok"):
+            return {
+                **response,
+                "ok": False,
+                "status": "dmol3_execution_failed",
+                "error": (
+                    "DMol3 runner or tagged result validation failed; no revision "
+                    "was created."
+                ),
+            }
+        if not result_validation.get("converged"):
+            return {
+                **response,
+                "ok": False,
+                "status": "dmol3_not_converged",
+                "error": (
+                    "DMol3 completed without convergence; evidence was preserved "
+                    "but not promoted."
+                ),
+            }
+        if not current_revision_still_current:
+            return {
+                **response,
+                "ok": False,
+                "status": "dmol3_revision_superseded",
+                "error": (
+                    "DMol3 converged, but the project advanced during execution; "
+                    "evidence was preserved but not promoted."
+                ),
+                "current_revision": current_revision_after_execution,
+            }
+
+        current_before_promotion, pointer_before_promotion = store.resolve_current(
+            base_spec.project_id
+        )
+        if current_before_promotion.revision != base_spec.revision:
+            return {
+                **response,
+                "ok": False,
+                "status": "dmol3_revision_superseded",
+                "current_revision": current_before_promotion.revision,
+                "current_pointer": pointer_before_promotion,
+                "revision_created": False,
+            }
+        candidate_revision = store.next_revision_number(base_spec.project_id)
+        relaxed_spec, relaxation_receipt = build_dmol3_relaxed_revision_spec(
+            base_spec,
+            simulation=simulation,
+            result_payload=dict(result_validation.get("result") or {}),
+            input_structure=execution_input_structure,
+            output_structure=output_structure,
+            output_report=output_report,
+            script_sha256=text_sha256(script),
+            target_revision=candidate_revision,
+        )
+        promoted_metadata = dict(relaxed_spec.metadata)
+        history = [
+            dict(item)
+            for item in (
+                promoted_metadata.get("dmol3_geometry_optimization_history")
+                or []
+            )
+            if isinstance(item, dict)
+        ]
+        if history:
+            history[-1] = relaxation_receipt
+        promoted_metadata.update(
+            {
+                "dmol3_geometry_optimization_history": history,
+                "last_dmol3_geometry_optimization": relaxation_receipt,
+            }
+        )
+        relaxed_spec = relaxed_spec.model_copy(
+            update={
+                "revision": candidate_revision,
+                "metadata": promoted_metadata,
+            },
+            deep=True,
+        )
+        generated_promoted = _generate_structured_script(relaxed_spec, store)
+        if not generated_promoted["script_validation"].get("valid"):
+            raise ValueError(
+                "Promoted DMol3 revision generated an invalid structure script."
+            )
+        info = store.save_revision(
+            base_spec.project_id,
+            relaxed_spec,
+            user_text="DMol3 GeometryOptimization converged result promotion",
+            action="dmol3_geometry_optimization",
+            generated_script=generated_promoted["script"],
+            calculation_preview_script=generated_promoted.get(
+                "calculation_preview_script"
+            ),
+            diff=[
+                "dmol3_geometry_optimization converged=true "
+                f"source=r{base_spec.revision:03d} "
+                f"target=r{candidate_revision:03d}"
+            ],
+            expected_revision=base_spec.revision,
+            expected_new_revision=candidate_revision,
+        )
+        return {
+            **response,
+            "ok": True,
+            "status": "dmol3_relaxation_promoted",
+            "revision_created": True,
+            "new_revision": info.revision,
+            "revision": info.revision,
+            "project_resolution": _explicit_project_resolution(relaxed_spec),
+            "relaxation_receipt": relaxation_receipt,
+            "promotion_evidence_path": str(info.spec_path),
+            "planned_outputs": {
+                "optimized_structure_evidence": str(output_structure),
+                "report": str(output_report),
+                "result_metadata": str(result_metadata_path),
+                "promoted_revision_spec": str(info.spec_path),
+            },
+            "gui_input_performed": False,
+            "open_in_gui": False,
+        }
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except Exception as exc:
+        return _error(exc)
 
 
 def main() -> None:

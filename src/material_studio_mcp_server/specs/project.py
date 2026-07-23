@@ -13,13 +13,17 @@ from pydantic import Field, field_validator, model_validator
 from .castep import CastepEnergySpec
 from .common import AcceptanceCriteria, FileRef, ModelType, StrictModel, UnitSystem
 from .crystal import CrystalSpec
+from .dmol3 import DMol3GeometryOptimizationSpec
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
 from .molecule import MoleculeSpec
 
 
 # 模拟规格类型
 SimulationSpec = Annotated[
-    ForciteOptimizationSpec | ForciteDynamicsSpec | CastepEnergySpec,
+    ForciteOptimizationSpec
+    | ForciteDynamicsSpec
+    | CastepEnergySpec
+    | DMol3GeometryOptimizationSpec,
     Field(union_mode="left_to_right"),
 ]
 
@@ -36,6 +40,17 @@ class ImportedStructureSpec(StrictModel):
     name: str = Field(min_length=1, max_length=120)
     source_file: FileRef
     format: str | None = None
+
+    @model_validator(mode="after")
+    def require_digest_for_immutable_source(self) -> "ImportedStructureSpec":
+        if (
+            self.source_file.role == "immutable_cif_source"
+            and self.source_file.sha256 is None
+        ):
+            raise ValueError(
+                "immutable_cif_source requires an exact lowercase SHA-256 digest"
+            )
+        return self
 
 
 class ModelSpec(StrictModel):
@@ -83,4 +98,20 @@ class ModelSpec(StrictModel):
         }[self.model_type]
         if not isinstance(self.model, expected):
             raise ValueError(f"model_type {self.model_type.value!r} 与模型载荷不匹配")
+        if isinstance(self.simulation, DMol3GeometryOptimizationSpec):
+            if not isinstance(self.model, MoleculeSpec):
+                raise ValueError(
+                    "DMol3 GeometryOptimization currently requires a molecule model"
+                )
+            if (
+                self.model.total_charge is not None
+                and self.simulation.charge != self.model.total_charge
+            ):
+                raise ValueError(
+                    "DMol3 simulation charge must match molecule total_charge"
+                )
+            if self.model.spin_multiplicity not in {None, 1}:
+                raise ValueError(
+                    "DMol3 non-singlet molecules are not supported by the current strict settings contract"
+                )
         return self

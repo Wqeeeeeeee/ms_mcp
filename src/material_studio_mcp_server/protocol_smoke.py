@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -36,6 +37,14 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_live_update_with_patch",
     "material_studio_castep_relax_current",
     "material_studio_castep_run_current",
+    "material_studio_dmol3_relax_current",
+    "material_studio_cif_source_search",
+    "material_studio_cif_source_ingest",
+    "material_studio_remote_castep_prepare",
+    "material_studio_remote_job_record",
+    "material_studio_remote_job_status",
+    "material_studio_workspace_snapshot",
+    "material_studio_workspace_artifact_read",
     "material_studio_model_export_view_bundle",
     "material_studio_project_history",
     "material_studio_project_rollback",
@@ -62,12 +71,22 @@ EXPECTED_LIVE_WATCHDOG_MAX_BYTES = 12_000
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
-EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 28
+EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 32
 EXPECTED_RUNTIME_DEPLOYMENT_SCHEMA = (
     "material_studio_mcp_runtime_deployment_binding_v1"
 )
 EXPECTED_RUNTIME_CODEX_CONFIG_SCHEMA = (
     "material_studio_mcp_runtime_codex_config_status_v1"
+)
+SAFE_NEW_TOOL_PROTOCOL_CALLS: tuple[str, ...] = (
+    "material_studio_cif_source_search",
+    "material_studio_cif_source_ingest",
+    "material_studio_dmol3_relax_current",
+    "material_studio_remote_castep_prepare",
+    "material_studio_remote_job_record",
+    "material_studio_remote_job_status",
+    "material_studio_workspace_snapshot",
+    "material_studio_workspace_artifact_read",
 )
 
 _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
@@ -85,6 +104,38 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_castep_run_current": {
         "readOnlyHint": False,
         "destructiveHint": True,
+    },
+    "material_studio_dmol3_relax_current": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    },
+    "material_studio_cif_source_search": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    },
+    "material_studio_cif_source_ingest": {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+    },
+    "material_studio_remote_castep_prepare": {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+    },
+    "material_studio_remote_job_record": {
+        "readOnlyHint": False,
+        "destructiveHint": False,
+    },
+    "material_studio_remote_job_status": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    },
+    "material_studio_workspace_snapshot": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    },
+    "material_studio_workspace_artifact_read": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
     },
     "material_studio_gui_apply_current_revision": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_gui_fit_to_view": {"readOnlyHint": False, "destructiveHint": False},
@@ -207,6 +258,116 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
             "response_mode",
         },
         "required": set(),
+    },
+    "material_studio_dmol3_relax_current": {
+        "properties": {
+            "project_id",
+            "expected_revision",
+            "execution_mode",
+            "quality",
+            "theory_level",
+            "geometry_optimization_quality",
+            "charge",
+            "use_symmetry",
+            "create_energy_evolution_chart",
+            "working_dir",
+            "timeout_seconds",
+        },
+        "required": set(),
+    },
+    "material_studio_cif_source_search": {
+        "properties": {"query", "formula", "max_results", "execution_mode"},
+        "required": set(),
+    },
+    "material_studio_cif_source_ingest": {
+        "properties": {
+            "project_id",
+            "structure_name",
+            "cod_id",
+            "source_url",
+            "execution_mode",
+            "working_dir",
+            "max_bytes",
+            "network_timeout_seconds",
+            "materials_timeout_seconds",
+        },
+        "required": {"project_id", "structure_name"},
+    },
+    "material_studio_remote_castep_prepare": {
+        "properties": {
+            "project_id",
+            "expected_revision",
+            "calculation_name",
+            "requested_cores",
+            "expected_preview_manifest_sha256",
+            "execution_mode",
+            "working_dir",
+        },
+        "required": {"project_id", "expected_revision", "calculation_name"},
+    },
+    "material_studio_remote_job_record": {
+        "properties": {
+            "project_id",
+            "bundle_id",
+            "expected_manifest_sha256",
+            "event_type",
+            "scheduler_kind",
+            "scheduler_id",
+            "job_id",
+            "recorded_at",
+            "channel",
+            "state",
+            "detail",
+            "scheduler_message_id",
+            "working_dir",
+        },
+        "required": {
+            "project_id",
+            "bundle_id",
+            "expected_manifest_sha256",
+            "event_type",
+            "scheduler_kind",
+            "scheduler_id",
+            "job_id",
+            "recorded_at",
+        },
+    },
+    "material_studio_remote_job_status": {
+        "properties": {
+            "project_id",
+            "bundle_id",
+            "expected_manifest_sha256",
+            "scheduler_kind",
+            "scheduler_id",
+            "job_id",
+            "working_dir",
+        },
+        "required": {
+            "project_id",
+            "bundle_id",
+            "expected_manifest_sha256",
+            "scheduler_kind",
+            "scheduler_id",
+            "job_id",
+        },
+    },
+    "material_studio_workspace_snapshot": {
+        "properties": {
+            "working_dir",
+            "max_projects",
+            "max_artifacts_per_revision",
+        },
+        "required": set(),
+    },
+    "material_studio_workspace_artifact_read": {
+        "properties": {
+            "project_id",
+            "revision",
+            "relative_path",
+            "working_dir",
+            "max_bytes",
+        },
+        "required": {"project_id", "revision", "relative_path"},
     },
     "material_studio_model_modify_with_patch": {
         "properties": {
@@ -669,6 +830,25 @@ def _protocol_roundtrip_execution_handoff_acceptance(
     project_id = created.get("project_id")
     revision = created.get("revision")
     workspace_path = workspace.expanduser().resolve()
+    create_plan = (
+        created.get("next_action_plan")
+        if isinstance(created.get("next_action_plan"), dict)
+        else {}
+    )
+    status_plan = (
+        status.get("next_action_plan")
+        if isinstance(status.get("next_action_plan"), dict)
+        else {}
+    )
+    safety_deferred = (
+        create_plan.get("action_id")
+        == "resolve_single_window_materials_studio_session"
+    )
+    mode = (
+        "multi_window_safety_deferred"
+        if safety_deferred
+        else "exact_create_status_apply"
+    )
     allowed_payload_fields = {
         "project_id",
         "expected_revision",
@@ -685,7 +865,10 @@ def _protocol_roundtrip_execution_handoff_acceptance(
         "response_mode",
     }
 
-    def extract(label: str, response: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    def extract_apply(
+        label: str,
+        response: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         plan = response.get("next_action_plan")
         if not isinstance(plan, dict):
             errors.append(f"roundtrip_{label}_next_action_plan_missing")
@@ -708,9 +891,16 @@ def _protocol_roundtrip_execution_handoff_acceptance(
             return action, {}
         return action, payload
 
+    if safety_deferred:
+        create_action: dict[str, Any] = {}
+        create_payload: dict[str, Any] = {}
+        status_action, status_payload = extract_apply("status", status)
+    else:
+        create_action, create_payload = extract_apply("create", created)
+        status_action, status_payload = extract_apply("status", status)
     extracted = {
-        label: extract(label, response)
-        for label, response in (("create", created), ("status", status))
+        "create": (create_action, create_payload),
+        "status": (status_action, status_payload),
     }
     expected_payload_fields: dict[str, Any] = {
         "project_id": project_id,
@@ -723,6 +913,105 @@ def _protocol_roundtrip_execution_handoff_acceptance(
         "views": list(expected_views),
         "working_dir": str(workspace_path),
     }
+
+    safety_reasons: list[str] = []
+    safety_action_verified = False
+    status_gui_preflight_receipt_verified = False
+    if safety_deferred:
+        safety_payload = create_plan.get("payload_hint")
+        if create_plan.get("recommended_tool") != "material_studio_gui_status":
+            errors.append("roundtrip_create_safety_tool_mismatch")
+        if create_plan.get("needs_user_confirmation") is not True:
+            errors.append("roundtrip_create_safety_confirmation_gate_missing")
+        if create_plan.get("safe_to_call_without_confirmation") is not False:
+            errors.append("roundtrip_create_safety_safe_flag_invalid")
+        if not isinstance(safety_payload, dict):
+            errors.append("roundtrip_create_safety_payload_missing")
+            safety_payload = {}
+        unexpected_safety_fields = sorted(
+            set(safety_payload)
+            - {"single_window_violation_reasons", "working_dir"}
+        )
+        if unexpected_safety_fields:
+            errors.append(
+                "roundtrip_create_safety_payload_fields_unexpected:"
+                + ",".join(unexpected_safety_fields)
+            )
+        raw_reasons = safety_payload.get("single_window_violation_reasons")
+        allowed_safety_reasons = {
+            "multiple_matstudio_processes_detected",
+            "multiple_matstudio_windows_detected",
+        }
+        if (
+            not isinstance(raw_reasons, list)
+            or not raw_reasons
+            or any(
+                not isinstance(item, str)
+                or item not in allowed_safety_reasons
+                for item in raw_reasons
+            )
+            or len(set(raw_reasons)) != len(raw_reasons)
+        ):
+            errors.append(
+                "roundtrip_create_safety_single_window_reasons_invalid"
+            )
+        else:
+            safety_reasons = list(raw_reasons)
+        if safety_payload.get("working_dir") != str(workspace_path):
+            errors.append("roundtrip_create_safety_working_dir_mismatch")
+        if "gui_single_window_policy_violation" not in (
+            create_plan.get("blocking_reasons") or []
+        ):
+            errors.append("roundtrip_create_safety_blocking_reason_missing")
+        expected_review_reasons = {
+            f"gui:single_window:{reason}" for reason in safety_reasons
+        }
+        if not expected_review_reasons.issubset(
+            set(create_plan.get("review_reasons") or [])
+        ):
+            errors.append("roundtrip_create_safety_review_reasons_missing")
+        if create_plan.get("deferred_hotload_action") not in (None, {}):
+            errors.append(
+                "roundtrip_create_safety_unexpected_apply_handoff"
+            )
+        safety_action_verified = not any(
+            item.startswith("roundtrip_create_safety_") for item in errors
+        )
+
+        status_preflight_payload = status_plan.get("payload_hint")
+        if status_plan.get("action_id") != "verify_single_window_gui_preflight":
+            errors.append("roundtrip_status_gui_preflight_action_mismatch")
+        if status_plan.get("recommended_tool") != "material_studio_gui_status":
+            errors.append("roundtrip_status_gui_preflight_tool_mismatch")
+        if status_plan.get("needs_user_confirmation") is not False:
+            errors.append(
+                "roundtrip_status_gui_preflight_confirmation_flag_invalid"
+            )
+        if status_plan.get("safe_to_call_without_confirmation") is not True:
+            errors.append("roundtrip_status_gui_preflight_safe_flag_invalid")
+        if status_plan.get("gui_preflight_verified") is not False:
+            errors.append(
+                "roundtrip_status_gui_preflight_verified_flag_invalid"
+            )
+        if status_plan.get("gui_preflight_required") is not True:
+            errors.append(
+                "roundtrip_status_gui_preflight_required_flag_missing"
+            )
+        if not isinstance(status_preflight_payload, dict):
+            errors.append("roundtrip_status_gui_preflight_payload_missing")
+            status_preflight_payload = {}
+        expected_status_preflight = {
+            "project_id": project_id,
+            "revision": revision,
+            "working_dir": str(workspace_path),
+        }
+        if status_preflight_payload != expected_status_preflight:
+            errors.append("roundtrip_status_gui_preflight_payload_mismatch")
+        status_gui_preflight_receipt_verified = not any(
+            item.startswith("roundtrip_status_gui_preflight_")
+            for item in errors
+        )
+
     for label, (action, payload) in extracted.items():
         if not action or not payload:
             continue
@@ -742,29 +1031,265 @@ def _protocol_roundtrip_execution_handoff_acceptance(
             if observed != expected or type(observed) is not type(expected):
                 errors.append(f"roundtrip_{label}_apply_{field}_mismatch")
 
-    create_payload = extracted["create"][1]
-    status_payload = extracted["status"][1]
-    if create_payload and status_payload and create_payload != status_payload:
+    if (
+        not safety_deferred
+        and create_payload
+        and status_payload
+        and create_payload != status_payload
+    ):
         errors.append("roundtrip_create_status_apply_payload_mismatch")
 
+    accepted_payload = status_payload if safety_deferred else create_payload
+    create_status_payload_consistent: bool | None = (
+        None
+        if safety_deferred
+        else bool(create_payload and create_payload == status_payload)
+    )
     return {
         "ok": not errors,
-        "status": "passed" if not errors else "failed",
+        "status": (
+            "passed_safety_deferred"
+            if not errors and safety_deferred
+            else "passed"
+            if not errors
+            else "failed"
+        ),
+        "mode": mode,
         "errors": errors,
         "project_id": project_id,
         "revision": revision,
-        "recommended_tool": "material_studio_gui_apply_current_revision",
-        "needs_user_confirmation": extracted["create"][0].get(
-            "needs_user_confirmation"
+        "recommended_tool": (
+            "material_studio_gui_status"
+            if safety_deferred
+            else "material_studio_gui_apply_current_revision"
         ),
-        "safe_to_call_without_confirmation": extracted["create"][0].get(
-            "safe_to_call_without_confirmation"
+        "needs_user_confirmation": (
+            create_plan.get("needs_user_confirmation")
+            if safety_deferred
+            else create_action.get("needs_user_confirmation")
         ),
-        "create_status_payload_consistent": bool(
-            create_payload and create_payload == status_payload
+        "safe_to_call_without_confirmation": (
+            create_plan.get("safe_to_call_without_confirmation")
+            if safety_deferred
+            else create_action.get("safe_to_call_without_confirmation")
         ),
-        "payload": create_payload,
+        "safety_deferred": safety_deferred,
+        "safety_action_verified": safety_action_verified,
+        "single_window_violation_reasons": safety_reasons,
+        "status_gui_preflight_receipt_verified": (
+            status_gui_preflight_receipt_verified
+        ),
+        "apply_payload_source": (
+            "status_deferred_hotload_action"
+            if safety_deferred
+            else "create_and_status"
+        ),
+        "apply_payload_verified": bool(accepted_payload) and not any(
+            "_apply_" in item for item in errors
+        ),
+        "payload_consistency_claimed": not safety_deferred,
+        "create_status_payload_consistent": (
+            create_status_payload_consistent
+        ),
+        "payload": accepted_payload,
     }
+
+
+def _protocol_normality_create_status_acceptance(
+    *,
+    created_decision: dict[str, Any],
+    status_decision: dict[str, Any],
+    project_id: str,
+    revision: Any,
+    handoff_acceptance: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate exact or explicitly safety-deferred normality comparison."""
+
+    errors: list[str] = []
+    safety_deferred = bool(
+        handoff_acceptance.get("ok") is True
+        and handoff_acceptance.get("mode")
+        == "multi_window_safety_deferred"
+    )
+    comparison_mode = (
+        "multi_window_safety_deferred"
+        if safety_deferred
+        else "exact_create_status"
+    )
+    if status_decision.get("schema_version") != (
+        EXPECTED_NORMALITY_DECISION_SCHEMA
+    ):
+        errors.append("status_normality_decision_schema_mismatch")
+    if status_decision.get("authoritative_source") != "normality_gate":
+        errors.append("status_normality_decision_source_mismatch")
+    if status_decision.get("project_id") != project_id:
+        errors.append("status_normality_decision_project_mismatch")
+    if status_decision.get("revision") != revision:
+        errors.append("status_normality_decision_revision_mismatch")
+    if status_decision.get("binding_verified") is not True:
+        errors.append("status_normality_decision_binding_unverified")
+    status_consistency = status_decision.get("consistency")
+    if not isinstance(status_consistency, dict):
+        errors.append("status_normality_decision_consistency_missing")
+        status_consistency = {}
+    if status_consistency.get("ok") is not True:
+        errors.append("status_normality_decision_inconsistent")
+
+    statuses_match = (
+        status_decision.get("status") == created_decision.get("status")
+    )
+    if safety_deferred:
+        if created_decision.get("status") != "blocked":
+            errors.append(
+                "safety_deferred_create_normality_status_mismatch"
+            )
+        if (
+            created_decision.get("primary_reason")
+            != "gui_single_window_policy_violation"
+        ):
+            errors.append(
+                "safety_deferred_create_normality_reason_mismatch"
+            )
+        if status_decision.get("status") != "preview_only":
+            errors.append(
+                "safety_deferred_status_normality_status_mismatch"
+            )
+        if status_decision.get("primary_reason") != "preview_not_hot_loaded":
+            errors.append(
+                "safety_deferred_status_normality_reason_mismatch"
+            )
+        for label, decision in (
+            ("create", created_decision),
+            ("status", status_decision),
+        ):
+            if decision.get("can_claim_model_normal") is not False:
+                errors.append(
+                    f"safety_deferred_{label}_model_normal_claim_invalid"
+                )
+            if decision.get("can_claim_live_gui_normal") is not False:
+                errors.append(
+                    f"safety_deferred_{label}_live_gui_claim_invalid"
+                )
+    elif not statuses_match:
+        errors.append("status_normality_decision_status_mismatch")
+
+    return {
+        "ok": not errors,
+        "status": (
+            "passed_safety_deferred"
+            if not errors and safety_deferred
+            else "passed"
+            if not errors
+            else "failed"
+        ),
+        "mode": comparison_mode,
+        "errors": errors,
+        "comparison_claimed": not safety_deferred,
+        "create_status_consistent": (
+            None if safety_deferred else statuses_match
+        ),
+        "status_difference_expected": safety_deferred,
+        "create_status": created_decision.get("status"),
+        "status_without_gui_status": status_decision.get("status"),
+        "create_primary_reason": created_decision.get("primary_reason"),
+        "status_without_gui_primary_reason": status_decision.get(
+            "primary_reason"
+        ),
+    }
+
+
+def _bounded_workspace_write_signature(
+    workspace: Path,
+    *,
+    max_entries: int = 20_000,
+    max_file_bytes: int = 128 * 1024 * 1024,
+) -> str:
+    """Hash write-relevant workspace state without following links."""
+
+    root = workspace.expanduser().resolve(strict=True)
+    pending = [root]
+    entries: list[tuple[str, str, int, int, Path]] = []
+    total_file_bytes = 0
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as iterator:
+            children = sorted(iterator, key=lambda item: item.name)
+        for child in children:
+            path = Path(child.path)
+            details = child.stat(follow_symlinks=False)
+            relative = path.relative_to(root).as_posix()
+            reparse = bool(
+                int(getattr(details, "st_file_attributes", 0)) & 0x400
+            )
+            if child.is_symlink() or reparse:
+                kind = "link"
+            elif child.is_dir(follow_symlinks=False):
+                kind = "directory"
+                pending.append(path)
+            elif child.is_file(follow_symlinks=False):
+                kind = "file"
+                total_file_bytes += int(details.st_size)
+                if total_file_bytes > max_file_bytes:
+                    raise RuntimeError(
+                        "Protocol workspace exceeds the bounded signature byte limit."
+                    )
+            else:
+                kind = "other"
+            entries.append(
+                (
+                    relative,
+                    kind,
+                    int(details.st_mode),
+                    int(details.st_size),
+                    path,
+                )
+            )
+            if len(entries) > max_entries:
+                raise RuntimeError(
+                    "Protocol workspace exceeds the bounded signature entry limit."
+                )
+
+    digest = hashlib.sha256()
+    for relative, kind, mode, size, path in sorted(entries):
+        digest.update(
+            json.dumps(
+                [relative, kind, mode, size],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+        if kind == "file":
+            with path.open("rb") as handle:
+                while True:
+                    block = handle.read(1024 * 1024)
+                    if not block:
+                        break
+                    digest.update(block)
+    return digest.hexdigest()
+
+
+def _protocol_planned_structure(
+    response: dict[str, Any],
+    *,
+    workspace: Path,
+    expected_suffixes: set[str],
+) -> Path:
+    value = (response.get("planned_outputs") or {}).get("structure")
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("Protocol fixture has no planned structure path.")
+    path = Path(value).expanduser().resolve()
+    try:
+        path.relative_to(workspace.expanduser().resolve(strict=True))
+    except ValueError as exc:
+        raise RuntimeError(
+            "Protocol fixture structure escapes the controlled workspace."
+        ) from exc
+    if path.suffix.lower() not in expected_suffixes:
+        raise RuntimeError(
+            "Protocol fixture structure has an unexpected file extension."
+        )
+    return path
 
 
 async def _run_preview_calls(
@@ -933,6 +1458,199 @@ async def _run_preview_calls(
             timeout,
         )
 
+        water_fixture = await _call_tool(
+            session,
+            "material_studio_live_modeling_request",
+            {
+                "user_request": (
+                    "Build water for a bounded DMol3 protocol preview fixture "
+                    f"{nonce}."
+                ),
+                "execution_mode": "preview",
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "fit_to_view_after_open": False,
+                "prepare_view_replay_after_open": False,
+                "export_view_audit": False,
+                "working_dir": str(workspace),
+                "response_mode": "compact",
+                "verify_ms_roundtrip": False,
+            },
+            timeout,
+        )
+        remote_fixture = await _call_tool(
+            session,
+            "material_studio_live_modeling_request",
+            {
+                "user_request": (
+                    "Build silicon diamond for a bounded remote CASTEP protocol "
+                    f"preview fixture {nonce}."
+                ),
+                "execution_mode": "preview",
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "fit_to_view_after_open": False,
+                "prepare_view_replay_after_open": False,
+                "export_view_audit": False,
+                "working_dir": str(workspace),
+                "response_mode": "compact",
+                "verify_ms_roundtrip": False,
+            },
+            timeout,
+        )
+        remote_input = _protocol_planned_structure(
+            remote_fixture,
+            workspace=workspace,
+            expected_suffixes={".cif", ".xsd"},
+        )
+        remote_input.parent.mkdir(parents=True, exist_ok=True)
+        remote_fixture_bytes = (
+            b"data_protocol_remote_castep_fixture\n"
+            b"_audit_creation_method 'bounded MCP protocol fixture'\n"
+        )
+        with remote_input.open("xb") as fixture_handle:
+            fixture_handle.write(remote_fixture_bytes)
+
+        revision_root = (
+            workspace
+            / project_id
+            / "outputs"
+            / f"r{int(created.get('revision') or 0):03d}"
+        ).resolve(strict=True)
+        artifact_path = Path(
+            str(exported.get("view_bundle_manifest_path") or "")
+        ).expanduser().resolve(strict=True)
+        try:
+            artifact_relative_path = artifact_path.relative_to(
+                revision_root
+            ).as_posix()
+        except ValueError as exc:
+            raise RuntimeError(
+                "Protocol artifact fixture escapes the current revision output root."
+            ) from exc
+
+        new_tool_workspace_signature_before = _bounded_workspace_write_signature(
+            workspace
+        )
+        cif_search_preview = await _call_tool(
+            session,
+            "material_studio_cif_source_search",
+            {
+                "query": "quartz",
+                "max_results": 3,
+                "execution_mode": "preview",
+            },
+            timeout,
+        )
+        cif_ingest_project_id = f"protocol_cif_{nonce}"
+        cif_ingest_preview = await _call_tool(
+            session,
+            "material_studio_cif_source_ingest",
+            {
+                "project_id": cif_ingest_project_id,
+                "structure_name": "COD Quartz Protocol Fixture",
+                "cod_id": "1009000",
+                "execution_mode": "preview",
+                "working_dir": str(workspace),
+                "max_bytes": 65_536,
+                "network_timeout_seconds": 2.0,
+                "materials_timeout_seconds": 30,
+            },
+            timeout,
+        )
+        dmol3_preview = await _call_tool(
+            session,
+            "material_studio_dmol3_relax_current",
+            {
+                "project_id": water_fixture.get("project_id"),
+                "expected_revision": water_fixture.get("revision"),
+                "execution_mode": "preview",
+                "quality": "Fine",
+                "theory_level": "GGA",
+                "charge": 0,
+                "use_symmetry": "No",
+                "create_energy_evolution_chart": "Yes",
+                "working_dir": str(workspace),
+                "timeout_seconds": 30,
+            },
+            timeout,
+        )
+        remote_preview = await _call_tool(
+            session,
+            "material_studio_remote_castep_prepare",
+            {
+                "project_id": remote_fixture.get("project_id"),
+                "expected_revision": remote_fixture.get("revision"),
+                "calculation_name": "protocol_preview",
+                "requested_cores": 2,
+                "execution_mode": "preview",
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
+        remote_identity = {
+            "scheduler_kind": "slurm",
+            "scheduler_id": "protocol-cluster",
+            "job_id": f"protocol-job-{nonce}",
+        }
+        remote_record_blocked = await _call_tool(
+            session,
+            "material_studio_remote_job_record",
+            {
+                "project_id": remote_fixture.get("project_id"),
+                "bundle_id": remote_preview.get("bundle_id"),
+                "expected_manifest_sha256": remote_preview.get(
+                    "manifest_sha256"
+                ),
+                "event_type": "submission",
+                **remote_identity,
+                "recorded_at": "2026-07-24T00:00:00Z",
+                "channel": "manual_scheduler_submission",
+                "detail": "Protocol-only evidence; bundle was not executed.",
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
+        remote_status_blocked = await _call_tool(
+            session,
+            "material_studio_remote_job_status",
+            {
+                "project_id": remote_fixture.get("project_id"),
+                "bundle_id": remote_preview.get("bundle_id"),
+                "expected_manifest_sha256": remote_preview.get(
+                    "manifest_sha256"
+                ),
+                **remote_identity,
+                "working_dir": str(workspace),
+            },
+            timeout,
+        )
+        workspace_snapshot = await _call_tool(
+            session,
+            "material_studio_workspace_snapshot",
+            {
+                "working_dir": str(workspace),
+                "max_projects": 10,
+                "max_artifacts_per_revision": 100,
+            },
+            timeout,
+        )
+        workspace_artifact = await _call_tool(
+            session,
+            "material_studio_workspace_artifact_read",
+            {
+                "project_id": project_id,
+                "revision": created.get("revision"),
+                "relative_path": artifact_relative_path,
+                "working_dir": str(workspace),
+                "max_bytes": 1024 * 1024,
+            },
+            timeout,
+        )
+        new_tool_workspace_signature_after = _bounded_workspace_write_signature(
+            workspace
+        )
+
         planned_structure = Path(str((created.get("planned_outputs") or {}).get("structure") or ""))
         view_names = list((created.get("live_summary") or {}).get("view_names") or [])
         nl_plan = created.get("nl_plan") if isinstance(created.get("nl_plan"), dict) else {}
@@ -964,6 +1682,15 @@ async def _run_preview_calls(
                 expected_views=("front", "top", "isometric"),
             )
         )
+        normality_create_status_acceptance = (
+            _protocol_normality_create_status_acceptance(
+                created_decision=normality_decision,
+                status_decision=status_normality_decision,
+                project_id=project_id,
+                revision=created.get("revision"),
+                handoff_acceptance=roundtrip_handoff_acceptance,
+            )
+        )
         response_sizes_bytes = {
             "capabilities": len(json.dumps(capabilities, ensure_ascii=False).encode("utf-8")),
             "preflight": len(json.dumps(preflight, ensure_ascii=False).encode("utf-8")),
@@ -992,10 +1719,37 @@ async def _run_preview_calls(
             ),
             "view_bundle": len(json.dumps(exported, ensure_ascii=False).encode("utf-8")),
             "history": len(json.dumps(history, ensure_ascii=False).encode("utf-8")),
+            "cif_source_search_preview": len(
+                json.dumps(cif_search_preview, ensure_ascii=False).encode("utf-8")
+            ),
+            "cif_source_ingest_preview": len(
+                json.dumps(cif_ingest_preview, ensure_ascii=False).encode("utf-8")
+            ),
+            "dmol3_preview": len(
+                json.dumps(dmol3_preview, ensure_ascii=False).encode("utf-8")
+            ),
+            "remote_castep_preview": len(
+                json.dumps(remote_preview, ensure_ascii=False).encode("utf-8")
+            ),
+            "remote_job_record_blocked": len(
+                json.dumps(remote_record_blocked, ensure_ascii=False).encode("utf-8")
+            ),
+            "remote_job_status_blocked": len(
+                json.dumps(remote_status_blocked, ensure_ascii=False).encode("utf-8")
+            ),
+            "workspace_snapshot": len(
+                json.dumps(workspace_snapshot, ensure_ascii=False).encode("utf-8")
+            ),
+            "workspace_artifact_read": len(
+                json.dumps(workspace_artifact, ensure_ascii=False).encode("utf-8")
+            ),
         }
         validation_errors: list[str] = []
         validation_errors.extend(roundtrip_acceptance["errors"])
         validation_errors.extend(roundtrip_handoff_acceptance["errors"])
+        validation_errors.extend(
+            normality_create_status_acceptance["errors"]
+        )
         if capabilities.get("ok") is not True:
             validation_errors.append("capabilities_call_not_ok")
         if capabilities.get("response_mode") != "compact":
@@ -1646,18 +2400,6 @@ async def _run_preview_calls(
             validation_errors.append(
                 "preview_normality_decision_top_level_reason_mismatch"
             )
-        if status_normality_decision.get("schema_version") != (
-            EXPECTED_NORMALITY_DECISION_SCHEMA
-        ):
-            validation_errors.append("status_normality_decision_schema_mismatch")
-        if status_normality_decision.get("project_id") != project_id:
-            validation_errors.append("status_normality_decision_project_mismatch")
-        if status_normality_decision.get("revision") != created.get("revision"):
-            validation_errors.append("status_normality_decision_revision_mismatch")
-        if status_normality_decision.get("status") != normality_decision.get(
-            "status"
-        ):
-            validation_errors.append("status_normality_decision_status_mismatch")
         if created.get("runner_invoked") not in {None, False}:
             validation_errors.append("preview_cjk_unexpected_runner_invocation")
         if created.get("structure_materialization_started") not in {None, False}:
@@ -1817,6 +2559,275 @@ async def _run_preview_calls(
             validation_errors.append("castep_electronic_preview_run_path_missing")
         elif electronic_run_dir.exists():
             validation_errors.append("castep_electronic_preview_created_run_directory")
+
+        water_structure = _protocol_planned_structure(
+            water_fixture,
+            workspace=workspace,
+            expected_suffixes={".xsd"},
+        )
+        if water_fixture.get("ok") is not True:
+            validation_errors.append("new_tool_water_fixture_not_ok")
+        if water_fixture.get("execution_mode") != "preview":
+            validation_errors.append("new_tool_water_fixture_not_preview")
+        if (water_fixture.get("nl_plan") or {}).get("template_id") != "water":
+            validation_errors.append("new_tool_water_fixture_template_mismatch")
+        if water_structure.exists():
+            validation_errors.append("new_tool_water_fixture_was_materialized")
+        if water_fixture.get("runner_invoked") not in {None, False}:
+            validation_errors.append("new_tool_water_fixture_started_runner")
+        if water_fixture.get("gui_open") is not None:
+            validation_errors.append("new_tool_water_fixture_opened_gui")
+
+        if remote_fixture.get("ok") is not True:
+            validation_errors.append("new_tool_remote_fixture_not_ok")
+        if remote_fixture.get("execution_mode") != "preview":
+            validation_errors.append("new_tool_remote_fixture_not_preview")
+        if (remote_fixture.get("nl_plan") or {}).get("template_id") != (
+            "silicon_diamond"
+        ):
+            validation_errors.append("new_tool_remote_fixture_template_mismatch")
+        if remote_fixture.get("runner_invoked") not in {None, False}:
+            validation_errors.append("new_tool_remote_fixture_started_runner")
+        if remote_fixture.get("gui_open") is not None:
+            validation_errors.append("new_tool_remote_fixture_opened_gui")
+        if not remote_input.is_file():
+            validation_errors.append("new_tool_remote_fixture_input_missing")
+        elif remote_input.read_bytes() != remote_fixture_bytes:
+            validation_errors.append("new_tool_remote_fixture_input_changed")
+
+        if cif_search_preview.get("ok") is not True:
+            validation_errors.append("cif_source_search_preview_not_ok")
+        if cif_search_preview.get("execution_mode") != "preview":
+            validation_errors.append("cif_source_search_preview_mode_changed")
+        if cif_search_preview.get("status") != "ready":
+            validation_errors.append("cif_source_search_preview_not_ready")
+        if cif_search_preview.get("text") != "quartz":
+            validation_errors.append("cif_source_search_query_not_preserved")
+        if cif_search_preview.get("max_results") != 3:
+            validation_errors.append("cif_source_search_limit_not_preserved")
+        if cif_search_preview.get("network_performed") is not False:
+            validation_errors.append("cif_source_search_preview_used_network")
+        if cif_search_preview.get("dns_resolution_performed") is not False:
+            validation_errors.append("cif_source_search_preview_used_dns")
+        if cif_search_preview.get("writes_performed") is not False:
+            validation_errors.append("cif_source_search_preview_wrote_files")
+
+        cif_fetch = cif_ingest_preview.get("fetch")
+        if not isinstance(cif_fetch, dict):
+            validation_errors.append("cif_source_ingest_preview_fetch_missing")
+            cif_fetch = {}
+        if cif_ingest_preview.get("ok") is not True:
+            validation_errors.append("cif_source_ingest_preview_not_ok")
+        if cif_ingest_preview.get("execution_mode") != "preview":
+            validation_errors.append("cif_source_ingest_preview_mode_changed")
+        if cif_ingest_preview.get("status") != "ready_for_explicit_execute":
+            validation_errors.append("cif_source_ingest_preview_not_ready")
+        if cif_ingest_preview.get("project_id") != cif_ingest_project_id:
+            validation_errors.append("cif_source_ingest_project_not_preserved")
+        if cif_ingest_preview.get("network_performed") is not False:
+            validation_errors.append("cif_source_ingest_preview_used_network")
+        if cif_fetch.get("dns_resolution_performed") is not False:
+            validation_errors.append("cif_source_ingest_preview_used_dns")
+        if cif_fetch.get("writes_performed") is not False:
+            validation_errors.append("cif_source_ingest_preview_wrote_files")
+        if cif_ingest_preview.get("project_created") is not False:
+            validation_errors.append("cif_source_ingest_preview_created_project")
+        if cif_ingest_preview.get(
+            "materials_studio_execution_performed"
+        ) is not False:
+            validation_errors.append(
+                "cif_source_ingest_preview_started_materials_studio"
+            )
+        if cif_ingest_preview.get("gui_input_performed") is not False:
+            validation_errors.append("cif_source_ingest_preview_sent_gui_input")
+        if (workspace / cif_ingest_project_id).exists():
+            validation_errors.append("cif_source_ingest_preview_project_path_exists")
+
+        dmol3_preflight = dmol3_preview.get("preflight")
+        if not isinstance(dmol3_preflight, dict):
+            validation_errors.append("dmol3_preview_preflight_missing")
+            dmol3_preflight = {}
+        dmol3_simulation = dmol3_preview.get("simulation")
+        if not isinstance(dmol3_simulation, dict):
+            validation_errors.append("dmol3_preview_simulation_missing")
+            dmol3_simulation = {}
+        if dmol3_preview.get("ok") is not True:
+            validation_errors.append("dmol3_preview_not_ok")
+        if dmol3_preview.get("execution_mode") != "preview":
+            validation_errors.append("dmol3_preview_mode_changed")
+        if dmol3_preview.get("project_id") != water_fixture.get("project_id"):
+            validation_errors.append("dmol3_preview_project_binding_mismatch")
+        if dmol3_preview.get("revision") != water_fixture.get("revision"):
+            validation_errors.append("dmol3_preview_revision_binding_mismatch")
+        if dmol3_preview.get("status") != "dmol3_preflight_blocked":
+            validation_errors.append("dmol3_preview_materialization_gate_missing")
+        if dmol3_preflight.get("execution_ready") is not False:
+            validation_errors.append("dmol3_preview_unexpectedly_execution_ready")
+        if "current_molecule_xsd_not_materialized" not in (
+            dmol3_preflight.get("blocking_reasons") or []
+        ):
+            validation_errors.append("dmol3_preview_input_gate_missing")
+        if dmol3_simulation.get("quality") != "Fine":
+            validation_errors.append("dmol3_preview_quality_not_preserved")
+        if dmol3_simulation.get("theory_level") != "GGA":
+            validation_errors.append("dmol3_preview_theory_not_preserved")
+        if dmol3_simulation.get("charge") != 0:
+            validation_errors.append("dmol3_preview_charge_not_preserved")
+        if dmol3_simulation.get("use_symmetry") != "No":
+            validation_errors.append("dmol3_preview_symmetry_not_preserved")
+        if dmol3_simulation.get("create_energy_evolution_chart") != "Yes":
+            validation_errors.append("dmol3_preview_chart_not_preserved")
+        if dmol3_preview.get("execution_started") is not False:
+            validation_errors.append("dmol3_preview_started_execution")
+        if dmol3_preview.get("revision_created") is not False:
+            validation_errors.append("dmol3_preview_created_revision")
+        if dmol3_preview.get("gui_input_performed") is not False:
+            validation_errors.append("dmol3_preview_sent_gui_input")
+
+        remote_manifest_sha256 = remote_preview.get("manifest_sha256")
+        remote_bundle_value = str(remote_preview.get("bundle_dir") or "")
+        remote_bundle_dir = (
+            Path(remote_bundle_value) if remote_bundle_value else None
+        )
+        if remote_preview.get("ok") is not True:
+            validation_errors.append("remote_castep_preview_not_ok")
+        if remote_preview.get("execution_mode") != "preview":
+            validation_errors.append("remote_castep_preview_mode_changed")
+        if remote_preview.get("status") != "preview":
+            validation_errors.append("remote_castep_preview_status_mismatch")
+        if remote_preview.get("project_id") != remote_fixture.get("project_id"):
+            validation_errors.append("remote_castep_preview_project_mismatch")
+        if remote_preview.get("revision") != remote_fixture.get("revision"):
+            validation_errors.append("remote_castep_preview_revision_mismatch")
+        if remote_preview.get("write_performed") is not False:
+            validation_errors.append("remote_castep_preview_wrote_bundle")
+        if not (
+            isinstance(remote_manifest_sha256, str)
+            and len(remote_manifest_sha256) == 64
+            and all(
+                character in "0123456789abcdef"
+                for character in remote_manifest_sha256
+            )
+        ):
+            validation_errors.append("remote_castep_preview_manifest_hash_invalid")
+        for field in (
+            "shell_execution_performed",
+            "ssh_execution_performed",
+            "scheduler_execution_performed",
+            "materials_studio_execution_performed",
+            "gui_input_performed",
+        ):
+            if remote_preview.get(field) is not False:
+                validation_errors.append(
+                    f"remote_castep_preview_external_action:{field}"
+                )
+        remote_execute_action = remote_preview.get("execute_action")
+        if not isinstance(remote_execute_action, dict):
+            validation_errors.append("remote_castep_preview_execute_action_missing")
+            remote_execute_action = {}
+        remote_execute_payload = remote_execute_action.get("payload")
+        if not isinstance(remote_execute_payload, dict):
+            validation_errors.append("remote_castep_preview_execute_payload_missing")
+            remote_execute_payload = {}
+        if remote_execute_action.get("needs_user_confirmation") is not True:
+            validation_errors.append("remote_castep_preview_confirmation_gate_missing")
+        if remote_execute_payload.get(
+            "expected_preview_manifest_sha256"
+        ) != remote_manifest_sha256:
+            validation_errors.append("remote_castep_preview_digest_gate_missing")
+        if remote_execute_payload.get("execution_mode") != "execute":
+            validation_errors.append("remote_castep_preview_execute_mode_missing")
+        if remote_bundle_dir is None or remote_bundle_dir.exists():
+            validation_errors.append("remote_castep_preview_bundle_materialized")
+
+        for label, blocked in (
+            ("record", remote_record_blocked),
+            ("status", remote_status_blocked),
+        ):
+            if blocked.get("ok") is not False:
+                validation_errors.append(
+                    f"remote_job_{label}_preview_only_boundary_missing"
+                )
+            if "remote handoff bundle was not found" not in str(
+                blocked.get("error") or ""
+            ):
+                validation_errors.append(
+                    f"remote_job_{label}_missing_bundle_gate_missing"
+                )
+        if remote_bundle_dir is not None and remote_bundle_dir.exists():
+            validation_errors.append("remote_job_blocked_calls_created_bundle")
+
+        snapshot_projects = workspace_snapshot.get("projects")
+        if not isinstance(snapshot_projects, list):
+            validation_errors.append("workspace_snapshot_projects_missing")
+            snapshot_projects = []
+        snapshot_project_ids = {
+            item.get("project_id")
+            for item in snapshot_projects
+            if isinstance(item, dict)
+        }
+        expected_snapshot_projects = {
+            project_id,
+            water_fixture.get("project_id"),
+            remote_fixture.get("project_id"),
+        }
+        if workspace_snapshot.get("ok") is not True:
+            validation_errors.append("workspace_snapshot_not_ok")
+        if workspace_snapshot.get("read_only") is not True:
+            validation_errors.append("workspace_snapshot_not_read_only")
+        if workspace_snapshot.get("filesystem_write_performed") is not False:
+            validation_errors.append("workspace_snapshot_wrote_files")
+        if workspace_snapshot.get("workspace_root") != str(workspace):
+            validation_errors.append("workspace_snapshot_root_mismatch")
+        if not expected_snapshot_projects.issubset(snapshot_project_ids):
+            validation_errors.append("workspace_snapshot_fixture_projects_missing")
+
+        artifact_payload: dict[str, Any] = {}
+        artifact_content = workspace_artifact.get("content")
+        if isinstance(artifact_content, str):
+            try:
+                parsed_artifact = json.loads(artifact_content)
+            except json.JSONDecodeError:
+                validation_errors.append("workspace_artifact_content_not_json")
+            else:
+                if isinstance(parsed_artifact, dict):
+                    artifact_payload = parsed_artifact
+                else:
+                    validation_errors.append(
+                        "workspace_artifact_content_not_object"
+                    )
+        else:
+            validation_errors.append("workspace_artifact_content_missing")
+        if workspace_artifact.get("ok") is not True:
+            validation_errors.append("workspace_artifact_read_not_ok")
+        if workspace_artifact.get("read_only") is not True:
+            validation_errors.append("workspace_artifact_read_not_read_only")
+        if workspace_artifact.get("filesystem_write_performed") is not False:
+            validation_errors.append("workspace_artifact_read_wrote_files")
+        if workspace_artifact.get("project_id") != project_id:
+            validation_errors.append("workspace_artifact_project_mismatch")
+        if workspace_artifact.get("revision") != created.get("revision"):
+            validation_errors.append("workspace_artifact_revision_mismatch")
+        if workspace_artifact.get("relative_path") != artifact_relative_path:
+            validation_errors.append("workspace_artifact_path_mismatch")
+        if workspace_artifact.get("encoding") != "utf-8":
+            validation_errors.append("workspace_artifact_encoding_mismatch")
+        artifact_sha256 = workspace_artifact.get("content_sha256")
+        if not (
+            isinstance(artifact_sha256, str)
+            and len(artifact_sha256) == 64
+        ):
+            validation_errors.append("workspace_artifact_hash_missing")
+        if not artifact_payload:
+            validation_errors.append("workspace_artifact_payload_empty")
+
+        new_tool_workspace_unchanged = (
+            new_tool_workspace_signature_before
+            == new_tool_workspace_signature_after
+        )
+        if not new_tool_workspace_unchanged:
+            validation_errors.append("new_tool_safe_calls_changed_workspace")
+
         if prepared_replay.get("ok") is not True:
             validation_errors.append("view_replay_prepare_not_ok")
         if execution_preview.get("ok") is not True:
@@ -1921,6 +2932,14 @@ async def _run_preview_calls(
                 "prepare_view_replay",
                 "resumed_preflight",
                 "view_bundle",
+                "cif_source_search_preview",
+                "cif_source_ingest_preview",
+                "dmol3_preview",
+                "remote_castep_preview",
+                "remote_job_record_blocked",
+                "remote_job_status_blocked",
+                "workspace_snapshot",
+                "workspace_artifact_read",
             )
             if response_sizes_bytes[name] >= COMPACT_RESPONSE_MAX_BYTES
         )
@@ -1939,6 +2958,182 @@ async def _run_preview_calls(
                 "errors": validation_errors,
                 "project_id": project_id,
                 "revision": created.get("revision"),
+                "new_tool_protocol_coverage": {
+                    "called_tools": list(SAFE_NEW_TOOL_PROTOCOL_CALLS),
+                    "call_count": len(SAFE_NEW_TOOL_PROTOCOL_CALLS),
+                    "workspace_signature_before": (
+                        new_tool_workspace_signature_before
+                    ),
+                    "workspace_signature_after": (
+                        new_tool_workspace_signature_after
+                    ),
+                    "workspace_unchanged": new_tool_workspace_unchanged,
+                    "cif_source_search": {
+                        "ok": cif_search_preview.get("ok"),
+                        "status": cif_search_preview.get("status"),
+                        "execution_mode": cif_search_preview.get(
+                            "execution_mode"
+                        ),
+                        "query": cif_search_preview.get("text"),
+                        "max_results": cif_search_preview.get("max_results"),
+                        "network_performed": cif_search_preview.get(
+                            "network_performed"
+                        ),
+                        "dns_resolution_performed": cif_search_preview.get(
+                            "dns_resolution_performed"
+                        ),
+                        "writes_performed": cif_search_preview.get(
+                            "writes_performed"
+                        ),
+                    },
+                    "cif_source_ingest": {
+                        "ok": cif_ingest_preview.get("ok"),
+                        "status": cif_ingest_preview.get("status"),
+                        "execution_mode": cif_ingest_preview.get(
+                            "execution_mode"
+                        ),
+                        "project_id": cif_ingest_preview.get("project_id"),
+                        "network_performed": cif_ingest_preview.get(
+                            "network_performed"
+                        ),
+                        "dns_resolution_performed": cif_fetch.get(
+                            "dns_resolution_performed"
+                        ),
+                        "writes_performed": cif_fetch.get("writes_performed"),
+                        "project_created": cif_ingest_preview.get(
+                            "project_created"
+                        ),
+                        "materials_studio_execution_performed": (
+                            cif_ingest_preview.get(
+                                "materials_studio_execution_performed"
+                            )
+                        ),
+                        "gui_input_performed": cif_ingest_preview.get(
+                            "gui_input_performed"
+                        ),
+                    },
+                    "dmol3_relax_current": {
+                        "ok": dmol3_preview.get("ok"),
+                        "status": dmol3_preview.get("status"),
+                        "execution_mode": dmol3_preview.get("execution_mode"),
+                        "project_id": dmol3_preview.get("project_id"),
+                        "revision": dmol3_preview.get("revision"),
+                        "simulation": dmol3_simulation,
+                        "blocking_reasons": dmol3_preflight.get(
+                            "blocking_reasons"
+                        ),
+                        "execution_started": dmol3_preview.get(
+                            "execution_started"
+                        ),
+                        "revision_created": dmol3_preview.get(
+                            "revision_created"
+                        ),
+                        "gui_input_performed": dmol3_preview.get(
+                            "gui_input_performed"
+                        ),
+                    },
+                    "remote_castep_prepare": {
+                        "ok": remote_preview.get("ok"),
+                        "status": remote_preview.get("status"),
+                        "execution_mode": remote_preview.get(
+                            "execution_mode"
+                        ),
+                        "project_id": remote_preview.get("project_id"),
+                        "revision": remote_preview.get("revision"),
+                        "manifest_sha256": remote_manifest_sha256,
+                        "write_performed": remote_preview.get(
+                            "write_performed"
+                        ),
+                        "bundle_exists": (
+                            remote_bundle_dir.exists()
+                            if remote_bundle_dir is not None
+                            else None
+                        ),
+                        "execute_digest_bound": (
+                            remote_execute_payload.get(
+                                "expected_preview_manifest_sha256"
+                            )
+                            == remote_manifest_sha256
+                        ),
+                        "needs_user_confirmation": (
+                            remote_execute_action.get(
+                                "needs_user_confirmation"
+                            )
+                        ),
+                        "shell_execution_performed": remote_preview.get(
+                            "shell_execution_performed"
+                        ),
+                        "ssh_execution_performed": remote_preview.get(
+                            "ssh_execution_performed"
+                        ),
+                        "scheduler_execution_performed": remote_preview.get(
+                            "scheduler_execution_performed"
+                        ),
+                        "materials_studio_execution_performed": (
+                            remote_preview.get(
+                                "materials_studio_execution_performed"
+                            )
+                        ),
+                        "gui_input_performed": remote_preview.get(
+                            "gui_input_performed"
+                        ),
+                    },
+                    "remote_job_record": {
+                        "ok": remote_record_blocked.get("ok"),
+                        "safely_blocked_without_executed_bundle": (
+                            "remote handoff bundle was not found"
+                            in str(remote_record_blocked.get("error") or "")
+                        ),
+                        "bundle_exists": (
+                            remote_bundle_dir.exists()
+                            if remote_bundle_dir is not None
+                            else None
+                        ),
+                    },
+                    "remote_job_status": {
+                        "ok": remote_status_blocked.get("ok"),
+                        "safely_blocked_without_executed_bundle": (
+                            "remote handoff bundle was not found"
+                            in str(remote_status_blocked.get("error") or "")
+                        ),
+                        "bundle_exists": (
+                            remote_bundle_dir.exists()
+                            if remote_bundle_dir is not None
+                            else None
+                        ),
+                    },
+                    "workspace_snapshot": {
+                        "ok": workspace_snapshot.get("ok"),
+                        "read_only": workspace_snapshot.get("read_only"),
+                        "filesystem_write_performed": workspace_snapshot.get(
+                            "filesystem_write_performed"
+                        ),
+                        "project_count": workspace_snapshot.get(
+                            "project_count"
+                        ),
+                        "fixture_projects_present": (
+                            expected_snapshot_projects.issubset(
+                                snapshot_project_ids
+                            )
+                        ),
+                    },
+                    "workspace_artifact_read": {
+                        "ok": workspace_artifact.get("ok"),
+                        "read_only": workspace_artifact.get("read_only"),
+                        "filesystem_write_performed": workspace_artifact.get(
+                            "filesystem_write_performed"
+                        ),
+                        "project_id": workspace_artifact.get("project_id"),
+                        "revision": workspace_artifact.get("revision"),
+                        "relative_path": workspace_artifact.get(
+                            "relative_path"
+                        ),
+                        "encoding": workspace_artifact.get("encoding"),
+                        "size_bytes": workspace_artifact.get("size_bytes"),
+                        "content_sha256": artifact_sha256,
+                        "json_object_decoded": bool(artifact_payload),
+                    },
+                },
                 "execution_mode": created.get("execution_mode"),
                 "user_request": request,
                 "user_request_echo": created.get("user_request"),
@@ -1967,6 +3162,30 @@ async def _run_preview_calls(
                 ),
                 "normality_decision_consistency_ok": decision_consistency.get(
                     "ok"
+                ),
+                "normality_create_status_acceptance": (
+                    normality_create_status_acceptance
+                ),
+                "normality_create_status_acceptance_ok": (
+                    normality_create_status_acceptance["ok"]
+                ),
+                "normality_create_status_mode": (
+                    normality_create_status_acceptance["mode"]
+                ),
+                "normality_create_status_comparison_claimed": (
+                    normality_create_status_acceptance[
+                        "comparison_claimed"
+                    ]
+                ),
+                "normality_create_status_consistent": (
+                    normality_create_status_acceptance[
+                        "create_status_consistent"
+                    ]
+                ),
+                "normality_status_without_gui_status": (
+                    normality_create_status_acceptance[
+                        "status_without_gui_status"
+                    ]
                 ),
                 "normality_decision_explanation_primary_reason_differs": normality_decision.get(
                     "explanation_primary_reason_differs"
@@ -1998,8 +3217,25 @@ async def _run_preview_calls(
                 "roundtrip_execution_handoff_acceptance_ok": (
                     roundtrip_handoff_acceptance["ok"]
                 ),
+                "roundtrip_execution_handoff_status": (
+                    roundtrip_handoff_acceptance["status"]
+                ),
+                "roundtrip_execution_handoff_mode": (
+                    roundtrip_handoff_acceptance["mode"]
+                ),
+                "roundtrip_execution_handoff_safety_deferred": (
+                    roundtrip_handoff_acceptance["safety_deferred"]
+                ),
+                "roundtrip_execution_handoff_apply_payload_verified": (
+                    roundtrip_handoff_acceptance["apply_payload_verified"]
+                ),
                 "roundtrip_execution_handoff_confirmation_required": (
                     roundtrip_handoff_acceptance["needs_user_confirmation"]
+                ),
+                "roundtrip_execution_handoff_payload_consistency_claimed": (
+                    roundtrip_handoff_acceptance[
+                        "payload_consistency_claimed"
+                    ]
                 ),
                 "roundtrip_execution_handoff_payload_consistent": (
                     roundtrip_handoff_acceptance[

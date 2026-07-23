@@ -21,6 +21,10 @@ class CastepTask(str, Enum):
     PROJECTED_DENSITY_OF_STATES = "ProjectedDensityOfStates"
     OPTICS = "Optics"
     PHONON = "Phonon"
+    FREQUENCY = "Frequency"
+    BAND_STRUCTURE_AND_DOS = "BandStructureAndDOS"
+    CHARGE_DENSITY = "ChargeDensity"
+    DENSITY_DIFFERENCE = "DensityDifference"
     ELASTIC_CONSTANTS = "ElasticConstants"
 
 
@@ -93,6 +97,14 @@ _CASTEP_TASK_ALIASES.update(
         "opticalproperties": CastepTask.OPTICS,
         "phonons": CastepTask.PHONON,
         "phonondispersion": CastepTask.PHONON,
+        "frequency": CastepTask.FREQUENCY,
+        "frequencies": CastepTask.FREQUENCY,
+        "phonondos": CastepTask.FREQUENCY,
+        "bandsanddos": CastepTask.BAND_STRUCTURE_AND_DOS,
+        "bandanddos": CastepTask.BAND_STRUCTURE_AND_DOS,
+        "banddos": CastepTask.BAND_STRUCTURE_AND_DOS,
+        "chargedensity": CastepTask.CHARGE_DENSITY,
+        "densitydifference": CastepTask.DENSITY_DIFFERENCE,
         "elastic": CastepTask.ELASTIC_CONSTANTS,
         "elasticity": CastepTask.ELASTIC_CONSTANTS,
     }
@@ -277,6 +289,10 @@ class CastepEnergySpec(StrictModel):
             CastepTask.PROJECTED_DENSITY_OF_STATES,
             CastepTask.OPTICS,
             CastepTask.PHONON,
+            CastepTask.FREQUENCY,
+            CastepTask.BAND_STRUCTURE_AND_DOS,
+            CastepTask.CHARGE_DENSITY,
+            CastepTask.DENSITY_DIFFERENCE,
         }
         if (
             self.properties_kpoint_separation is not None
@@ -295,9 +311,13 @@ class CastepEnergySpec(StrictModel):
         supplied_band_fields = [
             name for name, value in band_fields.items() if value is not None
         ]
-        if supplied_band_fields and self.task is not CastepTask.BAND_STRUCTURE:
+        if supplied_band_fields and self.task not in {
+            CastepTask.BAND_STRUCTURE,
+            CastepTask.BAND_STRUCTURE_AND_DOS,
+        }:
             raise ValueError(
-                "CASTEP band-structure settings require task BandStructure: "
+                "CASTEP band-structure settings require task BandStructure or "
+                "BandStructureAndDOS: "
                 + ", ".join(supplied_band_fields)
             )
         dos_fields = {
@@ -313,10 +333,11 @@ class CastepEnergySpec(StrictModel):
         if supplied_dos_fields and self.task not in {
             CastepTask.DENSITY_OF_STATES,
             CastepTask.PROJECTED_DENSITY_OF_STATES,
+            CastepTask.BAND_STRUCTURE_AND_DOS,
         }:
             raise ValueError(
                 "CASTEP DOS settings require task DensityOfStates or "
-                "ProjectedDensityOfStates: "
+                "ProjectedDensityOfStates or BandStructureAndDOS: "
                 + ", ".join(supplied_dos_fields)
             )
         if (

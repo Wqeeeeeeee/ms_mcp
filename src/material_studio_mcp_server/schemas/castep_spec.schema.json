@@ -51,6 +51,10 @@
         "ProjectedDensityOfStates",
         "Optics",
         "Phonon",
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
         "ElasticConstants"
       ],
       "title": "CastepTask",
@@ -60,58 +64,29 @@
   "additionalProperties": false,
   "description": "CASTEP task settings rendered against the Materials Studio 20.1 API.\n\nThe class name is retained for public compatibility. Property calculations\nare dispatched through the Energy task with documented property flags;\ngeometry optimization and elastic constants use their dedicated task APIs.\n``kpoint_separation`` controls the primary SCF grid, not the separate\nproperty-grid setting.",
   "properties": {
-    "band_structure_energy_max_ev": {
-      "anyOf": [
-        {
-          "maximum": 100,
-          "minimum": 0,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Band Structure Energy Max Ev"
+    "module": {
+      "const": "CASTEP",
+      "default": "CASTEP",
+      "title": "Module",
+      "type": "string"
     },
-    "band_structure_energy_tolerance_ev": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 1e-08,
-          "maximum": 100,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Band Structure Energy Tolerance Ev"
+    "task": {
+      "$ref": "#/$defs/CastepTask",
+      "default": "Energy"
     },
-    "band_structure_extra_bands": {
-      "anyOf": [
-        {
-          "maximum": 999,
-          "minimum": 0,
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Band Structure Extra Bands"
+    "functional": {
+      "default": "PBE",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Functional",
+      "type": "string"
     },
-    "cell_optimization": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/CastepCellOptimization"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
+    "quality": {
+      "default": "Medium",
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Quality",
+      "type": "string"
     },
     "cutoff_energy_ev": {
       "anyOf": [
@@ -126,133 +101,6 @@
       ],
       "default": null,
       "title": "Cutoff Energy Ev"
-    },
-    "dipole_correction": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/CastepDipoleCorrection"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "displacement_convergence_angstrom": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 1e-08,
-          "maximum": 100,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Displacement Convergence Angstrom"
-    },
-    "dos_energy_max_ev": {
-      "anyOf": [
-        {
-          "maximum": 100,
-          "minimum": 0,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Dos Energy Max Ev"
-    },
-    "dos_energy_tolerance_ev": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 1e-08,
-          "maximum": 100,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Dos Energy Tolerance Ev"
-    },
-    "dos_extra_bands": {
-      "anyOf": [
-        {
-          "maximum": 999,
-          "minimum": 0,
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Dos Extra Bands"
-    },
-    "dos_integration_method": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/CastepDosIntegrationMethod"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null
-    },
-    "dos_smearing_width_ev": {
-      "anyOf": [
-        {
-          "maximum": 100,
-          "minimum": 0.005,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Dos Smearing Width Ev"
-    },
-    "energy_convergence_ev_per_atom": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 1e-09,
-          "maximum": 100,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Energy Convergence Ev Per Atom"
-    },
-    "force_convergence_ev_per_angstrom": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 1e-07,
-          "maximum": 100,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Force Convergence Ev Per Angstrom"
-    },
-    "functional": {
-      "default": "PBE",
-      "maxLength": 100,
-      "minLength": 1,
-      "title": "Functional",
-      "type": "string"
     },
     "kpoint_separation": {
       "anyOf": [
@@ -293,6 +141,140 @@
       "default": null,
       "title": "Kpoints"
     },
+    "properties_kpoint_separation": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Properties Kpoint Separation"
+    },
+    "band_structure_energy_max_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Energy Max Ev"
+    },
+    "band_structure_extra_bands": {
+      "anyOf": [
+        {
+          "maximum": 999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Extra Bands"
+    },
+    "band_structure_energy_tolerance_ev": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Band Structure Energy Tolerance Ev"
+    },
+    "dos_energy_max_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Energy Max Ev"
+    },
+    "dos_extra_bands": {
+      "anyOf": [
+        {
+          "maximum": 999,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Extra Bands"
+    },
+    "dos_energy_tolerance_ev": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Energy Tolerance Ev"
+    },
+    "dos_smearing_width_ev": {
+      "anyOf": [
+        {
+          "maximum": 100,
+          "minimum": 0.005,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dos Smearing Width Ev"
+    },
+    "dos_integration_method": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepDosIntegrationMethod"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "dipole_correction": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepDipoleCorrection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "max_iterations": {
       "anyOf": [
         {
@@ -307,11 +289,58 @@
       "default": null,
       "title": "Max Iterations"
     },
-    "module": {
-      "const": "CASTEP",
-      "default": "CASTEP",
-      "title": "Module",
-      "type": "string"
+    "displacement_convergence_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-08,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Displacement Convergence Angstrom"
+    },
+    "energy_convergence_ev_per_atom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-09,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Energy Convergence Ev Per Atom"
+    },
+    "force_convergence_ev_per_angstrom": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 1e-07,
+          "maximum": 100,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Force Convergence Ev Per Angstrom"
+    },
+    "cell_optimization": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CastepCellOptimization"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "optimization_algorithm": {
       "anyOf": [
@@ -335,31 +364,6 @@
       ],
       "default": null,
       "title": "Output File"
-    },
-    "properties_kpoint_separation": {
-      "anyOf": [
-        {
-          "exclusiveMinimum": 0,
-          "maximum": 10,
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Properties Kpoint Separation"
-    },
-    "quality": {
-      "default": "Medium",
-      "maxLength": 100,
-      "minLength": 1,
-      "title": "Quality",
-      "type": "string"
-    },
-    "task": {
-      "$ref": "#/$defs/CastepTask",
-      "default": "Energy"
     }
   },
   "title": "CastepEnergySpec",

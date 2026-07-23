@@ -10,17 +10,17 @@
           "title": "Max Warnings",
           "type": "integer"
         },
+        "require_convergence": {
+          "default": false,
+          "title": "Require Convergence",
+          "type": "boolean"
+        },
         "notes": {
           "items": {
             "type": "string"
           },
           "title": "Notes",
           "type": "array"
-        },
-        "require_convergence": {
-          "default": false,
-          "title": "Require Convergence",
-          "type": "boolean"
         }
       },
       "title": "AcceptanceCriteria",
@@ -30,6 +30,21 @@
       "additionalProperties": false,
       "description": "原子规格。\n\n属性:\n    id: 原子唯一标识符\n    element: 元素符号\n    xyz_angstrom: 笛卡尔坐标（埃）\n    charge: 电荷（可选）",
       "properties": {
+        "id": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "element": {
+          "maxLength": 3,
+          "minLength": 1,
+          "title": "Element",
+          "type": "string"
+        },
+        "xyz_angstrom": {
+          "$ref": "#/$defs/Vector3"
+        },
         "charge": {
           "anyOf": [
             {
@@ -41,21 +56,6 @@
           ],
           "default": null,
           "title": "Charge"
-        },
-        "element": {
-          "maxLength": 3,
-          "minLength": 1,
-          "title": "Element",
-          "type": "string"
-        },
-        "id": {
-          "maxLength": 50,
-          "minLength": 1,
-          "title": "Id",
-          "type": "string"
-        },
-        "xyz_angstrom": {
-          "$ref": "#/$defs/Vector3"
         }
       },
       "required": [
@@ -70,6 +70,12 @@
       "additionalProperties": false,
       "description": "基原子规格。\n\n属性:\n    id: 原子唯一标识符\n    element: 元素符号\n    fractional: 分数坐标",
       "properties": {
+        "id": {
+          "maxLength": 50,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
         "element": {
           "maxLength": 3,
           "minLength": 1,
@@ -78,12 +84,6 @@
         },
         "fractional": {
           "$ref": "#/$defs/FractionalVector3"
-        },
-        "id": {
-          "maxLength": 50,
-          "minLength": 1,
-          "title": "Id",
-          "type": "string"
         }
       },
       "required": [
@@ -159,58 +159,29 @@
       "additionalProperties": false,
       "description": "CASTEP task settings rendered against the Materials Studio 20.1 API.\n\nThe class name is retained for public compatibility. Property calculations\nare dispatched through the Energy task with documented property flags;\ngeometry optimization and elastic constants use their dedicated task APIs.\n``kpoint_separation`` controls the primary SCF grid, not the separate\nproperty-grid setting.",
       "properties": {
-        "band_structure_energy_max_ev": {
-          "anyOf": [
-            {
-              "maximum": 100,
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Band Structure Energy Max Ev"
+        "module": {
+          "const": "CASTEP",
+          "default": "CASTEP",
+          "title": "Module",
+          "type": "string"
         },
-        "band_structure_energy_tolerance_ev": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Band Structure Energy Tolerance Ev"
+        "task": {
+          "$ref": "#/$defs/CastepTask",
+          "default": "Energy"
         },
-        "band_structure_extra_bands": {
-          "anyOf": [
-            {
-              "maximum": 999,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Band Structure Extra Bands"
+        "functional": {
+          "default": "PBE",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Functional",
+          "type": "string"
         },
-        "cell_optimization": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepCellOptimization"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
+        "quality": {
+          "default": "Medium",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Quality",
+          "type": "string"
         },
         "cutoff_energy_ev": {
           "anyOf": [
@@ -225,133 +196,6 @@
           ],
           "default": null,
           "title": "Cutoff Energy Ev"
-        },
-        "dipole_correction": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepDipoleCorrection"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "displacement_convergence_angstrom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Displacement Convergence Angstrom"
-        },
-        "dos_energy_max_ev": {
-          "anyOf": [
-            {
-              "maximum": 100,
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Energy Max Ev"
-        },
-        "dos_energy_tolerance_ev": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Energy Tolerance Ev"
-        },
-        "dos_extra_bands": {
-          "anyOf": [
-            {
-              "maximum": 999,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Extra Bands"
-        },
-        "dos_integration_method": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepDosIntegrationMethod"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "dos_smearing_width_ev": {
-          "anyOf": [
-            {
-              "maximum": 100,
-              "minimum": 0.005,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Smearing Width Ev"
-        },
-        "energy_convergence_ev_per_atom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-09,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Energy Convergence Ev Per Atom"
-        },
-        "force_convergence_ev_per_angstrom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-07,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Force Convergence Ev Per Angstrom"
-        },
-        "functional": {
-          "default": "PBE",
-          "maxLength": 100,
-          "minLength": 1,
-          "title": "Functional",
-          "type": "string"
         },
         "kpoint_separation": {
           "anyOf": [
@@ -392,6 +236,140 @@
           "default": null,
           "title": "Kpoints"
         },
+        "properties_kpoint_separation": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Properties Kpoint Separation"
+        },
+        "band_structure_energy_max_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Energy Max Ev"
+        },
+        "band_structure_extra_bands": {
+          "anyOf": [
+            {
+              "maximum": 999,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Extra Bands"
+        },
+        "band_structure_energy_tolerance_ev": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Energy Tolerance Ev"
+        },
+        "dos_energy_max_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Energy Max Ev"
+        },
+        "dos_extra_bands": {
+          "anyOf": [
+            {
+              "maximum": 999,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Extra Bands"
+        },
+        "dos_energy_tolerance_ev": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Energy Tolerance Ev"
+        },
+        "dos_smearing_width_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0.005,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Smearing Width Ev"
+        },
+        "dos_integration_method": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepDosIntegrationMethod"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dipole_correction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepDipoleCorrection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "max_iterations": {
           "anyOf": [
             {
@@ -406,11 +384,58 @@
           "default": null,
           "title": "Max Iterations"
         },
-        "module": {
-          "const": "CASTEP",
-          "default": "CASTEP",
-          "title": "Module",
-          "type": "string"
+        "displacement_convergence_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displacement Convergence Angstrom"
+        },
+        "energy_convergence_ev_per_atom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-09,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Convergence Ev Per Atom"
+        },
+        "force_convergence_ev_per_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-07,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Force Convergence Ev Per Angstrom"
+        },
+        "cell_optimization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepCellOptimization"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "optimization_algorithm": {
           "anyOf": [
@@ -434,31 +459,6 @@
           ],
           "default": null,
           "title": "Output File"
-        },
-        "properties_kpoint_separation": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 10,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Properties Kpoint Separation"
-        },
-        "quality": {
-          "default": "Medium",
-          "maxLength": 100,
-          "minLength": 1,
-          "title": "Quality",
-          "type": "string"
-        },
-        "task": {
-          "$ref": "#/$defs/CastepTask",
-          "default": "Energy"
         }
       },
       "title": "CastepEnergySpec",
@@ -485,6 +485,10 @@
         "ProjectedDensityOfStates",
         "Optics",
         "Phonon",
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
         "ElasticConstants"
       ],
       "title": "CastepTask",
@@ -494,16 +498,16 @@
       "additionalProperties": false,
       "description": "晶体操作规格。\n\n属性:\n    type: 操作类型\n    parameters: 操作参数",
       "properties": {
-        "parameters": {
-          "additionalProperties": true,
-          "title": "Parameters",
-          "type": "object"
-        },
         "type": {
           "maxLength": 80,
           "minLength": 1,
           "title": "Type",
           "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
         }
       },
       "required": [
@@ -516,6 +520,15 @@
       "additionalProperties": false,
       "description": "晶体规格。\n\n属性:\n    name: 晶体名称\n    lattice: 晶格规格\n    basis_atoms: 基原子列表\n    operations: 操作列表",
       "properties": {
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "lattice": {
+          "$ref": "#/$defs/LatticeSpec"
+        },
         "basis_atoms": {
           "items": {
             "$ref": "#/$defs/BasisAtomSpec"
@@ -523,15 +536,6 @@
           "minItems": 1,
           "title": "Basis Atoms",
           "type": "array"
-        },
-        "lattice": {
-          "$ref": "#/$defs/LatticeSpec"
-        },
-        "name": {
-          "maxLength": 120,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
         },
         "operations": {
           "items": {
@@ -548,6 +552,91 @@
       ],
       "title": "CrystalSpec",
       "type": "object"
+    },
+    "DMol3GeometryOptimizationSpec": {
+      "additionalProperties": false,
+      "description": "Strict settings for ``Modules->DMol3->GeometryOptimization``.\n\nThe model intentionally exposes only reviewed Materials Studio 20.1\nsettings. In particular, it has no arbitrary ``extraSettings`` escape\nhatch.",
+      "properties": {
+        "module": {
+          "const": "DMol3",
+          "default": "DMol3",
+          "title": "Module",
+          "type": "string"
+        },
+        "task": {
+          "const": "GeometryOptimization",
+          "default": "GeometryOptimization",
+          "title": "Task",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/DMol3Quality",
+          "default": "Medium"
+        },
+        "theory_level": {
+          "$ref": "#/$defs/DMol3TheoryLevel",
+          "default": "GGA"
+        },
+        "geometry_optimization_quality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DMol3Quality"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "charge": {
+          "default": 0,
+          "maximum": 1000,
+          "minimum": -1000,
+          "title": "Charge",
+          "type": "integer"
+        },
+        "use_symmetry": {
+          "$ref": "#/$defs/DMol3YesNo",
+          "default": "No"
+        },
+        "create_energy_evolution_chart": {
+          "$ref": "#/$defs/DMol3YesNo",
+          "default": "Yes"
+        }
+      },
+      "title": "DMol3GeometryOptimizationSpec",
+      "type": "object"
+    },
+    "DMol3Quality": {
+      "description": "Reviewed Materials Studio 20.1 DMol3 quality presets.",
+      "enum": [
+        "Coarse",
+        "Medium",
+        "Fine"
+      ],
+      "title": "DMol3Quality",
+      "type": "string"
+    },
+    "DMol3TheoryLevel": {
+      "description": "Theory levels documented for the MS 20.1 DMol3 task.",
+      "enum": [
+        "LDA",
+        "GGA",
+        "Hybrid",
+        "m-GGA",
+        "HF"
+      ],
+      "title": "DMol3TheoryLevel",
+      "type": "string"
+    },
+    "DMol3YesNo": {
+      "description": "Exact MaterialsScript toggle strings.",
+      "enum": [
+        "Yes",
+        "No"
+      ],
+      "title": "DMol3YesNo",
+      "type": "string"
     },
     "DynamicsEnsemble": {
       "description": "动力学系综枚举。",
@@ -579,6 +668,19 @@
           ],
           "default": null,
           "title": "Role"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
         }
       },
       "required": [
@@ -602,61 +704,19 @@
       "additionalProperties": false,
       "description": "Forcite 动力学规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    ensemble: 系综类型\n    temperature_K: 温度（开尔文）\n    pressure_GPa: 压力（吉帕斯卡）\n    timestep_fs: 时间步长（飞秒）\n    total_time_ps: 总时间（皮秒）\n    trajectory_output_frequency: 轨迹输出频率\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    output_file: 输出文件路径",
       "properties": {
-        "charge_assignment": {
-          "default": "Forcefield assigned",
-          "maxLength": 100,
-          "minLength": 1,
-          "title": "Charge Assignment",
-          "type": "string"
-        },
-        "ensemble": {
-          "$ref": "#/$defs/DynamicsEnsemble"
-        },
-        "forcefield": {
-          "default": "COMPASS",
-          "maxLength": 100,
-          "minLength": 1,
-          "title": "Forcefield",
-          "type": "string"
-        },
         "module": {
           "const": "Forcite",
           "default": "Forcite",
           "title": "Module",
           "type": "string"
         },
-        "output_file": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Output File"
-        },
-        "pressure_GPa": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Pressure Gpa"
-        },
-        "quality": {
-          "$ref": "#/$defs/ForciteQuality",
-          "default": "Medium"
-        },
         "task": {
           "default": "Dynamics",
           "title": "Task",
           "type": "string"
+        },
+        "ensemble": {
+          "$ref": "#/$defs/DynamicsEnsemble"
         },
         "temperature_K": {
           "anyOf": [
@@ -670,6 +730,18 @@
           ],
           "default": null,
           "title": "Temperature K"
+        },
+        "pressure_GPa": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pressure Gpa"
         },
         "timestep_fs": {
           "exclusiveMinimum": 0,
@@ -686,6 +758,36 @@
           "minimum": 1,
           "title": "Trajectory Output Frequency",
           "type": "integer"
+        },
+        "forcefield": {
+          "default": "COMPASS",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Forcefield",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/ForciteQuality",
+          "default": "Medium"
+        },
+        "charge_assignment": {
+          "default": "Forcefield assigned",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Charge Assignment",
+          "type": "string"
+        },
+        "output_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output File"
         }
       },
       "required": [
@@ -700,22 +802,33 @@
       "additionalProperties": false,
       "description": "Forcite 优化规格。\n\n属性:\n    module: 模拟模块\n    task: 任务类型\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    max_iterations: 最大迭代次数\n    convergence: 收敛级别\n    output_file: 输出文件路径",
       "properties": {
-        "charge_assignment": {
-          "default": "Forcefield assigned",
-          "maxLength": 100,
-          "minLength": 1,
-          "title": "Charge Assignment",
+        "module": {
+          "const": "Forcite",
+          "default": "Forcite",
+          "title": "Module",
           "type": "string"
         },
-        "convergence": {
-          "$ref": "#/$defs/ForciteConvergence",
-          "default": "Medium"
+        "task": {
+          "default": "GeometryOptimization",
+          "title": "Task",
+          "type": "string"
         },
         "forcefield": {
           "default": "COMPASS",
           "maxLength": 100,
           "minLength": 1,
           "title": "Forcefield",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/ForciteQuality",
+          "default": "Medium"
+        },
+        "charge_assignment": {
+          "default": "Forcefield assigned",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Charge Assignment",
           "type": "string"
         },
         "max_iterations": {
@@ -725,11 +838,9 @@
           "title": "Max Iterations",
           "type": "integer"
         },
-        "module": {
-          "const": "Forcite",
-          "default": "Forcite",
-          "title": "Module",
-          "type": "string"
+        "convergence": {
+          "$ref": "#/$defs/ForciteConvergence",
+          "default": "Medium"
         },
         "output_file": {
           "anyOf": [
@@ -742,15 +853,6 @@
           ],
           "default": null,
           "title": "Output File"
-        },
-        "quality": {
-          "$ref": "#/$defs/ForciteQuality",
-          "default": "Medium"
-        },
-        "task": {
-          "default": "GeometryOptimization",
-          "title": "Task",
-          "type": "string"
         }
       },
       "title": "ForciteOptimizationSpec",
@@ -771,11 +873,6 @@
       "additionalProperties": false,
       "description": "分数坐标向量。",
       "properties": {
-        "allow_outside_cell": {
-          "default": false,
-          "title": "Allow Outside Cell",
-          "type": "boolean"
-        },
         "x": {
           "title": "X",
           "type": "number"
@@ -787,6 +884,11 @@
         "z": {
           "title": "Z",
           "type": "number"
+        },
+        "allow_outside_cell": {
+          "default": false,
+          "title": "Allow Outside Cell",
+          "type": "boolean"
         }
       },
       "required": [
@@ -801,6 +903,15 @@
       "additionalProperties": false,
       "description": "导入结构规格。\n\n属性:\n    name: 结构名称\n    source_file: 源文件引用\n    format: 文件格式（可选）",
       "properties": {
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "source_file": {
+          "$ref": "#/$defs/FileRef"
+        },
         "format": {
           "anyOf": [
             {
@@ -812,15 +923,6 @@
           ],
           "default": null,
           "title": "Format"
-        },
-        "name": {
-          "maxLength": 120,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
-        },
-        "source_file": {
-          "$ref": "#/$defs/FileRef"
         }
       },
       "required": [
@@ -839,26 +941,26 @@
           "title": "A",
           "type": "number"
         },
+        "b": {
+          "exclusiveMinimum": 0,
+          "title": "B",
+          "type": "number"
+        },
+        "c": {
+          "exclusiveMinimum": 0,
+          "title": "C",
+          "type": "number"
+        },
         "alpha": {
           "exclusiveMaximum": 180,
           "exclusiveMinimum": 0,
           "title": "Alpha",
           "type": "number"
         },
-        "b": {
-          "exclusiveMinimum": 0,
-          "title": "B",
-          "type": "number"
-        },
         "beta": {
           "exclusiveMaximum": 180,
           "exclusiveMinimum": 0,
           "title": "Beta",
-          "type": "number"
-        },
-        "c": {
-          "exclusiveMinimum": 0,
-          "title": "C",
           "type": "number"
         },
         "gamma": {
@@ -893,6 +995,12 @@
       "additionalProperties": false,
       "description": "分子规格。\n\n属性:\n    name: 分子名称\n    atoms: 原子列表\n    bonds: 键列表\n    total_charge: 总电荷（可选）\n    spin_multiplicity: 自旋多重度（可选）",
       "properties": {
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "atoms": {
           "items": {
             "$ref": "#/$defs/AtomSpec"
@@ -908,11 +1016,17 @@
           "title": "Bonds",
           "type": "array"
         },
-        "name": {
-          "maxLength": 120,
-          "minLength": 1,
-          "title": "Name",
-          "type": "string"
+        "total_charge": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Charge"
         },
         "spin_multiplicity": {
           "anyOf": [
@@ -926,18 +1040,6 @@
           ],
           "default": null,
           "title": "Spin Multiplicity"
-        },
-        "total_charge": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Total Charge"
         }
       },
       "required": [
@@ -951,6 +1053,12 @@
       "additionalProperties": false,
       "description": "单位系统。",
       "properties": {
+        "length": {
+          "const": "angstrom",
+          "default": "angstrom",
+          "title": "Length",
+          "type": "string"
+        },
         "energy": {
           "default": "eV",
           "enum": [
@@ -958,12 +1066,6 @@
             "kcal/mol"
           ],
           "title": "Energy",
-          "type": "string"
-        },
-        "length": {
-          "const": "angstrom",
-          "default": "angstrom",
-          "title": "Length",
           "type": "string"
         },
         "temperature": {
@@ -1014,13 +1116,28 @@
   "additionalProperties": false,
   "description": "模型规格。\n\n属性:\n    project_id: 项目 ID\n    revision: 修订版本号\n    software: 软件名称\n    unit_system: 单位系统\n    model_type: 模型类型\n    model: 模型数据\n    simulation: 模拟规格\n    outputs: 输出配置\n    acceptance: 验收标准\n    metadata: 元数据",
   "properties": {
-    "acceptance": {
-      "$ref": "#/$defs/AcceptanceCriteria"
+    "project_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Project Id",
+      "type": "string"
     },
-    "metadata": {
-      "additionalProperties": true,
-      "title": "Metadata",
-      "type": "object"
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "software": {
+      "default": "Materials Studio",
+      "title": "Software",
+      "type": "string"
+    },
+    "unit_system": {
+      "$ref": "#/$defs/UnitSystem"
+    },
+    "model_type": {
+      "$ref": "#/$defs/ModelType"
     },
     "model": {
       "anyOf": [
@@ -1036,26 +1153,6 @@
       ],
       "title": "Model"
     },
-    "model_type": {
-      "$ref": "#/$defs/ModelType"
-    },
-    "outputs": {
-      "additionalProperties": true,
-      "title": "Outputs",
-      "type": "object"
-    },
-    "project_id": {
-      "maxLength": 120,
-      "minLength": 1,
-      "title": "Project Id",
-      "type": "string"
-    },
-    "revision": {
-      "default": 0,
-      "minimum": 0,
-      "title": "Revision",
-      "type": "integer"
-    },
     "simulation": {
       "anyOf": [
         {
@@ -1068,19 +1165,27 @@
           "$ref": "#/$defs/CastepEnergySpec"
         },
         {
+          "$ref": "#/$defs/DMol3GeometryOptimizationSpec"
+        },
+        {
           "type": "null"
         }
       ],
       "default": null,
       "title": "Simulation"
     },
-    "software": {
-      "default": "Materials Studio",
-      "title": "Software",
-      "type": "string"
+    "outputs": {
+      "additionalProperties": true,
+      "title": "Outputs",
+      "type": "object"
     },
-    "unit_system": {
-      "$ref": "#/$defs/UnitSystem"
+    "acceptance": {
+      "$ref": "#/$defs/AcceptanceCriteria"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "title": "Metadata",
+      "type": "object"
     }
   },
   "required": [

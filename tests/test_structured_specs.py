@@ -10,6 +10,9 @@ from material_studio_mcp_server.specs import CastepEnergySpec, ForciteDynamicsSp
 from material_studio_mcp_server.specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from material_studio_mcp_server.specs.molecule import AtomSpec, BondSpec, MoleculeSpec
 from material_studio_mcp_server.specs.patch import SemanticPatchOperation
+from material_studio_mcp_server.translators.project_to_perl import (
+    render_model_to_perl,
+)
 
 
 EXAMPLES = Path("src/material_studio_mcp_server/examples")
@@ -118,6 +121,46 @@ def test_simulation_specs_reject_mismatched_modules() -> None:
         )
 
 
+def test_immutable_imported_structure_is_digest_bound_at_import(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "project_id": "digest_bound_cif",
+        "model_type": "imported_structure",
+        "model": {
+            "name": "quartz",
+            "source_file": {
+                "path": str(tmp_path / "source.cif"),
+                "role": "immutable_cif_source",
+                "sha256": "a" * 64,
+            },
+            "format": "cif",
+        },
+    }
+    spec = ModelSpec.model_validate(payload)
+    generated = render_model_to_perl(spec, tmp_path / "outputs")
+
+    assert spec.model.source_file.sha256 == "a" * 64
+    assert "use Digest::SHA;" in generated.script
+    assert "use Fcntl qw(O_WRONLY O_CREAT O_EXCL);" in generated.script
+    assert "Imported structure source SHA-256 mismatch" in generated.script
+    assert generated.script.index("$source_digest->hexdigest") < (
+        generated.script.index("Documents->Import($import_source)")
+    )
+    assert "Verified import source SHA-256 mismatch" in generated.script
+    assert "O_WRONLY | O_CREAT | O_EXCL" in generated.script
+
+    missing = json.loads(json.dumps(payload))
+    del missing["model"]["source_file"]["sha256"]
+    with pytest.raises(ValidationError, match="requires an exact lowercase SHA-256"):
+        ModelSpec.model_validate(missing)
+
+    uppercase = json.loads(json.dumps(payload))
+    uppercase["model"]["source_file"]["sha256"] = "A" * 64
+    with pytest.raises(ValidationError):
+        ModelSpec.model_validate(uppercase)
+
+
 def test_semantic_patch_operation_type_is_enumerated() -> None:
     with pytest.raises(ValidationError):
         SemanticPatchOperation.model_validate({"type": "unsupported_operation"})
@@ -174,6 +217,7 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
         "molecule_spec.schema.json": {"name", "atoms", "bonds"},
         "crystal_spec.schema.json": {"name", "lattice", "basis_atoms"},
         "castep_spec.schema.json": {"module", "task", "functional"},
+        "dmol3_spec.schema.json": {"module", "task", "quality", "theory_level"},
         "patch_spec.schema.json": {"project_id", "base_revision", "operations"},
     }
     for filename, fields in expected.items():
@@ -199,8 +243,24 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
         "ProjectedDensityOfStates",
         "Optics",
         "Phonon",
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
         "ElasticConstants",
     ]
+    model_schema = json.loads(
+        Path(
+            "src/material_studio_mcp_server/schemas/model_spec.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "DMol3GeometryOptimizationSpec" in model_schema["$defs"]
+    assert {
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
+    } <= set(model_schema["$defs"]["CastepTask"]["enum"])
     assert castep_schema["properties"]["dipole_correction"]["anyOf"][0]["$ref"] == (
         "#/$defs/CastepDipoleCorrection"
     )

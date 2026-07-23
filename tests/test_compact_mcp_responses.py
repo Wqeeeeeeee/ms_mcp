@@ -1151,8 +1151,27 @@ def test_compact_status_preserves_bound_nondefault_views_and_rejects_stale_audit
 
 
 def test_compact_semiconductor_stress_receipt_stays_within_budget(
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
+    class _SingleWindowController:
+        def status(self, **_kwargs) -> dict[str, object]:
+            return {
+                "ok": True,
+                "supported": True,
+                "process_count": 1,
+                "window_found": True,
+                "window_count": 1,
+                "single_window_policy_ok": True,
+                "single_window_violation_reasons": [],
+            }
+
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda _working_dir=None: _SingleWindowController(),
+    )
+
     capabilities = server.material_studio_live_capabilities(response_mode="compact")
     views = capabilities["diagnostics"]["supported_view_names"]
     created = server.material_studio_live_modeling_request(

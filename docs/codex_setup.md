@@ -1614,6 +1614,40 @@ fails closed with `current_revision_execution_block` if the current revision
 has advanced, before probing the GUI or starting a runner. Do not reconstruct
 this payload from a generic execute example.
 
+## Secure CIF, DMol3, Remote Handoff, and Read-Only Dashboard
+
+All new side-effect-capable tools are included in the generated Codex
+configuration with prompt approval. CIF ingestion, DMol3 execution, and remote
+bundle preparation are preview-first; remote job recording is an explicit
+append-only evidence action rather than a preview/execute tool:
+
+- `material_studio_cif_source_ingest`
+- `material_studio_dmol3_relax_current`
+- `material_studio_remote_castep_prepare`
+- `material_studio_remote_job_record`
+
+COD search, remote local-status reads, workspace snapshots, and allowlisted
+artifact reads are read-only tools. CIF execute accepts only the built-in
+HTTPS host allowlist and revalidates every redirect and resolved address.
+Remote handoff never submits work: it packages the exact current
+spec/script/input hashes and records identities supplied by an external
+scheduler adapter. Execute must echo `expected_preview_manifest_sha256` from
+the exact preview; any changed input, core count, or revision binding is
+rejected before the bundle directory is created. Use the preview's directly
+callable `execute_action` unchanged after explicit confirmation.
+
+The dashboard is a separate loopback-only reader:
+
+```powershell
+.\.venv\Scripts\ms-mcp-dashboard.exe `
+  --workspace workspace `
+  --host 127.0.0.1 `
+  --port 4877
+```
+
+It exposes GET/HEAD only and does not instantiate `ProjectStore`, create a
+missing workspace, execute Materials Studio, or provide mutation endpoints.
+
 ## Goal Watchdog
 
 This section describes unattended Codex code-goal continuation. For periodic

@@ -67,6 +67,14 @@ SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_castep_energy_script",
     "material_studio_castep_relax_current",
     "material_studio_castep_run_current",
+    "material_studio_dmol3_relax_current",
+    "material_studio_cif_source_search",
+    "material_studio_cif_source_ingest",
+    "material_studio_remote_castep_prepare",
+    "material_studio_remote_job_record",
+    "material_studio_remote_job_status",
+    "material_studio_workspace_snapshot",
+    "material_studio_workspace_artifact_read",
     "material_studio_list_script_templates",
 )
 PROMPT_TOOLS: tuple[str, ...] = (
@@ -83,6 +91,10 @@ PROMPT_TOOLS: tuple[str, ...] = (
     "material_studio_gui_execute_view_replay",
     "material_studio_castep_relax_current",
     "material_studio_castep_run_current",
+    "material_studio_dmol3_relax_current",
+    "material_studio_cif_source_ingest",
+    "material_studio_remote_castep_prepare",
+    "material_studio_remote_job_record",
     "material_studio_run_script",
 )
 

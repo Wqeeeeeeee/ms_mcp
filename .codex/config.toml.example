@@ -43,6 +43,14 @@ enabled_tools = [
   "material_studio_castep_energy_script",
   "material_studio_castep_relax_current",
   "material_studio_castep_run_current",
+  "material_studio_dmol3_relax_current",
+  "material_studio_cif_source_search",
+  "material_studio_cif_source_ingest",
+  "material_studio_remote_castep_prepare",
+  "material_studio_remote_job_record",
+  "material_studio_remote_job_status",
+  "material_studio_workspace_snapshot",
+  "material_studio_workspace_artifact_read",
   "material_studio_list_script_templates"
 ]
 
@@ -87,6 +95,18 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_castep_run_current]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_dmol3_relax_current]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_cif_source_ingest]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_remote_castep_prepare]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_remote_job_record]
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_run_script]

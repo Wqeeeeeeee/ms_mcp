@@ -267,6 +267,40 @@ def test_structured_crystal_execute_materializes_cif_without_runner(
     assert status["execution_started"] is True
 
 
+def test_structured_execute_propagates_runner_failure_to_top_level(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    spec = load_benzene()
+    spec["project_id"] = "structured_runner_failure"
+
+    class FailedRunResult:
+        def to_dict(self) -> dict:
+            return {
+                "success": False,
+                "return_code": 1,
+                "stderr": "simulated MaterialsScript failure",
+                "created_files": [],
+                "duration_seconds": 0.01,
+            }
+
+    monkeypatch.setattr(
+        server.runner,
+        "run_script",
+        lambda *args, **kwargs: FailedRunResult(),
+    )
+    result = material_studio_model_create_from_spec(
+        spec,
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "revision_execution_failed"
+    assert result["result"]["success"] is False
+    assert result["execution_attempt"]["result_success"] is False
+
+
 def test_forcite_dynamics_execute_persists_unmanaged_result_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

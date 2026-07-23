@@ -11,6 +11,8 @@ import pytest
 from material_studio_mcp_server.protocol_smoke import (
     COMPACT_RESPONSE_MAX_BYTES,
     REQUIRED_PROTOCOL_TOOLS,
+    SAFE_NEW_TOOL_PROTOCOL_CALLS,
+    _protocol_normality_create_status_acceptance,
     _protocol_roundtrip_execution_handoff_acceptance,
     _protocol_roundtrip_preview_acceptance,
     audit_codex_config,
@@ -61,6 +63,89 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     }
     calls = result["calls"]
     assert calls["ok"] is True
+    new_tools = calls["new_tool_protocol_coverage"]
+    assert tuple(new_tools["called_tools"]) == SAFE_NEW_TOOL_PROTOCOL_CALLS
+    assert new_tools["call_count"] == 8
+    assert new_tools["workspace_unchanged"] is True
+    assert (
+        new_tools["workspace_signature_before"]
+        == new_tools["workspace_signature_after"]
+    )
+
+    cif_search = new_tools["cif_source_search"]
+    assert cif_search == {
+        "ok": True,
+        "status": "ready",
+        "execution_mode": "preview",
+        "query": "quartz",
+        "max_results": 3,
+        "network_performed": False,
+        "dns_resolution_performed": False,
+        "writes_performed": False,
+    }
+    cif_ingest = new_tools["cif_source_ingest"]
+    assert cif_ingest["ok"] is True
+    assert cif_ingest["status"] == "ready_for_explicit_execute"
+    assert cif_ingest["execution_mode"] == "preview"
+    assert cif_ingest["project_id"].startswith("protocol_cif_")
+    assert cif_ingest["network_performed"] is False
+    assert cif_ingest["dns_resolution_performed"] is False
+    assert cif_ingest["writes_performed"] is False
+    assert cif_ingest["project_created"] is False
+    assert cif_ingest["materials_studio_execution_performed"] is False
+    assert cif_ingest["gui_input_performed"] is False
+
+    dmol3 = new_tools["dmol3_relax_current"]
+    assert dmol3["ok"] is True
+    assert dmol3["status"] == "dmol3_preflight_blocked"
+    assert dmol3["execution_mode"] == "preview"
+    assert dmol3["simulation"]["quality"] == "Fine"
+    assert dmol3["simulation"]["theory_level"] == "GGA"
+    assert dmol3["simulation"]["charge"] == 0
+    assert dmol3["simulation"]["use_symmetry"] == "No"
+    assert dmol3["simulation"]["create_energy_evolution_chart"] == "Yes"
+    assert "current_molecule_xsd_not_materialized" in dmol3["blocking_reasons"]
+    assert dmol3["execution_started"] is False
+    assert dmol3["revision_created"] is False
+    assert dmol3["gui_input_performed"] is False
+
+    remote = new_tools["remote_castep_prepare"]
+    assert remote["ok"] is True
+    assert remote["status"] == "preview"
+    assert remote["execution_mode"] == "preview"
+    assert len(remote["manifest_sha256"]) == 64
+    assert remote["write_performed"] is False
+    assert remote["bundle_exists"] is False
+    assert remote["execute_digest_bound"] is True
+    assert remote["needs_user_confirmation"] is True
+    assert remote["shell_execution_performed"] is False
+    assert remote["ssh_execution_performed"] is False
+    assert remote["scheduler_execution_performed"] is False
+    assert remote["materials_studio_execution_performed"] is False
+    assert remote["gui_input_performed"] is False
+    for name in ("remote_job_record", "remote_job_status"):
+        boundary = new_tools[name]
+        assert boundary["ok"] is False
+        assert boundary["safely_blocked_without_executed_bundle"] is True
+        assert boundary["bundle_exists"] is False
+
+    snapshot = new_tools["workspace_snapshot"]
+    assert snapshot["ok"] is True
+    assert snapshot["read_only"] is True
+    assert snapshot["filesystem_write_performed"] is False
+    assert snapshot["project_count"] >= 3
+    assert snapshot["fixture_projects_present"] is True
+    artifact = new_tools["workspace_artifact_read"]
+    assert artifact["ok"] is True
+    assert artifact["read_only"] is True
+    assert artifact["filesystem_write_performed"] is False
+    assert artifact["project_id"] == calls["project_id"]
+    assert artifact["revision"] == calls["revision"]
+    assert artifact["relative_path"].endswith(".json")
+    assert artifact["encoding"] == "utf-8"
+    assert artifact["size_bytes"] > 0
+    assert len(artifact["content_sha256"]) == 64
+    assert artifact["json_object_decoded"] is True
     assert calls["cjk_request_echo_preserved"] is True
     assert calls["user_request_echo"] == calls["user_request"]
     assert "构建硅晶体" in calls["user_request"]
@@ -80,8 +165,40 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["roundtrip_preview_gui_probe_planned"] is False
     assert calls["roundtrip_preview_run_root_exists"] is False
     assert calls["roundtrip_execution_handoff_acceptance_ok"] is True
+    handoff_mode = calls["roundtrip_execution_handoff_mode"]
+    assert handoff_mode in {
+        "exact_create_status_apply",
+        "multi_window_safety_deferred",
+    }
+    assert calls["roundtrip_execution_handoff_apply_payload_verified"] is True
     assert calls["roundtrip_execution_handoff_confirmation_required"] is True
-    assert calls["roundtrip_execution_handoff_payload_consistent"] is True
+    if handoff_mode == "exact_create_status_apply":
+        assert calls["roundtrip_execution_handoff_status"] == "passed"
+        assert calls["roundtrip_execution_handoff_safety_deferred"] is False
+        assert (
+            calls[
+                "roundtrip_execution_handoff_payload_consistency_claimed"
+            ]
+            is True
+        )
+        assert calls["roundtrip_execution_handoff_payload_consistent"] is True
+    else:
+        assert (
+            calls["roundtrip_execution_handoff_status"]
+            == "passed_safety_deferred"
+        )
+        assert calls["roundtrip_execution_handoff_safety_deferred"] is True
+        assert (
+            calls[
+                "roundtrip_execution_handoff_payload_consistency_claimed"
+            ]
+            is False
+        )
+        assert calls["roundtrip_execution_handoff_payload_consistent"] is None
+        handoff = calls["roundtrip_execution_handoff_acceptance"]
+        assert handoff["safety_action_verified"] is True
+        assert handoff["status_gui_preflight_receipt_verified"] is True
+        assert handoff["single_window_violation_reasons"]
     assert calls["roundtrip_execution_handoff_acceptance"]["payload"] == {
         "project_id": calls["project_id"],
         "expected_revision": calls["revision"],
@@ -250,6 +367,22 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     assert calls["normality_decision_authoritative_source"] == "normality_gate"
     assert calls["normality_decision_binding_verified"] is True
     assert calls["normality_decision_consistency_ok"] is True
+    assert calls["normality_create_status_acceptance_ok"] is True
+    normality_mode = calls["normality_create_status_mode"]
+    if handoff_mode == "exact_create_status_apply":
+        assert normality_mode == "exact_create_status"
+        assert calls["normality_create_status_comparison_claimed"] is True
+        assert calls["normality_create_status_consistent"] is True
+        assert (
+            calls["normality_status_without_gui_status"]
+            == calls["normality_decision_status"]
+        )
+    else:
+        assert normality_mode == "multi_window_safety_deferred"
+        assert calls["normality_create_status_comparison_claimed"] is False
+        assert calls["normality_create_status_consistent"] is None
+        assert calls["normality_decision_status"] == "blocked"
+        assert calls["normality_status_without_gui_status"] == "preview_only"
     assert decision["project_id"] == calls["project_id"]
     assert decision["revision"] == calls["revision"]
     assert decision["status"] == calls["normality_decision_status"]
@@ -294,6 +427,14 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
             "prepare_view_replay",
             "resumed_preflight",
             "view_bundle",
+            "cif_source_search_preview",
+            "cif_source_ingest_preview",
+            "dmol3_preview",
+            "remote_castep_preview",
+            "remote_job_record_blocked",
+            "remote_job_status_blocked",
+            "workspace_snapshot",
+            "workspace_artifact_read",
         )
     ) < COMPACT_RESPONSE_MAX_BYTES
     assert Path(calls["view_bundle_manifest_path"]).exists()
@@ -477,9 +618,271 @@ def test_protocol_roundtrip_execution_handoff_acceptance_binds_exact_payload(
 
     assert acceptance["ok"] is True
     assert acceptance["status"] == "passed"
+    assert acceptance["mode"] == "exact_create_status_apply"
+    assert acceptance["safety_deferred"] is False
+    assert acceptance["apply_payload_source"] == "create_and_status"
+    assert acceptance["apply_payload_verified"] is True
     assert acceptance["needs_user_confirmation"] is True
     assert acceptance["safe_to_call_without_confirmation"] is False
+    assert acceptance["payload_consistency_claimed"] is True
     assert acceptance["create_status_payload_consistent"] is True
+
+
+def _roundtrip_safety_deferred_responses(
+    tmp_path: Path,
+) -> tuple[dict, dict]:
+    created, status = _roundtrip_handoff_responses(tmp_path)
+    reasons = [
+        "multiple_matstudio_processes_detected",
+        "multiple_matstudio_windows_detected",
+    ]
+    created["next_action_plan"] = {
+        "state": "blocked",
+        "action_id": "resolve_single_window_materials_studio_session",
+        "project_id": created["project_id"],
+        "revision": created["revision"],
+        "recommended_tool": "material_studio_gui_status",
+        "needs_user_confirmation": True,
+        "safe_to_call_without_confirmation": False,
+        "payload_hint": {
+            "single_window_violation_reasons": reasons,
+            "working_dir": str(tmp_path.resolve()),
+        },
+        "deferred_hotload_action": {},
+        "gui_preflight_verified": False,
+        "gui_preflight_required": False,
+        "blocking_reasons": ["gui_single_window_policy_violation"],
+        "review_reasons": [
+            f"gui:single_window:{reason}" for reason in reasons
+        ],
+    }
+    status["next_action_plan"].update(
+        {
+            "gui_preflight_verified": False,
+            "gui_preflight_required": True,
+        }
+    )
+    return created, status
+
+
+def test_protocol_roundtrip_execution_handoff_accepts_verified_safety_deferred_mode(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_safety_deferred_responses(tmp_path)
+
+    acceptance = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed_safety_deferred"
+    assert acceptance["mode"] == "multi_window_safety_deferred"
+    assert acceptance["safety_deferred"] is True
+    assert acceptance["safety_action_verified"] is True
+    assert acceptance["status_gui_preflight_receipt_verified"] is True
+    assert acceptance["apply_payload_source"] == (
+        "status_deferred_hotload_action"
+    )
+    assert acceptance["apply_payload_verified"] is True
+    assert acceptance["payload_consistency_claimed"] is False
+    assert acceptance["create_status_payload_consistent"] is None
+    assert acceptance["single_window_violation_reasons"] == [
+        "multiple_matstudio_processes_detected",
+        "multiple_matstudio_windows_detected",
+    ]
+    assert acceptance["payload"] == status["next_action_plan"][
+        "deferred_hotload_action"
+    ]["payload_hint"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        (
+            "confirmation_bypass",
+            "roundtrip_create_safety_confirmation_gate_missing",
+        ),
+        (
+            "missing_reasons",
+            "roundtrip_create_safety_single_window_reasons_invalid",
+        ),
+        (
+            "unsafe_status_preflight",
+            "roundtrip_status_gui_preflight_safe_flag_invalid",
+        ),
+        (
+            "status_apply_drift",
+            "roundtrip_status_apply_verify_ms_roundtrip_mismatch",
+        ),
+    ],
+)
+def test_protocol_roundtrip_execution_handoff_rejects_invalid_safety_deferred_mode(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+) -> None:
+    created, status = _roundtrip_safety_deferred_responses(tmp_path)
+    if mutation == "confirmation_bypass":
+        created["next_action_plan"]["needs_user_confirmation"] = False
+    elif mutation == "missing_reasons":
+        created["next_action_plan"]["payload_hint"][
+            "single_window_violation_reasons"
+        ] = []
+    elif mutation == "unsafe_status_preflight":
+        status["next_action_plan"]["safe_to_call_without_confirmation"] = (
+            False
+        )
+    else:
+        status["next_action_plan"]["deferred_hotload_action"][
+            "payload_hint"
+        ]["verify_ms_roundtrip"] = False
+
+    acceptance = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["status"] == "failed"
+    assert expected_error in acceptance["errors"]
+
+
+def _normality_decision(
+    *,
+    project_id: str,
+    revision: int,
+    status: str,
+    primary_reason: str,
+) -> dict:
+    return {
+        "schema_version": "material_studio_normality_decision_v1",
+        "authoritative_source": "normality_gate",
+        "project_id": project_id,
+        "revision": revision,
+        "binding_verified": True,
+        "status": status,
+        "primary_reason": primary_reason,
+        "can_claim_model_normal": False,
+        "can_claim_live_gui_normal": False,
+        "consistency": {"ok": True},
+    }
+
+
+def test_protocol_normality_comparison_reports_exact_single_window_mode(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_handoff_responses(tmp_path)
+    handoff = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+    decision = _normality_decision(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        status="preview_only",
+        primary_reason="preview_not_hot_loaded",
+    )
+
+    acceptance = _protocol_normality_create_status_acceptance(
+        created_decision=decision,
+        status_decision=copy.deepcopy(decision),
+        project_id=created["project_id"],
+        revision=created["revision"],
+        handoff_acceptance=handoff,
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed"
+    assert acceptance["mode"] == "exact_create_status"
+    assert acceptance["comparison_claimed"] is True
+    assert acceptance["create_status_consistent"] is True
+    assert acceptance["status_difference_expected"] is False
+
+
+def test_protocol_normality_comparison_reports_safety_deferred_mode(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_safety_deferred_responses(tmp_path)
+    handoff = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+    created_decision = _normality_decision(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        status="blocked",
+        primary_reason="gui_single_window_policy_violation",
+    )
+    status_decision = _normality_decision(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        status="preview_only",
+        primary_reason="preview_not_hot_loaded",
+    )
+
+    acceptance = _protocol_normality_create_status_acceptance(
+        created_decision=created_decision,
+        status_decision=status_decision,
+        project_id=created["project_id"],
+        revision=created["revision"],
+        handoff_acceptance=handoff,
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed_safety_deferred"
+    assert acceptance["mode"] == "multi_window_safety_deferred"
+    assert acceptance["comparison_claimed"] is False
+    assert acceptance["create_status_consistent"] is None
+    assert acceptance["status_difference_expected"] is True
+    assert acceptance["create_status"] == "blocked"
+    assert acceptance["status_without_gui_status"] == "preview_only"
+
+
+def test_protocol_normality_safety_deferred_mode_never_accepts_normal_claim(
+    tmp_path: Path,
+) -> None:
+    created, status = _roundtrip_safety_deferred_responses(tmp_path)
+    handoff = _protocol_roundtrip_execution_handoff_acceptance(
+        created=created,
+        status=status,
+        workspace=tmp_path,
+        expected_views=("front", "top", "isometric"),
+    )
+    created_decision = _normality_decision(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        status="blocked",
+        primary_reason="gui_single_window_policy_violation",
+    )
+    status_decision = _normality_decision(
+        project_id=created["project_id"],
+        revision=created["revision"],
+        status="preview_only",
+        primary_reason="preview_not_hot_loaded",
+    )
+    status_decision["can_claim_model_normal"] = True
+
+    acceptance = _protocol_normality_create_status_acceptance(
+        created_decision=created_decision,
+        status_decision=status_decision,
+        project_id=created["project_id"],
+        revision=created["revision"],
+        handoff_acceptance=handoff,
+    )
+
+    assert acceptance["ok"] is False
+    assert "safety_deferred_status_model_normal_claim_invalid" in (
+        acceptance["errors"]
+    )
 
 
 @pytest.mark.parametrize(

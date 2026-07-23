@@ -104,7 +104,28 @@ def test_workspace_binding_reaches_deferred_apply_action() -> None:
     )
 
 
-def test_preview_and_status_preserve_exact_apply_handoff(tmp_path: Path) -> None:
+def test_preview_and_status_preserve_exact_apply_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class _SingleWindowController:
+        def status(self, **_kwargs) -> dict[str, object]:
+            return {
+                "ok": True,
+                "supported": True,
+                "process_count": 1,
+                "window_found": True,
+                "window_count": 1,
+                "single_window_policy_ok": True,
+                "single_window_violation_reasons": [],
+            }
+
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda _working_dir=None: _SingleWindowController(),
+    )
+
     created = server.material_studio_live_modeling_request(
         "Build silicon crystal for revision-bound handoff acceptance.",
         execution_mode="preview",

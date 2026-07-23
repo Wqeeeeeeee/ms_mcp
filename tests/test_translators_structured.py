@@ -3,8 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from material_studio_mcp_server.specs.project import ModelSpec
-from material_studio_mcp_server.translators import render_model_to_perl, write_crystal_cif
+from material_studio_mcp_server.translators import (
+    planned_output_file,
+    render_model_to_perl,
+    write_crystal_cif,
+)
 from material_studio_mcp_server.validators import validate_generated_script
 
 
@@ -22,6 +28,52 @@ def test_molecule_translator_generates_safe_perl(tmp_path: Path) -> None:
     assert "Convergence =>" not in generated.script
     assert "__MS_MCP_JSON_START__" in generated.script
     assert validate_generated_script(generated.script)["valid"] is True
+
+
+def test_managed_output_override_is_confined_to_output_directory(
+    tmp_path: Path,
+) -> None:
+    spec = load_example("benzene_spec.json")
+    spec = spec.model_copy(
+        update={"outputs": {"output_file": "custom-structure.xsd"}}
+    )
+
+    assert planned_output_file(spec, tmp_path) == (
+        tmp_path / "custom-structure.xsd"
+    )
+
+
+def test_managed_outputs_override_rejects_absolute_path(tmp_path: Path) -> None:
+    spec = load_example("benzene_spec.json")
+    spec = spec.model_copy(
+        update={
+            "outputs": {
+                "output_file": str(
+                    (tmp_path.parent / "escaped-structure.xsd").resolve()
+                )
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="relative file name"):
+        planned_output_file(spec, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "output_file",
+    ["../escaped-structure.xsd", r"..\escaped-structure.xsd"],
+)
+def test_managed_simulation_override_rejects_traversal(
+    tmp_path: Path,
+    output_file: str,
+) -> None:
+    spec = load_example("benzene_spec.json")
+    assert spec.simulation is not None
+    simulation = spec.simulation.model_copy(update={"output_file": output_file})
+    spec = spec.model_copy(update={"simulation": simulation})
+
+    with pytest.raises(ValueError, match="relative file name"):
+        planned_output_file(spec, tmp_path)
 
 
 def test_castep_translator_generates_energy_script(tmp_path: Path) -> None:

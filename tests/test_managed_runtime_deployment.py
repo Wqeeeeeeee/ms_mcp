@@ -29,8 +29,10 @@ from material_studio_mcp_server.managed_runtime import (
     RUNTIME_MANIFEST_ENV,
     consume_runtime_manifest_argument,
     filesystem_io_path,
+    managed_runtime_launch_cwd,
     managed_runtime_status,
     manifest_bytes,
+    process_launch_path,
     require_managed_runtime_launcher_binding,
     runtime_content_snapshot,
     sha256_bytes,
@@ -276,6 +278,11 @@ def test_launcher_consumes_exact_manifest_binding(tmp_path: Path) -> None:
             None,
         )
     require_managed_runtime_launcher_binding(runtime, manifest_hash)
+    if os.name == "nt":
+        require_managed_runtime_launcher_binding(
+            Path("\\\\?\\" + str(runtime.resolve())),
+            manifest_hash,
+        )
     (runtime / "run_server.py").write_text("print('changed')\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="integrity verification failed"):
         require_managed_runtime_launcher_binding(runtime, manifest_hash)
@@ -448,7 +455,7 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
     tmp_path: Path,
 ) -> None:
     repository, _ = _pushed_repository(tmp_path)
-    runtime_root = tmp_path / "runtimes"
+    runtime_root = tmp_path / ("runtimes_" + ("x" * 100))
     config = tmp_path / "config.toml"
     config.write_text("[projects]\n", encoding="utf-8")
     config_before = _sha256(config)
@@ -468,7 +475,9 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
         validate_protocol=False,
     )
     target = Path(result["target_runtime_path"])
-    first_manifest = (target / MANAGED_RUNTIME_MANIFEST).read_bytes()
+    first_manifest = filesystem_io_path(
+        target / MANAGED_RUNTIME_MANIFEST
+    ).read_bytes()
     reused_plan = plan_runtime_deployment(
         source_root=repository,
         runtime_root=runtime_root,
@@ -510,6 +519,15 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
         RUNTIME_MANIFEST_ARGUMENT,
         result["runtime_integrity"]["manifest_sha256"],
     ]
+    if os.name == "nt":
+        registered = result["registration_plan"]["recommended_entrypoint"]
+        assert len(str(target)) >= 260
+        assert registered["args"][0].startswith("\\\\?\\")
+        assert len(registered["cwd"]) < 240
+        assert Path(registered["cwd"]).is_dir()
+        assert result["registration_handoff"]["apply_command"][1].startswith(
+            "\\\\?\\"
+        )
     long_deployed_example = (
         target
         / "src"
@@ -521,7 +539,9 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
         encoding="utf-8"
     ) == '{"kind": "long-path-fixture"}\n'
     deployed_manifest = json.loads(
-        (target / MANAGED_RUNTIME_MANIFEST).read_text(encoding="utf-8")
+        filesystem_io_path(target / MANAGED_RUNTIME_MANIFEST).read_text(
+            encoding="utf-8"
+        )
     )
     assert deployed_manifest["python_runtime_contract"][
         "contract_sha256"
@@ -530,7 +550,32 @@ def test_runtime_deployment_apply_is_immutable_and_returns_registration_plan(
     assert reused_plan["status"] == "runtime_already_deployed"
     assert reused["status"] == "runtime_reused_registration_ready"
     assert reused["runtime_written"] is False
-    assert (target / MANAGED_RUNTIME_MANIFEST).read_bytes() == first_manifest
+    assert filesystem_io_path(
+        target / MANAGED_RUNTIME_MANIFEST
+    ).read_bytes() == first_manifest
+
+
+def test_windows_long_runtime_selects_safe_process_launch_paths(
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        return
+    runtime = (
+        tmp_path
+        / ("runtime_" + ("x" * 100))
+        / ("a" * 40)
+        / ("b" * 64)
+    )
+    filesystem_io_path(runtime).mkdir(parents=True)
+
+    launch_script = process_launch_path(runtime / "run_server.py")
+    launch_cwd = managed_runtime_launch_cwd(runtime)
+
+    assert len(str(runtime)) >= 260
+    assert str(launch_script).startswith("\\\\?\\")
+    assert not str(launch_cwd).startswith("\\\\?\\")
+    assert len(str(launch_cwd)) < 240
+    assert launch_cwd.is_dir()
 
 
 def test_runtime_manifest_is_stable_across_branches_at_same_commit(

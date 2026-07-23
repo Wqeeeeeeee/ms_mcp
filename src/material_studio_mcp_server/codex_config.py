@@ -17,6 +17,8 @@ except ModuleNotFoundError:  # Python 3.10 compatibility.
 
 from .protocol_smoke import REQUIRED_PROTOCOL_TOOLS, audit_codex_config
 from .managed_runtime import (
+    filesystem_io_path,
+    managed_runtime_launch_cwd,
     managed_runtime_server_args,
     managed_runtime_status,
 )
@@ -113,11 +115,12 @@ def build_codex_config_snippet(
     root = Path(repo_root).expanduser().resolve()
     command = resolve_python_command(root, python_command)
     server_args = managed_runtime_server_args(root)
+    launch_cwd = managed_runtime_launch_cwd(root)
     lines = [
         f"[mcp_servers.{SERVER_NAME}]",
         f"command = {_toml_string(command)}",
         f"args = [{', '.join(_toml_string(item) for item in server_args)}]",
-        f"cwd = {_toml_string(root)}",
+        f"cwd = {_toml_string(launch_cwd)}",
         "startup_timeout_sec = 30",
         "tool_timeout_sec = 1800",
         'default_tools_approval_mode = "prompt"',
@@ -155,7 +158,9 @@ def diagnose_codex_config(
     config = Path(config_path).expanduser().resolve() if config_path else default_active_config_path()
     command = resolve_python_command(root, python_command)
     run_server = (root / "run_server.py").resolve()
+    run_server_exists = filesystem_io_path(run_server).is_file()
     expected_args = managed_runtime_server_args(root)
+    launch_cwd = managed_runtime_launch_cwd(root)
     managed_runtime = managed_runtime_status(root)
     declared_python_runtime = managed_runtime.get("declared_python_runtime")
     declared_python_command = (
@@ -185,9 +190,9 @@ def diagnose_codex_config(
             "server_name": SERVER_NAME,
             "command": str(command),
             "args": expected_args,
-            "cwd": str(root),
+            "cwd": str(launch_cwd),
             "python_exists": command.exists(),
-            "run_server_exists": run_server.exists(),
+            "run_server_exists": run_server_exists,
         },
         "managed_runtime": {
             "status": managed_runtime.get("status"),
@@ -210,7 +215,7 @@ def diagnose_codex_config(
     if include_snippet:
         result["recommended_snippet"] = snippet
 
-    if not run_server.exists():
+    if not run_server_exists:
         result.update(
             {
                 "ok": False,
@@ -335,7 +340,7 @@ def diagnose_codex_config(
     command_matches = _same_path(server.get("command"), command)
     args = server.get("args") if isinstance(server.get("args"), list) else []
     args_match = _same_server_args(args, expected_args)
-    cwd_matches = _same_path(server.get("cwd"), root)
+    cwd_matches = _same_path(server.get("cwd"), launch_cwd)
     missing_recommended = sorted(
         set(SAFE_ENABLED_TOOLS) - {str(item) for item in server.get("enabled_tools", []) or []}
     )
@@ -560,13 +565,24 @@ def _same_path(left: Any, right: Any) -> bool:
     if left is None or right is None:
         return False
     try:
-        left_path = str(Path(str(left)).expanduser().resolve())
-        right_path = str(Path(str(right)).expanduser().resolve())
+        left_path = _portable_path_text(Path(str(left)).expanduser().resolve())
+        right_path = _portable_path_text(Path(str(right)).expanduser().resolve())
     except (OSError, RuntimeError, ValueError):
         return False
     if os.name == "nt":
         return left_path.casefold() == right_path.casefold()
     return left_path == right_path
+
+
+def _portable_path_text(path: str | Path) -> str:
+    text = str(path)
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
 
 
 def _same_server_args(observed: list[Any], expected: list[str]) -> bool:

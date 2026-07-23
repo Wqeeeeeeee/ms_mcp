@@ -159,7 +159,9 @@ leaving the single Materials Studio window open. Managed runtimes are never
 overwritten or automatically deleted; their manifest, complete file snapshot,
 and Python runtime contract are reverified at startup and during preflight.
 Changing the interpreter or any bound dependency requires a fresh deployment
-plan and produces a different immutable runtime identity.
+plan and produces a different immutable runtime identity. On Windows, a long
+runtime can use a `\\?\`-prefixed script argument plus a shorter launch `cwd`;
+the launcher changes into the exact runtime root before importing the server.
 
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
 immediate session-control action and coordinates three revision-bound tracks:

@@ -17,6 +17,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, Tool
 
+from .managed_runtime import managed_runtime_launch_cwd
 from .roundtrip import ROUNDTRIP_AUDIT_PROFILE, ROUNDTRIP_AUDIT_SCHEMA_VERSION
 
 try:
@@ -342,6 +343,7 @@ async def run_protocol_acceptance(
     """Start the stdio server and verify discovery plus preview-safe calls."""
 
     root = Path(cwd).expanduser().resolve()
+    launch_root = managed_runtime_launch_cwd(root)
     workspace_path = Path(workspace).expanduser().resolve()
     workspace_path.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -351,7 +353,7 @@ async def run_protocol_acceptance(
     server = StdioServerParameters(
         command=str(command),
         args=[str(item) for item in args],
-        cwd=str(root),
+        cwd=str(launch_root),
         env=env,
         encoding="utf-8",
         encoding_error_handler="replace",
@@ -363,6 +365,7 @@ async def run_protocol_acceptance(
         "command": str(command),
         "args": [str(item) for item in args],
         "cwd": str(root),
+        "launch_cwd": str(launch_root),
         "workspace": str(workspace_path),
         "list_only": bool(list_only),
         "errors": [],

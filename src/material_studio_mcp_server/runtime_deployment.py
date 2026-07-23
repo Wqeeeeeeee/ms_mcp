@@ -23,11 +23,13 @@ from .codex_registration import plan_codex_registration
 from .managed_runtime import (
     MANAGED_RUNTIME_MANIFEST,
     MANAGED_RUNTIME_SCHEMA,
+    RUNTIME_MANIFEST_ARGUMENT,
     default_managed_runtime_root,
     filesystem_io_path,
     managed_runtime_server_args,
     managed_runtime_status,
     manifest_bytes,
+    process_launch_path,
     runtime_content_snapshot,
     sha256_bytes,
 )
@@ -434,8 +436,8 @@ def _prepare_runtime_deployment(
                 runtime_contract
             ),
             "server_args_after_deployment": [
-                str(target / "run_server.py"),
-                "--runtime-manifest-sha256",
+                str(process_launch_path(target / "run_server.py")),
+                RUNTIME_MANIFEST_ARGUMENT,
                 manifest_hash,
             ],
         }
@@ -734,7 +736,7 @@ def _registration_handoff(
     if plan_id and registration_plan.get("status") == "registration_ready":
         command = [
             str(python_command),
-            str(target / "register_codex.py"),
+            str(process_launch_path(target / "register_codex.py")),
             "--runtime-manifest-sha256",
             manifest_sha256,
             "--config",

@@ -21,6 +21,7 @@ MANAGED_RUNTIME_MANIFEST = ".materials_studio_mcp_runtime.json"
 RUNTIME_MANIFEST_ARGUMENT = "--runtime-manifest-sha256"
 RUNTIME_MANIFEST_ENV = "MATERIAL_STUDIO_MCP_EXPECTED_RUNTIME_MANIFEST_SHA256"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS_SAFE_PROCESS_CWD_LENGTH = 240
 
 
 def filesystem_io_path(path: str | Path) -> Path:
@@ -36,6 +37,37 @@ def filesystem_io_path(path: str | Path) -> Path:
     if absolute.startswith("\\\\"):
         return Path("\\\\?\\UNC\\" + absolute[2:])
     return Path("\\\\?\\" + absolute)
+
+
+def process_launch_path(path: str | Path) -> Path:
+    """Use an extended Windows path only when CreateProcess may need one."""
+
+    resolved = Path(path).expanduser().resolve()
+    value = str(resolved)
+    if os.name == "nt" and (
+        value.startswith("\\\\?\\")
+        or len(value) >= _WINDOWS_SAFE_PROCESS_CWD_LENGTH
+    ):
+        return filesystem_io_path(resolved)
+    return resolved
+
+
+def managed_runtime_launch_cwd(runtime_root: str | Path) -> Path:
+    """Choose the nearest existing ancestor safe for Windows process startup."""
+
+    root = Path(runtime_root).expanduser().resolve()
+    if os.name != "nt":
+        return root
+    root = Path(_portable_path_text(root))
+    for candidate in (root, *root.parents):
+        value = str(candidate)
+        if (
+            not value.startswith("\\\\?\\")
+            and len(value) < _WINDOWS_SAFE_PROCESS_CWD_LENGTH
+            and filesystem_io_path(candidate).is_dir()
+        ):
+            return candidate
+    return Path(root.anchor)
 
 
 def default_managed_runtime_root() -> Path:
@@ -305,7 +337,7 @@ def managed_runtime_server_args(runtime_root: str | Path) -> list[str]:
 
     root = Path(runtime_root).expanduser().resolve()
     status = managed_runtime_status(root)
-    args = [str((root / "run_server.py").resolve())]
+    args = [str(process_launch_path(root / "run_server.py"))]
     if status.get("managed") and status.get("integrity_verified") is True:
         args.extend(
             (
@@ -393,13 +425,24 @@ def _same_path(left: Any, right: str | Path) -> bool:
     if not isinstance(left, str) or not left:
         return False
     try:
-        left_path = str(Path(left).expanduser().resolve())
-        right_path = str(Path(right).expanduser().resolve())
+        left_path = _portable_path_text(Path(left).expanduser().resolve())
+        right_path = _portable_path_text(Path(right).expanduser().resolve())
     except (OSError, RuntimeError, ValueError):
         return False
     if os.name == "nt":
         return left_path.casefold() == right_path.casefold()
     return left_path == right_path
+
+
+def _portable_path_text(path: str | Path) -> str:
+    text = str(path)
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
 
 
 def _file_sha256(path: Path) -> str | None:
@@ -422,9 +465,11 @@ __all__: Sequence[str] = (
     "consume_runtime_manifest_argument",
     "default_managed_runtime_root",
     "filesystem_io_path",
+    "managed_runtime_launch_cwd",
     "managed_runtime_server_args",
     "managed_runtime_status",
     "manifest_bytes",
+    "process_launch_path",
     "require_managed_runtime_launcher_binding",
     "runtime_content_snapshot",
     "sha256_bytes",

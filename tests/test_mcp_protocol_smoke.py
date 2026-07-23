@@ -49,6 +49,7 @@ def test_stdio_protocol_acceptance_lists_and_calls_live_semiconductor_tools(tmp_
     }
     assert result["ok"] is True, json.dumps(failure_diagnostic, indent=2)
     assert result["transport"] == "stdio"
+    assert result["launch_cwd"] == str(root)
     assert result["protocol_version"]
     assert result["tool_count"] >= len(REQUIRED_PROTOCOL_TOOLS)
     assert result["discovery"] == {

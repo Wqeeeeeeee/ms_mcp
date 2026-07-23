@@ -117,6 +117,14 @@ unchanged, a dependency update requires a fresh reviewed deployment plan and a
 new Python-contract-addressed directory. Do not repair or delete an existing
 managed runtime.
 
+On Windows, a deeply nested managed runtime may produce a `\\?\`-prefixed
+script argument and a shorter ancestor `cwd` in the reviewed Codex snippet.
+This is intentional: Windows process creation rejects an overlong working
+directory even when file I/O supports long paths. `run_server.py` immediately
+changes its own working directory to the exact immutable runtime root before
+loading the server, and provenance compares the prefixed and ordinary path
+forms as the same identity.
+
 ## Protocol Acceptance
 
 Direct tool-function tests do not verify the MCP transport. Run the stdio

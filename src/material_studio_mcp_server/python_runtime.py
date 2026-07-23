@@ -22,6 +22,7 @@ from packaging.utils import canonicalize_name
 PYTHON_RUNTIME_CONTRACT_SCHEMA = "material_studio_mcp_python_runtime_v1"
 PYTHON_RUNTIME_PROBE_SCHEMA = "material_studio_mcp_python_runtime_probe_v1"
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS_SAFE_PROCESS_CWD_LENGTH = 240
 _ROOT_DISTRIBUTIONS: Mapping[str, frozenset[str]] = {
     "jinja2": frozenset(),
     "mcp": frozenset({"cli"}),
@@ -117,7 +118,7 @@ def probe_python_runtime_contract(
     }
     if not command.is_file():
         return {**base, "error": "python_command_not_found"}
-    if not source.is_dir():
+    if not _filesystem_io_path(source).is_dir():
         return {**base, "error": "python_runtime_probe_source_missing"}
 
     source_literal = json.dumps(
@@ -139,7 +140,7 @@ def probe_python_runtime_contract(
     try:
         completed = subprocess.run(
             [str(command), "-I", "-c", probe],
-            cwd=_filesystem_io_path(root),
+            cwd=_safe_process_cwd(root),
             env=env,
             check=False,
             capture_output=True,
@@ -463,6 +464,31 @@ def _filesystem_io_path(path: str | Path) -> Path:
     if absolute.startswith("\\\\"):
         return Path("\\\\?\\UNC\\" + absolute[2:])
     return Path("\\\\?\\" + absolute)
+
+
+def _safe_process_cwd(path: str | Path) -> Path:
+    root = Path(path).expanduser().resolve()
+    if os.name != "nt":
+        return root
+    root = Path(_portable_path_text(root))
+    for candidate in (root, *root.parents):
+        if (
+            len(str(candidate)) < _WINDOWS_SAFE_PROCESS_CWD_LENGTH
+            and _filesystem_io_path(candidate).is_dir()
+        ):
+            return candidate
+    return Path(root.anchor)
+
+
+def _portable_path_text(path: str | Path) -> str:
+    text = str(path)
+    if os.name != "nt":
+        return text
+    if text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + text[8:]
+    if text.startswith("\\\\?\\"):
+        return text[4:]
+    return text
 
 
 def _normalized_path(path: str | Path) -> str:

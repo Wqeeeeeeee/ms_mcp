@@ -938,9 +938,15 @@ The response marks this as `hot_loaded_from_live_status=true` and persists an
 `apply_current_request` receipt whose runner, materializer, GUI-input, reopen,
 and process-launch fields remain false. This is observation of an already-loaded
 revision, not evidence that the preview executed or changed Materials Studio.
-Failed results, missing artifacts, hidden or minimized targets, multi-window
-sessions, and stale or mismatched wrappers remain blocked and retain the normal
-preview/hot-load recommendation.
+Window activation is tracked separately from loaded-revision identity. An exact
+hidden, minimized, or background target may keep `verified=true` and
+`loaded_revision_verified=true`, while returning `interaction_ready=false`,
+`interaction_status=activation_required`, and explicit
+`interaction_blocking_reasons`. It remains ineligible for screenshots, view
+replay, file opening, or any other GUI input until the same window is restored
+and verified foreground. Failed results, missing artifacts, multi-window
+sessions, fallback selection, and stale or mismatched wrappers still invalidate
+the loaded-revision binding and retain the normal preview/hot-load recommendation.
 The same fresh evidence is attached before execute-mode modeling-health is
 recomputed by live status or a diagnostic bundle export. Health accepts it only
 when its schema, project, revision, planned structure, successful result,

@@ -47,6 +47,13 @@ def _verified_live_status_hotload_evidence(
         return None
     if evidence.get("blocking_reasons"):
         return None
+    if (
+        "loaded_revision_verified" in evidence
+        and evidence.get("loaded_revision_verified") is not True
+    ):
+        return None
+    if evidence.get("binding_blocking_reasons"):
+        return None
     if evidence.get("result_success") is not True:
         return None
     if evidence.get("observation_only") is not True:
@@ -250,6 +257,24 @@ def build_modeling_health(response: dict[str, Any], *, execution_mode: str) -> d
         gui_open = response.get("gui_open")
         live_status_hotload = _verified_live_status_hotload_evidence(response)
         checks["gui_hot_loaded_from_live_status"] = bool(live_status_hotload)
+        checks["gui_loaded_revision_verified_from_live_status"] = bool(
+            live_status_hotload
+        )
+        if live_status_hotload is not None:
+            checks["gui_interaction_ready_from_live_status"] = (
+                live_status_hotload.get("interaction_ready")
+            )
+            checks["gui_interaction_status_from_live_status"] = (
+                live_status_hotload.get("interaction_status")
+            )
+            checks["gui_interaction_blocking_reasons_from_live_status"] = list(
+                live_status_hotload.get("interaction_blocking_reasons") or []
+            )
+            checks[
+                "gui_activation_required_before_capture_or_input"
+            ] = live_status_hotload.get(
+                "activation_required_before_capture_or_input"
+            )
         if isinstance(gui_open, dict):
             checks["gui_hotload_evidence_source"] = "gui_open_artifact"
             external_visual_confirmation_ok = _external_visual_confirmation_ok(response)

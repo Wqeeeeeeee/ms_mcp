@@ -80,7 +80,13 @@ def test_modeling_health_accepts_strict_live_status_hotload_evidence(
 
 @pytest.mark.parametrize(
     "mutation",
-    ["multiple_processes", "gui_input_performed", "revision_mismatch", "structure_mismatch"],
+    [
+        "multiple_processes",
+        "gui_input_performed",
+        "revision_mismatch",
+        "structure_mismatch",
+        "loaded_revision_unverified",
+    ],
 )
 def test_modeling_health_rejects_incomplete_live_status_hotload_evidence(
     mutation: str,
@@ -94,6 +100,8 @@ def test_modeling_health_rejects_incomplete_live_status_hotload_evidence(
         evidence["gui_input_performed"] = True
     elif mutation == "revision_mismatch":
         evidence["revision"] = 3
+    elif mutation == "loaded_revision_unverified":
+        evidence["loaded_revision_verified"] = False
     else:
         evidence["structure_path"] = str(tmp_path / "other_structure.cif")
 
@@ -103,6 +111,48 @@ def test_modeling_health_rejects_incomplete_live_status_hotload_evidence(
     assert health["checks"]["gui_opened"] is False
     assert health["checks"]["gui_hot_loaded_from_live_status"] is False
     assert "GUI hot-load was not performed" in "\n".join(health["warnings"])
+
+
+def test_modeling_health_keeps_loaded_revision_when_gui_interaction_is_blocked(
+    tmp_path: Path,
+) -> None:
+    response = _live_status_health_response(tmp_path)
+    response["live_status_hotload_evidence"].update(
+        {
+            "loaded_revision_verified": True,
+            "binding_blocking_reasons": [],
+            "interaction_ready": False,
+            "interaction_status": "activation_required",
+            "interaction_blocking_reasons": [
+                "target_window_minimized_or_unknown",
+                "target_window_not_foreground",
+                "target_window_activation_required_before_capture_or_input",
+            ],
+            "activation_required_before_capture_or_input": True,
+            "target_window_is_visible": True,
+            "target_window_is_minimized": True,
+            "target_window_foreground_observed": True,
+            "target_window_is_foreground": False,
+        }
+    )
+
+    health = build_modeling_health(response, execution_mode="execute")
+
+    assert health["verdict"] == "passed"
+    assert health["checks"]["gui_hot_loaded_from_live_status"] is True
+    assert health["checks"]["gui_loaded_revision_verified_from_live_status"] is True
+    assert health["checks"]["gui_interaction_ready_from_live_status"] is False
+    assert health["checks"]["gui_interaction_status_from_live_status"] == (
+        "activation_required"
+    )
+    assert "target_window_minimized_or_unknown" in health["checks"][
+        "gui_interaction_blocking_reasons_from_live_status"
+    ]
+    assert health["checks"][
+        "gui_activation_required_before_capture_or_input"
+    ] is True
+    assert health["checks"]["gui_loaded_current_revision"] is True
+    assert "GUI hot-load was not performed" not in "\n".join(health["warnings"])
 
 
 def test_common_iii_v_reference_electronic_properties_cover_band_alignment_preflight() -> None:

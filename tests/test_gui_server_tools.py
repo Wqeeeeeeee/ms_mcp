@@ -9074,6 +9074,15 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["activate_policy"]["use_when_target_window_loaded_but_not_selected"] is True
     assert capabilities["gui"]["activate_policy"]["use_when_target_window_minimized"] is True
     assert capabilities["gui"]["activate_policy"]["use_when_target_window_not_foreground"] is True
+    assert capabilities["gui"]["activate_policy"][
+        "loaded_revision_identity_persists_while_inactive"
+    ] is True
+    assert capabilities["gui"]["activate_policy"][
+        "live_status_binding_separate_from_interaction_readiness"
+    ] is True
+    assert capabilities["gui"]["activate_policy"][
+        "inactive_target_forbids_gui_input_until_activation"
+    ] is True
     assert capabilities["gui"]["activate_policy"]["snapshot_requires_restored_foreground_target"] is True
     assert capabilities["gui"]["activate_policy"]["same_window_input_requires_verified_activation"] is True
     assert capabilities["gui"]["activate_policy"]["focus_loss_returns_deferred_snapshot_receipt"] is True

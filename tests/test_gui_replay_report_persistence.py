@@ -512,6 +512,130 @@ def test_apply_current_preview_recovers_existing_live_revision_without_gui_input
     ) < server.COMPACT_RESPONSE_MAX_BYTES
 
 
+def test_live_status_preserves_loaded_revision_while_target_is_minimized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, _, _ = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+        create_execution_mode=ExecutionMode.PREVIEW,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.EXECUTE,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+    assert executed["ok"] is True
+    structure_path = Path(executed["planned_outputs"]["structure"])
+    wrapper = gui._create_project_wrapper(
+        structure_path,
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    active_window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    gui.backend.window = active_window
+    live_status = gui.status(
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    assert live_status["current_revision_loaded"] is True
+    snapshot_path = (
+        Path(live_status["screenshots_dir"])
+        / created["project_id"]
+        / f"r{created['revision']:03d}"
+        / "loaded_before_minimize.bmp"
+    )
+    gui.backend.capture_window(active_window, snapshot_path)
+    gui.backend.window = WindowInfo(
+        handle=active_window.handle,
+        title=active_window.title,
+        pid=active_window.pid,
+        rect=(-32000, -32000, -31840, -31972),
+        is_visible=True,
+        is_minimized=True,
+        is_foreground=False,
+    )
+    open_count_before_status = len(gui.backend.opened_paths)
+
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert status["ok"] is True
+    assert len(gui.backend.opened_paths) == open_count_before_status
+    evidence = status["live_status_hotload_evidence"]
+    assert evidence["verified"] is True
+    assert evidence["loaded_revision_verified"] is True
+    assert evidence["blocking_reasons"] == []
+    assert evidence["binding_blocking_reasons"] == []
+    assert evidence["interaction_ready"] is False
+    assert evidence["interaction_status"] == "activation_required"
+    assert "target_window_minimized_or_unknown" in evidence[
+        "interaction_blocking_reasons"
+    ]
+    assert "target_window_not_foreground" in evidence[
+        "interaction_blocking_reasons"
+    ]
+    assert evidence["activation_required_before_capture_or_input"] is True
+    assert evidence["gui_input_performed"] is False
+    assert evidence["structure_reopened"] is False
+    assert evidence["gui_process_launched"] is False
+
+    gui_report = status["modeling_report"]["gui"]
+    assert gui_report["hot_loaded"] is True
+    assert gui_report["hot_loaded_from_live_status"] is True
+    assert gui_report["loaded_current_revision"] is True
+    gui_current = status["gui_current_revision"]
+    assert gui_current["status"] == "current_but_not_active"
+    assert gui_current["loaded_current_revision"] is True
+    assert gui_current["needs_reload"] is False
+    assert gui_current["needs_activation"] is True
+    assert gui_current["recommended_tool"] == "material_studio_gui_activate"
+    assert status["live_hotload_preflight"]["current_revision_loaded"] is True
+    assert status["live_gui_acceptance"]["window_binding_ok"] is True
+    assert status["live_gui_acceptance"]["binding_failures"] == []
+    assert status["modeling_health"]["checks"][
+        "gui_hot_loaded_from_live_status"
+    ] is True
+    assert status["modeling_health"]["checks"][
+        "gui_interaction_ready_from_live_status"
+    ] is False
+    assert status["modeling_health"]["checks"][
+        "gui_activation_required_before_capture_or_input"
+    ] is True
+    assert "GUI hot-load was not performed" not in "\n".join(
+        status["modeling_health"]["warnings"]
+    )
+    gate = status["normality_gate"]
+    assert "generated_structure_not_hot_loaded_in_gui" not in gate[
+        "must_not_claim_normal_reasons"
+    ]
+    assert "execute_mode_without_gui_hotload" not in gate["review_reasons"]
+    assert gate["can_claim_live_gui_normal"] is True
+    decision = status["normality_decision"]
+    assert decision["binding_verified"] is True
+    assert decision["can_claim_live_gui_normal"] is True
+    assert status["gui_status"]["recommended_tool"] == (
+        "material_studio_gui_activate"
+    )
+    assert status["gui_status"]["activation_required_before_capture_or_input"] is True
+
+
 def test_apply_current_preview_does_not_recover_live_state_from_failed_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

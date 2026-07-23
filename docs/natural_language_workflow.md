@@ -35,6 +35,18 @@ the welcome page's `Browse...` picker to choose the exact generated `.stp`.
 Directly replacing the welcome-page text is not sufficient because a selected
 Recent Projects entry can otherwise win and open a stale project.
 
+On a resumed session, loaded-revision identity and GUI interaction readiness
+are separate. If the exact one-window wrapper still binds the current project,
+revision, structure path, successful result, and controller workspace, a
+hidden, minimized, or background window remains `loaded_current_revision=true`
+and does not require `show_current`, structure execution, or file reopening.
+Its live-status evidence instead reports `interaction_ready=false`, while
+`gui_current_revision.status=current_but_not_active` routes the next GUI action
+to `material_studio_gui_activate`. Activation remains mandatory before a
+snapshot, replay, open, or any other GUI input. Existing hash-verified replay
+evidence may continue to support the revision's normality decision while the
+window is inactive; activation state never clears calculation-review gates.
+
 User asks to create benzene and optimize it with Forcite. Codex should produce a `ModelSpec`, call `material_studio_model_validate`, then call `material_studio_model_create_from_spec` with `execution_mode=preview`.
 
 For the high-level `material_studio_live_modeling_request` entry point, omitting `execution_mode` still resolves to preview by default. It resolves to execute only when the user text contains explicit live-loading intent such as "hot-load it in Materials Studio", "real-time GUI", "push it to MS", "let me see it in MS", "实时热加载", "推送到当前窗口", or "让我在 MS 里看到变化"; the response records this in `execution_mode_source`.

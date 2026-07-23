@@ -8269,6 +8269,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "use_when_target_window_loaded_but_not_selected": True,
                 "use_when_target_window_minimized": True,
                 "use_when_target_window_not_foreground": True,
+                "loaded_revision_identity_persists_while_inactive": True,
+                "live_status_binding_separate_from_interaction_readiness": True,
+                "inactive_target_forbids_gui_input_until_activation": True,
                 "snapshot_requires_restored_foreground_target": True,
                 "same_window_input_requires_verified_activation": True,
                 "focus_loss_returns_deferred_snapshot_receipt": True,
@@ -24834,7 +24837,13 @@ def _live_status_current_revision_hotload_evidence(
     gui_status: dict[str, Any],
     revision_consistency: dict[str, Any],
 ) -> dict[str, Any]:
-    """Verify an already-loaded revision without inventing a GUI open action."""
+    """Verify an already-loaded revision without inventing a GUI open action.
+
+    Window activation is an interaction gate, not part of the immutable
+    project/revision/structure binding. A minimized or background window may
+    still prove which revision is loaded, while remaining ineligible for
+    screenshots or GUI input until it is activated again.
+    """
 
     expected_project_id = response.get("project_id")
     expected_revision = response.get("new_revision", response.get("revision"))
@@ -24866,35 +24875,31 @@ def _live_status_current_revision_hotload_evidence(
         else {}
     )
 
-    reasons: list[str] = []
+    binding_reasons: list[str] = []
     if result.get("success") is not True:
-        reasons.append("successful_revision_result_missing")
+        binding_reasons.append("successful_revision_result_missing")
     if not planned_structure or not Path(str(planned_structure)).expanduser().is_file():
-        reasons.append("planned_structure_missing")
+        binding_reasons.append("planned_structure_missing")
     if gui_status.get("window_found") is not True:
-        reasons.append("target_window_missing")
+        binding_reasons.append("target_window_missing")
     if gui_status.get("single_window_policy_ok") is not True:
-        reasons.append("single_window_policy_unverified")
+        binding_reasons.append("single_window_policy_unverified")
     if int(window_management.get("process_count") or 0) != 1:
-        reasons.append("matstudio_process_count_not_one")
+        binding_reasons.append("matstudio_process_count_not_one")
     if int(window_management.get("window_count") or 0) != 1:
-        reasons.append("matstudio_window_count_not_one")
+        binding_reasons.append("matstudio_window_count_not_one")
     if gui_status.get("current_revision_loaded") is not True:
-        reasons.append("gui_status_current_revision_not_loaded")
+        binding_reasons.append("gui_status_current_revision_not_loaded")
     if revision_consistency.get("loaded_current_revision") is not True:
-        reasons.append("revision_consistency_not_loaded")
+        binding_reasons.append("revision_consistency_not_loaded")
     if target_resolution.get("matched_project_window") is not True:
-        reasons.append("target_window_project_not_matched")
+        binding_reasons.append("target_window_project_not_matched")
     if int(target_resolution.get("matching_window_count") or 0) != 1:
-        reasons.append("target_window_match_count_not_one")
+        binding_reasons.append("target_window_match_count_not_one")
     if target_resolution.get("fallback_used") is not False:
-        reasons.append("target_window_fallback_used")
-    if target_window.get("is_visible") is not True:
-        reasons.append("target_window_not_visible")
-    if target_window.get("is_minimized") is not False:
-        reasons.append("target_window_minimized_or_unknown")
+        binding_reasons.append("target_window_fallback_used")
     if str(wrapper.get("project_id") or "") != str(expected_project_id or ""):
-        reasons.append("wrapper_project_mismatch")
+        binding_reasons.append("wrapper_project_mismatch")
     try:
         wrapper_revision_matches = int(wrapper.get("revision")) == int(
             expected_revision
@@ -24902,37 +24907,91 @@ def _live_status_current_revision_hotload_evidence(
     except (TypeError, ValueError):
         wrapper_revision_matches = False
     if not wrapper_revision_matches:
-        reasons.append("wrapper_revision_mismatch")
+        binding_reasons.append("wrapper_revision_mismatch")
     wrapper_source = wrapper.get("source_path")
     if not wrapper_source or not planned_structure or not _structure_path_matches_current(
         response,
         wrapper_source,
         planned_structure,
     ):
-        reasons.append("wrapper_structure_mismatch")
+        binding_reasons.append("wrapper_structure_mismatch")
     if wrapper.get("wrapper_workspace_matches_controller") is not True:
-        reasons.append("wrapper_workspace_mismatch")
+        binding_reasons.append("wrapper_workspace_mismatch")
     if wrapper.get("wrapper_provenance_status") != "verified_revision_wrapper":
-        reasons.append("wrapper_provenance_unverified")
+        binding_reasons.append("wrapper_provenance_unverified")
 
-    reasons = _dedupe_strings(reasons)
-    verified = not reasons
+    binding_reasons = _dedupe_strings(binding_reasons)
+    loaded_revision_verified = not binding_reasons
+    target_window_is_visible = target_window.get("is_visible")
+    target_window_is_minimized = target_window.get("is_minimized")
+    target_window_foreground_observed = _first_not_none(
+        gui_status.get("target_window_foreground_observed"),
+        window_management.get("target_window_foreground_observed"),
+    )
+    target_window_is_foreground = target_window.get("is_foreground")
+    activation_required = bool(
+        gui_status.get("activation_required_before_capture_or_input") is True
+        or gui_status.get("needs_activation") is True
+        or window_management.get("activation_required_before_capture_or_input")
+        is True
+        or window_management.get("needs_activation") is True
+    )
+    interaction_blocking_reasons: list[str] = []
+    if target_window_is_visible is not True:
+        interaction_blocking_reasons.append("target_window_not_visible_or_unknown")
+    if target_window_is_minimized is not False:
+        interaction_blocking_reasons.append("target_window_minimized_or_unknown")
+    if target_window_foreground_observed is not True:
+        interaction_blocking_reasons.append("target_window_foreground_unverified")
+    elif target_window_is_foreground is not True:
+        interaction_blocking_reasons.append("target_window_not_foreground")
+    if activation_required:
+        interaction_blocking_reasons.append(
+            "target_window_activation_required_before_capture_or_input"
+        )
+    interaction_blocking_reasons = _dedupe_strings(
+        interaction_blocking_reasons
+    )
+    interaction_ready = bool(
+        loaded_revision_verified and not interaction_blocking_reasons
+    )
     return {
         "schema_version": "material_studio_live_status_hotload_evidence_v1",
         "available": bool(gui_status),
-        "verified": verified,
+        "verified": loaded_revision_verified,
+        "loaded_revision_verified": loaded_revision_verified,
         "status": (
             "verified_current_revision_loaded"
-            if verified
+            if loaded_revision_verified
             else "not_verified"
         ),
-        "blocking_reasons": reasons,
+        "blocking_reasons": binding_reasons,
+        "binding_blocking_reasons": binding_reasons,
+        "interaction_ready": interaction_ready,
+        "interaction_status": (
+            "ready"
+            if interaction_ready
+            else "activation_required"
+            if loaded_revision_verified
+            else "revision_not_verified"
+        ),
+        "interaction_blocking_reasons": interaction_blocking_reasons,
+        "activation_required_before_capture_or_input": activation_required,
+        "activation_reasons": _dedupe_strings(
+            [
+                *list(gui_status.get("activation_reasons") or []),
+                *list(window_management.get("activation_reasons") or []),
+            ]
+        ),
         "project_id": expected_project_id,
         "revision": expected_revision,
         "structure_path": str(planned_structure) if planned_structure else None,
         "target_window_handle": target_window.get("handle"),
         "target_window_title": target_window.get("title"),
-        "target_window_is_foreground": target_window.get("is_foreground"),
+        "target_window_is_visible": target_window_is_visible,
+        "target_window_is_minimized": target_window_is_minimized,
+        "target_window_foreground_observed": target_window_foreground_observed,
+        "target_window_is_foreground": target_window_is_foreground,
         "wrapper_source_path": wrapper_source,
         "result_success": result.get("success"),
         "process_count": window_management.get("process_count"),

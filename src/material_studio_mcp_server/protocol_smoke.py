@@ -371,7 +371,11 @@ async def run_protocol_acceptance(
         "errors": [],
         "warnings": [],
     }
-    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as errlog:
+    with tempfile.TemporaryFile(
+        mode="w+",
+        encoding="utf-8",
+        errors="replace",
+    ) as errlog:
         try:
             async with stdio_client(server, errlog=errlog) as (read_stream, write_stream):
                 async with ClientSession(

@@ -161,7 +161,7 @@ and Python runtime contract are reverified at startup and during preflight.
 Changing the interpreter or any bound dependency requires a fresh deployment
 plan and produces a different immutable runtime identity. On Windows, a long
 runtime can use a `\\?\`-prefixed script argument plus a shorter launch `cwd`;
-the launcher changes into the exact runtime root before importing the server.
+the server loads the exact immutable runtime through absolute paths.
 
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
 immediate session-control action and coordinates three revision-bound tracks:

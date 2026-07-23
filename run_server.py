@@ -26,13 +26,11 @@ def _import_path(path: Path) -> Path:
 # 项目根目录和源代码目录
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
-ROOT_IMPORT = _import_path(ROOT)
 SRC_IMPORT = _import_path(SRC)
 
 # 将源代码目录添加到 Python 路径
 if str(SRC_IMPORT) not in sys.path:
     sys.path.insert(0, str(SRC_IMPORT))
-os.chdir(ROOT_IMPORT)
 
 # 导入主服务器模块
 from material_studio_mcp_server.managed_runtime import (

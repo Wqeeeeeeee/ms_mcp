@@ -120,10 +120,10 @@ managed runtime.
 On Windows, a deeply nested managed runtime may produce a `\\?\`-prefixed
 script argument and a shorter ancestor `cwd` in the reviewed Codex snippet.
 This is intentional: Windows process creation rejects an overlong working
-directory even when file I/O supports long paths. `run_server.py` immediately
-changes its own working directory to the exact immutable runtime root before
-loading the server, and provenance compares the prefixed and ordinary path
-forms as the same identity.
+directory even when file I/O supports long paths. The process remains in that
+safe ancestor and loads the immutable runtime only through absolute paths.
+Provenance binds the exact package, manifest, and entrypoint while comparing
+the prefixed and ordinary path forms as the same identity.
 
 ## Protocol Acceptance
 

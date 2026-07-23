@@ -23,6 +23,7 @@ ms-mcp-legacy = "ms_mcp.server:main"
 ms-mcp-live-smoke = "material_studio_mcp_server.live_smoke:main"
 ms-mcp-protocol-smoke = "material_studio_mcp_server.protocol_smoke:main"
 ms-mcp-config-doctor = "material_studio_mcp_server.codex_config:main"
+ms-mcp-config-register = "material_studio_mcp_server.codex_registration:main"
 
 [build-system]
 requires = ["hatchling"]

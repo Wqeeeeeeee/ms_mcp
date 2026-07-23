@@ -76,6 +76,9 @@ def test_doctor_reports_missing_registration_without_modifying_active_config(tmp
     assert result["recommended_entrypoint"]["python_exists"] is True
     assert result["recommended_entrypoint"]["run_server_exists"] is True
     assert "[mcp_servers.materials_studio]" in result["recommended_snippet"]
+    assert result["next_actions"][0].startswith(
+        "Preview a guarded append with ms-mcp-config-register"
+    )
     assert _sha256(config) == before
 
 

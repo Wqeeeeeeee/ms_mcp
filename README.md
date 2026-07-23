@@ -120,9 +120,23 @@ it:
 The doctor reports missing or legacy registration, entrypoint and allowlist
 drift, and the exact absolute paths for this checkout. It writes only the
 separate snippet path supplied above and refuses to overwrite the active
-`%USERPROFILE%\.codex\config.toml`. Review and merge the snippet manually,
-preserving unrelated config, then restart Codex before calling
-`material_studio_live_session_preflight`.
+`%USERPROFILE%\.codex\config.toml`.
+
+For a missing registration, preview a guarded append without changing the
+active config:
+
+```powershell
+ms-mcp-config-register --cwd . --omit-snippet
+```
+
+After reviewing the returned paths, hashes, and `registration_plan_id`, apply
+only that exact plan with
+`ms-mcp-config-register --cwd . --apply --expected-plan-id <REVIEWED_ID>`.
+The command preserves existing bytes, creates an exact backup, refuses stale or
+conflicting registrations, and returns a hash-bound rollback command. It never
+restarts Codex or touches Materials Studio. Restart Codex after an approved
+change, then call `material_studio_live_session_preflight`. If automatic append
+is blocked, review and merge the generated snippet manually.
 
 For resumed projects, the preflight keeps the legacy `next_action_plan` as the
 immediate session-control action and coordinates three revision-bound tracks:

@@ -71,8 +71,15 @@ server before the user decides to update their local config. With
 `--strict-config`, any missing required tool, enabled custom-script tool, or
 missing explicit custom-script disablement makes the command fail.
 
-The audit is intentionally read-only. Update the active `.codex/config.toml`
-only with the user's explicit approval, then restart the Codex MCP session.
+The audit is intentionally read-only. For a missing registration,
+`ms-mcp-config-register --cwd . --omit-snippet` produces a read-only install
+plan. An explicit apply additionally requires
+`--apply --expected-plan-id <REVIEWED_ID>`; it refuses legacy or existing
+registration conflicts, preserves unrelated bytes, creates an exact backup,
+and returns a hash-bound rollback command. Update the active
+`.codex/config.toml` only with the user's explicit approval, then restart the
+Codex MCP session. Neither registration command restarts Codex or touches the
+Materials Studio process.
 
 ## Response Modes
 

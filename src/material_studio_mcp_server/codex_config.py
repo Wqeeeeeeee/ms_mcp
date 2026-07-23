@@ -421,6 +421,7 @@ def write_recommended_snippet(
 
 def _activation_actions(config_path: Path) -> list[str]:
     return [
+        "Preview a guarded append with ms-mcp-config-register; applying it requires the exact fresh plan ID.",
         f"Review and merge the recommended snippet into {config_path}; do not replace unrelated config sections.",
         "Restart Codex so the MCP server and tool allowlist are reloaded.",
         "Call material_studio_live_session_preflight, then use material_studio_live_modeling_request.",

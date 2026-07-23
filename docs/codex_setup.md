@@ -23,9 +23,44 @@ The command is read-only with respect to the active config. It reports whether
 `run_server.py`, whether the safe tool allowlist is complete, and whether
 `material_studio_run_script` remains disabled. The optional output is a
 separate review artifact; the command rejects an output path equal to the
-active `%USERPROFILE%\.codex\config.toml`. Merge the reviewed section manually
-without replacing unrelated servers or trusted-project entries, restart Codex,
-and call `material_studio_live_session_preflight`.
+active `%USERPROFILE%\.codex\config.toml`.
+
+For a missing `materials_studio` registration, generate a fingerprint-bound
+install preview:
+
+```powershell
+.\.venv\Scripts\python.exe -m material_studio_mcp_server.codex_registration `
+  --cwd . `
+  --omit-snippet
+```
+
+Preview is the default and never writes the active config. Review the returned
+checkout paths, `config_sha256_before`, `proposed_config_sha256`, and
+`registration_plan_id`. Apply only that exact plan:
+
+```powershell
+.\.venv\Scripts\python.exe -m material_studio_mcp_server.codex_registration `
+  --cwd . `
+  --apply `
+  --expected-plan-id <REVIEWED_REGISTRATION_PLAN_ID>
+```
+
+The apply path only appends a new server when no Materials Studio registration
+or legacy candidate exists. It preserves all existing config bytes as an exact
+prefix, verifies the proposed TOML semantically, writes through an atomic
+replace, and saves the original bytes under
+`materials_studio_mcp_backups/`. It refuses stale fingerprints, malformed
+TOML, existing `materials_studio` drift, and legacy `ms_mcp.server`
+registrations instead of overwriting them. It does not restart Codex or touch
+Materials Studio.
+
+The successful receipt contains a hash-bound rollback command. Rollback
+requires the exact current-config and backup SHA-256 values, preserves both the
+source backup and a pre-rollback safety backup, and also requires a Codex
+restart. When automatic append is blocked, merge the separately reviewed
+snippet manually without replacing unrelated servers or trusted-project
+entries. After either path, restart Codex and call
+`material_studio_live_session_preflight`.
 
 ## Protocol Acceptance
 
@@ -1463,9 +1498,10 @@ reported `BandGap` change. Passing those thresholds never changes
 directly callable `material_studio_castep_run_current` preview with GUI loading
 disabled. Execute remains a separately confirmed operation.
 
-The active user config is not rewritten by the doctor or protocol smoke. After
-merging the example snippet manually and restarting Codex, validate discovery
-with:
+The active user config is not rewritten by the doctor or protocol smoke. The
+separate registration CLI is also preview-only unless `--apply` and the exact
+fresh `--expected-plan-id` are supplied. After an approved registration change
+and Codex restart, validate discovery with:
 
 ```powershell
 ms-mcp-config-doctor --cwd .

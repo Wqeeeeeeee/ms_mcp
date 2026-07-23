@@ -241,6 +241,8 @@ Build reproducible Materials Studio modeling workflows through MCP tools, with o
 - Never push directly to `main` or force-push shared branches.
 - Do not commit the active `.codex/config.toml`, workspace revisions/jobs/screenshots, GUI captures, temporary probes, or test caches.
 - Do not create a PR for a no-op or a trivial documentation-only correction unless the user explicitly requests it.
+- Keep `ms-mcp-config-doctor` read-only. `ms-mcp-config-register` also defaults to preview; active-config writes require the exact fresh plan ID and explicit apply intent, and existing or legacy Materials Studio registrations require manual review.
+- Do not register an ephemeral stacked worktree as the active Codex MCP checkout unless the user explicitly chooses that source path. Registration and rollback never restart Codex or touch the Materials Studio process.
 
 ## Done When
 - Structure is generated or imported.

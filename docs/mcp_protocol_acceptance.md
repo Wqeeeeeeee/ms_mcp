@@ -5,6 +5,11 @@ start the stdio server, negotiate the protocol, discover the expected tools,
 and invoke the preview-safe live workflow. It complements direct Python unit
 tests; it does not replace them.
 
+When running acceptance beside active Materials Studio sessions, set
+`MATERIAL_STUDIO_MCP_GUI_BACKEND=null` to isolate preview-only protocol results
+from the number and titles of live GUI windows. This is an opt-in headless test
+backend; normal Windows MCP sessions continue to use the native GUI backend.
+
 ## Run
 
 ```powershell

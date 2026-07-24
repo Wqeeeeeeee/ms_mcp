@@ -20775,7 +20775,11 @@ def test_live_modeling_request_hotloads_chinese_multiplication_sign_supercell(
     assert backend.opened[-1].suffix == ".stp"
 
 
-def test_live_modeling_request_marks_surface_slab_polarity_diagnostic_focus(tmp_path: Path) -> None:
+def test_live_modeling_request_marks_surface_slab_polarity_diagnostic_focus(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_GUI_BACKEND", "null")
     result = server.material_studio_live_modeling_request(
         "Build silicon (100) slab and export surface diagnostics.",
         working_dir=str(tmp_path),

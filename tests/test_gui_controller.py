@@ -23,6 +23,81 @@ from material_studio_mcp_server.gui import (
 )
 
 
+def _verified_source_wrapper_provenance() -> dict:
+    return {
+        "auto_save_allowed": True,
+        "status": "verified_same_workspace_revision_wrapper",
+        "reason_codes": [],
+    }
+
+
+def _unverified_source_wrapper_provenance() -> dict:
+    return {
+        "auto_save_allowed": False,
+        "status": "auto_save_not_authorized",
+        "reason_codes": ["source_wrapper_provenance_unverified"],
+    }
+
+
+def _write_test_wrapper(
+    workspace: Path,
+    *,
+    project_name: str,
+    project_id: str,
+    revision: int,
+) -> Path:
+    project_dir = workspace / "gui_projects" / project_name
+    unique_part = project_name.rsplit("_", 1)[1]
+    document_name = f"model_r{revision:03d}_{unique_part}.xsd"
+    document_path = (
+        project_dir
+        / f"{project_name}_Files"
+        / "Documents"
+        / document_name
+    )
+    document_path.parent.mkdir(parents=True, exist_ok=True)
+    document_path.write_text("<XSD/>\n", encoding="utf-8")
+    project_path = project_dir / f"{project_name}.stp"
+    project_path.write_text(
+        (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<Project>\n"
+            "  <Version>20.1</Version>\n"
+            "  <DocumentManager><Document>"
+            f"<URL>.\\{document_name}</URL>"
+            "</Document></DocumentManager>\n"
+            "  <ViewRegistry><Frame><View>"
+            "<Type>SVViewer3D.Viewer3DControl</Type>"
+            "</View></Frame></ViewRegistry>\n"
+            "</Project>\n"
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "revision": revision,
+                "project_name": project_name,
+                "document_name": document_name,
+                "source_path": str(document_path),
+                "wrapper_schema_version": 2,
+                "wrapper_profile": "materials_studio_20_1_project_wrapper_v1",
+                "project_file_sha256": hashlib.sha256(
+                    project_path.read_bytes()
+                ).hexdigest(),
+                "project_file_size_bytes": project_path.stat().st_size,
+                "document_sha256": hashlib.sha256(
+                    document_path.read_bytes()
+                ).hexdigest(),
+                "document_size_bytes": document_path.stat().st_size,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project_path
+
+
 class FakeGuiBackend:
     supported = True
     unavailable_reason = None
@@ -922,6 +997,7 @@ def test_windows_backend_uses_welcome_dialog_without_ctrl_open(monkeypatch, tmp_
     monkeypatch.setattr(backend, "dismiss_startup_dialogs", lambda **kwargs: [])
     monkeypatch.setattr(backend, "activate_window", lambda selected: selected.handle == window.handle)
     monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: [welcome])
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [window.handle])
     monkeypatch.setattr(
         gui_module,
         "_open_project_from_welcome_dialog",
@@ -993,7 +1069,30 @@ def test_welcome_dialog_uses_browse_picker_instead_of_direct_path_write(monkeypa
         class_name="#32770",
     )
     clicks: list[int] = []
-    submitted: list[tuple[int, str]] = []
+    posted_clicks: list[int] = []
+    submission_calls: list[dict] = []
+    path_binding = {
+        "ok": True,
+        "expected_path": str(project),
+        "verification_source": "filename_exact_match_after_refill",
+        "filename_field": {"ok": True, "method": "verified_test_setter"},
+    }
+    picker_submission = {
+        "ok": True,
+        "submitted_dialog_handle": 500,
+        "dialog_handle_recreated": False,
+        "dialogs_absent": True,
+        "expected_path_verified": True,
+        "expected_path_observed": True,
+        "path_binding": path_binding,
+    }
+    expected_window = WindowInfo(
+        handle=600,
+        title=f"{project.stem} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    project_window_polls = iter([None, expected_window])
 
     monkeypatch.setattr(
         gui_module,
@@ -1006,28 +1105,63 @@ def test_welcome_dialog_uses_browse_picker_instead_of_direct_path_write(monkeypa
         ],
     )
     monkeypatch.setattr(gui_module, "_click_button_handle", clicks.append)
+    monkeypatch.setattr(
+        gui_module,
+        "_post_button_click_handle",
+        lambda handle: posted_clicks.append(handle) or {"posted": True},
+    )
     monkeypatch.setattr(gui_module, "_find_file_open_dialog", lambda **kwargs: picker)
     monkeypatch.setattr(
         gui_module,
-        "_set_common_dialog_filename",
-        lambda handle, path: submitted.append((handle, path)) or {"ok": True},
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: submission_calls.append(kwargs) or picker_submission,
     )
-    monkeypatch.setattr(gui_module, "_click_dialog_ok", lambda handle: clicks.append(handle))
     monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gui_module, "_window_handle_exists", lambda handle: True)
     monkeypatch.setattr(gui_module, "_window_text", lambda handle: str(project))
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [222])
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_project_window",
+        lambda **kwargs: next(project_window_polls),
+    )
 
     result = gui_module._open_project_from_welcome_dialog(222, str(project), pid=2233)
 
-    assert clicks == [10, 20, 500, 40]
-    assert submitted == [(500, str(project))]
+    assert clicks == [10]
+    assert posted_clicks == [20, 40]
+    assert submission_calls == [
+        {
+            "pid": 2233,
+            "owner_root_handle": 222,
+            "initial_dialog": picker,
+            "expected_path": str(project),
+        }
+    ]
     assert result["verified_path"] == str(project)
+    assert result["path_verification"] == "welcome_edit_exact_match"
+    assert result["welcome_auto_submitted"] is False
+    assert result["browse_submission"] == {"posted": True}
+    assert result["welcome_submission"] == {"posted": True}
+    assert result["expected_project_window"]["handle"] == 600
     assert result["browse_dialog"]["handle"] == 500
+    assert result["browse_dialog_owner_chain"] == [222]
+    assert result["picker_submission"] == picker_submission
+    assert result["dialog_protocol_schema_version"] == 2
+    assert result["filename_field"] == path_binding["filename_field"]
+    assert result["path_binding"] == path_binding
     assert result["filename_submission_attempts"] == [
-        {"attempt": 1, "filename_field": {"ok": True}, "picker_closed": True}
+        {
+            "attempt": 1,
+            "filename_field": path_binding["filename_field"],
+            "path_binding": path_binding,
+            "picker_submission": picker_submission,
+            "picker_closed": True,
+        }
     ]
 
 
-def test_welcome_dialog_retries_file_picker_submission(monkeypatch, tmp_path: Path) -> None:
+def test_welcome_dialog_records_recreated_file_picker_submission(monkeypatch, tmp_path: Path) -> None:
     project = tmp_path / "wrapped.stp"
     project.write_text("<Project/>\n", encoding="utf-8")
     picker = WindowInfo(
@@ -1038,8 +1172,33 @@ def test_welcome_dialog_retries_file_picker_submission(monkeypatch, tmp_path: Pa
         class_name="#32770",
     )
     clicks: list[int] = []
-    submitted: list[tuple[int, str]] = []
-    close_results = iter([False, True])
+    posted_clicks: list[int] = []
+    path_binding = {
+        "ok": True,
+        "expected_path": str(project),
+        "verification_source": "filename_exact_match_after_refill",
+        "filename_field": {"ok": True, "method": "verified_test_setter"},
+    }
+    picker_submission = {
+        "ok": True,
+        "submitted_dialog_handle": 501,
+        "dialog_handle_recreated": True,
+        "dialogs_absent": True,
+        "expected_path_verified": True,
+        "expected_path_observed": True,
+        "path_binding": path_binding,
+        "attempts": [
+            {"attempt": 1, "status": "stale_dialog_handle"},
+            {"attempt": 2, "status": "submitted", "dialogs_absent": True},
+        ],
+    }
+    expected_window = WindowInfo(
+        handle=600,
+        title=f"{project.stem} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    project_window_polls = iter([None, expected_window])
 
     monkeypatch.setattr(
         gui_module,
@@ -1052,21 +1211,1280 @@ def test_welcome_dialog_retries_file_picker_submission(monkeypatch, tmp_path: Pa
         ],
     )
     monkeypatch.setattr(gui_module, "_click_button_handle", clicks.append)
+    monkeypatch.setattr(
+        gui_module,
+        "_post_button_click_handle",
+        lambda handle: posted_clicks.append(handle) or {"posted": True},
+    )
     monkeypatch.setattr(gui_module, "_find_file_open_dialog", lambda **kwargs: picker)
     monkeypatch.setattr(
         gui_module,
-        "_set_common_dialog_filename",
-        lambda handle, path: submitted.append((handle, path)) or {"ok": True},
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: picker_submission,
     )
-    monkeypatch.setattr(gui_module, "_click_dialog_ok", lambda handle: clicks.append(handle))
-    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: next(close_results))
+    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gui_module, "_window_handle_exists", lambda handle: True)
     monkeypatch.setattr(gui_module, "_window_text", lambda handle: str(project))
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [222])
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_project_window",
+        lambda **kwargs: next(project_window_polls),
+    )
 
     result = gui_module._open_project_from_welcome_dialog(222, str(project), pid=2233)
 
-    assert clicks == [10, 20, 500, 500, 40]
-    assert submitted == [(500, str(project)), (500, str(project))]
-    assert [attempt["picker_closed"] for attempt in result["filename_submission_attempts"]] == [False, True]
+    assert clicks == [10]
+    assert posted_clicks == [20, 40]
+    assert result["picker_submission"]["dialog_handle_recreated"] is True
+    assert result["picker_submission"]["attempts"][0]["status"] == "stale_dialog_handle"
+    assert result["filename_submission_attempts"][0]["picker_closed"] is True
+
+
+def test_welcome_dialog_accepts_picker_auto_submit_with_exact_project_window(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "wrapped.stp"
+    project.write_text("<Project/>\n", encoding="utf-8")
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    expected_window = WindowInfo(
+        handle=600,
+        title=f"{project.stem} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    synchronous_clicks: list[int] = []
+    posted_clicks: list[int] = []
+    picker_lookups: list[dict] = []
+
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_controls",
+        lambda handle: [
+            {"handle": 10, "class": "Button", "text": "&Open an existing project:"},
+            {"handle": 20, "class": "Button", "text": "&Browse..."},
+            {"handle": 30, "class": "Edit", "text": ""},
+            {"handle": 40, "class": "Button", "text": "OK"},
+        ],
+    )
+    monkeypatch.setattr(gui_module, "_click_button_handle", synchronous_clicks.append)
+    monkeypatch.setattr(
+        gui_module,
+        "_post_button_click_handle",
+        lambda handle: posted_clicks.append(handle) or {"posted": True, "target_handle": handle},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_find_file_open_dialog",
+        lambda **kwargs: picker_lookups.append(kwargs) or picker,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_set_common_dialog_filename",
+        lambda handle, path: {"ok": True, "path": path},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: {
+            "ok": True,
+            "submitted_dialog_handle": 500,
+            "dialog_handle_recreated": False,
+            "dialogs_absent": True,
+            "expected_path_verified": True,
+            "expected_path_observed": True,
+            "path_binding": {
+                "ok": True,
+                "expected_path": str(project),
+            },
+        },
+    )
+    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gui_module, "_window_handle_exists", lambda handle: False)
+    monkeypatch.setattr(
+        gui_module,
+        "_window_text",
+        lambda handle: (_ for _ in ()).throw(AssertionError("destroyed welcome edit must not be read")),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [222])
+    monkeypatch.setattr(gui_module, "_wait_for_project_window", lambda **kwargs: expected_window)
+
+    result = gui_module._open_project_from_welcome_dialog(222, str(project), pid=2233)
+
+    assert synchronous_clicks == [10]
+    assert posted_clicks == [20]
+    assert picker_lookups == [
+        {"pid": 2233, "timeout_seconds": 10.0, "owner_root_handle": 222}
+    ]
+    assert result["welcome_auto_submitted"] is True
+    assert result["welcome_submission"] is None
+    assert result["verified_path"] == str(project)
+    assert result["path_verification"] == "picker_filename_exact_match_plus_exact_project_window"
+    assert result["expected_project_window"]["handle"] == 600
+
+
+def test_welcome_auto_submit_does_not_synthesize_verified_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "wrapped.stp"
+    project.write_text("<Project/>\n", encoding="utf-8")
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    expected_window = WindowInfo(
+        handle=600,
+        title=f"{project.stem} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_controls",
+        lambda _handle: [
+            {"handle": 10, "class": "Button", "text": "Open an existing project"},
+            {"handle": 20, "class": "Button", "text": "Browse..."},
+            {"handle": 30, "class": "Edit", "text": ""},
+            {"handle": 40, "class": "Button", "text": "OK"},
+        ],
+    )
+    monkeypatch.setattr(gui_module, "_click_button_handle", lambda _handle: None)
+    monkeypatch.setattr(
+        gui_module,
+        "_post_button_click_handle",
+        lambda handle: {"posted": True, "target_handle": handle},
+    )
+    monkeypatch.setattr(gui_module, "_find_file_open_dialog", lambda **kwargs: picker)
+    monkeypatch.setattr(
+        gui_module,
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: {
+            "ok": True,
+            "submitted_dialog_handle": picker.handle,
+            "dialog_handle_recreated": False,
+            "dialogs_absent": True,
+            "expected_path_verified": False,
+            "expected_path_observed": False,
+            "path_binding": {"ok": False},
+        },
+    )
+    monkeypatch.setattr(gui_module, "_window_handle_exists", lambda _handle: False)
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda _handle: [222])
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_project_window",
+        lambda **kwargs: expected_window,
+    )
+
+    result = gui_module._open_project_from_welcome_dialog(
+        222,
+        str(project),
+        pid=2233,
+    )
+
+    assert result["requested_path"] == str(project)
+    assert result["verified_path"] is None
+    assert result["path_verification"] == "exact_project_window_only"
+
+
+def test_find_file_open_dialog_requires_expected_owner_chain(monkeypatch) -> None:
+    wrong = WindowInfo(
+        handle=501,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    expected = WindowInfo(
+        handle=502,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: [wrong, expected])
+    monkeypatch.setattr(gui_module, "_looks_like_file_open_dialog", lambda window: True)
+    monkeypatch.setattr(
+        gui_module,
+        "_window_owner_chain",
+        lambda handle: [999] if handle == wrong.handle else [222, 111],
+    )
+
+    resolved = gui_module._find_file_open_dialog(
+        pid=2233,
+        timeout_seconds=0.1,
+        owner_root_handle=111,
+    )
+
+    assert resolved == expected
+
+
+def test_wait_for_project_window_requires_raw_exact_title(monkeypatch) -> None:
+    normalized_collision = WindowInfo(
+        handle=600,
+        title="model_name - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    exact = WindowInfo(
+        handle=601,
+        title="model name - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    polls = iter([[normalized_collision], [exact]])
+    monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: next(polls))
+    monkeypatch.setattr(gui_module.time, "sleep", lambda _seconds: None)
+
+    result = gui_module._wait_for_project_window(
+        pid=2233,
+        expected_project_name="model name",
+        timeout_seconds=1.0,
+    )
+
+    assert result == exact
+
+
+def test_picker_absence_requires_stable_quiet_period(monkeypatch) -> None:
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    states = iter([[picker], [], [picker], [], [], [], [], []])
+    calls = 0
+
+    def owned_dialogs(**_kwargs) -> list[WindowInfo]:
+        nonlocal calls
+        calls += 1
+        return next(states, [])
+
+    monkeypatch.setattr(gui_module, "_owned_file_open_dialogs", owned_dialogs)
+
+    result = gui_module._wait_for_owned_file_open_dialogs_absent(
+        pid=2233,
+        owner_root_handle=222,
+        timeout_seconds=0.3,
+        quiet_period_seconds=0.03,
+        poll_interval_seconds=0.01,
+    )
+
+    assert result is True
+    assert calls >= 4
+
+
+def test_submit_current_file_open_dialog_rebinds_after_handle_recreation(monkeypatch) -> None:
+    initial = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    replacement = WindowInfo(
+        handle=501,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    current_dialogs = iter([initial, replacement])
+
+    monkeypatch.setattr(
+        gui_module,
+        "_find_file_open_dialog",
+        lambda **kwargs: next(current_dialogs),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [222])
+    monkeypatch.setattr(
+        gui_module,
+        "_bind_expected_file_open_path",
+        lambda handle, **kwargs: {
+            "ok": True,
+            "expected_path": kwargs["expected_path"],
+            "dialog_handle": handle,
+        },
+    )
+
+    def submit(handle: int) -> dict:
+        if handle == initial.handle:
+            raise GuiError("stale handle")
+        return {"posted": True, "target_handle": handle}
+
+    monkeypatch.setattr(gui_module, "_click_dialog_ok", submit)
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_owned_file_open_dialogs_absent",
+        lambda **kwargs: True,
+    )
+
+    result = gui_module._submit_current_file_open_dialog(
+        pid=2233,
+        owner_root_handle=222,
+        initial_dialog=initial,
+        expected_path=r"C:\workspace\target.stp",
+    )
+
+    assert result["ok"] is True
+    assert result["dialog_handle_recreated"] is True
+    assert result["initial_dialog_handle"] == 500
+    assert result["submitted_dialog_handle"] == 501
+    assert [attempt["status"] for attempt in result["attempts"]] == [
+        "stale_dialog_handle",
+        "submitted",
+    ]
+
+
+def test_recreated_picker_refills_and_reverifies_exact_target_path(monkeypatch) -> None:
+    expected_path = r"C:\workspace\gui_projects\msmcp_r003_target\msmcp_r003_target.stp"
+    initial = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    replacement = WindowInfo(
+        handle=501,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    current_dialogs = iter([initial, replacement])
+    replacement_refilled = False
+    refill_calls: list[tuple[int, str]] = []
+
+    monkeypatch.setattr(
+        gui_module,
+        "_find_file_open_dialog",
+        lambda **kwargs: next(current_dialogs),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [222])
+
+    def visible_path(handle: int, *, expected: str | None = None) -> str:
+        if handle == initial.handle:
+            return expected_path
+        return expected_path if replacement_refilled else r"C:\stale\old.stp"
+
+    def refill(handle: int, path: str) -> dict:
+        nonlocal replacement_refilled
+        refill_calls.append((handle, path))
+        replacement_refilled = True
+        return {"ok": True, "method": "verified_test_setter"}
+
+    def submit(handle: int) -> dict:
+        if handle == initial.handle:
+            raise GuiError("stale handle")
+        return {"posted": True, "target_handle": handle}
+
+    monkeypatch.setattr(gui_module, "_visible_filename_edit_text", visible_path)
+    monkeypatch.setattr(gui_module, "_set_common_dialog_filename", refill)
+    monkeypatch.setattr(gui_module, "_click_dialog_ok", submit)
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_owned_file_open_dialogs_absent",
+        lambda **kwargs: True,
+    )
+
+    result = gui_module._submit_current_file_open_dialog(
+        pid=2233,
+        owner_root_handle=222,
+        initial_dialog=initial,
+        expected_path=expected_path,
+    )
+
+    assert refill_calls == [(replacement.handle, expected_path)]
+    assert result["expected_path_verified"] is True
+    assert result["submitted_dialog_handle"] == replacement.handle
+    assert result["path_binding"]["path_refilled"] is True
+    assert (
+        result["path_binding"]["verification_source"]
+        == "filename_exact_match_after_refill"
+    )
+
+
+def test_save_as_is_never_classified_as_file_open(monkeypatch) -> None:
+    save_as = WindowInfo(
+        handle=400,
+        title="Save As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_has_file_path_controls",
+        lambda _handle: True,
+    )
+
+    assert gui_module._looks_like_file_open_dialog(save_as) is False
+
+
+def test_save_project_as_variant_is_not_file_open(monkeypatch) -> None:
+    save_as = WindowInfo(
+        handle=400,
+        title="Save Project As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_has_file_path_controls",
+        lambda _handle: True,
+    )
+
+    assert gui_module._looks_like_file_open_dialog(save_as) is False
+    assert gui_module._looks_like_non_open_file_dialog(save_as) is True
+
+
+@pytest.mark.parametrize("title", ["Upload File", "Download Project"])
+def test_upload_download_titles_are_not_file_open(
+    monkeypatch,
+    title: str,
+) -> None:
+    dialog = WindowInfo(
+        handle=400,
+        title=title,
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_has_file_path_controls",
+        lambda _handle: True,
+    )
+
+    assert gui_module._looks_like_file_open_dialog(dialog) is False
+    assert gui_module._looks_like_non_open_file_dialog(dialog) is True
+
+
+def test_post_open_save_as_is_cancelled_before_generic_picker_handling(
+    monkeypatch,
+) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="msmcp_r002_aaaaaaaaaa - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    save_as = WindowInfo(
+        handle=400,
+        title="Save As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    cancelled: list[int] = []
+    picker_submissions: list[dict] = []
+    monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: [save_as])
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda _handle: [111])
+    monkeypatch.setattr(gui_module, "_dialog_controls", lambda _handle: [])
+    monkeypatch.setattr(
+        gui_module,
+        "_looks_like_non_open_file_dialog",
+        lambda _window: True,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_cancel_dialog",
+        lambda handle, **kwargs: cancelled.append(handle)
+        or {"command": "IDCANCEL", "closed": True},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: picker_submissions.append(kwargs),
+    )
+
+    with pytest.raises(GuiError, match="without positive File/Open semantics"):
+        gui_module._resolve_same_window_open_prompts(
+            pid=2233,
+            source_window=source,
+            path_text=r"C:\workspace\target.stp",
+            source_wrapper_provenance=_verified_source_wrapper_provenance(),
+            timeout_seconds=1.0,
+        )
+
+    assert cancelled == [save_as.handle]
+    assert picker_submissions == []
+
+
+def test_pre_open_save_as_is_cancelled_before_prompt_classification(
+    monkeypatch,
+) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="msmcp_r002_aaaaaaaaaa - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    save_as = WindowInfo(
+        handle=400,
+        title="Save As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    cancelled: list[int] = []
+    monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: [save_as])
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda _handle: [111])
+    monkeypatch.setattr(
+        gui_module,
+        "_cancel_dialog",
+        lambda handle, **kwargs: cancelled.append(handle)
+        or {"command": "IDCANCEL", "closed": True},
+    )
+
+    monkeypatch.setattr(
+        gui_module,
+        "_looks_like_non_open_file_dialog",
+        lambda _window: True,
+    )
+
+    with pytest.raises(GuiError, match="without positive File/Open semantics"):
+        gui_module._resolve_same_window_pre_open_prompts(
+            pid=2233,
+            source_window=source,
+            source_wrapper_provenance=_verified_source_wrapper_provenance(),
+            timeout_seconds=1.0,
+        )
+
+    assert cancelled == [save_as.handle]
+
+
+def test_source_wrapper_auto_save_requires_same_workspace_metadata(
+    tmp_path: Path,
+) -> None:
+    source_name = "msmcp_r002_aaaaaaaaaa"
+    target_name = "msmcp_r003_bbbbbbbbbb"
+    _write_test_wrapper(
+        tmp_path,
+        project_name=source_name,
+        project_id="semiconductor_project",
+        revision=2,
+    )
+    target_path = _write_test_wrapper(
+        tmp_path,
+        project_name=target_name,
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    source = WindowInfo(
+        handle=111,
+        title=f"{source_name} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+
+    receipt = gui_module._source_wrapper_auto_save_provenance(
+        source_window=source,
+        target_project_path=target_path,
+        trusted_workspace_roots=(tmp_path,),
+    )
+
+    assert receipt["auto_save_allowed"] is True
+    assert receipt["status"] == "verified_same_workspace_revision_wrapper"
+    assert receipt["source_wrapper"]["verified"] is True
+    assert receipt["target_wrapper"]["verified"] is True
+
+
+def test_source_wrapper_title_prefix_without_metadata_cannot_auto_save(
+    tmp_path: Path,
+) -> None:
+    target_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    spoofed = WindowInfo(
+        handle=111,
+        title="msmcp_r002_aaaaaaaaaa - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+
+    receipt = gui_module._source_wrapper_auto_save_provenance(
+        source_window=spoofed,
+        target_project_path=target_path,
+        trusted_workspace_roots=(tmp_path,),
+    )
+
+    assert receipt["auto_save_allowed"] is False
+    assert "source_wrapper_provenance_unverified" in receipt["reason_codes"]
+
+
+def test_source_wrapper_title_must_match_raw_generated_title(
+    tmp_path: Path,
+) -> None:
+    source_name = "msmcp_r002_aaaaaaaaaa"
+    _write_test_wrapper(
+        tmp_path,
+        project_name=source_name,
+        project_id="semiconductor_project",
+        revision=2,
+    )
+    target_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    source = WindowInfo(
+        handle=111,
+        title=f" {source_name} - Materials Studio ",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+
+    receipt = gui_module._source_wrapper_auto_save_provenance(
+        source_window=source,
+        target_project_path=target_path,
+        trusted_workspace_roots=(tmp_path,),
+    )
+
+    assert receipt["auto_save_allowed"] is False
+    assert "source_window_title_not_raw_exact" in receipt["reason_codes"]
+
+
+def test_auto_save_rejects_valid_wrapper_outside_trusted_workspace(
+    tmp_path: Path,
+) -> None:
+    source_name = "msmcp_r002_aaaaaaaaaa"
+    _write_test_wrapper(
+        tmp_path,
+        project_name=source_name,
+        project_id="semiconductor_project",
+        revision=2,
+    )
+    target_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    source = WindowInfo(
+        handle=111,
+        title=f"{source_name} - Materials Studio",
+        pid=2233,
+    )
+
+    receipt = gui_module._source_wrapper_auto_save_provenance(
+        source_window=source,
+        target_project_path=target_path,
+        trusted_workspace_roots=(tmp_path / "different_workspace",),
+    )
+
+    assert receipt["auto_save_allowed"] is False
+    assert receipt["target_wrapper"]["status"] == "target_workspace_untrusted"
+    assert "target_wrapper_provenance_unverified" in receipt["reason_codes"]
+
+
+def test_wrapper_provenance_rejects_revision_and_project_xml_tampering(
+    tmp_path: Path,
+) -> None:
+    project_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    metadata_path = project_path.parent / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["revision"] = 4
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    project_path.write_text("<Project/>\n", encoding="utf-8")
+
+    receipt = gui_module._wrapper_project_path_provenance(
+        project_path,
+        workspace_root=tmp_path,
+    )
+
+    assert receipt["verified"] is False
+    assert "project_name_revision_metadata_mismatch" in receipt["reason_codes"]
+    assert "project_xml_version_invalid" in receipt["reason_codes"]
+    assert "project_xml_viewer_binding_missing" in receipt["reason_codes"]
+    assert "project_xml_document_url_mismatch" in receipt["reason_codes"]
+
+
+def test_wrapper_provenance_accepts_attested_locked_current_project(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    real_parse = gui_module.ET.parse
+
+    def locked_parse(path):
+        if Path(path) == project_path:
+            raise PermissionError(13, "project is locked by Materials Studio")
+        return real_parse(path)
+
+    monkeypatch.setattr(gui_module.ET, "parse", locked_parse)
+
+    receipt = gui_module._wrapper_project_path_provenance(
+        project_path,
+        workspace_root=tmp_path,
+        allow_locked_attestation=True,
+    )
+
+    assert receipt["verified"] is True
+    assert receipt["project_file_locked"] is True
+    assert receipt["wrapper_attestation_valid"] is True
+    assert (
+        receipt["project_xml_verification_status"]
+        == "metadata_attested_current_project_lock"
+    )
+
+
+def test_locked_attestation_is_rejected_for_target_verification(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_path = _write_test_wrapper(
+        tmp_path,
+        project_name="msmcp_r003_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=3,
+    )
+    monkeypatch.setattr(
+        gui_module.ET,
+        "parse",
+        lambda _path: (_ for _ in ()).throw(
+            PermissionError(13, "project is locked")
+        ),
+    )
+
+    receipt = gui_module._wrapper_project_path_provenance(
+        project_path,
+        workspace_root=tmp_path,
+    )
+
+    assert receipt["verified"] is False
+    assert (
+        "locked_project_not_allowed_for_target_verification"
+        in receipt["reason_codes"]
+    )
+
+
+@pytest.mark.parametrize("revision", [999, 1000])
+def test_wrapper_provenance_accepts_three_or_more_revision_digits(
+    tmp_path: Path,
+    revision: int,
+) -> None:
+    project_path = _write_test_wrapper(
+        tmp_path,
+        project_name=f"msmcp_r{revision:03d}_bbbbbbbbbb",
+        project_id="semiconductor_project",
+        revision=revision,
+    )
+
+    receipt = gui_module._wrapper_project_path_provenance(
+        project_path,
+        workspace_root=tmp_path,
+    )
+
+    assert receipt["verified"] is True
+
+
+def test_controller_binds_windows_backend_write_root(tmp_path: Path) -> None:
+    backend = WindowsGuiBackend()
+
+    MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    assert backend.trusted_write_workspace_roots == (tmp_path.resolve(),)
+
+
+def test_pre_open_prompt_saves_only_mcp_wrapper_before_file_picker(monkeypatch) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="msmcp_r002_example - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    save_prompt = WindowInfo(
+        handle=400,
+        title="Materials Studio",
+        pid=2233,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    window_polls = iter([[save_prompt], [picker]])
+    submissions: list[int] = []
+
+    monkeypatch.setattr(
+        gui_module,
+        "_find_windows",
+        lambda **kwargs: next(window_polls, []),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [111])
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_controls",
+        lambda handle: [
+            {"handle": 10, "class": "Button", "text": "&Yes"},
+            {"handle": 20, "class": "Button", "text": "&No"},
+            {"handle": 30, "class": "Button", "text": "Cancel"},
+        ],
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_looks_like_file_open_dialog",
+        lambda window: window.handle == picker.handle,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_confirm_yes_dialog",
+        lambda handle: submissions.append(handle) or {"posted": True},
+    )
+    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+
+    result = gui_module._resolve_same_window_pre_open_prompts(
+        pid=2233,
+        source_window=source,
+        source_wrapper_provenance=_verified_source_wrapper_provenance(),
+        timeout_seconds=1.0,
+    )
+
+    assert submissions == [400]
+    assert result[0]["action"] == "confirm_save_current_mcp_project_before_open"
+    assert result[0]["owner_chain"] == [111]
+    assert result[0]["submission"] == {"posted": True}
+    assert result[0]["closed"] is True
+
+
+def test_post_open_prompt_rebinds_only_owned_file_picker(monkeypatch) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="msmcp_r002_example - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    unrelated = WindowInfo(
+        handle=499,
+        title="Open Project",
+        pid=2233,
+        rect=(10, 10, 300, 200),
+        class_name="#32770",
+    )
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    window_polls = iter([[unrelated, picker], []])
+    submissions: list[dict] = []
+
+    monkeypatch.setattr(
+        gui_module,
+        "_find_windows",
+        lambda **kwargs: next(window_polls, []),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_window_owner_chain",
+        lambda handle: [999] if handle == unrelated.handle else [111],
+    )
+    monkeypatch.setattr(gui_module, "_dialog_controls", lambda handle: [])
+    monkeypatch.setattr(
+        gui_module,
+        "_looks_like_file_open_dialog",
+        lambda window: window.handle == picker.handle,
+    )
+    path_binding = {
+        "ok": True,
+        "expected_path": r"C:\workspace\msmcp_r003_target.stp",
+        "filename_field": {
+            "ok": True,
+            "path": r"C:\workspace\msmcp_r003_target.stp",
+        },
+    }
+    monkeypatch.setattr(
+        gui_module,
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: submissions.append(kwargs)
+        or {
+            "ok": True,
+            "dialogs_absent": True,
+            "path_binding": path_binding,
+        },
+    )
+
+    result = gui_module._resolve_same_window_open_prompts(
+        pid=2233,
+        source_window=source,
+        path_text=r"C:\workspace\msmcp_r003_target.stp",
+        source_wrapper_provenance=_verified_source_wrapper_provenance(),
+        timeout_seconds=1.0,
+    )
+
+    assert submissions == [
+        {
+            "pid": 2233,
+            "owner_root_handle": 111,
+            "initial_dialog": picker,
+            "expected_path": r"C:\workspace\msmcp_r003_target.stp",
+        }
+    ]
+    assert result == [
+        {
+            "dialog_protocol_schema_version": 2,
+            "action": "resubmit_open_project_dialog",
+            "dialog": picker.to_dict(),
+            "filename_field": path_binding["filename_field"],
+            "path_binding": path_binding,
+            "submission": {
+                "ok": True,
+                "dialogs_absent": True,
+                "path_binding": path_binding,
+            },
+        }
+    ]
+
+
+def test_pre_open_prompt_refuses_save_for_non_mcp_project(monkeypatch) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="user_project - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    prompt = WindowInfo(
+        handle=400,
+        title="Materials Studio",
+        pid=2233,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    cancelled: list[int] = []
+
+    monkeypatch.setattr(gui_module, "_find_windows", lambda **kwargs: [prompt])
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [111])
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_controls",
+        lambda handle: [
+            {"handle": 10, "class": "Button", "text": "&Yes"},
+            {"handle": 20, "class": "Button", "text": "&No"},
+            {"handle": 30, "class": "Button", "text": "Cancel"},
+        ],
+    )
+    monkeypatch.setattr(gui_module, "_looks_like_file_open_dialog", lambda window: False)
+    monkeypatch.setattr(
+        gui_module,
+        "_cancel_dialog",
+        lambda handle, **kwargs: cancelled.append(handle) or {"closed": True},
+    )
+
+    with pytest.raises(GuiError, match="provenance was not verified"):
+        gui_module._resolve_same_window_pre_open_prompts(
+            pid=2233,
+            source_window=source,
+            source_wrapper_provenance=_unverified_source_wrapper_provenance(),
+            timeout_seconds=1.0,
+        )
+
+    assert cancelled == [400]
+
+
+def test_generic_yes_no_prompt_is_not_a_file_open_dialog(monkeypatch) -> None:
+    prompt = WindowInfo(
+        handle=400,
+        title="Materials Studio",
+        pid=2233,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    monkeypatch.setattr(gui_module, "_dialog_has_file_path_controls", lambda handle: False)
+
+    assert gui_module._looks_like_file_open_dialog(prompt) is False
+
+
+def test_cancel_dialog_posts_exact_idcancel_and_verifies_close(monkeypatch) -> None:
+    commands: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        gui_module,
+        "_post_dialog_command",
+        lambda handle, command_id: commands.append((handle, command_id))
+        or {"posted": True, "command_id": command_id},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_window_absent",
+        lambda handle, **kwargs: handle == 400,
+    )
+
+    result = gui_module._cancel_dialog(400)
+
+    assert commands == [(400, 2)]
+    assert result["command"] == "IDCANCEL"
+    assert result["closed"] is True
+
+
+def test_cancel_dialog_drains_owned_replacement_and_requires_stable_absence(
+    monkeypatch,
+) -> None:
+    replacement = WindowInfo(
+        handle=401,
+        title="Save Project As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    window_states = iter([[replacement], [], [], [], []])
+    commands: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        gui_module,
+        "_post_dialog_command",
+        lambda handle, command_id: commands.append((handle, command_id))
+        or {"posted": True, "command_id": command_id},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_wait_for_window_absent",
+        lambda _handle, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_find_windows",
+        lambda **kwargs: next(window_states, []),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda _handle: [111])
+
+    result = gui_module._cancel_dialog(
+        400,
+        pid=2233,
+        owner_root_handle=111,
+        dialog_title="Save Project As",
+        timeout_seconds=0.3,
+        quiet_period_seconds=0.02,
+    )
+
+    assert commands == [(400, 2), (401, 2)]
+    assert result["replacement_cancel_count"] == 1
+    assert result["family_stable_absent"] is True
+
+
+def test_post_open_prompt_does_not_miss_delayed_save_dialog(monkeypatch) -> None:
+    source = WindowInfo(
+        handle=111,
+        title="msmcp_r002_aaaaaaaaaa - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    delayed = WindowInfo(
+        handle=400,
+        title="Save Project As",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    window_states = iter([[], [delayed]])
+    cancelled: list[int] = []
+    monkeypatch.setattr(
+        gui_module,
+        "_find_windows",
+        lambda **kwargs: next(window_states, [delayed]),
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda _handle: [111])
+    monkeypatch.setattr(
+        gui_module,
+        "_dialog_has_file_path_controls",
+        lambda _handle: True,
+    )
+    monkeypatch.setattr(gui_module, "_dialog_controls", lambda _handle: [])
+    monkeypatch.setattr(
+        gui_module,
+        "_cancel_dialog",
+        lambda handle, **kwargs: cancelled.append(handle)
+        or {"closed": True, "family_stable_absent": True},
+    )
+
+    with pytest.raises(GuiError, match="without positive File/Open semantics"):
+        gui_module._resolve_same_window_open_prompts(
+            pid=2233,
+            source_window=source,
+            path_text=r"C:\workspace\target.stp",
+            source_wrapper_provenance=_verified_source_wrapper_provenance(),
+            timeout_seconds=1.0,
+        )
+
+    assert cancelled == [delayed.handle]
+
+
+def test_windows_backend_submits_existing_window_open_asynchronously(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = WindowsGuiBackend()
+    backend.supported = True
+    project = tmp_path / "wrapped.stp"
+    project.write_text("<Project/>\n", encoding="utf-8")
+    window = WindowInfo(
+        handle=111,
+        title="Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    picker = WindowInfo(
+        handle=500,
+        title="Open Project",
+        pid=2233,
+        rect=(20, 20, 700, 500),
+        class_name="#32770",
+    )
+    expected_window = WindowInfo(
+        handle=111,
+        title=f"{project.stem} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+    )
+    lookup_payloads: list[dict] = []
+    submission_calls: list[dict] = []
+
+    monkeypatch.setattr(backend, "list_processes", lambda: [ProcessInfo(name="MatStudio.exe", pid=2233)])
+    monkeypatch.setattr(backend, "dismiss_startup_dialogs", lambda **kwargs: [])
+    monkeypatch.setattr(backend, "activate_window", lambda selected: selected == window)
+    monkeypatch.setattr(gui_module, "_open_project_from_startup_dialogs", lambda **kwargs: None)
+    monkeypatch.setattr(gui_module, "_send_ctrl_open_shortcut", lambda: None)
+    monkeypatch.setattr(
+        gui_module,
+        "_resolve_same_window_pre_open_prompts",
+        lambda **kwargs: [{"action": "test_pre_open"}],
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_find_file_open_dialog",
+        lambda **kwargs: lookup_payloads.append(kwargs) or picker,
+    )
+    monkeypatch.setattr(gui_module, "_window_owner_chain", lambda handle: [111])
+    monkeypatch.setattr(
+        gui_module,
+        "_set_common_dialog_filename",
+        lambda handle, path: {"ok": True, "path": path},
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_submit_current_file_open_dialog",
+        lambda **kwargs: submission_calls.append(kwargs)
+        or {
+            "ok": True,
+            "submitted_dialog_handle": 500,
+            "dialog_handle_recreated": False,
+            "dialogs_absent": True,
+            "path_binding": {
+                "ok": True,
+                "expected_path": str(project),
+                "filename_field": {
+                    "ok": True,
+                    "method": "verified_test_setter",
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+    monkeypatch.setattr(gui_module, "_resolve_same_window_open_prompts", lambda **kwargs: [])
+    monkeypatch.setattr(gui_module, "_wait_for_project_window", lambda **kwargs: expected_window)
+
+    result = backend.open_file_in_existing_window(window, project)
+
+    assert lookup_payloads == [
+        {"pid": 2233, "timeout_seconds": 10.0, "owner_root_handle": 111}
+    ]
+    assert submission_calls == [
+        {
+            "pid": 2233,
+            "owner_root_handle": 111,
+            "initial_dialog": picker,
+            "expected_path": str(project),
+        }
+    ]
+    assert result["dialog_submission"]["submitted_dialog_handle"] == 500
+    assert result["dialog_protocol_schema_version"] == 2
+    assert result["filename_field"] == {
+        "ok": True,
+        "method": "verified_test_setter",
+    }
+    assert result["path_binding"]["expected_path"] == str(project)
+    assert result["pre_open_prompts"] == [{"action": "test_pre_open"}]
+    assert result["dialog_closed"] is True
+    assert result["dialog_owner_chain"] == [111]
+    assert result["expected_project_window"]["title"] == expected_window.title
+    assert result["spawned_process_ids"] == []
+
+
+def test_windows_backend_cancels_file_association_dialog_without_claiming_files(
+    monkeypatch,
+) -> None:
+    backend = WindowsGuiBackend()
+    backend.supported = True
+    dialog = WindowInfo(
+        handle=700,
+        title="Materials Studio File Associations",
+        pid=2233,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    replacement = WindowInfo(
+        handle=701,
+        title="Materials Studio File Associations",
+        pid=2233,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    find_results = iter([[dialog], [replacement], [], [], [], [], []])
+    commands: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(
+        gui_module,
+        "_find_windows",
+        lambda **kwargs: next(find_results, []),
+    )
+    monkeypatch.setattr(
+        gui_module,
+        "_post_dialog_command",
+        lambda handle, command_id: commands.append((handle, command_id))
+        or {"posted": True, "command_id": command_id},
+    )
+    monkeypatch.setattr(gui_module, "_wait_for_window_absent", lambda *args, **kwargs: True)
+
+    result = backend.dismiss_startup_dialogs(pid=2233, timeout_seconds=1.0)
+
+    assert commands == [(700, 2), (701, 2)]
+    assert result[0]["action"] == "cancel_file_association_dialog"
+    assert result[0]["submission"]["command_id"] == 2
+    assert result[0]["closed"] is True
+    assert result[0]["cancellation"]["replacement_cancel_count"] == 1
+    assert result[0]["cancellation"]["family_stable_absent"] is True
 
 
 def test_gui_open_structure_refuses_new_instance_file_open_backend(tmp_path: Path) -> None:

@@ -94,9 +94,47 @@ wrapper under `workspace/gui_projects/` and opens that project, so Materials
 Studio starts with an active project and a visible viewer.
 When opening an MCP-generated wrapper, the fallback waits for a Materials Studio
 window whose title matches the wrapper project name before treating the open as
-settled; if the title never appears before the timeout, it falls back to the
-latest visible Materials Studio window and reports weaker window-identity
-evidence.
+settled. The Windows same-window path fails closed when that exact title does
+not appear in the requested MatStudio PID; it does not treat another visible
+Materials Studio window as success.
+
+Native startup and File/Open dialogs are bound to both the requested MatStudio
+PID and their Win32 owner chain. Controls that can enter a modal loop use
+asynchronous `BM_CLICK`/`WM_COMMAND` submission so the MCP call does not
+deadlock behind Materials Studio. Windows may recreate an `Open Project` HWND
+during long-path submission; the backend re-resolves only the current owned
+picker, records the old/new handles, then observes or refills and re-verifies
+the exact requested path before every bounded submit attempt. Completion
+requires a stable picker-free quiet period and the raw exact generated wrapper
+title to appear in the same process. File/Open detection is positive: the
+dialog title must carry whole-token open/select/browse/import/load semantics
+and expose path controls; upload/download are explicitly excluded. Any other
+path dialog, including `Save Project As`, is cancelled
+and rejected before the requested wrapper path can be written. A refill
+acknowledgment permits a bounded
+submit but remains distinct from `expected_path_observed`; final target identity
+still comes from the exact project title. Welcome-dialog receipts use
+`dialog_protocol_schema_version=2`; `verified_path` is populated only from
+observed welcome text or an exact picker readback, never merely from the request.
+The regular File/Open receipt uses the same schema version, preserves the
+legacy `filename_field` setter receipt, and adds `path_binding` separately.
+The first-run
+`Materials Studio File Associations` dialog is dismissed with `IDCANCEL`, so
+the fallback does not claim file extensions; same-PID replacement dialogs are
+drained to stable absence even when no owner is exposed. `Save As` is excluded from generic
+open-dialog detection and is cancelled rather than submitted automatically.
+A save-current confirmation is accepted only when source and target both live
+under a write root explicitly injected by the active GUI controller. Their
+strict generated names, revision/UUID-specific document names, Materials
+Studio 20.1 project XML, SHA-256/size attestations, and revision metadata must
+agree. An arbitrary external `gui_projects/` layout and a matching `msmcp_*`
+title grant no write permission. When Materials Studio exclusively locks the
+currently open `.stp`, only the exact source wrapper bound to that window may
+use its server-created metadata attestation; a locked target is rejected, and
+an unlocked target is always parsed and hash-checked directly.
+Every refusal sends exact asynchronous `IDCANCEL`, follows bounded
+same-owner/same-title replacement HWNDs, and requires a stable absence period.
+This flow uses no screen coordinates.
 `material_studio_gui_status` also reports the resolved `MatStudio.exe` path,
 the selected open strategy, whether that strategy may launch another Materials
 Studio instance, the same-window dialog capability,

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .roundtrip import verify_visual_bonded_hotload_selection
+
 
 def _materials_studio_roundtrip_audit(response: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve the persisted or in-band revision round-trip receipt."""
@@ -554,7 +556,63 @@ def _same_path(left: Any, right: Any) -> bool:
 def _structure_path_matches_current(response: dict[str, Any], candidate: Any, expected: Any) -> bool:
     """Return True for the planned structure or trusted same-revision GUI derivatives."""
 
-    if _same_path(candidate, expected):
+    canonical_path_matches = _same_path(candidate, expected)
+    audit = _materials_studio_roundtrip_audit(response)
+    report = (
+        response.get("modeling_report")
+        if isinstance(response.get("modeling_report"), dict)
+        else {}
+    )
+    project_id = response.get("project_id", report.get("project_id"))
+    revision = response.get(
+        "new_revision",
+        response.get("revision", report.get("revision")),
+    )
+    persisted_selection = (
+        response.get("gui_hotload_structure_selection")
+        if isinstance(
+            response.get("gui_hotload_structure_selection"),
+            dict,
+        )
+        else report.get("gui_hotload_structure_selection")
+        if isinstance(report.get("gui_hotload_structure_selection"), dict)
+        else {}
+    )
+    roundtrip_audit_required = bool(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or report.get("materials_studio_roundtrip_audit_requested") is True
+        or persisted_selection.get("visual_bonded_requested") is True
+    ) and not isinstance(audit, dict)
+    if (
+        project_id is not None
+        and type(revision) is int
+        and (isinstance(audit, dict) or roundtrip_audit_required)
+    ):
+        try:
+            selection = verify_visual_bonded_hotload_selection(
+                audit,
+                canonical_structure_path=Path(str(expected)),
+                project_id=str(project_id),
+                revision=revision,
+                roundtrip_audit_required=roundtrip_audit_required,
+            )
+        except Exception:
+            selection = {}
+        if canonical_path_matches:
+            return bool(
+                selection.get("canonical_verified") is True
+                and selection.get("hotload_allowed") is True
+            )
+        if (
+            selection.get("visual_bonded_verified") is True
+            and selection.get("hotload_allowed") is True
+            and _same_path(
+                candidate,
+                selection.get("selected_structure_path"),
+            )
+        ):
+            return True
+    if canonical_path_matches:
         return True
     return _same_revision_structure_derivative(candidate, expected, response.get("new_revision", response.get("revision")))
 
@@ -583,8 +641,6 @@ def _same_revision_structure_derivative(candidate: Any, expected: Any, revision:
             return False
 
     if candidate_stem == expected_stem:
-        return True
-    if candidate_stem == f"{expected_stem}_visual_bonded":
         return True
     if candidate_stem.startswith(f"{expected_stem}_msimport"):
         return True

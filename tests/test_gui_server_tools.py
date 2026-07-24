@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from material_studio_mcp_server import live_smoke, server
 from material_studio_mcp_server import gui as gui_module
+from material_studio_mcp_server import roundtrip as roundtrip_module
 from material_studio_mcp_server.diagnostic_contract import (
     DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
     REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS,
@@ -12780,7 +12781,7 @@ def test_live_project_status_recovers_gui_open_from_report_json_when_audit_artif
     assert status["mcp_current_model_structure_path"] == created["structure_path"]
 
 
-def test_live_project_status_recomputes_health_for_visual_structure_derivative(monkeypatch, tmp_path: Path) -> None:
+def test_live_project_status_rejects_unreceipted_visual_structure_derivative(monkeypatch, tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
@@ -12857,13 +12858,18 @@ def test_live_project_status_recomputes_health_for_visual_structure_derivative(m
     assert status["ok"] is True
     assert status["modeling_health_source"] == "recomputed_status"
     assert status["result"]["success"] is True
-    assert status["modeling_health"]["checks"]["gui_loaded_current_revision"] is True
-    assert status["modeling_health"]["checks"]["gui_stale_reasons"] == []
-    assert status["modeling_health"]["checks"]["gui_open_identity_verification"] == "verified_project_wrapper"
-    assert status["modeling_report"]["gui"]["loaded_current_revision"] is True
-    assert status["modeling_report"]["gui"]["structure_path_matches_current"] is True
-    assert status["modeling_report"]["gui"]["stale_reasons"] == []
-    assert status["gui_current_revision"]["loaded_current_revision"] is True
+    assert status["modeling_health"]["checks"]["gui_loaded_current_revision"] is False
+    assert (
+        "opened_structure_does_not_match_planned_structure"
+        in status["modeling_health"]["checks"]["gui_stale_reasons"]
+    )
+    assert status["modeling_report"]["gui"]["loaded_current_revision"] is False
+    assert status["modeling_report"]["gui"]["structure_path_matches_current"] is False
+    assert (
+        "opened_structure_does_not_match_planned_structure"
+        in status["modeling_report"]["gui"]["stale_reasons"]
+    )
+    assert status["gui_current_revision"]["loaded_current_revision"] is False
 
 
 def test_live_project_status_uses_computed_audit_when_persisted_semiconductor_audit_is_stale(
@@ -14094,15 +14100,72 @@ def test_modeling_report_marks_stale_gui_open_for_previous_revision(tmp_path: Pa
     assert "opened_structure_does_not_match_planned_structure" in report["gui"]["stale_reasons"]
 
 
-def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_path: Path) -> None:
+def test_modeling_report_accepts_receipt_bound_visual_structure_derivative(tmp_path: Path) -> None:
     output_dir = tmp_path / "outputs" / "r000"
     output_dir.mkdir(parents=True)
     planned_structure = output_dir / "structure_r000.cif"
-    visual_structure = output_dir / "structure_r000_visual_bonded.xsd"
+    run_root = output_dir / "ms_roundtrip" / "attempt_001"
+    run_root.mkdir(parents=True)
+    visual_structure = run_root / "structure_r000_visual_bonded.xsd"
     untrusted_structure = output_dir / "structure_r000_unreviewed.xsd"
     planned_structure.write_text("data_visual_derivative\n", encoding="utf-8")
-    visual_structure.write_text("visual derivative", encoding="utf-8")
+    visual_structure.write_text(
+        '<?xml version="1.0"?><XSD Version="20.1"><Bond ID="1"/></XSD>',
+        encoding="utf-8",
+    )
     untrusted_structure.write_text("untrusted derivative", encoding="utf-8")
+    planned_sha256 = hashlib.sha256(planned_structure.read_bytes()).hexdigest()
+    visual_sha256 = hashlib.sha256(visual_structure.read_bytes()).hexdigest()
+    roundtrip_audit = {
+        "schema_version": server.ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        "profile": server.ROUNDTRIP_AUDIT_PROFILE,
+        "project_id": "visual_derivative_proj",
+        "revision": 0,
+        "status": "passed",
+        "ok": True,
+        "source_path": str(planned_structure.resolve()),
+        "source_sha256_planned": planned_sha256,
+        "source_sha256_before": planned_sha256,
+        "source_sha256_after": planned_sha256,
+        "source_unchanged": True,
+        "run_root": str(run_root.resolve()),
+        "comparison": {
+            "passed": True,
+            "input_sha256": planned_sha256,
+        },
+        "visual_bonded_artifact": {
+            "schema_version": (
+                roundtrip_module.VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION
+            ),
+            "requested": True,
+            "required": False,
+            "status": "ready",
+            "ok": True,
+            "criteria": {
+                "min_bond_length": 0.6,
+                "max_bond_length": 1.15,
+            },
+            "source_path": str(planned_structure.resolve()),
+            "source_sha256": planned_sha256,
+            "path": str(visual_structure.resolve()),
+            "sha256": visual_sha256,
+            "confined": True,
+            "format_verified": True,
+            "root_tag": "XSD",
+            "tagged_summary_verified": True,
+            "atom_count": 2,
+            "calculated_bond_count": 1,
+            "bond_count": 1,
+            "xsd_bond_element_count": 1,
+            "atom_count_matches_source": True,
+            "bond_calculation_performed": True,
+            "visual_export_performed": True,
+            "structure_truth_authority": False,
+            "calculation_input_allowed": False,
+            "gui_hotload_candidate": True,
+            "failure_does_not_fail_roundtrip": True,
+        },
+    }
 
     response = {
         "ok": True,
@@ -14110,6 +14173,7 @@ def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_p
         "revision": 0,
         "execution_mode": "execute",
         "result": {"success": True, "execution_backend": "crystal_cif_materialize"},
+        "materials_studio_roundtrip_audit": roundtrip_audit,
         "validation": {"valid": True},
         "planned_outputs": {"structure": str(planned_structure)},
         "gui_status": {
@@ -14152,6 +14216,14 @@ def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_p
             },
         },
     }
+    response["gui_hotload_structure_selection"] = (
+        server._verified_visual_bonded_hotload_selection(
+            roundtrip_audit,
+            canonical_structure_path=planned_structure,
+            project_id="visual_derivative_proj",
+            revision=0,
+        )
+    )
 
     assert server._structure_path_matches_current(response, visual_structure, planned_structure) is True
     assert server._structure_path_matches_current(response, untrusted_structure, planned_structure) is False

@@ -15,6 +15,7 @@ import math
 import os
 import re
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -30,9 +31,19 @@ from .state.store import atomic_write_text
 from .validators import validate_generated_script
 
 
-ROUNDTRIP_AUDIT_SCHEMA_VERSION = "material_studio_revision_roundtrip_audit_v1"
-ROUNDTRIP_AUDIT_PROFILE = "generic_crystal_cif_import_export_v1"
+ROUNDTRIP_AUDIT_SCHEMA_VERSION = "material_studio_revision_roundtrip_audit_v2"
+ROUNDTRIP_AUDIT_PROFILE = (
+    "generic_crystal_cif_import_export_with_visual_bonding_v2"
+)
+VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION = (
+    "material_studio_visual_bonded_artifact_v1"
+)
+GUI_HOTLOAD_STRUCTURE_SELECTION_SCHEMA_VERSION = (
+    "material_studio_gui_hotload_structure_selection_v1"
+)
 ROUNDTRIP_MAX_INPUT_BYTES = 16 * 1024 * 1024
+ROUNDTRIP_MAX_VISUAL_BYTES = 128 * 1024 * 1024
+ROUNDTRIP_MAX_XML_PROLOG_BYTES = 1024 * 1024
 ROUNDTRIP_MAX_ATOMS = 20_000
 ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT = 240
 ROUNDTRIP_RMS_TOLERANCE_ANGSTROM = 0.05
@@ -91,6 +102,38 @@ class CifRoundtripComparison(_RoundtripModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class VisualBondedArtifactReceipt(_RoundtripModel):
+    schema_version: Literal[VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION] = (
+        VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION
+    )
+    requested: bool
+    required: Literal[False] = False
+    status: Literal["ready", "failed", "unavailable", "not_requested"]
+    ok: bool | None
+    criteria: dict[str, float] = Field(default_factory=dict)
+    source_path: str | None = None
+    source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    path: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    confined: bool | None = None
+    format_verified: bool | None = None
+    root_tag: str | None = None
+    tagged_summary_verified: bool | None = None
+    atom_count: int | None = Field(default=None, ge=0)
+    calculated_bond_count: int | None = Field(default=None, ge=0)
+    bond_count: int | None = Field(default=None, ge=0)
+    xsd_bond_element_count: int | None = Field(default=None, ge=0)
+    atom_count_matches_source: bool | None = None
+    bond_calculation_performed: bool = False
+    visual_export_performed: bool = False
+    structure_truth_authority: Literal[False] = False
+    calculation_input_allowed: Literal[False] = False
+    gui_hotload_candidate: bool = False
+    failure_does_not_fail_roundtrip: Literal[True] = True
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class RoundtripAuditPlan(_RoundtripModel):
     schema_version: Literal[ROUNDTRIP_AUDIT_SCHEMA_VERSION] = (
         ROUNDTRIP_AUDIT_SCHEMA_VERSION
@@ -113,6 +156,9 @@ class RoundtripAuditPlan(_RoundtripModel):
     run_id: str
     run_root: str | None = None
     output_path: str | None = None
+    visual_output_path: str | None = None
+    visual_bonding_planned: bool = False
+    visual_bonding_required: Literal[False] = False
     script: str | None = None
     script_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     script_validation: dict[str, Any] = Field(default_factory=dict)
@@ -176,6 +222,13 @@ class RoundtripAuditReceipt(_RoundtripModel):
     runner_identity: dict[str, Any] = Field(default_factory=dict)
     gui_invariant: dict[str, Any] = Field(default_factory=dict)
     comparison: CifRoundtripComparison | None = None
+    visual_bonded_artifact: VisualBondedArtifactReceipt = Field(
+        default_factory=lambda: VisualBondedArtifactReceipt(
+            requested=False,
+            status="not_requested",
+            ok=None,
+        )
+    )
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -201,6 +254,113 @@ def _sha256_file(path: Path) -> str:
                 )
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256_visual_file(path: Path) -> str:
+    size = path.stat().st_size
+    if size > ROUNDTRIP_MAX_VISUAL_BYTES:
+        raise ValueError(
+            "Visual bonded XSD exceeds "
+            f"{ROUNDTRIP_MAX_VISUAL_BYTES} bytes: {path}"
+        )
+    digest = hashlib.sha256()
+    bytes_read = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            bytes_read += len(chunk)
+            if bytes_read > ROUNDTRIP_MAX_VISUAL_BYTES:
+                raise ValueError(
+                    "Visual bonded XSD exceeds "
+                    f"{ROUNDTRIP_MAX_VISUAL_BYTES} bytes: {path}"
+                )
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _inspect_visual_xsd(path: Path) -> dict[str, Any]:
+    prolog = bytearray()
+    root_found = False
+    rolling_tail = b""
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            upper_chunk = chunk.upper()
+            if root_found:
+                marker_scan = rolling_tail + upper_chunk
+                if b"<!DOCTYPE" in marker_scan or b"<!ENTITY" in marker_scan:
+                    raise ValueError(
+                        "Visual bonded XSD contains a declaration after the "
+                        "root element."
+                    )
+                rolling_tail = marker_scan[-16:]
+                continue
+            prolog.extend(chunk)
+            root_match = re.search(
+                br"<XSD(?:\s|>)",
+                bytes(prolog),
+                flags=re.IGNORECASE,
+            )
+            if root_match is None:
+                if len(prolog) > ROUNDTRIP_MAX_XML_PROLOG_BYTES:
+                    raise ValueError(
+                        "Visual bonded XSD root was not found within the "
+                        f"{ROUNDTRIP_MAX_XML_PROLOG_BYTES}-byte prolog limit."
+                    )
+                continue
+            root_offset = root_match.start()
+            if root_offset > ROUNDTRIP_MAX_XML_PROLOG_BYTES:
+                raise ValueError(
+                    "Visual bonded XSD root was not found within the "
+                    f"{ROUNDTRIP_MAX_XML_PROLOG_BYTES}-byte prolog limit."
+                )
+            root_found = True
+            declaration_bytes = bytes(prolog[:root_offset])
+            after_root = bytes(prolog[root_offset:]).upper()
+            if b"<!DOCTYPE" in after_root or b"<!ENTITY" in after_root:
+                raise ValueError(
+                    "Visual bonded XSD contains a declaration after the root "
+                    "element."
+                )
+            rolling_tail = after_root[-16:]
+
+    if not root_found:
+        raise ValueError("Visual bonded XSD has no XSD root element.")
+    prefix = declaration_bytes.upper()
+    if b"<!ENTITY" in prefix:
+        raise ValueError(
+            "Visual bonded XSD contains a forbidden entity declaration."
+        )
+    prefix_text = prefix.decode("latin1", errors="replace")
+    for declaration in re.findall(
+        r"<!DOCTYPE\b[^>]*>",
+        prefix_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        if " ".join(declaration.split()).casefold() != "<!doctype xsd []>":
+            raise ValueError(
+                "Visual bonded XSD contains an unsupported external or "
+                "non-empty DTD declaration."
+            )
+    if b"<!DOCTYPE" in prefix and not re.search(
+        br"<!DOCTYPE\b[^>]*>",
+        prefix,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        raise ValueError("Visual bonded XSD contains an incomplete DTD declaration.")
+    root_tag: str | None = None
+    bond_count = 0
+    for event, element in ET.iterparse(path, events=("start", "end")):
+        local_name = str(element.tag).rsplit("}", 1)[-1]
+        if event == "start" and root_tag is None:
+            root_tag = local_name
+        if event == "end":
+            if local_name == "Bond":
+                bond_count += 1
+            element.clear()
+    return {
+        "root_tag": root_tag,
+        "format_verified": root_tag == "XSD",
+        "xsd_bond_element_count": bond_count,
+    }
 
 
 def _canonical_spec_sha256(spec: ModelSpec) -> str:
@@ -600,14 +760,32 @@ def compare_cif_roundtrip(
     return CifRoundtripComparison.model_validate(receipt).model_dump(mode="json")
 
 
-def _script_safety(source_path: Path, output_path: Path, script: str) -> dict[str, Any]:
-    expected = import_export_script(source_path, output_path)
+def _script_safety(
+    source_path: Path,
+    output_path: Path,
+    visual_output_path: Path,
+    script: str,
+) -> dict[str, Any]:
+    expected = import_export_script(
+        source_path,
+        output_path,
+        visual_output_file=visual_output_path,
+    )
     validation = validate_generated_script(script)
     errors = [str(item) for item in validation.get("errors", []) or []]
     warnings = [str(item) for item in validation.get("warnings", []) or []]
     source_literal = "'" + str(source_path).replace("\\", "\\\\").replace("'", "\\'") + "'"
     output_literal = "'" + str(output_path).replace("\\", "\\\\").replace("'", "\\'") + "'"
-    operation_text = script.replace(source_literal, "''").replace(output_literal, "''")
+    visual_output_literal = (
+        "'"
+        + str(visual_output_path).replace("\\", "\\\\").replace("'", "\\'")
+        + "'"
+    )
+    operation_text = (
+        script.replace(source_literal, "''")
+        .replace(output_literal, "''")
+        .replace(visual_output_literal, "''")
+    )
     forbidden_errors: list[str] = []
     for pattern in _DANGEROUS_GENERATED_MARKERS:
         if pattern.search(operation_text):
@@ -621,11 +799,14 @@ def _script_safety(source_path: Path, output_path: Path, script: str) -> dict[st
         errors.append("Round-trip script must bind the source path exactly once.")
     if script.count(output_literal) != 1:
         errors.append("Round-trip script must bind the output path exactly once.")
+    if script.count(visual_output_literal) != 1:
+        errors.append("Round-trip script must bind the visual output path exactly once.")
     return {
         "valid": not errors,
         "deterministic": script == expected,
         "source_bound_once": script.count(source_literal) == 1,
         "output_bound_once": script.count(output_literal) == 1,
+        "visual_output_bound_once": script.count(visual_output_literal) == 1,
         "forbidden_operations_absent": not forbidden_errors,
         "errors": errors,
         "warnings": warnings,
@@ -661,12 +842,14 @@ def _roundtrip_runner_path_budget(
     source: Path,
     run_root: Path,
     output_path: Path,
+    visual_output_path: Path,
 ) -> dict[str, Any]:
     """Describe the direct-job paths that legacy MatServer 20.1 will expand."""
 
     paths = {
         "source_cif": source.expanduser().resolve(),
         "output_cif": output_path.expanduser().resolve(),
+        "visual_bonded_xsd": visual_output_path.expanduser().resolve(),
         "runner_script": (run_root / "roundtrip.pl").expanduser().resolve(),
         "runner_output": (run_root / "roundtrip.pl.out").expanduser().resolve(),
         "runner_log": (run_root / "roundtripMatStudioLog.htm").expanduser().resolve(),
@@ -789,6 +972,11 @@ def plan_roundtrip_audit(
     revision_output = Path(output_dir).expanduser().resolve()
     run_root = _ensure_inside(revision_output, revision_output / "ms_roundtrip" / run_id, label="round-trip run root")
     output_path = _ensure_inside(run_root, run_root / "roundtrip_output.cif", label="round-trip output")
+    visual_output_path = _ensure_inside(
+        run_root,
+        run_root / f"{source.stem}_visual_bonded.xsd",
+        label="visual bonded output",
+    )
     base: dict[str, Any] = {
         "project_id": spec.project_id,
         "revision": spec.revision,
@@ -798,6 +986,11 @@ def plan_roundtrip_audit(
         "run_id": run_id,
         "run_root": str(run_root),
         "output_path": str(output_path),
+        "visual_output_path": (
+            str(visual_output_path) if isinstance(spec.model, CrystalSpec) else None
+        ),
+        "visual_bonding_planned": isinstance(spec.model, CrystalSpec),
+        "visual_bonding_required": False,
         "gui_probe_planned": gui_probe_planned,
         "runner_call_planned": execution_mode == "execute",
         "side_effects": {
@@ -848,8 +1041,17 @@ def plan_roundtrip_audit(
         return RoundtripAuditPlan.model_validate(base).model_dump(mode="json")
     try:
         source_sha = _sha256_file(source)
-        script = import_export_script(source, output_path)
-        script_validation = _script_safety(source, output_path, script)
+        script = import_export_script(
+            source,
+            output_path,
+            visual_output_file=visual_output_path,
+        )
+        script_validation = _script_safety(
+            source,
+            output_path,
+            visual_output_path,
+            script,
+        )
     except Exception as exc:
         base.update({"applicable": True, "status": "blocked", "errors": [str(exc)]})
         return RoundtripAuditPlan.model_validate(base).model_dump(mode="json")
@@ -896,6 +1098,9 @@ def not_applicable_roundtrip_receipt(
 
 
 def _failure_receipt_from_plan(plan: dict[str, Any], *, status: str | None = None) -> dict[str, Any]:
+    visual_requested = bool(
+        plan.get("visual_bonding_planned") and plan.get("visual_output_path")
+    )
     receipt = {
         "project_id": plan["project_id"],
         "revision": plan["revision"],
@@ -911,6 +1116,22 @@ def _failure_receipt_from_plan(plan: dict[str, Any], *, status: str | None = Non
         "output_path": plan.get("output_path"),
         "run_root": plan.get("run_root"),
         "script_sha256": plan.get("script_sha256"),
+        "visual_bonded_artifact": {
+            "requested": visual_requested,
+            "status": "unavailable" if visual_requested else "not_requested",
+            "ok": None,
+            "source_path": plan.get("source_path"),
+            "source_sha256": plan.get("source_sha256"),
+            "path": plan.get("visual_output_path"),
+            "warnings": (
+                [
+                    "Visual bonded XSD generation did not run because the core "
+                    "round-trip audit was not executable."
+                ]
+                if visual_requested
+                else []
+            ),
+        },
         "errors": list(plan.get("errors") or []),
         "warnings": list(plan.get("warnings") or []),
     }
@@ -918,6 +1139,447 @@ def _failure_receipt_from_plan(plan: dict[str, Any], *, status: str | None = Non
         receipt["status"] = "not_applicable"
         receipt["ok"] = None
     return RoundtripAuditReceipt.model_validate(receipt).model_dump(mode="json")
+
+
+def _tagged_true(value: Any) -> bool:
+    return value is True or (type(value) is int and value == 1)
+
+
+def _tagged_nonnegative_int(value: Any) -> int | None:
+    if type(value) is not int or value < 0:
+        return None
+    return value
+
+
+def _visual_bonded_artifact_receipt(
+    *,
+    source: Path,
+    source_sha256: str,
+    visual_output_path: Path,
+    run_root: Path,
+    tagged: Any,
+    comparison: dict[str, Any] | None,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    nested = tagged.get("visual_bonded") if isinstance(tagged, dict) else None
+    requested = False
+    calculate_ok = False
+    export_ok = False
+    atom_count: int | None = None
+    calculated_bond_count: int | None = None
+    unit_cell_bond_count: int | None = None
+    criteria: dict[str, float] = {}
+    tagged_summary_verified = False
+
+    if isinstance(nested, dict):
+        requested = _tagged_true(nested.get("requested"))
+        calculate_ok = _tagged_true(nested.get("calculate_bonds_ok"))
+        export_ok = _tagged_true(nested.get("visual_export_ok"))
+        atom_count = _tagged_nonnegative_int(nested.get("atom_count"))
+        calculated_bond_count = _tagged_nonnegative_int(
+            nested.get("calculated_bond_count")
+        )
+        unit_cell_bond_count = _tagged_nonnegative_int(
+            nested.get("unit_cell_bond_count")
+        )
+        raw_criteria = nested.get("criteria")
+        if isinstance(raw_criteria, dict):
+            try:
+                criteria = {
+                    "min_bond_length": float(raw_criteria["min_bond_length"]),
+                    "max_bond_length": float(raw_criteria["max_bond_length"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                criteria = {}
+        tagged_summary_verified = (
+            requested
+            and str(nested.get("output") or "") == str(visual_output_path)
+            and criteria == {
+                "min_bond_length": 0.6,
+                "max_bond_length": 1.15,
+            }
+        )
+        calculate_error = str(nested.get("calculate_error") or "").strip()
+        export_error = str(nested.get("export_error") or "").strip()
+        if calculate_error:
+            errors.append(
+                f"Materials Studio CalculateBonds failed: {calculate_error}"
+            )
+        if export_error:
+            errors.append(
+                f"Materials Studio visual XSD export failed: {export_error}"
+            )
+    else:
+        errors.append("The tagged JSON summary has no visual_bonded receipt.")
+
+    if not tagged_summary_verified:
+        errors.append(
+            "The visual bonded tagged JSON summary is not bound to the "
+            "deterministic path and bond criteria."
+        )
+    if not calculate_ok:
+        errors.append("Materials Studio did not confirm CalculateBonds success.")
+    if not export_ok:
+        errors.append("Materials Studio did not confirm visual XSD export success.")
+    if atom_count is None:
+        errors.append("The visual bonded summary has no valid atom count.")
+    if calculated_bond_count is None:
+        errors.append("The visual bonded summary has no valid calculated bond count.")
+    if unit_cell_bond_count is None:
+        errors.append("The visual bonded summary has no valid unit-cell bond count.")
+
+    confined: bool | None = None
+    sha256: str | None = None
+    format_verified: bool | None = None
+    root_tag: str | None = None
+    xsd_bond_element_count: int | None = None
+    if not visual_output_path.is_file():
+        errors.append("Materials Studio did not create the visual bonded XSD.")
+    elif visual_output_path.is_symlink():
+        confined = False
+        errors.append("The visual bonded XSD must not be a symbolic link.")
+    else:
+        try:
+            resolved_visual = visual_output_path.resolve(strict=True)
+            resolved_visual.relative_to(run_root.resolve(strict=True))
+            confined = True
+        except (OSError, ValueError):
+            confined = False
+            errors.append("The visual bonded XSD escaped the round-trip run root.")
+        if confined:
+            try:
+                sha256 = _sha256_visual_file(visual_output_path)
+                inspected = _inspect_visual_xsd(visual_output_path)
+                format_verified = bool(inspected["format_verified"])
+                root_tag = inspected["root_tag"]
+                xsd_bond_element_count = int(
+                    inspected["xsd_bond_element_count"]
+                )
+                if not format_verified:
+                    errors.append(
+                        "The visual bonded artifact is not a Materials Studio XSD document."
+                    )
+            except Exception as exc:
+                errors.append(f"Visual bonded XSD verification failed: {exc}")
+
+    expected_atom_count = (
+        comparison.get("input_atom_count")
+        if isinstance(comparison, dict)
+        else None
+    )
+    atom_count_matches_source = (
+        atom_count == expected_atom_count
+        if atom_count is not None and isinstance(expected_atom_count, int)
+        else None
+    )
+    if atom_count_matches_source is False:
+        errors.append(
+            "The visual bonded XSD atom count does not match the canonical source CIF."
+        )
+    if (
+        unit_cell_bond_count is not None
+        and unit_cell_bond_count > 0
+        and xsd_bond_element_count == 0
+    ):
+        errors.append(
+            "The visual bonded summary reports bonds but the XSD contains no Bond element."
+        )
+    if unit_cell_bond_count == 0:
+        warnings.append(
+            "CalculateBonds produced zero unit-cell bonds; GUI hot-load will use "
+            "the canonical CIF instead."
+        )
+
+    errors = list(dict.fromkeys(errors))
+    warnings = list(dict.fromkeys(warnings))
+    ok = not errors
+    gui_hotload_candidate = bool(
+        ok
+        and unit_cell_bond_count is not None
+        and unit_cell_bond_count > 0
+        and xsd_bond_element_count is not None
+        and xsd_bond_element_count > 0
+    )
+    return VisualBondedArtifactReceipt(
+        requested=True,
+        status="ready" if ok else "failed",
+        ok=ok,
+        criteria=criteria,
+        source_path=str(source),
+        source_sha256=source_sha256,
+        path=str(visual_output_path),
+        sha256=sha256,
+        confined=confined,
+        format_verified=format_verified,
+        root_tag=root_tag,
+        tagged_summary_verified=tagged_summary_verified,
+        atom_count=atom_count,
+        calculated_bond_count=calculated_bond_count,
+        bond_count=unit_cell_bond_count,
+        xsd_bond_element_count=xsd_bond_element_count,
+        atom_count_matches_source=atom_count_matches_source,
+        bond_calculation_performed=calculate_ok,
+        visual_export_performed=export_ok,
+        gui_hotload_candidate=gui_hotload_candidate,
+        errors=errors,
+        warnings=warnings,
+    ).model_dump(mode="json")
+
+
+def _same_resolved_path(left: Any, right: Any) -> bool:
+    try:
+        return (
+            Path(str(left)).expanduser().resolve()
+            == Path(str(right)).expanduser().resolve()
+        )
+    except Exception:
+        return str(left) == str(right)
+
+
+def verify_visual_bonded_hotload_selection(
+    audit: Any,
+    *,
+    canonical_structure_path: str | Path,
+    project_id: str,
+    revision: int,
+    roundtrip_audit_required: bool = False,
+) -> dict[str, Any]:
+    """Verify a visual XSD and decide whether canonical fallback is safe."""
+
+    canonical_raw = Path(canonical_structure_path).expanduser()
+    canonical = canonical_raw.resolve()
+    canonical_blocking_reasons: list[str] = []
+    visual_fallback_reasons: list[str] = []
+    canonical_sha256: str | None = None
+    if not canonical.is_file():
+        canonical_blocking_reasons.append("canonical_structure_missing")
+    elif canonical_raw.is_symlink():
+        canonical_blocking_reasons.append("canonical_structure_is_symlink")
+    else:
+        try:
+            canonical_sha256 = _sha256_visual_file(canonical)
+        except Exception:
+            canonical_blocking_reasons.append(
+                "canonical_structure_hash_failed"
+            )
+
+    visual: dict[str, Any] = {}
+    if not isinstance(audit, dict):
+        visual_fallback_reasons.append("roundtrip_audit_missing")
+        if roundtrip_audit_required:
+            canonical_blocking_reasons.append(
+                "roundtrip_audit_required_but_missing"
+            )
+    else:
+        raw_visual = audit.get("visual_bonded_artifact")
+        visual = raw_visual if isinstance(raw_visual, dict) else {}
+        canonical_expected_fields = {
+            "project_id": project_id,
+            "revision": revision,
+            "status": "passed",
+            "ok": True,
+            "source_unchanged": True,
+        }
+        for field, expected in canonical_expected_fields.items():
+            if audit.get(field) != expected:
+                canonical_blocking_reasons.append(
+                    f"roundtrip_{field}_mismatch"
+                )
+        if not _same_resolved_path(audit.get("source_path"), canonical):
+            canonical_blocking_reasons.append(
+                "roundtrip_source_path_mismatch"
+            )
+        for field in (
+            "source_sha256_planned",
+            "source_sha256_before",
+            "source_sha256_after",
+        ):
+            if not canonical_sha256 or audit.get(field) != canonical_sha256:
+                canonical_blocking_reasons.append(
+                    f"roundtrip_{field}_mismatch"
+                )
+        comparison = (
+            audit.get("comparison")
+            if isinstance(audit.get("comparison"), dict)
+            else {}
+        )
+        if comparison.get("passed") is not True:
+            canonical_blocking_reasons.append(
+                "roundtrip_comparison_not_passed"
+            )
+        if (
+            canonical_sha256
+            and comparison.get("input_sha256") != canonical_sha256
+        ):
+            canonical_blocking_reasons.append(
+                "roundtrip_comparison_source_hash_mismatch"
+            )
+        if audit.get("schema_version") != ROUNDTRIP_AUDIT_SCHEMA_VERSION:
+            visual_fallback_reasons.append(
+                "roundtrip_schema_version_mismatch"
+            )
+        if audit.get("profile") != ROUNDTRIP_AUDIT_PROFILE:
+            visual_fallback_reasons.append("roundtrip_profile_mismatch")
+
+    if visual:
+        if (
+            visual.get("schema_version")
+            != VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION
+        ):
+            visual_fallback_reasons.append(
+                "visual_schema_version_mismatch"
+            )
+        try:
+            VisualBondedArtifactReceipt.model_validate(visual)
+        except Exception:
+            visual_fallback_reasons.append(
+                "visual_receipt_schema_invalid"
+            )
+        if visual.get("criteria") != {
+            "min_bond_length": 0.6,
+            "max_bond_length": 1.15,
+        }:
+            visual_fallback_reasons.append(
+                "visual_bond_criteria_mismatch"
+            )
+        required_visual_fields = {
+            "requested": True,
+            "required": False,
+            "status": "ready",
+            "ok": True,
+            "confined": True,
+            "format_verified": True,
+            "root_tag": "XSD",
+            "tagged_summary_verified": True,
+            "atom_count_matches_source": True,
+            "bond_calculation_performed": True,
+            "visual_export_performed": True,
+            "structure_truth_authority": False,
+            "calculation_input_allowed": False,
+            "gui_hotload_candidate": True,
+            "failure_does_not_fail_roundtrip": True,
+        }
+        for field, expected in required_visual_fields.items():
+            if visual.get(field) != expected:
+                visual_fallback_reasons.append(
+                    f"visual_{field}_mismatch"
+                )
+        if canonical_sha256 and visual.get("source_sha256") != canonical_sha256:
+            visual_fallback_reasons.append("visual_source_hash_mismatch")
+        if not _same_resolved_path(visual.get("source_path"), canonical):
+            visual_fallback_reasons.append("visual_source_path_mismatch")
+        for field in ("atom_count", "calculated_bond_count", "bond_count"):
+            value = visual.get(field)
+            if type(value) is not int or value < 0:
+                visual_fallback_reasons.append(
+                    f"visual_{field}_invalid"
+                )
+        for field in ("bond_count", "xsd_bond_element_count"):
+            value = visual.get(field)
+            if type(value) is not int or value <= 0:
+                visual_fallback_reasons.append(
+                    f"visual_{field}_not_positive"
+                )
+    elif isinstance(audit, dict):
+        visual_fallback_reasons.append("visual_bonded_receipt_missing")
+
+    visual_path: Path | None = None
+    visual_sha256: str | None = None
+    raw_visual_path = visual.get("path")
+    raw_run_root = audit.get("run_root") if isinstance(audit, dict) else None
+    if not visual:
+        pass
+    elif not raw_visual_path:
+        visual_fallback_reasons.append("visual_path_missing")
+    elif not raw_run_root:
+        visual_fallback_reasons.append("roundtrip_run_root_missing")
+    else:
+        try:
+            visual_raw_path = Path(str(raw_visual_path)).expanduser()
+            visual_path = visual_raw_path.resolve(strict=True)
+            run_root = Path(str(raw_run_root)).expanduser().resolve(
+                strict=True
+            )
+            visual_path.relative_to(run_root)
+            run_root.relative_to(
+                (canonical.parent / "ms_roundtrip").resolve(strict=True)
+            )
+            if visual_raw_path.is_symlink():
+                visual_fallback_reasons.append("visual_path_is_symlink")
+            if visual_path.suffix.casefold() != ".xsd":
+                visual_fallback_reasons.append("visual_path_not_xsd")
+            visual_sha256 = _sha256_visual_file(visual_path)
+            if visual_sha256 != visual.get("sha256"):
+                visual_fallback_reasons.append(
+                    "visual_sha256_mismatch"
+                )
+        except (OSError, ValueError):
+            visual_fallback_reasons.append(
+                "visual_path_not_confined_or_readable"
+            )
+
+    canonical_blocking_reasons = list(
+        dict.fromkeys(canonical_blocking_reasons)
+    )
+    visual_fallback_reasons = list(
+        dict.fromkeys(visual_fallback_reasons)
+    )
+    canonical_verified = not canonical_blocking_reasons
+    visual_verified = bool(
+        canonical_verified
+        and not visual_fallback_reasons
+        and visual_path is not None
+    )
+    selected_path = visual_path if visual_verified else canonical
+    hotload_allowed = bool(visual_verified or canonical_verified)
+    return {
+        "schema_version": GUI_HOTLOAD_STRUCTURE_SELECTION_SCHEMA_VERSION,
+        "project_id": project_id,
+        "revision": revision,
+        "status": (
+            "verified_visual_selected"
+            if visual_verified
+            else "canonical_fallback_ready"
+            if canonical_verified
+            else "blocked"
+        ),
+        "hotload_allowed": hotload_allowed,
+        "canonical_verified": canonical_verified,
+        "canonical_blocking_reasons": canonical_blocking_reasons,
+        "canonical_structure_path": str(canonical),
+        "canonical_structure_sha256": canonical_sha256,
+        "roundtrip_audit_required": roundtrip_audit_required,
+        "visual_bonded_requested": bool(
+            isinstance(audit, dict) or roundtrip_audit_required
+        ),
+        "visual_bonded_verified": visual_verified,
+        "selected_source": (
+            "verified_visual_bonded_xsd"
+            if visual_verified
+            else "canonical_cif_fallback"
+            if canonical_verified
+            else "blocked"
+        ),
+        "selected_structure_path": str(selected_path),
+        "selected_structure_sha256": (
+            visual_sha256 if visual_verified else canonical_sha256
+        ),
+        "visual_structure_path": str(visual_path) if visual_path else None,
+        "visual_structure_sha256": visual_sha256,
+        "visual_receipt_sha256": (
+            canonical_json_sha256(visual) if visual else None
+        ),
+        "visual_fallback_reasons": visual_fallback_reasons,
+        "fallback_reasons": [
+            *canonical_blocking_reasons,
+            *visual_fallback_reasons,
+        ],
+        "structure_truth_path": str(canonical),
+        "calculation_input_path": str(canonical),
+        "visual_derivative_is_structure_truth": False,
+        "visual_derivative_is_calculation_input": False,
+    }
 
 
 def execute_roundtrip_audit(
@@ -947,6 +1609,7 @@ def execute_roundtrip_audit(
         return _failure_receipt_from_plan(plan)
     run_root = Path(plan["run_root"])
     output_path = Path(plan["output_path"])
+    visual_output_path = Path(plan["visual_output_path"])
     source = Path(plan["source_path"])
     try:
         source_before = _sha256_file(source)
@@ -970,6 +1633,7 @@ def execute_roundtrip_audit(
         source=source,
         run_root=run_root,
         output_path=output_path,
+        visual_output_path=visual_output_path,
     )
     if (
         runner_identity.get("real_materials_studio_20_1")
@@ -1141,6 +1805,23 @@ def execute_roundtrip_audit(
     if not tagged_verified:
         errors.append("The runner did not return a bound tagged JSON import/export summary.")
 
+    visual_bonded_artifact = _visual_bonded_artifact_receipt(
+        source=source,
+        source_sha256=source_before,
+        visual_output_path=visual_output_path,
+        run_root=run_root,
+        tagged=tagged,
+        comparison=comparison,
+    )
+    warnings.extend(
+        f"Visual bonded XSD: {message}"
+        for message in visual_bonded_artifact.get("errors", [])
+    )
+    warnings.extend(
+        str(message)
+        for message in visual_bonded_artifact.get("warnings", [])
+    )
+
     try:
         runner_identity_after = _runner_identity(runner)
     except Exception as exc:
@@ -1200,6 +1881,7 @@ def execute_roundtrip_audit(
         },
         "gui_invariant": gui_invariant,
         "comparison": comparison,
+        "visual_bonded_artifact": visual_bonded_artifact,
         "errors": list(dict.fromkeys(errors)),
         "warnings": list(dict.fromkeys(warnings)),
     }
@@ -1217,14 +1899,18 @@ def execute_roundtrip_audit(
 
 __all__ = [
     "CifRoundtripComparison",
+    "GUI_HOTLOAD_STRUCTURE_SELECTION_SCHEMA_VERSION",
     "ROUNDTRIP_AUDIT_PROFILE",
     "ROUNDTRIP_AUDIT_SCHEMA_VERSION",
     "ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT",
+    "VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION",
     "RoundtripAuditPlan",
     "RoundtripAuditReceipt",
+    "VisualBondedArtifactReceipt",
     "capture_gui_inventory",
     "compare_cif_roundtrip",
     "execute_roundtrip_audit",
     "not_applicable_roundtrip_receipt",
     "plan_roundtrip_audit",
+    "verify_visual_bonded_hotload_selection",
 ]

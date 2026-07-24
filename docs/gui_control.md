@@ -125,6 +125,17 @@ exceeded. A zero process return code is insufficient: a real
 `Exiting MatServer: status OK`. The receipt preserves the return code, both
 marker observations, and the actual saved-script byte SHA-256; any missing
 evidence prevents the subsequent GUI hot-load.
+After the canonical CIF export, the audit may create a visual-only bonded XSD
+inside the same immutable attempt directory. The GUI selects that XSD only
+when the round-trip receipt, source and artifact hashes, path confinement, XSD
+format, atom count, and positive bond evidence all pass a fresh pre-open
+check. Any failure uses the canonical CIF without failing an otherwise valid
+round-trip. A filename ending in `_visual_bonded.xsd` is not trust evidence,
+and direct GUI-open retries reject an unreceipted visual derivative. The XSD is
+never used as calculation input and never replaces the revision CIF as
+structural truth. This fallback applies only to the optional visual derivative:
+a canonical-CIF hash or source-binding failure, or a missing required
+round-trip receipt, blocks GUI open before any input is sent.
 Precise structure changes should remain spec/patch driven because they are
 reproducible, logged, and rollback-safe.
 

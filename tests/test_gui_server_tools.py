@@ -22800,7 +22800,19 @@ def test_view_parameter_summary_recommends_export_refresh_when_counts_are_stale(
 
     gate = server._normality_gate(report)
     assert gate["can_claim_model_normal"] is True
-    assert gate["can_claim_live_gui_normal"] is True
+    assert gate["can_claim_live_gui_normal"] is False
+    assert gate["trusted_multiview_gui_evidence_required"] is True
+    assert gate["trusted_multiview_gui_evidence_ok"] is False
+    assert (
+        "trusted_multiview_gui_evidence_missing"
+        in gate["must_not_claim_live_gui_normal_reasons"]
+    )
+    assert gate["trusted_multiview_gui_evidence_action"][
+        "recommended_tool"
+    ] == "material_studio_live_modeling_request"
+    assert gate["trusted_multiview_gui_evidence_action"][
+        "payload_hint"
+    ]["project_id"] == "stale_views"
     assert "view_parameter_export_not_current" not in gate["all_must_not_claim_reasons"]
 
 
@@ -34992,6 +35004,14 @@ def test_modeling_report_treats_calculation_only_warning_as_model_normal_with_ca
         },
     }
     response["modeling_health"] = build_modeling_health(response, execution_mode="execute")
+    baseline_report = server._build_modeling_report(dict(response))
+    response["gui_view_replay"] = _trusted_clean_view_replay_payload(
+        project_id=spec.project_id,
+        revision=0,
+        view_names=list(
+            baseline_report["view_review"]["supported_view_names"]
+        ),
+    )
     report = server._build_modeling_report(response)
 
     assert report["normality"] == "review_warnings"
@@ -35854,6 +35874,7 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
         "ok": True,
         "project_id": spec.project_id,
         "revision": 0,
+        "working_dir": str(tmp_path),
         "workflow": "gui_view_replay_confirmation",
         "execution_mode": "execute",
         "result": {"success": True, "execution_backend": "crystal_cif_materialize"},
@@ -35909,6 +35930,84 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
         execution_mode="execute",
     )
     baseline_report = server._build_modeling_report(dict(response))
+    baseline_gate = baseline_report["normality_gate"]
+    assert baseline_gate["can_claim_model_normal"] is True
+    assert baseline_gate["can_claim_live_gui_normal"] is False
+    assert baseline_gate["trusted_multiview_gui_evidence_required"] is True
+    assert baseline_gate["trusted_multiview_gui_evidence_ok"] is False
+    assert (
+        "trusted_multiview_gui_evidence_missing"
+        in baseline_gate["must_not_claim_live_gui_normal_reasons"]
+    )
+    assert baseline_gate["next_action"] == (
+        "continue_view_replay_before_claiming_live_gui_normal"
+    )
+    baseline_replay_action = baseline_gate[
+        "trusted_multiview_gui_evidence_action"
+    ]
+    assert baseline_replay_action["action_id"] == "continue_gui_view_replay"
+    assert baseline_replay_action["recommended_tool"] == (
+        "material_studio_live_modeling_request"
+    )
+    assert baseline_replay_action["needs_user_confirmation"] is False
+    assert baseline_replay_action["safe_to_call_without_confirmation"] is True
+    assert baseline_replay_action["mutates_structure"] is False
+    assert baseline_replay_action["creates_revision"] is False
+    assert baseline_replay_action["issues_gui_input"] is False
+    assert baseline_replay_action["payload_hint"] == {
+        "user_request": "continue the next GUI view replay",
+        "project_id": spec.project_id,
+        "execution_mode": "preview",
+        "open_in_gui": False,
+        "take_snapshot": False,
+        "export_view_audit": False,
+        "views": baseline_report["view_review"]["supported_view_names"],
+        "response_mode": "full",
+        "working_dir": str(tmp_path),
+    }
+    assert baseline_report["normality_decision"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_report["normality_decision"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_report["normality_decision"]["consistency"]["ok"] is True
+    assert baseline_report["semiconductor_calculation_readiness"][
+        "ready_for_calculation"
+    ] is False
+
+    baseline_response = dict(response)
+    baseline_response["modeling_report"] = baseline_report
+    server._refresh_response_summaries(baseline_response)
+    baseline_compact = server._compact_live_response(
+        baseline_response,
+        "compact",
+    )
+    assert baseline_compact["normality_gate"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["normality_gate"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_compact["normality_gate"][
+        "trusted_multiview_gui_evidence_action"
+    ]["payload_hint"]["project_id"] == spec.project_id
+    assert baseline_compact["normality_decision"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["normality_decision"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_compact["normality_decision"][
+        "trusted_multiview_gui_evidence_action_ref"
+    ] == "normality_gate.trusted_multiview_gui_evidence_action"
+    assert baseline_compact["live_summary"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["live_summary"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+
     view_names = list(baseline_report["view_review"]["supported_view_names"])
     response["gui_view_replay"] = _trusted_clean_view_replay_payload(
         project_id=spec.project_id,
@@ -35932,6 +36031,9 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
     assert gate["status"] == "claimable_with_calculation_review"
     assert gate["can_claim_model_normal"] is True
     assert gate["can_claim_live_gui_normal"] is True
+    assert gate["trusted_multiview_gui_evidence_required"] is True
+    assert gate["trusted_multiview_gui_evidence_ok"] is True
+    assert gate["trusted_multiview_gui_evidence_action"] is None
     assert gate["must_not_claim_live_gui_normal_reasons"] == []
     assert gate["resolved_visual_review_reasons"] == [
         "view:projection_overlaps",
@@ -35999,6 +36101,9 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
     assert compact["trusted_clean_view_replay"]["ok"] is True
     assert compact["trusted_clean_view_replay"]["view_selection_matches"] is True
     assert compact["normality_gate"]["can_claim_live_gui_normal"] is True
+    assert compact["normality_gate"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is True
     assert compact["normality_gate"]["trusted_clean_view_replay_ref"] == (
         "trusted_clean_view_replay"
     )

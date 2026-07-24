@@ -3642,6 +3642,9 @@ _TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS = (
     "trusted_clean_view_replay_status",
     "trusted_clean_view_replay_ok",
     "trusted_clean_view_names",
+    "trusted_multiview_gui_evidence_required",
+    "trusted_multiview_gui_evidence_ok",
+    "trusted_multiview_gui_evidence_status",
     "resolved_visual_review_reasons",
     "unresolved_visual_review_reasons",
     "view_selection",
@@ -17932,6 +17935,18 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         "trusted_clean_view_replay_blocking_reasons": _csv_json_value(
             trusted_clean_view_replay.get("blocking_reasons") or []
         ),
+        "trusted_multiview_gui_evidence_required": normality_gate.get(
+            "trusted_multiview_gui_evidence_required"
+        ),
+        "trusted_multiview_gui_evidence_ok": normality_gate.get(
+            "trusted_multiview_gui_evidence_ok"
+        ),
+        "trusted_multiview_gui_evidence_status": normality_gate.get(
+            "trusted_multiview_gui_evidence_status"
+        ),
+        "trusted_multiview_gui_evidence_action": _csv_json_value(
+            normality_gate.get("trusted_multiview_gui_evidence_action") or {}
+        ),
         "resolved_visual_review_reasons": _csv_json_value(
             normality_gate.get("resolved_visual_review_reasons") or []
         ),
@@ -27727,6 +27742,15 @@ def _visual_normality_summary(report: dict[str, Any]) -> dict[str, Any]:
             "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
                 "status"
             ),
+            "trusted_multiview_gui_evidence_required": normality_gate.get(
+                "trusted_multiview_gui_evidence_required"
+            ),
+            "trusted_multiview_gui_evidence_ok": normality_gate.get(
+                "trusted_multiview_gui_evidence_ok"
+            ),
+            "trusted_multiview_gui_evidence_status": normality_gate.get(
+                "trusted_multiview_gui_evidence_status"
+            ),
             "trusted_clean_view_names": trusted_clean_view_replay.get(
                 "trusted_clean_view_names"
             )
@@ -28260,6 +28284,9 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("trusted_clean_view_replay"), dict)
         else {}
     )
+    trusted_multiview_gui_evidence_ok = (
+        trusted_clean_view_replay.get("ok") is True
+    )
     replay_resolvable_visual_reasons = set(
         str(item)
         for item in trusted_clean_view_replay.get(
@@ -28295,6 +28322,55 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     gui_single_window_policy_ok = single_window.get("single_window_policy_ok")
     gui_single_window_violation_reasons = single_window.get("single_window_violation_reasons") or []
     requested_focuses = report.get("requested_diagnostic_focuses") if isinstance(report.get("requested_diagnostic_focuses"), list) else []
+    replay_view_names = _dedupe_strings(
+        [
+            str(item)
+            for item in view_review.get("supported_view_names")
+            or view_review.get("view_names")
+            or []
+            if item
+        ]
+    )
+    trusted_multiview_gui_evidence_action = None
+    if (
+        not trusted_multiview_gui_evidence_ok
+        and hot_loaded
+        and loaded_current_revision is not False
+        and report.get("project_id")
+        and isinstance(report.get("revision"), int)
+        and replay_view_names
+    ):
+        replay_payload = _drop_none_values(
+            {
+                "user_request": "continue the next GUI view replay",
+                "project_id": report.get("project_id"),
+                "execution_mode": ExecutionMode.PREVIEW.value,
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": False,
+                "views": replay_view_names,
+                "response_mode": McpResponseMode.FULL.value,
+            }
+        )
+        replay_payload = _workspace_bound_payload_hint(
+            "material_studio_live_modeling_request",
+            replay_payload,
+            report.get("working_dir"),
+        )
+        trusted_multiview_gui_evidence_action = {
+            "action_id": "continue_gui_view_replay",
+            "recommended_tool": "material_studio_live_modeling_request",
+            "recommended_action": (
+                "prepare_or_continue_current_revision_view_replay"
+            ),
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+            "mutates_structure": False,
+            "creates_revision": False,
+            "issues_gui_input": False,
+            "payload_hint_is_directly_callable": True,
+            "payload_hint": replay_payload,
+        }
 
     model_must_not_claim = []
     model_must_not_claim.extend(blocking_reasons)
@@ -28302,6 +28378,14 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     model_must_not_claim.extend(model_calculation_blocking_reasons)
     gui_must_not_claim = []
     gui_must_not_claim.extend(unresolved_visual_review_reasons)
+    if (
+        not trusted_multiview_gui_evidence_ok
+        and hot_loaded
+        and loaded_current_revision is not False
+    ):
+        gui_must_not_claim.append(
+            "trusted_multiview_gui_evidence_missing"
+        )
     if execution_mode == ExecutionMode.PREVIEW.value and not hot_loaded:
         model_must_not_claim.append("preview_not_hot_loaded")
     elif not hot_loaded:
@@ -28355,6 +28439,7 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     can_claim_live_gui_normal = (
         can_claim_model_normal
         and gui_visual_validation in {None, "passed"}
+        and trusted_multiview_gui_evidence_ok
         and not gui_must_not_claim
     )
 
@@ -28366,7 +28451,11 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         next_action = "safe_to_report_model_normal_for_available_checks"
     elif can_claim_model_normal:
         status = "model_claimable_with_visual_notes"
-        next_action = "report_model_normal_with_visual_notes_and_clean_view_candidates"
+        next_action = (
+            "continue_view_replay_before_claiming_live_gui_normal"
+            if not trusted_multiview_gui_evidence_ok
+            else "report_model_normal_with_visual_notes_and_clean_view_candidates"
+        )
     elif blocking_reasons or report.get("ok") is False or report.get("health_ok") is False:
         status = "blocked"
         next_action = "fix_blocking_reasons_then_reaudit"
@@ -28408,6 +28497,17 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
         "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
             "status"
+        ),
+        "trusted_multiview_gui_evidence_required": True,
+        "trusted_multiview_gui_evidence_ok": (
+            trusted_multiview_gui_evidence_ok
+        ),
+        "trusted_multiview_gui_evidence_status": (
+            trusted_clean_view_replay.get("status")
+            or "not_available"
+        ),
+        "trusted_multiview_gui_evidence_action": (
+            trusted_multiview_gui_evidence_action
         ),
         "trusted_clean_view_names": trusted_clean_view_replay.get(
             "trusted_clean_view_names"
@@ -28517,6 +28617,10 @@ def _normality_decision(report: dict[str, Any]) -> dict[str, Any]:
         "all_must_not_claim_reasons",
         "review_reasons",
         "calculation_only_review_reasons",
+        "trusted_multiview_gui_evidence_required",
+        "trusted_multiview_gui_evidence_ok",
+        "trusted_multiview_gui_evidence_status",
+        "trusted_multiview_gui_evidence_action",
     )
     decision_values = {
         "status": gate.get("status"),
@@ -28538,6 +28642,18 @@ def _normality_decision(report: dict[str, Any]) -> dict[str, Any]:
         "review_reasons": list(gate.get("review_reasons") or []),
         "calculation_only_review_reasons": list(
             gate.get("calculation_only_review_reasons") or []
+        ),
+        "trusted_multiview_gui_evidence_required": gate.get(
+            "trusted_multiview_gui_evidence_required"
+        ),
+        "trusted_multiview_gui_evidence_ok": gate.get(
+            "trusted_multiview_gui_evidence_ok"
+        ),
+        "trusted_multiview_gui_evidence_status": gate.get(
+            "trusted_multiview_gui_evidence_status"
+        ),
+        "trusted_multiview_gui_evidence_action": gate.get(
+            "trusted_multiview_gui_evidence_action"
         ),
     }
     mirrors_normality_gate = bool(gate) and all(
@@ -32469,6 +32585,15 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
                 "status"
             ),
             "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+            "trusted_multiview_gui_evidence_required": normality_gate.get(
+                "trusted_multiview_gui_evidence_required"
+            ),
+            "trusted_multiview_gui_evidence_ok": normality_gate.get(
+                "trusted_multiview_gui_evidence_ok"
+            ),
+            "trusted_multiview_gui_evidence_status": normality_gate.get(
+                "trusted_multiview_gui_evidence_status"
+            ),
             "trusted_clean_view_names": trusted_clean_view_replay.get(
                 "trusted_clean_view_names"
             )
@@ -38330,6 +38455,9 @@ def _compact_normality_decision(value: Any) -> dict[str, Any] | None:
             "must_not_claim_live_gui_normal_reasons",
             "review_reasons",
             "calculation_only_review_reasons",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "explanation",
             "explanation_primary_reason_differs",
             "explanation_next_action_differs",
@@ -38341,6 +38469,10 @@ def _compact_normality_decision(value: Any) -> dict[str, Any] | None:
             "must_not_claim_normal_reasons",
             "must_not_claim_live_gui_normal_reasons",
         ]
+    if value.get("trusted_multiview_gui_evidence_action"):
+        compact["trusted_multiview_gui_evidence_action_ref"] = (
+            "normality_gate.trusted_multiview_gui_evidence_action"
+        )
     return compact
 
 
@@ -38381,6 +38513,10 @@ def _compact_normality_gate(
                 "next_action",
                 "trusted_clean_view_replay_status",
                 "trusted_clean_view_replay_ok",
+                "trusted_multiview_gui_evidence_required",
+                "trusted_multiview_gui_evidence_ok",
+                "trusted_multiview_gui_evidence_status",
+                "trusted_multiview_gui_evidence_action",
             ),
         )
         compact["authoritative_decision_ref"] = "normality_decision"
@@ -42365,6 +42501,9 @@ def _compact_live_response(
             "trusted_clean_view_replay_status",
             "trusted_clean_view_replay_ok",
             "trusted_clean_view_names",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "resolved_visual_review_reasons",
             "unresolved_visual_review_reasons",
             "structure_artifact_validation_status",
@@ -42738,6 +42877,9 @@ def _compact_live_response(
             "trusted_clean_view_replay_status",
             "trusted_clean_view_replay_ok",
             "trusted_clean_view_names",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "resolved_visual_review_reasons",
             "unresolved_visual_review_reasons",
             "requested_diagnostic_focus_ok",

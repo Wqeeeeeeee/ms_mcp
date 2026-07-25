@@ -104,7 +104,11 @@ def test_workspace_binding_reaches_deferred_apply_action() -> None:
     )
 
 
-def test_preview_and_status_preserve_exact_apply_handoff(tmp_path: Path) -> None:
+def test_preview_and_status_preserve_exact_apply_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_GUI_BACKEND", "null")
     created = server.material_studio_live_modeling_request(
         "Build silicon crystal for revision-bound handoff acceptance.",
         execution_mode="preview",

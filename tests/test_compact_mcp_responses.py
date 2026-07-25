@@ -1151,8 +1151,10 @@ def test_compact_status_preserves_bound_nondefault_views_and_rejects_stale_audit
 
 
 def test_compact_semiconductor_stress_receipt_stays_within_budget(
+    monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_GUI_BACKEND", "null")
     capabilities = server.material_studio_live_capabilities(response_mode="compact")
     views = capabilities["diagnostics"]["supported_view_names"]
     created = server.material_studio_live_modeling_request(

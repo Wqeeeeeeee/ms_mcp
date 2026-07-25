@@ -113,6 +113,18 @@ refresh diagnostics. The fallback must not create a second Materials Studio
 window just to hot-load a revision.
 For crystal specs the generated structure file is a CIF artifact; molecule and
 imported-structure script executions can still produce `.xsd` outputs.
+
+When `verify_ms_roundtrip=true`, the Materials Studio 20.1 import/export check
+uses its immutable `ms_roundtrip/<attempt_id>` directory as the runner job
+directory. This avoids the legacy MatServer `MAX_PATH` failure caused by adding
+the generic `.material-studio-mcp/jobs/...` hierarchy. The receipt records a
+240-character path budget for the source CIF, output CIF, script, `.out`, and
+MatStudio HTML log and refuses to start the runner when that budget is
+exceeded. A zero process return code is insufficient: a real
+`RunMatScript.bat` run must also emit both `Completion status: (OK)` and
+`Exiting MatServer: status OK`. The receipt preserves the return code, both
+marker observations, and the actual saved-script byte SHA-256; any missing
+evidence prevents the subsequent GUI hot-load.
 Precise structure changes should remain spec/patch driven because they are
 reproducible, logged, and rollback-safe.
 

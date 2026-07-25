@@ -14,6 +14,7 @@ from material_studio_mcp_server.gui import (
     GuiError,
     GuiSnapshotBlockedError,
     MaterialsStudioGuiController,
+    NullGuiBackend,
     ProcessInfo,
     WindowInfo,
     WindowsGuiBackend,
@@ -301,6 +302,20 @@ class MinimizedGuiBackend(FakeGuiBackend):
     def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
         self.captured_handles.append(window.handle)
         return super().capture_window(window, output_path)
+
+
+def test_gui_backend_can_be_explicitly_disabled_for_headless_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_GUI_BACKEND", "null")
+
+    headless = MaterialsStudioGuiController(tmp_path / "headless")
+    explicit = FakeGuiBackend()
+    injected = MaterialsStudioGuiController(tmp_path / "injected", backend=explicit)
+
+    assert isinstance(headless.backend, NullGuiBackend)
+    assert injected.backend is explicit
 
 
 def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:

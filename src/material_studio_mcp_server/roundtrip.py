@@ -34,6 +34,7 @@ ROUNDTRIP_AUDIT_SCHEMA_VERSION = "material_studio_revision_roundtrip_audit_v1"
 ROUNDTRIP_AUDIT_PROFILE = "generic_crystal_cif_import_export_v1"
 ROUNDTRIP_MAX_INPUT_BYTES = 16 * 1024 * 1024
 ROUNDTRIP_MAX_ATOMS = 20_000
+ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT = 240
 ROUNDTRIP_RMS_TOLERANCE_ANGSTROM = 0.05
 ROUNDTRIP_MAX_DISPLACEMENT_TOLERANCE_ANGSTROM = 0.15
 ROUNDTRIP_LATTICE_RELATIVE_TOLERANCE = 0.001
@@ -62,6 +63,7 @@ class RoundtripRunner(Protocol):
         timeout_seconds: int | None = None,
         job_prefix: str = "msjob",
         keep_script_name: str = "script.pl",
+        direct_job_dir: bool = False,
     ) -> Any: ...
 
 
@@ -163,6 +165,13 @@ class RoundtripAuditReceipt(_RoundtripModel):
     runner_success: bool | None = None
     runner_timed_out: bool | None = None
     runner_duration_seconds: float | None = Field(default=None, ge=0.0)
+    runner_return_code: int | None = None
+    runner_termination_markers: dict[str, bool] = Field(default_factory=dict)
+    runner_success_markers_required: bool | None = None
+    runner_script_bytes_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    runner_path_budget: dict[str, Any] = Field(default_factory=dict)
     runner_created_files: list[str] = Field(default_factory=list)
     runner_identity: dict[str, Any] = Field(default_factory=dict)
     gui_invariant: dict[str, Any] = Field(default_factory=dict)
@@ -647,6 +656,39 @@ def _runner_identity(runner: RoundtripRunner) -> dict[str, Any]:
     }
 
 
+def _roundtrip_runner_path_budget(
+    *,
+    source: Path,
+    run_root: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Describe the direct-job paths that legacy MatServer 20.1 will expand."""
+
+    paths = {
+        "source_cif": source.expanduser().resolve(),
+        "output_cif": output_path.expanduser().resolve(),
+        "runner_script": (run_root / "roundtrip.pl").expanduser().resolve(),
+        "runner_output": (run_root / "roundtrip.pl.out").expanduser().resolve(),
+        "runner_log": (run_root / "roundtripMatStudioLog.htm").expanduser().resolve(),
+    }
+    path_lengths = {name: len(str(path)) for name, path in paths.items()}
+    longest_name = max(path_lengths, key=path_lengths.__getitem__)
+    longest_length = path_lengths[longest_name]
+    return {
+        "schema_version": "materials_studio_20_1_path_budget_v1",
+        "limit_characters": ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT,
+        "within_budget": longest_length <= ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT,
+        "maximum_path_characters": longest_length,
+        "longest_path_kind": longest_name,
+        "longest_path": str(paths[longest_name]),
+        "direct_job_dir": True,
+        "paths": {
+            name: {"path": str(paths[name]), "characters": path_lengths[name]}
+            for name in sorted(paths)
+        },
+    }
+
+
 def capture_gui_inventory(backend: Any) -> dict[str, Any]:
     """Capture identity-only GUI evidence without activation or input."""
 
@@ -924,6 +966,40 @@ def execute_roundtrip_audit(
         return RoundtripAuditReceipt.model_validate(receipt).model_dump(mode="json")
 
     runner_identity = _runner_identity(runner)
+    runner_path_budget = _roundtrip_runner_path_budget(
+        source=source,
+        run_root=run_root,
+        output_path=output_path,
+    )
+    if (
+        runner_identity.get("real_materials_studio_20_1")
+        and not runner_path_budget["within_budget"]
+    ):
+        receipt = _failure_receipt_from_plan(plan, status="blocked")
+        receipt.update(
+            {
+                "real_materials_studio_status": "FAIL",
+                "source_unchanged": True,
+                "runner_success": False,
+                "runner_success_markers_required": True,
+                "runner_termination_markers": {
+                    "completion_status_ok": False,
+                    "matserver_exit_status_ok": False,
+                },
+                "runner_path_budget": runner_path_budget,
+                "runner_identity": {
+                    "before": runner_identity,
+                    "after": runner_identity,
+                    "unchanged": True,
+                },
+            }
+        )
+        receipt["errors"].append(
+            "Materials Studio 20.1 round-trip paths exceed the safe "
+            f"{ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT}-character budget; "
+            "the runner was not started."
+        )
+        return RoundtripAuditReceipt.model_validate(receipt).model_dump(mode="json")
     before_gui = capture_gui_inventory(gui_backend) if gui_backend is not None else capture_gui_inventory(None)
     if require_single_window and not before_gui.get("usable_single_window"):
         receipt = _failure_receipt_from_plan(
@@ -947,6 +1023,7 @@ def execute_roundtrip_audit(
             timeout_seconds=timeout_seconds,
             job_prefix=f"{spec.project_id}_r{spec.revision:03d}_roundtrip",
             keep_script_name="roundtrip.pl",
+            direct_job_dir=True,
         )
     except Exception as exc:
         errors.append(f"Materials Studio round-trip runner failed: {exc}")
@@ -966,15 +1043,39 @@ def execute_roundtrip_audit(
 
     runner_success = bool(getattr(result, "success", False)) if result is not None else False
     runner_timed_out = bool(getattr(result, "timed_out", False)) if result is not None else None
+    runner_return_code = (
+        int(getattr(result, "return_code"))
+        if result is not None and getattr(result, "return_code", None) is not None
+        else None
+    )
+    runner_termination_markers = (
+        dict(getattr(result, "completion_markers", {}) or {})
+        if result is not None
+        else {}
+    )
+    runner_success_markers_required = (
+        bool(getattr(result, "success_markers_required", False))
+        if result is not None
+        else None
+    )
     if not runner_success:
         errors.append("Materials Studio runner did not report a successful import/export.")
     if runner_timed_out:
         errors.append("Materials Studio round-trip runner timed out.")
+    if runner_identity.get("real_materials_studio_20_1") and not all(
+        runner_termination_markers.get(name) is True
+        for name in ("completion_status_ok", "matserver_exit_status_ok")
+    ):
+        errors.append(
+            "Materials Studio 20.1 did not emit both required successful "
+            "MatServer termination markers."
+        )
 
     created_files: list[str] = []
     output_confined = False
     runner_script_confined = False
     script_identity_verified = False
+    runner_script_bytes_sha256: str | None = None
     if result is not None:
         job_dir_raw = getattr(result, "job_dir", None)
         job_dir = Path(job_dir_raw).expanduser().resolve() if job_dir_raw else None
@@ -1003,6 +1104,7 @@ def execute_roundtrip_audit(
                 try:
                     script_text = script_path.read_text(encoding="utf-8")
                     script_identity_verified = script_text == plan["script"]
+                    runner_script_bytes_sha256 = _sha256_file(script_path)
                 except (OSError, UnicodeError):
                     script_identity_verified = False
         if not script_identity_verified:
@@ -1085,6 +1187,11 @@ def execute_roundtrip_audit(
         "runner_duration_seconds": float(getattr(result, "duration_seconds", 0.0) or 0.0)
         if result is not None
         else None,
+        "runner_return_code": runner_return_code,
+        "runner_termination_markers": runner_termination_markers,
+        "runner_success_markers_required": runner_success_markers_required,
+        "runner_script_bytes_sha256": runner_script_bytes_sha256,
+        "runner_path_budget": runner_path_budget,
         "runner_created_files": created_files,
         "runner_identity": {
             "before": runner_identity,
@@ -1112,6 +1219,7 @@ __all__ = [
     "CifRoundtripComparison",
     "ROUNDTRIP_AUDIT_PROFILE",
     "ROUNDTRIP_AUDIT_SCHEMA_VERSION",
+    "ROUNDTRIP_MS20_1_SAFE_PATH_LIMIT",
     "RoundtripAuditPlan",
     "RoundtripAuditReceipt",
     "capture_gui_inventory",

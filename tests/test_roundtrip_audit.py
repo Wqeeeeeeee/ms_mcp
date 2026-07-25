@@ -87,8 +87,18 @@ class _FakeRunner:
         runner_path.write_text("fake runner", encoding="utf-8")
         self.config = SimpleNamespace(runner=runner_path, extra_runner_args=())
 
-    def run_script(self, script: str, *, working_dir: str | Path, timeout_seconds: int | None, job_prefix: str, keep_script_name: str):
+    def run_script(
+        self,
+        script: str,
+        *,
+        working_dir: str | Path,
+        timeout_seconds: int | None,
+        job_prefix: str,
+        keep_script_name: str,
+        direct_job_dir: bool = False,
+    ):
         self.calls += 1
+        assert direct_job_dir is True
         root = Path(working_dir).resolve()
         root.mkdir(parents=True, exist_ok=True)
         script_path = root / keep_script_name
@@ -106,7 +116,13 @@ class _FakeRunner:
             script_path=script_path,
             success=True,
             timed_out=False,
+            return_code=0,
             duration_seconds=0.01,
+            completion_markers={
+                "completion_status_ok": True,
+                "matserver_exit_status_ok": True,
+            },
+            success_markers_required=False,
             created_files=[script_path, output],
             parsed_json={
                 "source": str(Path(source).resolve()),
@@ -120,6 +136,17 @@ class _MissingTaggedJsonRunner(_FakeRunner):
     def run_script(self, script: str, **kwargs):
         result = super().run_script(script, **kwargs)
         result.parsed_json = None
+        return result
+
+
+class _MissingTerminationMarkersRunner(_FakeRunner):
+    def run_script(self, script: str, **kwargs):
+        result = super().run_script(script, **kwargs)
+        result.completion_markers = {
+            "completion_status_ok": False,
+            "matserver_exit_status_ok": False,
+        }
+        result.success_markers_required = True
         return result
 
 
@@ -394,6 +421,15 @@ def test_execute_audit_binds_source_and_reports_unverified_runner(tmp_path: Path
     assert receipt["source_unchanged"] is True
     assert source.read_bytes() == original
     assert receipt["comparison"]["passed"] is True
+    assert receipt["runner_return_code"] == 0
+    assert all(receipt["runner_termination_markers"].values())
+    assert receipt["runner_path_budget"]["direct_job_dir"] is True
+    assert receipt["runner_path_budget"]["within_budget"] is True
+    assert len(receipt["runner_script_bytes_sha256"]) == 64
+    assert all(
+        Path(path).parent == Path(receipt["run_root"])
+        for path in receipt["runner_created_files"]
+    )
     persisted_receipt = json.loads(
         Path(receipt["receipt_path"]).read_text(encoding="utf-8")
     )
@@ -432,6 +468,56 @@ def test_execute_audit_rejects_source_changed_after_planning(
     assert receipt["source_sha256_planned"] != receipt["source_sha256_before"]
     assert runner.calls == 0
     assert not Path(receipt["run_root"]).exists()
+
+
+def test_real_ms_path_budget_block_prevents_runner(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    spec = _silicon_spec("path_budget_block")
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    source = write_crystal_cif(spec.model, output_dir / "structure.cif")
+    runner = _FakeRunner(tmp_path)
+    identity = {
+        "path": str(runner.config.runner),
+        "exists": True,
+        "sha256": "a" * 64,
+        "real_materials_studio_20_1": True,
+        "runner_kind": "materials_studio_20_1",
+    }
+    monkeypatch.setattr(roundtrip_module, "_runner_identity", lambda _runner: identity)
+    monkeypatch.setattr(
+        roundtrip_module,
+        "_roundtrip_runner_path_budget",
+        lambda **_kwargs: {
+            "schema_version": "materials_studio_20_1_path_budget_v1",
+            "limit_characters": 240,
+            "within_budget": False,
+            "maximum_path_characters": 256,
+            "longest_path_kind": "runner_log",
+            "longest_path": "x" * 256,
+            "direct_job_dir": True,
+            "paths": {},
+        },
+    )
+
+    receipt = execute_roundtrip_audit(
+        spec,
+        source_path=source,
+        output_dir=output_dir,
+        runner=runner,
+        run_id="path_budget_001",
+    )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["ok"] is False
+    assert receipt["real_materials_studio_status"] == "FAIL"
+    assert receipt["runner_path_budget"]["maximum_path_characters"] == 256
+    assert receipt["runner_success"] is False
+    assert runner.calls == 0
+    assert not Path(receipt["run_root"]).exists()
+    assert any("240-character budget" in error for error in receipt["errors"])
 
 
 def test_execute_audit_rejects_runner_script_outside_run_root(tmp_path: Path) -> None:
@@ -495,6 +581,41 @@ def test_execute_audit_requires_bound_tagged_json(tmp_path: Path) -> None:
     assert receipt["ok"] is False
     assert receipt["tagged_summary_verified"] is False
     assert any("tagged JSON" in error for error in receipt["errors"])
+
+
+def test_real_ms_receipt_requires_both_termination_markers(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    spec = _silicon_spec("missing_termination_markers")
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    source = write_crystal_cif(spec.model, output_dir / "structure.cif")
+    runner = _MissingTerminationMarkersRunner(tmp_path)
+    identity = {
+        "path": str(runner.config.runner),
+        "exists": True,
+        "sha256": "b" * 64,
+        "real_materials_studio_20_1": True,
+        "runner_kind": "materials_studio_20_1",
+    }
+    monkeypatch.setattr(roundtrip_module, "_runner_identity", lambda _runner: identity)
+
+    receipt = execute_roundtrip_audit(
+        spec,
+        source_path=source,
+        output_dir=output_dir,
+        runner=runner,
+        run_id="missing_termination_001",
+    )
+
+    assert receipt["status"] == "failed"
+    assert receipt["ok"] is False
+    assert receipt["runner_success"] is True
+    assert receipt["runner_success_markers_required"] is True
+    assert not any(receipt["runner_termination_markers"].values())
+    assert receipt["real_materials_studio_status"] == "FAIL"
+    assert any("termination markers" in error for error in receipt["errors"])
 
 
 def test_roundtrip_health_ignores_not_applicable_audit() -> None:
@@ -587,6 +708,10 @@ def test_structured_create_execute_persists_roundtrip_receipt(monkeypatch, tmp_p
     assert compact_audit["status"] == "passed"
     assert compact_audit["comparison"]["passed"] is True
     assert compact_audit["scientific_correctness_established"] is False
+    assert compact_audit["runner_return_code"] == 0
+    assert compact_audit["runner_path_budget"]["direct_job_dir"] is True
+    assert all(compact_audit["runner_termination_markers"].values())
+    assert len(compact_audit["runner_script_bytes_sha256"]) == 64
     assert "script" not in compact_audit
 
 

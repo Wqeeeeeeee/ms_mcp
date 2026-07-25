@@ -443,6 +443,33 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return [window for window in self.windows if window.pid == pid]
 
 
+class MultiProcessFakeGuiBackend(MultiWindowFakeGuiBackend):
+    def list_processes(self) -> list[ProcessInfo]:
+        return [
+            ProcessInfo(name="MatStudio.exe", pid=pid)
+            for pid in sorted({window.pid for window in self.windows})
+        ]
+
+    def activate_window(self, window: WindowInfo) -> bool:
+        self.activated_handles.append(window.handle)
+        activated = WindowInfo(
+            handle=window.handle,
+            title=window.title,
+            pid=window.pid,
+            rect=window.rect,
+            class_name=window.class_name,
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=True,
+        )
+        self.windows = [
+            activated if candidate.handle == window.handle else candidate
+            for candidate in self.windows
+        ]
+        self.window = activated
+        return True
+
+
 def _content_sha256_by_relative_path(root: Path) -> dict[str, str]:
     return {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -507,20 +534,36 @@ class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
         self.activated_handles: list[int] = []
 
     def list_processes(self) -> list[ProcessInfo]:
+        if self.window is None:
+            return []
         return [ProcessInfo(name="MatStudio.exe", pid=self.window.pid or 4444)]
 
     def find_window(self, pid: int | None = None) -> WindowInfo | None:
+        if self.window is None:
+            return None
         if pid is not None and self.window.pid != pid:
             return None
         return self.window
 
     def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
+        if self.window is None:
+            return []
         if pid is not None and self.window.pid != pid:
             return []
         return [self.window]
 
     def activate_window(self, window: WindowInfo) -> bool:
         self.activated_handles.append(window.handle)
+        self.window = WindowInfo(
+            handle=window.handle,
+            title=window.title,
+            pid=window.pid,
+            rect=window.rect,
+            class_name=window.class_name,
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=True,
+        )
         return True
 
     def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
@@ -543,6 +586,120 @@ class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
         return {"method": "fake_launch", "pid": self.window.pid}
 
     def dismiss_file_association_dialogs(self, *, pid: int | None = None, timeout_seconds: float = 8.0) -> list[dict]:
+        return []
+
+
+class ProjectScopedMultiProcessGuiBackend(WindowsGuiBackend):
+    supported = True
+    unavailable_reason = None
+    file_open_may_launch_new_instance = False
+
+    def __init__(self) -> None:
+        self.window: WindowInfo | None = None
+        self.windows: list[WindowInfo] = []
+        self.opened: list[Path] = []
+        self.opened_on_handles: list[tuple[int, Path]] = []
+        self.activated_handles: list[int] = []
+        self.captured_handles: list[int] = []
+
+    def list_processes(self) -> list[ProcessInfo]:
+        return [
+            ProcessInfo(name="MatStudio.exe", pid=pid)
+            for pid in sorted(
+                {
+                    int(window.pid)
+                    for window in self.windows
+                    if window.pid is not None
+                }
+            )
+        ]
+
+    def find_window(self, pid: int | None = None) -> WindowInfo | None:
+        if pid is not None:
+            return next(
+                (window for window in self.windows if window.pid == pid),
+                None,
+            )
+        return self.window or (self.windows[0] if self.windows else None)
+
+    def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
+        if pid is None:
+            return list(self.windows)
+        return [window for window in self.windows if window.pid == pid]
+
+    def activate_window(self, window: WindowInfo) -> bool:
+        self.activated_handles.append(window.handle)
+        activated = WindowInfo(
+            handle=window.handle,
+            title=window.title,
+            pid=window.pid,
+            rect=window.rect,
+            class_name=window.class_name,
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=True,
+        )
+        self.windows = [
+            activated
+            if candidate.handle == window.handle
+            else WindowInfo(
+                handle=candidate.handle,
+                title=candidate.title,
+                pid=candidate.pid,
+                rect=candidate.rect,
+                class_name=candidate.class_name,
+                is_visible=candidate.is_visible,
+                is_minimized=candidate.is_minimized,
+                is_foreground=False,
+            )
+            for candidate in self.windows
+        ]
+        self.window = activated
+        return True
+
+    def capture_window(self, window: WindowInfo, output_path: Path) -> Path:
+        self.captured_handles.append(window.handle)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(_tiny_bmp())
+        return output_path
+
+    def open_file(self, path: Path) -> dict:
+        if self.window is None:
+            raise AssertionError("a target window must be activated before open")
+        self.opened.append(path)
+        self.opened_on_handles.append((self.window.handle, path))
+        opened = self.window
+        if path.suffix.lower() == ".stp":
+            opened = WindowInfo(
+                handle=self.window.handle,
+                title=f"{path.stem} - Materials Studio",
+                pid=self.window.pid,
+                rect=self.window.rect,
+                class_name=self.window.class_name,
+                is_visible=True,
+                is_minimized=False,
+                is_foreground=True,
+            )
+            self.windows = [
+                opened if candidate.handle == opened.handle else candidate
+                for candidate in self.windows
+            ]
+            self.window = opened
+        return {
+            "method": "fake_project_scoped_open",
+            "path": str(path),
+            "pid": opened.pid,
+        }
+
+    def launch_app(self) -> dict:
+        raise AssertionError("project-scoped hotload must not launch MatStudio")
+
+    def dismiss_file_association_dialogs(
+        self,
+        *,
+        pid: int | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> list[dict]:
         return []
 
 
@@ -624,6 +781,27 @@ def load_benzene(project_id: str) -> dict:
     spec = json.loads(path.read_text(encoding="utf-8"))
     spec["project_id"] = project_id
     return spec
+
+
+def _trusted_gui_window_fields(
+    project_id: str,
+    revision: int,
+    source_path: str | Path,
+) -> dict:
+    source = str(source_path)
+    metadata = {
+        "project_id": project_id,
+        "revision": revision,
+        "source_path": source,
+        "wrapper_integrity_verified": True,
+        "wrapper_workspace_matches_controller": True,
+        "wrapper_provenance_status": "verified_revision_wrapper",
+    }
+    return {
+        **metadata,
+        "pid_is_matstudio_process": True,
+        "project_wrapper_metadata": metadata,
+    }
 
 
 def test_gui_tools_preview_and_status(monkeypatch, tmp_path: Path) -> None:
@@ -851,6 +1029,17 @@ def test_gui_status_identifies_wrapper_from_trusted_external_workspace(
     structure = external_root / "visible_project" / "outputs" / "r004" / "visible.cif"
     structure.parent.mkdir(parents=True, exist_ok=True)
     structure.write_text("data_visible\n", encoding="utf-8")
+    revision_path = (
+        external_root
+        / "visible_project"
+        / "revisions"
+        / "r004_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": "visible_project", "revision": 4}),
+        encoding="utf-8",
+    )
     wrapper = external_controller._create_project_wrapper(
         structure.resolve(),
         project_id="visible_project",
@@ -1210,7 +1399,7 @@ def test_live_preflight_aligned_workspace_binds_all_callable_action_payloads(
 
 
 def test_gui_status_without_project_resolves_latest_current_window(monkeypatch, tmp_path: Path) -> None:
-    backend = MultiWindowFakeGuiBackend()
+    backend = MultiProcessFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
 
@@ -1227,7 +1416,7 @@ def test_gui_status_without_project_resolves_latest_current_window(monkeypatch, 
     target_window = WindowInfo(
         handle=303,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=2222,
+        pid=3333,
         rect=(0, 0, 1024, 768),
     )
     backend.windows = [backend.window, target_window]
@@ -1250,15 +1439,16 @@ def test_gui_status_without_project_resolves_latest_current_window(monkeypatch, 
     assert management["target_window_project_id"] == created["project_id"]
     assert management["target_window_revision"] == created["revision"]
     assert management["target_window_is_selected"] is False
-    assert management["ready_for_open"] is False
-    assert status["can_open_structure_in_existing_window"] is False
-    assert management["recommended_tool"] == "material_studio_gui_status"
-    assert management["recommended_action"] == "close_save_extra_matstudio_windows_then_retry_hotload"
+    assert management["ready_for_open"] is True
+    assert status["can_open_structure_in_existing_window"] is True
+    assert management["recommended_tool"] == "material_studio_gui_activate"
+    assert management["recommended_action"] == "activate_target_project_window"
+    assert management["project_scoped_multi_instance_isolation"] is True
     assert "selected_window_is_not_target_window" in management["warnings"]
 
 
 def test_gui_activate_without_project_uses_latest_current_window(monkeypatch, tmp_path: Path) -> None:
-    backend = MultiWindowFakeGuiBackend()
+    backend = MultiProcessFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
 
@@ -1275,7 +1465,7 @@ def test_gui_activate_without_project_uses_latest_current_window(monkeypatch, tm
     target_window = WindowInfo(
         handle=303,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=2222,
+        pid=3333,
         rect=(0, 0, 1024, 768),
     )
     backend.windows = [backend.window, target_window]
@@ -1295,17 +1485,19 @@ def test_gui_activate_without_project_uses_latest_current_window(monkeypatch, tm
     assert activated["target_window_resolution"]["matched_project_window"] is True
     assert activated["target_window_resolution"]["target_handle"] == 303
     assert activated["target_window_resolution"]["fallback_used"] is False
-    assert activated["single_window_policy_ok"] is False
-    assert activated["single_window_violation_reasons"] == ["multiple_matstudio_windows_detected"]
+    assert activated["single_window_policy_ok"] is True
+    assert activated["single_window_violation_reasons"] == []
     assert activated["window_management"]["target_window_handle"] == 303
     assert activated["window_management"]["matched_project_window"] is True
-    assert activated["window_management"]["single_window_policy_ok"] is False
-    assert activated["window_management"]["recommended_action"] == "close_save_extra_matstudio_windows_then_retry_hotload"
+    assert activated["window_management"]["single_window_policy_ok"] is True
+    assert activated["window_management"][
+        "project_scoped_multi_instance_isolation"
+    ] is True
     assert backend.activated_handles == [303]
 
 
 def test_gui_launch_without_project_activates_latest_current_window(monkeypatch, tmp_path: Path) -> None:
-    backend = MultiWindowFakeGuiBackend()
+    backend = MultiProcessFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
 
@@ -1322,7 +1514,7 @@ def test_gui_launch_without_project_activates_latest_current_window(monkeypatch,
     target_window = WindowInfo(
         handle=303,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=2222,
+        pid=3333,
         rect=(0, 0, 1024, 768),
     )
     backend.window = target_window
@@ -1382,6 +1574,213 @@ def test_gui_launch_without_project_refuses_latest_current_when_extra_window_ope
     assert launched["target_window_resolution"]["target_handle"] == 303
     assert launched["target_window_resolution"]["fallback_used"] is False
     assert backend.activated_handles == []
+
+
+def test_server_status_rejects_non_matstudio_copied_wrapper_inventory(
+    tmp_path: Path,
+) -> None:
+    structure = tmp_path / "model_r003.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    copied_metadata = {
+        "project_id": "copied_wrapper_proj",
+        "revision": 3,
+        "source_path": str(structure),
+        "wrapper_integrity_verified": True,
+        "wrapper_workspace_matches_controller": True,
+        "wrapper_provenance_status": "verified_revision_wrapper",
+    }
+    copied_window = {
+        "handle": 909,
+        "title": "Copied wrapper title - Google Chrome",
+        "pid": 9999,
+        "pid_is_matstudio_process": False,
+        "project_id": "copied_wrapper_proj",
+        "revision": 3,
+        "source_path": str(structure),
+        "project_wrapper_metadata": copied_metadata,
+    }
+    response = {
+        "project_id": "copied_wrapper_proj",
+        "revision": 3,
+        "planned_outputs": {"structure": str(structure)},
+    }
+    gui_status = {
+        "ok": True,
+        "window_found": True,
+        "current_revision_loaded": True,
+        "single_window_policy_ok": True,
+        "target_window_pid_is_matstudio_process": False,
+        "window": copied_window,
+        "target_window": copied_window,
+        "windows": [copied_window],
+        "target_window_resolution": {
+            "matched_project_window": True,
+            "matching_window_count": 1,
+            "target_project_wrapper_metadata": copied_metadata,
+        },
+        "window_management": {
+            "target_window_pid_is_matstudio_process": False,
+            "single_window_policy_ok": True,
+        },
+    }
+
+    assert server._gui_status_window_is_trusted(copied_window) is False
+    assert (
+        server._gui_status_window_matches_project(response, copied_window)
+        is False
+    )
+    assert server._gui_status_verified_current_target(gui_status) is False
+    consistency = server._gui_status_window_consistency(
+        response,
+        copied_window,
+        prefix="target_window",
+        status_probed=True,
+    )
+    assert consistency["target_window_identity_verification"] == "mismatched"
+    assert (
+        "target_window_pid_not_verified_as_live_matstudio_process"
+        in consistency["target_window_stale_reasons"]
+    )
+    preflight = server._latest_project_gui_preflight_summary(
+        {
+            "available": True,
+            "project_id": "copied_wrapper_proj",
+            "revision": 3,
+            "planned_structure": str(structure),
+            "planned_structure_exists": True,
+        },
+        gui_status,
+    )
+    assert preflight["loaded_current_revision"] is False
+    assert preflight["matching_window_count"] == 0
+
+
+def test_target_bound_reports_and_visual_confirmation_ignore_selected_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    structure = tmp_path / "target_r003.cif"
+    structure.write_text("data_target\n", encoding="utf-8")
+    target_title = "msmcp_r003_target - Materials Studio"
+    target_metadata = {
+        "project_id": "target_bound_proj",
+        "revision": 3,
+        "source_path": str(structure),
+        "wrapper_integrity_verified": True,
+        "wrapper_workspace_matches_controller": True,
+        "wrapper_provenance_status": "verified_revision_wrapper",
+    }
+    selected = {
+        "handle": 101,
+        "title": "other_session - Materials Studio",
+        "pid": 1111,
+        "pid_is_matstudio_process": True,
+        "is_selected": True,
+        "is_foreground": False,
+    }
+    target = {
+        "handle": 303,
+        "title": target_title,
+        "pid": 3333,
+        "pid_is_matstudio_process": True,
+        "project_id": "target_bound_proj",
+        "revision": 3,
+        "source_path": str(structure),
+        "wrapper_integrity_verified": True,
+        "wrapper_workspace_matches_controller": True,
+        "wrapper_provenance_status": "verified_revision_wrapper",
+        "project_wrapper_metadata": target_metadata,
+        "is_selected": False,
+        "is_foreground": True,
+    }
+    management = {
+        "process_count": 2,
+        "window_count": 2,
+        "single_window_policy_ok": True,
+        "matched_project_window": True,
+        "target_window_has_project_metadata": True,
+        "target_window_pid_is_matstudio_process": True,
+        "target_wrapper_integrity_verified": True,
+        "target_window_wrapper_workspace_matches_controller": True,
+        "target_window_project_id": "target_bound_proj",
+        "target_window_revision": 3,
+        "target_window_handle": target["handle"],
+        "target_window_title": target_title,
+        "current_revision_loaded": True,
+    }
+    gui_status = {
+        "ok": True,
+        "supported": True,
+        "window_found": True,
+        "window": selected,
+        "target_window": target,
+        "windows": [selected, target],
+        "selected_window_handle": selected["handle"],
+        "current_revision_loaded": True,
+        "single_window_policy_ok": True,
+        "target_window_pid_is_matstudio_process": True,
+        "target_window_resolution": {
+            "matched_project_window": True,
+            "matching_window_count": 1,
+            "target_handle": target["handle"],
+            "target_title": target_title,
+            "fallback_used": False,
+            "target_project_wrapper_metadata": target_metadata,
+        },
+        "window_management": management,
+    }
+    response = {
+        "ok": True,
+        "project_id": "target_bound_proj",
+        "revision": 3,
+        "execution_mode": "execute",
+        "planned_outputs": {"structure": str(structure)},
+        "result": {"success": True},
+    }
+
+    summary = server._gui_report_summary(
+        response,
+        gui_status=gui_status,
+        gui_open=None,
+    )
+    assert summary["window_handle"] == target["handle"]
+    assert summary["window_title"] == target_title
+
+    class FixedStatusGui:
+        def status(self, *, project_id=None, revision=None):
+            assert project_id == "target_bound_proj"
+            assert revision == 3
+            return gui_status
+
+    monkeypatch.setattr(
+        server,
+        "_persist_gui_visual_confirmation_report",
+        lambda **kwargs: {},
+    )
+    recorded = server._record_gui_visual_confirmation_action(
+        gui=FixedStatusGui(),
+        sync_context={
+            "project_id": "target_bound_proj",
+            "revision": 3,
+            "project_resolution": {},
+        },
+        source="computer_use",
+        model_visible=True,
+        note="target project is visible",
+        screenshot_path=None,
+        expected_window_handle=None,
+        expected_window_title=None,
+        evidence_request=None,
+        working_dir=str(tmp_path),
+        response_mode="full",
+        transaction={"path": str(tmp_path / "gui_artifact_report.lock")},
+    )
+    assert recorded["ok"] is True
+    assert recorded["visual_confirmation_binding"]["ok"] is True
+    assert recorded["visual_confirmation"]["window"]["handle"] == target[
+        "handle"
+    ]
+    assert recorded["visual_confirmation"]["window"]["title"] == target_title
 
 
 def test_gui_copy_script_assist_without_project_reports_latest_current_window(monkeypatch, tmp_path: Path) -> None:
@@ -1543,7 +1942,7 @@ def test_gui_view_replay_tools_support_compact_response_mode(monkeypatch, tmp_pa
     target_window = WindowInfo(
         handle=404,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=3333,
+        pid=2222,
         rect=(0, 0, 1024, 768),
     )
     backend.window = target_window
@@ -1731,7 +2130,7 @@ def test_gui_record_view_replay_requires_and_archives_reviewed_copy_script(
     target_window = WindowInfo(
         handle=405,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=3334,
+        pid=2222,
         rect=(0, 0, 1024, 768),
     )
     backend.window = target_window
@@ -1871,7 +2270,7 @@ def test_live_view_replay_confirmation_accepts_strict_copy_script_payload(
     target_window = WindowInfo(
         handle=406,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=3335,
+        pid=2222,
         rect=(0, 0, 1024, 768),
     )
     backend.window = target_window
@@ -2599,7 +2998,7 @@ def test_molecule_standard_view_keeps_legacy_camera_acceptance_contract(
     target_window = WindowInfo(
         handle=777,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=7777,
+        pid=2222,
         rect=(0, 0, 1024, 768),
     )
     backend.window = target_window
@@ -5833,6 +6232,7 @@ def test_dopant_metadata_reconcile_explicit_hotload_reuses_single_gui_process(
     assert repaired["gui_status"]["process_count"] == 1
     assert repaired["gui_status"]["window_count"] == 1
     assert backend.opened and backend.opened[-1].suffix == ".cif"
+    assert repaired["gui_open"]["structure_path"].endswith(".cif")
 
 
 def test_crystal_cif_roundtrip_blocks_tampered_artifact_and_rematerializes_same_revision(
@@ -9047,7 +9447,9 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert view_replay_policy[
         "crystallographic_direction_legacy_review_gate_field_is_conservative"
     ] is True
-    assert view_replay_policy["requires_exactly_one_matstudio_process"] is True
+    assert view_replay_policy["requires_exactly_one_matstudio_process"] is False
+    assert view_replay_policy["requires_effective_target_window_isolation"] is True
+    assert view_replay_policy["unrelated_matstudio_processes_allowed"] is True
     assert view_replay_policy["pre_activation_screenshot_may_capture_occluding_window"] is True
     assert view_replay_policy["blind_toolbar_or_coordinate_actions_allowed"] is False
     trusted_visual_policy = view_replay_policy[
@@ -9090,16 +9492,39 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert single_window_policy["auto_launch_during_open_allowed"] is False
     assert single_window_policy["material_studio_gui_launch_reuses_existing_window"] is True
     assert single_window_policy["material_studio_gui_launch_refuses_process_without_window"] is True
-    assert single_window_policy["material_studio_gui_launch_refuses_multiple_matstudio_windows"] is True
+    assert single_window_policy[
+        "material_studio_gui_launch_refuses_unscoped_multiple_matstudio_windows"
+    ] is True
+    assert single_window_policy[
+        "material_studio_gui_launch_allows_exact_project_target_process"
+    ] is True
     assert single_window_policy["material_studio_gui_open_structure_never_launches_matstudio"] is True
     assert single_window_policy["material_studio_gui_apply_current_revision_reuses_existing_window"] is True
-    assert single_window_policy["hotload_refuses_multiple_matstudio_windows"] is True
-    assert single_window_policy["execute_open_in_gui_preflight_blocks_multiple_windows"] is True
+    assert single_window_policy[
+        "hotload_refuses_ambiguous_or_same_process_multiple_windows"
+    ] is True
+    assert single_window_policy[
+        "hotload_allows_unrelated_matstudio_processes_with_exact_target"
+    ] is True
+    assert single_window_policy[
+        "execute_open_in_gui_preflight_blocks_unscoped_multiple_windows"
+    ] is True
+    assert single_window_policy[
+        "unrelated_process_dialogs_are_not_target_dialogs"
+    ] is True
+    assert single_window_policy[
+        "non_matstudio_title_matches_are_ignored_by_pid"
+    ] is True
     assert single_window_policy["explicit_blank_session_launch_tool"] == "material_studio_gui_launch"
     assert "single_window_policy_ok" in single_window_policy["status_fields"]
+    assert "window_isolation_mode" in single_window_policy["status_fields"]
+    assert (
+        "window_management.project_scoped_multi_instance_isolation"
+        in single_window_policy["status_fields"]
+    )
     assert "window_management.single_window_violation_reasons" in single_window_policy["status_fields"]
     assert (
-        "Keep a single Materials Studio GUI window for hot-loaded revisions; close/save extra windows before continuing live edits."
+        "Keep each hot-loaded revision bound to one exact Materials Studio PID/window; unrelated verified sessions may remain open."
         in capabilities["gui"]["recommended_workflow"]
     )
     assert "material_studio_live_project_status after hot-loading" in capabilities["gui"]["recommended_workflow"][-1]
@@ -9131,7 +9556,18 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["open_structure_policy"]["generated_structure_project_wrapper"] is True
     assert capabilities["gui"]["open_structure_policy"]["requires_existing_matstudio_window"] is True
     assert capabilities["gui"]["open_structure_policy"]["single_window_policy_enforced_before_open"] is True
-    assert capabilities["gui"]["open_structure_policy"]["refuses_multiple_matstudio_windows"] is True
+    assert capabilities["gui"]["open_structure_policy"][
+        "refuses_unscoped_multiple_matstudio_windows"
+    ] is True
+    assert capabilities["gui"]["open_structure_policy"][
+        "allows_exact_project_target_amid_unrelated_processes"
+    ] is True
+    assert capabilities["gui"]["open_structure_policy"][
+        "refuses_multiple_primary_windows_in_target_process"
+    ] is True
+    assert capabilities["gui"]["open_structure_policy"][
+        "ignores_unrelated_process_dialogs"
+    ] is True
     assert capabilities["gui"]["open_structure_policy"]["requires_explicit_activation_before_gui_input"] is True
     assert capabilities["gui"]["open_structure_policy"]["refuses_automatic_activation_for_inactive_target"] is True
     assert capabilities["gui"]["open_structure_policy"]["activation_retry_tool"] == "material_studio_gui_activate"
@@ -10183,7 +10619,11 @@ def test_live_modeling_request_flags_post_open_spawned_matstudio_process(
         take_snapshot=False,
     )
 
-    assert result["ok"] is True
+    assert result["ok"] is False
+    assert result["partial_success"] is True
+    assert result["status"] == "execution_completed_gui_target_ambiguous"
+    assert result["execution_must_not_repeat"] is True
+    assert result["hotload_completion_verified"] is False
     assert result["execution_mode"] == "execute"
     assert result["gui_open"]["same_window_open_used"] is True
     assert result["gui_open"]["open_result"]["spawned_process_ids"] == [8888]
@@ -10196,12 +10636,17 @@ def test_live_modeling_request_flags_post_open_spawned_matstudio_process(
     assert result["gui_same_window_open_used"] is True
     assert result["gui_open_spawned_process_ids"] == [8888]
     assert result["gui_open"]["single_window_policy_ok"] is False
-    assert "multiple_matstudio_processes_detected" in result["gui_open"]["single_window_violation_reasons"]
+    assert (
+        "multiple_matstudio_processes_detected"
+        not in result["gui_open"]["single_window_violation_reasons"]
+    )
     assert (
         "matstudio_process_spawned_during_same_window_open"
         in result["gui_open"]["single_window_violation_reasons"]
     )
     report = result["modeling_report"]
+    assert report["gui"]["hot_loaded"] is False
+    assert report["gui"]["hot_loaded_from_gui_open_artifact"] is False
     assert report["gui"]["single_window_policy_ok"] is False
     assert report["gui"]["post_open_single_window_policy_ok"] is False
     assert "matstudio_process_spawned_during_same_window_open" in report["gui"]["single_window_violation_reasons"]
@@ -10213,7 +10658,7 @@ def test_live_modeling_request_flags_post_open_spawned_matstudio_process(
     assert result["live_summary"]["mcp_can_claim_live_gui_normal"] is False
     assert result["live_summary"]["mcp_single_window_policy_ok"] is False
     assert result["live_summary"]["mcp_post_open_single_window_policy_ok"] is False
-    assert "multiple_matstudio_processes_detected" in result["live_summary"][
+    assert "multiple_matstudio_processes_detected" not in result["live_summary"][
         "mcp_post_open_single_window_violation_reasons"
     ]
     assert "matstudio_process_spawned_during_same_window_open" in result["live_summary"][
@@ -10226,7 +10671,7 @@ def test_live_modeling_request_flags_post_open_spawned_matstudio_process(
     )
     assert len(summary_rows) == 1
     assert summary_rows[0]["gui_post_open_single_window_policy_ok"] == "False"
-    assert "multiple_matstudio_processes_detected" in json.loads(
+    assert "multiple_matstudio_processes_detected" not in json.loads(
         summary_rows[0]["gui_post_open_single_window_violation_reasons"]
     )
     assert "matstudio_process_spawned_during_same_window_open" in json.loads(
@@ -10543,9 +10988,11 @@ def test_external_visual_confirmation_satisfies_live_gui_acceptance(tmp_path: Pa
             "window": {
                 "handle": 101,
                 "title": "visual_confirm_proj - Materials Studio",
-                "project_id": "visual_confirm_proj",
-                "revision": 0,
-                "source_path": str(structure),
+                **_trusted_gui_window_fields(
+                    "visual_confirm_proj",
+                    0,
+                    structure,
+                ),
                 "is_selected": True,
                 "is_foreground": True,
             },
@@ -10553,9 +11000,11 @@ def test_external_visual_confirmation_satisfies_live_gui_acceptance(tmp_path: Pa
                 {
                     "handle": 101,
                     "title": "visual_confirm_proj - Materials Studio",
-                    "project_id": "visual_confirm_proj",
-                    "revision": 0,
-                    "source_path": str(structure),
+                    **_trusted_gui_window_fields(
+                        "visual_confirm_proj",
+                        0,
+                        structure,
+                    ),
                     "is_selected": True,
                     "is_foreground": True,
                 }
@@ -10672,7 +11121,7 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    backend = MultiWindowFakeGuiBackend()
+    backend = MultiProcessFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
 
@@ -10689,7 +11138,7 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     target_window = WindowInfo(
         handle=303,
         title=f"{wrapper['project_name']} - Materials Studio",
-        pid=2222,
+        pid=3333,
         rect=(0, 0, 1024, 768),
     )
     backend.windows = [backend.window, target_window]
@@ -10714,9 +11163,9 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["snapshot_deferred"] is False
     assert activated["snapshot"]["window_management"]["needs_snapshot"] is False
     assert activated["window_management"]["recommended_tool"] == (
-        "material_studio_gui_status"
+        "material_studio_live_project_status"
     )
-    assert activated["window_management"]["single_window_policy_ok"] is False
+    assert activated["window_management"]["single_window_policy_ok"] is True
     assert Path(activated["snapshot"]["screenshot_path"]).exists()
     assert activated["structured_sync"]["persisted"] is True
     assert activated["structured_sync"]["project_id"] == created["project_id"]
@@ -10730,9 +11179,13 @@ def test_gui_activate_can_snapshot_and_persist_current_revision_report(
     assert activated["modeling_report"]["gui"]["snapshot_source"] == "gui_snapshot"
     assert activated["modeling_report"]["gui"]["loaded_current_revision"] is True
     assert activated["gui_current_revision"]["target_window_loaded"] is True
-    assert activated["gui_current_revision"]["status"] == "single_window_policy_review"
-    assert activated["gui_current_revision"]["needs_single_window_resolution"] is True
-    assert activated["gui_current_revision"]["recommended_tool"] == "material_studio_gui_status"
+    assert activated["gui_current_revision"]["status"] == (
+        "current_and_visually_verified"
+    )
+    assert activated["gui_current_revision"]["needs_single_window_resolution"] is False
+    assert activated["gui_current_revision"]["recommended_tool"] == (
+        "material_studio_live_modeling_request"
+    )
     assert activated["gui_current_revision"]["payload_hint"] == {
         "working_dir": str(tmp_path.resolve())
     }
@@ -11580,7 +12033,7 @@ def test_live_project_status_marks_persisted_hotload_stale_when_gui_window_missi
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     result = server.material_studio_live_modeling_request(
@@ -13186,15 +13639,10 @@ def test_model_export_view_bundle_reports_gui_snapshot_summary(monkeypatch, tmp_
     assert gui["hot_loaded"] is False
     assert gui["window_found"] is True
     assert gui["window_title"] == "Untitled - Materials Studio"
-    assert gui["snapshot_source"] == "gui_artifact"
-    assert Path(gui["snapshot_path"]).exists()
-    assert gui["snapshot_readable"] is True
-    assert gui["snapshot_likely_nonblank"] is True
-    assert gui["snapshot_width"] == 2
-    assert gui["snapshot_height"] == 2
-    assert gui["snapshot_unique_sampled_colors"] == 4
-    assert gui["snapshot_dominant_color_ratio"] == 0.25
-    assert gui["visual_validation"] == "passed"
+    assert gui["snapshot_source"] is None
+    assert gui["snapshot_path"] is None
+    assert gui["snapshot_readable"] is None
+    assert gui["visual_validation"] == "not_available"
     assert gui["gui_artifact_count"] == 1
 
 
@@ -13334,7 +13782,7 @@ def test_model_export_view_tools_use_latest_project_when_id_omitted(monkeypatch,
 
 
 def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
@@ -13420,8 +13868,8 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert executed["modeling_health"]["verdict"] == "passed"
     assert executed["modeling_health"]["checks"]["gui_loaded_current_revision"] is True
     assert executed["modeling_health"]["checks"]["gui_stale_reasons"] == []
-    assert executed["modeling_health"]["checks"]["gui_open_identity_verification"] == "matched_open_artifact"
-    assert executed["modeling_health"]["checks"]["gui_window_identity_verification"] == "unverified"
+    assert executed["modeling_health"]["checks"]["gui_open_identity_verification"] == "verified_project_wrapper"
+    assert executed["modeling_health"]["checks"]["gui_window_identity_verification"] == "verified"
     assert "gui_open" in executed
     high_level_transaction = executed["gui_action_transaction"]
     assert high_level_transaction["path"] == executed["report_write_transaction"]["path"]
@@ -13434,12 +13882,16 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
         "gui_snapshot",
         "report_read_modify_write",
     } <= set(high_level_transaction["coverage"])
-    assert executed["modeling_report"]["normality"] == "review_warnings"
+    assert executed["modeling_report"]["normality"] == "hot_loaded_and_passed"
     normality_gate = executed["modeling_report"]["normality_gate"]
     assert normality_gate["status"] == "review_required"
     assert normality_gate["can_claim_model_normal"] is False
     assert normality_gate["can_claim_live_gui_normal"] is False
-    assert "gui:window_identity_unverified" in normality_gate["must_not_claim_normal_reasons"]
+    assert set(normality_gate["must_not_claim_normal_reasons"]) == {
+        "view:degenerate_projection_views",
+        "view:projection_overlaps",
+        "view:view_warnings",
+    }
     assert executed["normality_gate"] == normality_gate
     assert executed["live_summary"]["normality_gate_status"] == "review_required"
     assert executed["live_summary"]["can_claim_live_gui_normal"] is False
@@ -13448,9 +13900,12 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert readiness["ready_for_next_edit"] is True
     assert readiness["recommended_tool"] == "material_studio_live_modeling_request"
     assert readiness["recommended_action"] in {"continue_next_model_edit", "review_flags_then_continue_next_model_edit"}
-    assert "gui:window_identity_unverified" in readiness["review_reasons"]
-    assert "view:gui_window_identity_unverified" in readiness["review_reasons"]
-    assert "gui_window_identity_unverified" in executed["modeling_report"]["view_review"]["risk_flags"]
+    assert set(readiness["review_reasons"]) == {
+        "view:degenerate_projection_views",
+        "view:projection_overlaps",
+        "view:view_warnings",
+    }
+    assert "gui_window_identity_unverified" not in executed["modeling_report"]["view_review"]["risk_flags"]
     assert executed["modeling_report"]["gui"]["hot_loaded"] is True
     assert executed["gui_open"]["project_id"] == "gui_execute_proj"
     assert executed["gui_open"]["revision"] == 0
@@ -13460,18 +13915,18 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert executed["modeling_report"]["gui"]["structure_path_matches_current"] is True
     assert executed["modeling_report"]["gui"]["loaded_current_revision"] is True
     assert executed["modeling_report"]["gui"]["stale_reason_count"] == 0
-    assert executed["modeling_report"]["gui"]["open_identity_verification"] == "matched_open_artifact"
-    assert executed["modeling_report"]["gui"]["window_identity_verification"] == "unverified"
-    assert executed["modeling_report"]["gui"]["selected_window_identity_verification"] == "unverified"
-    assert executed["modeling_report"]["gui"]["foreground_window_identity_verification"] == "unverified"
-    assert executed["modeling_report"]["gui_current_revision"]["window_identity_verification"] == "unverified"
-    assert executed["modeling_report"]["gui_current_revision"]["open_identity_verification"] == "matched_open_artifact"
-    assert executed["modeling_report"]["change_receipt"]["gui_current_revision"]["window_identity_verification"] == "unverified"
-    assert executed["modeling_report"]["change_receipt"]["gui_current_revision"]["open_identity_verification"] == "matched_open_artifact"
-    assert executed["live_summary"]["gui_current_revision_open_identity_verification"] == "matched_open_artifact"
-    assert executed["live_summary"]["gui_current_revision_window_identity_verification"] == "unverified"
+    assert executed["modeling_report"]["gui"]["open_identity_verification"] == "verified_project_wrapper"
+    assert executed["modeling_report"]["gui"]["window_identity_verification"] == "verified"
+    assert executed["modeling_report"]["gui"]["selected_window_identity_verification"] == "verified"
+    assert executed["modeling_report"]["gui"]["foreground_window_identity_verification"] == "verified"
+    assert executed["modeling_report"]["gui_current_revision"]["window_identity_verification"] == "verified"
+    assert executed["modeling_report"]["gui_current_revision"]["open_identity_verification"] == "verified_project_wrapper"
+    assert executed["modeling_report"]["change_receipt"]["gui_current_revision"]["window_identity_verification"] == "verified"
+    assert executed["modeling_report"]["change_receipt"]["gui_current_revision"]["open_identity_verification"] == "verified_project_wrapper"
+    assert executed["live_summary"]["gui_current_revision_open_identity_verification"] == "verified_project_wrapper"
+    assert executed["live_summary"]["gui_current_revision_window_identity_verification"] == "verified"
     assert executed["modeling_report"]["gui"]["snapshot_path"] == executed["gui_open"]["snapshot"]["screenshot_path"]
-    assert executed["modeling_report"]["gui"]["window_title"] == "Untitled - Materials Studio"
+    assert executed["modeling_report"]["gui"]["window_title"].endswith(" - Materials Studio")
     assert executed["modeling_report"]["gui"]["activated_existing_window"] is True
     assert executed["modeling_report"]["gui"]["open_method"] == "fake"
     assert executed["modeling_report"]["gui"]["opened_structure_path"].endswith("gui_execute_proj_r000.xsd")
@@ -13483,7 +13938,8 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert executed["modeling_report"]["gui"]["visual_validation"] == "passed"
     assert Path(executed["modeling_report"]["gui"]["snapshot_path"]).exists()
     assert backend.opened
-    assert backend.opened[0].name == "gui_execute_proj_r000.xsd"
+    assert backend.opened[0].suffix == ".stp"
+    assert executed["gui_open"]["project_wrapper"]["source_path"].endswith("gui_execute_proj_r000.xsd")
     assert Path(executed["view_audit_report_path"]).exists()
     assert Path(executed["report_json_path"]).exists()
     report_payload = json.loads(Path(executed["view_audit_report_path"]).read_text(encoding="utf-8"))
@@ -13491,10 +13947,10 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     assert report_payload["modeling_health"]["verdict"] == "passed"
     health_summary_rows = list(csv.DictReader(Path(executed["view_bundle_files"]["modeling_health_summary_csv"]).open(encoding="utf-8")))
     assert len(health_summary_rows) == 1
-    assert health_summary_rows[0]["gui_open_identity_verification"] == "matched_open_artifact"
-    assert health_summary_rows[0]["gui_window_identity_verification"] == "unverified"
-    assert health_summary_rows[0]["gui_selected_window_identity_verification"] == "unverified"
-    assert health_summary_rows[0]["gui_foreground_window_identity_verification"] == "unverified"
+    assert health_summary_rows[0]["gui_open_identity_verification"] == "verified_project_wrapper"
+    assert health_summary_rows[0]["gui_window_identity_verification"] == "verified"
+    assert health_summary_rows[0]["gui_selected_window_identity_verification"] == "verified"
+    assert health_summary_rows[0]["gui_foreground_window_identity_verification"] == "verified"
     report_summary_path = Path(executed["view_bundle_files"]["modeling_report_summary_csv"])
     assert report_summary_path.exists()
     assert executed["modeling_report"]["diagnostics"]["modeling_report_summary_csv"] == str(report_summary_path)
@@ -13506,18 +13962,26 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     report_summary = report_summary_rows[0]
     assert report_summary["project_id"] == "gui_execute_proj"
     assert report_summary["revision"] == "0"
-    assert report_summary["normality"] == "review_warnings"
+    assert report_summary["normality"] == "hot_loaded_and_passed"
     assert report_summary["normality_gate_status"] == "review_required"
     assert report_summary["can_claim_model_normal"] == "False"
     assert report_summary["can_claim_live_gui_normal"] == "False"
-    assert "gui:window_identity_unverified" in json.loads(report_summary["normality_gate_reasons"])
+    assert set(json.loads(report_summary["normality_gate_reasons"])) == {
+        "view:degenerate_projection_views",
+        "view:projection_overlaps",
+        "view:view_warnings",
+    }
     assert report_summary["readiness_state"] == readiness["state"]
     assert report_summary["ready_for_next_edit"] == "True"
     assert report_summary["ready_for_calculation"] == "True"
     assert report_summary["hot_loaded"] == "True"
-    assert report_summary["gui_open_identity_verification"] == "matched_open_artifact"
-    assert report_summary["gui_window_identity_verification"] == "unverified"
-    assert "gui:window_identity_unverified" in json.loads(report_summary["review_reasons"])
+    assert report_summary["gui_open_identity_verification"] == "verified_project_wrapper"
+    assert report_summary["gui_window_identity_verification"] == "verified"
+    assert set(json.loads(report_summary["review_reasons"])) == {
+        "view:degenerate_projection_views",
+        "view:projection_overlaps",
+        "view:view_warnings",
+    }
     assert report_summary["report_json_path"] == executed["report_json_path"]
     assert report_summary["view_audit_report_path"] == executed["view_audit_report_path"]
     assert report_summary["view_bundle_manifest_path"] == executed["view_bundle_manifest_path"]
@@ -13534,14 +13998,14 @@ def test_gui_apply_current_revision_execute_opens_output(monkeypatch, tmp_path: 
     )
     assert status["ok"] is True
     assert status["modeling_health"]["verdict"] == "passed"
-    assert status["modeling_report"]["normality"] == "review_warnings"
+    assert status["modeling_report"]["normality"] == "hot_loaded_and_passed"
     assert status["modeling_report"]["normality_gate"]["status"] == "review_required"
     assert status["live_summary"]["can_claim_model_normal"] is False
     assert status["modeling_report"]["gui"]["hot_loaded"] is True
     assert status["modeling_report"]["gui"]["loaded_current_revision"] is True
-    assert status["modeling_report"]["gui"]["window_identity_verification"] == "unverified"
-    assert status["modeling_report"]["gui"]["open_identity_verification"] == "matched_open_artifact"
-    assert "gui:window_identity_unverified" in status["modeling_report"]["live_readiness"]["review_reasons"]
+    assert status["modeling_report"]["gui"]["window_identity_verification"] == "verified"
+    assert status["modeling_report"]["gui"]["open_identity_verification"] == "verified_project_wrapper"
+    assert "gui:window_identity_unverified" not in status["modeling_report"]["live_readiness"]["review_reasons"]
     assert status["modeling_report"]["gui"]["snapshot_likely_nonblank"] is True
     assert status["modeling_report"]["gui"]["visual_validation"] == "passed"
     assert Path(status["view_bundle_manifest_path"]).exists()
@@ -13801,7 +14265,7 @@ def test_gui_apply_current_revision_execute_requires_reactivation_after_runner_f
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    backend = MinimizedGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     backend.window = WindowInfo(
         handle=101,
         title="active-before-execution - Materials Studio",
@@ -13871,9 +14335,8 @@ def test_gui_apply_current_revision_execute_requires_reactivation_after_runner_f
     assert block["execution_retry_allowed"] is False
     assert executed["recommended_tool"] == "material_studio_gui_activate"
     assert executed["gui_activation_retry_payload"] == {
-        "project_id": project_id,
-        "revision": created["revision"],
-        "take_snapshot": True,
+        "take_snapshot": False,
+        "use_unscoped_existing_window": True,
         "working_dir": str(tmp_path.resolve()),
     }
     assert executed["gui_open_retry_tool"] == "material_studio_gui_open_structure"
@@ -13920,6 +14383,10 @@ def test_gui_apply_current_revision_execute_requires_reactivation_after_runner_f
         **executed["gui_activation_retry_payload"]
     )
     assert activated["ok"] is True
+    assert activated["activation_verified"] is True
+    assert activated["unscoped_existing_window_activation"] is True
+    assert activated["resolved_latest_current_for_activate"] is False
+    assert "snapshot" not in activated
     opened = server.material_studio_gui_open_structure(
         **executed["gui_open_retry_payload"]
     )
@@ -13968,9 +14435,8 @@ def test_live_modeling_create_execute_requires_activation_before_running(
     assert backend.opened == []
     assert "result" not in result
     assert result["gui_activation_retry_payload"] == {
-        "project_id": project_id,
-        "revision": 0,
-        "take_snapshot": True,
+        "take_snapshot": False,
+        "use_unscoped_existing_window": True,
         "working_dir": str(tmp_path.resolve()),
     }
     assert result["execution_retry_tool"] == "material_studio_gui_apply_current_revision"
@@ -14181,20 +14647,17 @@ def test_modeling_report_accepts_receipt_bound_visual_structure_derivative(tmp_p
             "window": {"handle": 200, "title": "msmcp_r000_visual - Materials Studio"},
             "selected_window_handle": 200,
             "windows": [
-                {
-                    "handle": 200,
-                    "title": "msmcp_r000_visual - Materials Studio",
-                    "is_selected": True,
-                    "is_foreground": True,
-                    "project_id": "visual_derivative_proj",
-                    "revision": 0,
-                    "source_path": str(visual_structure),
-                    "project_wrapper_metadata": {
-                        "project_id": "visual_derivative_proj",
-                        "revision": 0,
-                        "source_path": str(visual_structure),
-                    },
-                }
+                    {
+                        "handle": 200,
+                        "title": "msmcp_r000_visual - Materials Studio",
+                        **_trusted_gui_window_fields(
+                            "visual_derivative_proj",
+                            0,
+                            visual_structure,
+                        ),
+                        "is_selected": True,
+                        "is_foreground": True,
+                    }
             ],
         },
         "gui_open": {
@@ -14470,16 +14933,13 @@ def test_modeling_report_verifies_current_revision_from_matching_wrapper_window(
                 {
                     "handle": 200,
                     "title": "msmcp_r001_current - Materials Studio",
+                    **_trusted_gui_window_fields(
+                        "matching_wrapper_window_proj",
+                        1,
+                        structure,
+                    ),
                     "is_selected": False,
                     "is_foreground": False,
-                    "project_id": "matching_wrapper_window_proj",
-                    "revision": 1,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": "matching_wrapper_window_proj",
-                        "revision": 1,
-                        "source_path": str(structure),
-                    },
                 },
             ],
         },
@@ -14630,16 +15090,13 @@ def test_modeling_report_suppresses_open_activation_warning_when_foreground_veri
                 {
                     "handle": 200,
                     "title": "msmcp_r001_current - Materials Studio",
+                    **_trusted_gui_window_fields(
+                        "inactive_opened_window_proj",
+                        1,
+                        structure,
+                    ),
                     "is_selected": True,
                     "is_foreground": True,
-                    "project_id": "inactive_opened_window_proj",
-                    "revision": 1,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": "inactive_opened_window_proj",
-                        "revision": 1,
-                        "source_path": str(structure),
-                    },
                 }
             ],
         },
@@ -15307,7 +15764,7 @@ def test_modeling_report_marks_critical_view_review_problem() -> None:
 
 
 def test_live_update_with_patch_execute_opens_gui(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
@@ -15349,7 +15806,238 @@ def test_live_update_with_patch_execute_opens_gui(monkeypatch, tmp_path: Path) -
         "report_read_modify_write",
     } <= set(high_level_transaction["coverage"])
     assert backend.opened
-    assert backend.opened[0].name == "live_execute_proj_r001.xsd"
+    assert backend.opened[0].suffix == ".stp"
+    assert updated["gui_open"]["project_wrapper"]["source_path"].endswith(
+        "live_execute_proj_r001.xsd"
+    )
+
+
+def test_live_patch_hotloads_new_revision_into_existing_project_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectScopedMultiProcessGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: controller)
+
+    project_id = "project_scoped_patch_proj"
+    created = server.material_studio_model_create_from_spec(
+        load_benzene(project_id),
+        working_dir=str(tmp_path),
+    )
+    revision_zero_structure = Path(created["planned_outputs"]["structure"])
+    revision_zero_structure.parent.mkdir(parents=True, exist_ok=True)
+    revision_zero_structure.write_text("revision zero", encoding="utf-8")
+    revision_zero_wrapper = controller._create_project_wrapper(
+        revision_zero_structure.resolve(),
+        project_id=project_id,
+        revision=0,
+    )
+    target = WindowInfo(
+        handle=710,
+        title=f"{revision_zero_wrapper['project_name']} - Materials Studio",
+        pid=4444,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    unrelated = WindowInfo(
+        handle=810,
+        title="other_conversation - Materials Studio",
+        pid=8888,
+        rect=(40, 40, 1000, 740),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    backend.window = target
+    backend.windows = [target, unrelated]
+
+    preflight = server._gui_status_for_revision_hotload(
+        controller,
+        project_id=project_id,
+        revision=1,
+    )
+    assert preflight["hotload_target_resolution"]["mode"] == (
+        "existing_project_revision"
+    ), json.dumps(
+        {
+            "hotload_target_resolution": preflight.get(
+                "hotload_target_resolution"
+            ),
+            "target_window_resolution": preflight.get(
+                "target_window_resolution"
+            ),
+            "window_management": preflight.get("window_management"),
+        },
+        indent=2,
+        default=str,
+    )
+    assert preflight["window_management"]["single_window_policy_ok"] is True
+
+    execution_calls: list[int] = []
+
+    def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
+        execution_calls.append(spec.revision)
+        output = (
+            store.project_dir(spec.project_id)
+            / "outputs"
+            / f"r{spec.revision:03d}"
+            / f"{spec.project_id}_r{spec.revision:03d}.xsd"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("revision one", encoding="utf-8")
+        return {
+            "result": {"success": True, "created_files": [str(output)]},
+            "result_metadata_path": str(output.parent / "result_metadata.json"),
+        }
+
+    monkeypatch.setattr(
+        server,
+        "_execute_structured_script",
+        fake_execute_structured_script,
+    )
+
+    updated = server.material_studio_live_update_with_patch(
+        project_id=project_id,
+        base_revision=0,
+        patch={
+            "operations": [
+                {
+                    "type": "set_atom_position",
+                    "atom_id": "H1",
+                    "xyz_angstrom": [2.6, 0.0, 0.0],
+                }
+            ]
+        },
+        user_text="Move H1 and hot-load the new revision.",
+        execution_mode="execute",
+        working_dir=str(tmp_path),
+    )
+
+    assert updated["ok"] is True, updated.get("error")
+    assert updated["revision"] == 1
+    assert execution_calls == [1]
+    gui_open = updated["gui_open"]
+    pre_open_resolution = gui_open["pre_open_hotload_target_resolution"]
+    assert pre_open_resolution["hotload_target_mode"] == (
+        "existing_project_revision"
+    )
+    assert pre_open_resolution["hotload_requested_revision"] == 1
+    assert pre_open_resolution["hotload_target_revision"] == 0
+    assert gui_open["window"]["handle"] == target.handle
+    assert gui_open["window"]["pid"] == target.pid
+    assert gui_open["post_open_target_window_resolution"][
+        "matching_window_count"
+    ] == 1
+    assert gui_open["post_open_window_management"][
+        "project_scoped_multi_instance_isolation"
+    ] is True
+    assert gui_open["post_open_window_management"]["target_process_id"] == (
+        target.pid
+    )
+    assert backend.opened_on_handles == [
+        (target.handle, Path(gui_open["project_wrapper"]["project_path"]))
+    ]
+    assert backend.activated_handles
+    assert set(backend.activated_handles) == {target.handle}
+    assert set(backend.captured_handles) == {target.handle}
+    assert all(window.handle != unrelated.handle or window.title == unrelated.title for window in backend.windows)
+
+
+def test_gui_open_structure_retry_uses_existing_project_revision_in_multi_instance_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectScopedMultiProcessGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: controller,
+    )
+    project_id = "project_scoped_artifact_retry"
+    created = server.material_studio_model_create_from_spec(
+        load_benzene(project_id),
+        working_dir=str(tmp_path),
+    )
+    revision_zero_structure = Path(created["planned_outputs"]["structure"])
+    revision_zero_structure.parent.mkdir(parents=True, exist_ok=True)
+    revision_zero_structure.write_text("revision zero", encoding="utf-8")
+    revision_zero_wrapper = controller._create_project_wrapper(
+        revision_zero_structure.resolve(),
+        project_id=project_id,
+        revision=0,
+    )
+    target = WindowInfo(
+        handle=711,
+        title=f"{revision_zero_wrapper['project_name']} - Materials Studio",
+        pid=4444,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    unrelated = WindowInfo(
+        handle=811,
+        title="other_conversation - Materials Studio",
+        pid=8888,
+        rect=(40, 40, 1000, 740),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    backend.window = target
+    backend.windows = [target, unrelated]
+    patched = server.material_studio_model_modify_with_patch(
+        project_id=project_id,
+        base_revision=0,
+        patch={
+            "operations": [
+                {
+                    "type": "set_atom_position",
+                    "atom_id": "H1",
+                    "xyz_angstrom": [2.6, 0.0, 0.0],
+                }
+            ]
+        },
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+    )
+    revision_one_structure = Path(patched["planned_outputs"]["structure"])
+    revision_one_structure.parent.mkdir(parents=True, exist_ok=True)
+    revision_one_structure.write_text("revision one", encoding="utf-8")
+
+    reopened = server.material_studio_gui_open_structure(
+        structure_path=str(revision_one_structure),
+        project_id=project_id,
+        revision=1,
+        take_snapshot=False,
+        export_view_audit=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert reopened["ok"] is True, reopened.get("error")
+    assert reopened["pre_open_gui_status"]["hotload_target_resolution"]["mode"] == (
+        "existing_project_revision"
+    )
+    assert reopened["gui_open"]["pre_open_hotload_target_resolution"][
+        "hotload_target_mode"
+    ] == "existing_project_revision"
+    assert reopened["gui_open"]["post_open_single_window_policy_ok"] is True
+    assert reopened["gui_open"]["window"]["handle"] == target.handle
+    assert backend.opened_on_handles == [
+        (
+            target.handle,
+            Path(reopened["gui_open"]["project_wrapper"]["project_path"]),
+        )
+    ]
+    assert set(backend.activated_handles) == {target.handle}
+    assert all(
+        window.handle != unrelated.handle or window.title == unrelated.title
+        for window in backend.windows
+    )
 
 
 def test_live_update_with_patch_auto_executes_explicit_hotload_text(monkeypatch, tmp_path: Path) -> None:
@@ -23109,7 +23797,7 @@ def test_live_modeling_request_hotloads_when_user_wants_modeling_changes_visible
 def test_live_modeling_request_handles_chinese_realtime_gui_diagnostics_and_normality(
     monkeypatch, tmp_path: Path
 ) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     result = server.material_studio_live_modeling_request(
@@ -23199,7 +23887,8 @@ def test_live_modeling_request_handles_chinese_realtime_gui_diagnostics_and_norm
     assert summary_row["current_revision_loaded_in_gui"] == "True"
     assert summary_row["loaded_current_revision"] == "True"
     assert result["view_bundle_row_counts"]["view_projections"] == 48
-    assert backend.opened and backend.opened[-1].suffix == ".cif"
+    assert backend.opened and backend.opened[-1].suffix == ".stp"
+    assert result["gui_open"]["project_wrapper"]["source_path"].endswith(".cif")
 
     snapshot = server.material_studio_gui_snapshot(
         project_id=result["project_id"],
@@ -23939,7 +24628,7 @@ def test_live_modeling_request_checks_chinese_reasonable_bond_length_anomalies(
 def test_gui_snapshot_without_project_id_uses_latest_project_context_for_paths(
     monkeypatch, tmp_path: Path
 ) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     result = server.material_studio_live_modeling_request(
@@ -23988,7 +24677,7 @@ def test_gui_snapshot_supersedes_prior_gui_open_snapshot_in_reports(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     result = server.material_studio_live_modeling_request(
@@ -30793,7 +31482,7 @@ def test_live_modeling_request_hotloads_semiconductor_heterostructure(monkeypatc
 
 
 def test_live_modeling_request_hotloads_iii_v_superlattice(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     result = server.material_studio_live_modeling_request(
@@ -30868,7 +31557,8 @@ def test_live_modeling_request_hotloads_iii_v_superlattice(monkeypatch, tmp_path
     assert result["modeling_report"]["gui"]["snapshot_path"] == result["gui_open"]["snapshot"]["screenshot_path"]
     assert Path(result["modeling_report"]["gui"]["snapshot_path"]).exists()
     assert backend.opened
-    assert backend.opened[0].suffix == ".cif"
+    assert backend.opened[0].suffix == ".stp"
+    assert result["gui_open"]["project_wrapper"]["source_path"].endswith(".cif")
 
     cjk_result = server.material_studio_live_modeling_request(
         "\u6784\u5efa\u7837\u5316\u9553/\u7837\u5316\u94dd\u91cf\u5b50\u9631\u5e76\u70ed\u52a0\u8f7d\u5230 Materials Studio\u3002",
@@ -30885,7 +31575,8 @@ def test_live_modeling_request_hotloads_iii_v_superlattice(monkeypatch, tmp_path
     assert cjk_result["result"]["execution_backend"] == "crystal_cif_materialize"
     assert cjk_result["gui_open"]["structure_path"].endswith(".cif")
     assert cjk_result["modeling_report"]["gui"]["hot_loaded"] is True
-    assert backend.opened[-1].suffix == ".cif"
+    assert backend.opened[-1].suffix == ".stp"
+    assert cjk_result["gui_open"]["project_wrapper"]["source_path"].endswith(".cif")
 
 
 def test_live_modeling_request_hotload_does_not_launch_gui_when_window_missing(monkeypatch, tmp_path: Path) -> None:
@@ -32267,19 +32958,34 @@ def test_diagnostic_export_lock_timeout_preserves_report_and_skips_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     monkeypatch.setattr(
         server,
         "_gui_controller",
-        lambda working_dir=None: MaterialsStudioGuiController(
-            working_dir,
-            backend=backend,
-        ),
+        lambda working_dir=None: controller,
     )
     spec = load_benzene("diagnostic_export_timeout")
     created = server.material_studio_model_create_from_spec(
         spec,
         working_dir=str(tmp_path),
+    )
+    structure_path = Path(created["planned_outputs"]["structure"])
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    structure_path.write_text("loaded current revision", encoding="utf-8")
+    wrapper = controller._create_project_wrapper(
+        structure_path.resolve(),
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    backend.window = WindowInfo(
+        handle=501,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=4444,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
     )
     baseline = server.material_studio_model_export_view_bundle(
         project_id=created["project_id"],
@@ -32910,7 +33616,7 @@ def test_gui_artifact_report_lock_timeout_preserves_report(
     assert recorded["ok"] is True
 
 
-def test_high_level_patch_waits_for_snapshot_transaction_before_hotload(
+def test_high_level_patch_waits_for_existing_gui_artifact_transaction_before_hotload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -32958,16 +33664,10 @@ def test_high_level_patch_waits_for_snapshot_transaction_before_hotload(
     assert loaded["ok"] is True
     initial_open_count = len(backend.opened)
 
-    capture_started = threading.Event()
-    release_capture = threading.Event()
+    report_transaction_started = threading.Event()
+    release_report_transaction = threading.Event()
     contention_observed = threading.Event()
-    original_capture = backend.capture_window
     original_lock_attempt = gui_module._lock_file_descriptor_nonblocking
-
-    def blocking_capture(window: WindowInfo, output_path: Path) -> Path:
-        capture_started.set()
-        assert release_capture.wait(timeout=10.0)
-        return original_capture(window, output_path)
 
     def observed_lock_attempt(file_descriptor: int) -> None:
         try:
@@ -32976,8 +33676,18 @@ def test_high_level_patch_waits_for_snapshot_transaction_before_hotload(
             contention_observed.set()
             raise
 
-    monkeypatch.setattr(backend, "capture_window", blocking_capture)
     monkeypatch.setattr(gui_module, "_lock_file_descriptor_nonblocking", observed_lock_attempt)
+
+    def hold_gui_artifact_transaction() -> dict:
+        with server._gui_artifact_report_transaction(
+            project_id=created["project_id"],
+            revision=1,
+            working_dir=str(tmp_path),
+            coverage=("test_existing_gui_artifact_transaction",),
+        ) as transaction:
+            report_transaction_started.set()
+            assert release_report_transaction.wait(timeout=10.0)
+            return dict(transaction)
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         patch_future = executor.submit(
@@ -33001,32 +33711,24 @@ def test_high_level_patch_waits_for_snapshot_transaction_before_hotload(
             working_dir=str(tmp_path),
         )
         assert patch_execution_ready.wait(timeout=10.0)
-        snapshot_future = executor.submit(
-            server.material_studio_gui_snapshot,
-            "high_level_patch_blocker",
-            created["project_id"],
-            1,
-            str(tmp_path),
-        )
-        assert capture_started.wait(timeout=10.0)
+        holder_future = executor.submit(hold_gui_artifact_transaction)
+        assert report_transaction_started.wait(timeout=10.0)
         release_patch_execution.set()
         try:
             assert contention_observed.wait(timeout=10.0)
             assert patch_future.done() is False
             assert len(backend.opened) == initial_open_count
         finally:
-            release_capture.set()
-        snapshot_result = snapshot_future.result(timeout=30.0)
+            release_report_transaction.set()
+        holder_transaction = holder_future.result(timeout=30.0)
         patch_result = patch_future.result(timeout=30.0)
 
-    assert snapshot_result["ok"] is True
     assert patch_result["ok"] is True
     assert patch_result["revision"] == 1
     assert len(backend.opened) == initial_open_count + 1
     assert backend.opened[-1].suffix == ".stp"
-    snapshot_transaction = snapshot_result["gui_action_transaction"]
     patch_transaction = patch_result["gui_action_transaction"]
-    assert snapshot_transaction["path"] == patch_transaction["path"]
+    assert holder_transaction["path"] == patch_transaction["path"]
     assert patch_transaction["path"] == patch_result["report_write_transaction"]["path"]
     assert patch_transaction["waited_seconds"] > 0.0
     assert patch_transaction["nested_call_count"] == 0
@@ -34942,14 +35644,11 @@ def test_modeling_report_marks_clean_semiconductor_projection_overlap_as_visual_
                     "title": "msmcp_r000_clean - Materials Studio",
                     "is_selected": True,
                     "is_foreground": True,
-                    "project_id": spec.project_id,
-                    "revision": 0,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": spec.project_id,
-                        "revision": 0,
-                        "source_path": str(structure),
-                    },
+                    **_trusted_gui_window_fields(
+                        spec.project_id,
+                        0,
+                        structure,
+                    ),
                 }
             ],
         },
@@ -35050,14 +35749,11 @@ def test_modeling_report_treats_calculation_only_warning_as_model_normal_with_ca
                     "title": "msmcp_r000_clean - Materials Studio",
                     "is_selected": True,
                     "is_foreground": True,
-                    "project_id": spec.project_id,
-                    "revision": 0,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": spec.project_id,
-                        "revision": 0,
-                        "source_path": str(structure),
-                    },
+                    **_trusted_gui_window_fields(
+                        spec.project_id,
+                        0,
+                        structure,
+                    ),
                 }
             ],
         },
@@ -35846,14 +36542,11 @@ def test_modeling_report_visual_summary_allows_model_normal_with_clean_view_note
                     "title": "msmcp_r000_visual_notes - Materials Studio",
                     "is_selected": True,
                     "is_foreground": True,
-                    "project_id": spec.project_id,
-                    "revision": 0,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": spec.project_id,
-                        "revision": 0,
-                        "source_path": str(structure),
-                    },
+                    **_trusted_gui_window_fields(
+                        spec.project_id,
+                        0,
+                        structure,
+                    ),
                 }
             ],
         },
@@ -35969,14 +36662,11 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
                     "title": "msmcp_r000_trusted - Materials Studio",
                     "is_selected": True,
                     "is_foreground": True,
-                    "project_id": spec.project_id,
-                    "revision": 0,
-                    "source_path": str(structure),
-                    "project_wrapper_metadata": {
-                        "project_id": spec.project_id,
-                        "revision": 0,
-                        "source_path": str(structure),
-                    },
+                    **_trusted_gui_window_fields(
+                        spec.project_id,
+                        0,
+                        structure,
+                    ),
                 }
             ],
         },
@@ -37080,7 +37770,7 @@ def test_live_modeling_request_explicit_preview_overrides_hotload_text(monkeypat
 
 
 def test_live_modeling_request_create_execute_opens_gui_and_updates_audit(monkeypatch, tmp_path: Path) -> None:
-    backend = FakeGuiBackend()
+    backend = ProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     def fake_execute_structured_script(*, store, spec, script, timeout_seconds):
@@ -37104,10 +37794,14 @@ def test_live_modeling_request_create_execute_opens_gui_and_updates_audit(monkey
     assert result["result"]["success"] is True
     assert result["modeling_health"]["verdict"] == "passed"
     assert "gui_open" in result
-    assert result["modeling_report"]["normality"] == "review_warnings"
-    assert result["modeling_report"]["gui"]["window_identity_verification"] == "unverified"
-    assert "gui_window_identity_unverified" in result["modeling_report"]["view_review"]["risk_flags"]
+    assert result["modeling_report"]["normality"] == "hot_loaded_and_passed"
+    assert result["modeling_report"]["gui"]["window_identity_verification"] == "verified"
+    assert "gui_window_identity_unverified" not in result["modeling_report"]["view_review"]["risk_flags"]
     assert backend.opened
+    assert backend.opened[0].suffix == ".stp"
+    assert result["gui_open"]["project_wrapper"]["source_path"].endswith(
+        "live_request_execute_proj_r000.xsd"
+    )
     report_payload = json.loads(Path(result["view_audit_report_path"]).read_text(encoding="utf-8"))
     assert report_payload["gui_artifacts"][0]["type"] == "gui_open"
     assert report_payload["views"][0]["atom_projection_count"] == 12

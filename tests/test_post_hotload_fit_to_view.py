@@ -77,6 +77,21 @@ class _LiveGui:
         self.inactive = False
 
     def _window(self, project_id: str, revision: int) -> dict:
+        source_path = (
+            self.workspace
+            / project_id
+            / "outputs"
+            / f"r{revision:03d}"
+            / f"structure_r{revision:03d}.cif"
+        )
+        metadata = {
+            "project_id": project_id,
+            "revision": revision,
+            "source_path": str(source_path),
+            "wrapper_integrity_verified": True,
+            "wrapper_workspace_matches_controller": True,
+            "wrapper_provenance_status": "verified_revision_wrapper",
+        }
         return {
             "handle": 701,
             "title": f"msmcp_r{revision:03d}_{project_id} - Materials Studio",
@@ -87,6 +102,12 @@ class _LiveGui:
             "is_foreground": not self.inactive,
             "project_id": project_id,
             "revision": revision,
+            "source_path": str(source_path),
+            "pid_is_matstudio_process": True,
+            "wrapper_integrity_verified": True,
+            "wrapper_workspace_matches_controller": True,
+            "wrapper_provenance_status": "verified_revision_wrapper",
+            "project_wrapper_metadata": metadata,
         }
 
     def status(self, *, project_id: str, revision: int) -> dict:
@@ -97,8 +118,11 @@ class _LiveGui:
             "supported": True,
             "window_found": True,
             "window": window,
+            "target_window": window,
             "windows": [window],
             "selected_window_handle": window["handle"],
+            "target_window_pid_is_matstudio_process": True,
+            "current_revision_loaded": True,
             "single_window_policy_ok": True,
             "single_window_violation_reasons": [],
             "target_window_resolution": {
@@ -106,12 +130,18 @@ class _LiveGui:
                 "matching_window_count": 1,
                 "target_handle": window["handle"],
                 "target_title": window["title"],
+                "target_project_wrapper_metadata": window[
+                    "project_wrapper_metadata"
+                ],
                 "fallback_used": False,
             },
             "window_management": {
                 "single_window_policy_ok": True,
                 "single_window_violation_reasons": [],
                 "matched_project_window": True,
+                "target_window_pid_is_matstudio_process": True,
+                "target_wrapper_integrity_verified": True,
+                "target_window_wrapper_workspace_matches_controller": True,
                 "matching_window_identity_verification": "verified",
                 "target_window_is_selected": not self.inactive,
                 "target_window_is_visible": True,

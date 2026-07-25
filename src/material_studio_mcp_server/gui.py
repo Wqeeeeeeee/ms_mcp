@@ -2992,9 +2992,18 @@ class MaterialsStudioGuiController:
         processes = self.backend.list_processes() if self.backend.supported else []
         list_windows = getattr(self.backend, "list_windows", None)
         windows = list_windows() if self.backend.supported and callable(list_windows) else []
-        window = self.backend.find_window() if self.backend.supported else None
-        if window is not None and not any(item.handle == window.handle for item in windows):
-            windows = [window, *windows]
+        discovered_window = (
+            self.backend.find_window() if self.backend.supported else None
+        )
+        if discovered_window is not None and not any(
+            item.handle == discovered_window.handle for item in windows
+        ):
+            windows = [discovered_window, *windows]
+        window = _select_live_matstudio_window(
+            processes=processes,
+            windows=windows,
+            preferred=discovered_window,
+        )
         window_inventory = self._window_inventory(windows, selected_window=window)
         matstudio_exe = _resolve_matstudio_exe()
         open_strategy = "MatStudio.exe" if matstudio_exe is not None else ("os.startfile" if hasattr(os, "startfile") else None)
@@ -3049,6 +3058,12 @@ class MaterialsStudioGuiController:
             "window_found": window is not None,
             "window": window.to_dict() if window else None,
             "window_count": len(window_inventory),
+            "matstudio_window_count": window_management.get(
+                "matstudio_window_count"
+            ),
+            "ignored_non_matstudio_window_count": window_management.get(
+                "ignored_non_matstudio_window_count"
+            ),
             "selected_window_handle": window.handle if window else None,
             "target_window_found": target_window is not None,
             "target_window": target_window.to_dict() if target_window else None,
@@ -3091,15 +3106,51 @@ class MaterialsStudioGuiController:
             "reuse_existing_window_default": True,
             "single_window_policy": {
                 "enabled": True,
-                "scope": "structure_hotload_and_live_edit",
+                "scope": (
+                    "global_single_instance_or_exact_project_target_process"
+                ),
                 "hotload_requires_existing_window": True,
                 "auto_launch_during_open_allowed": False,
                 "explicit_blank_session_launch_tool": "material_studio_gui_launch",
+                "window_isolation_mode": window_management.get(
+                    "window_isolation_mode"
+                ),
+                "project_scoped_multi_instance_isolation": bool(
+                    window_management.get(
+                        "project_scoped_multi_instance_isolation"
+                    )
+                ),
+                "target_process_id": window_management.get(
+                    "target_process_id"
+                ),
+                "unrelated_process_count": window_management.get(
+                    "unrelated_process_count"
+                ),
                 "ok": not single_window_violation_reasons,
                 "violation_reasons": single_window_violation_reasons,
             },
             "single_window_policy_ok": not single_window_violation_reasons,
             "single_window_violation_reasons": single_window_violation_reasons,
+            "window_isolation_mode": window_management.get(
+                "window_isolation_mode"
+            ),
+            "project_scoped_multi_instance_isolation": bool(
+                window_management.get(
+                    "project_scoped_multi_instance_isolation"
+                )
+            ),
+            "target_process_id": window_management.get("target_process_id"),
+            "target_window_pid_is_matstudio_process": bool(
+                window_management.get(
+                    "target_window_pid_is_matstudio_process"
+                )
+            ),
+            "unrelated_process_count": window_management.get(
+                "unrelated_process_count"
+            ),
+            "unrelated_process_ids": list(
+                window_management.get("unrelated_process_ids") or []
+            ),
             "can_launch_matstudio": open_strategy is not None,
             "can_launch_blank_session": matstudio_exe is not None,
             "workspace_root": str(self.workspace_root),
@@ -3176,6 +3227,7 @@ class MaterialsStudioGuiController:
                 "Miller planes and exact-collinear crystal directions require a prepared automation-ready transactional recipe.",
                 "Non-collinear crystal directions still require a reviewed camera backend.",
                 "Blind coordinates, viewport modifier keys, and implicit MatStudio launches are prohibited.",
+                "Multiple MatStudio processes are usable only through one exact project/revision wrapper bound to one isolated target PID.",
                 "Fit-to-View only changes the current GUI camera framing; it never changes the structure artifact.",
             ],
         }
@@ -3264,8 +3316,8 @@ class MaterialsStudioGuiController:
         reasons: list[str] = []
         if status.get("supported") is not True:
             reasons.append("gui_backend_unavailable")
-        if status.get("process_count") != 1:
-            reasons.append("exactly_one_matstudio_process_required")
+        if status.get("target_window_pid_is_matstudio_process") is not True:
+            reasons.append("target_window_pid_not_matstudio_process")
         if status.get("single_window_policy_ok") is not True:
             reasons.extend(str(item) for item in status.get("single_window_violation_reasons") or [])
         if status.get("target_window_found") is not True:
@@ -3510,6 +3562,18 @@ class MaterialsStudioGuiController:
                     "external_workspace_wrapper_detected"
                 )
                 entry["wrapper_provenance_status"] = metadata.get("wrapper_provenance_status")
+                entry["wrapper_integrity_verified"] = metadata.get(
+                    "wrapper_integrity_verified"
+                )
+                entry["wrapper_integrity_status"] = metadata.get(
+                    "wrapper_integrity_status"
+                )
+                entry["wrapper_target_identity_verified"] = metadata.get(
+                    "wrapper_target_identity_verified"
+                )
+                entry["wrapper_target_identity_status"] = metadata.get(
+                    "wrapper_target_identity_status"
+                )
             entries.append(entry)
         return entries
 
@@ -3570,6 +3634,23 @@ class MaterialsStudioGuiController:
                 )
                 continue
 
+            project_path = (
+                workspace_root
+                / "gui_projects"
+                / project_name
+                / f"{project_name}.stp"
+            ).resolve()
+            wrapper_integrity = _wrapper_project_path_provenance(
+                project_path,
+                workspace_root=workspace_root,
+                allow_locked_attestation=True,
+            )
+            wrapper_integrity_verified = (
+                wrapper_integrity.get("verified") is True
+            )
+            wrapper_target_identity_verified = (
+                wrapper_integrity.get("target_identity_verified") is True
+            )
             source_path = metadata.get("source_path")
             source_inside_workspace = (
                 _path_is_inside(workspace_root, Path(str(source_path)).expanduser())
@@ -3587,15 +3668,18 @@ class MaterialsStudioGuiController:
                     has_project_identity = sanitize_project_id(metadata["project_id"]) == metadata["project_id"]
                 except ValueError:
                     pass
-            if (
+            if wrapper_integrity_verified:
+                provenance_status = "verified_revision_wrapper"
+            elif wrapper_target_identity_verified:
+                provenance_status = "verified_revision_reload_target"
+            elif source_path and source_inside_workspace is False:
+                provenance_status = "source_outside_wrapper_workspace"
+            elif (
                 has_project_identity
                 and has_revision_identity
                 and metadata_project_name == project_name
-                and source_inside_workspace is True
             ):
-                provenance_status = "verified_revision_wrapper"
-            elif source_path and source_inside_workspace is False:
-                provenance_status = "source_outside_wrapper_workspace"
+                provenance_status = "unverified_revision_wrapper"
             else:
                 provenance_status = "legacy_or_unscoped_wrapper"
             readable_candidates.append(
@@ -3605,6 +3689,56 @@ class MaterialsStudioGuiController:
                     "wrapper_project_name": project_name,
                     "source_inside_wrapper_workspace": source_inside_workspace,
                     "wrapper_provenance_status": provenance_status,
+                    "wrapper_integrity_verified": (
+                        wrapper_integrity_verified
+                    ),
+                    "wrapper_integrity_status": wrapper_integrity.get(
+                        "status"
+                    ),
+                    "wrapper_target_identity_verified": (
+                        wrapper_target_identity_verified
+                    ),
+                    "wrapper_target_identity_status": (
+                        wrapper_integrity.get("target_identity_status")
+                    ),
+                    "wrapper_target_identity_reason_codes": list(
+                        wrapper_integrity.get(
+                            "target_identity_reason_codes"
+                        )
+                        or []
+                    ),
+                    "wrapper_integrity_reason_codes": list(
+                        wrapper_integrity.get("reason_codes") or []
+                    ),
+                    "wrapper_project_xml_verification_status": (
+                        wrapper_integrity.get(
+                            "project_xml_verification_status"
+                        )
+                    ),
+                    "wrapper_project_sha256_current": (
+                        wrapper_integrity.get("project_sha256_current")
+                    ),
+                    "wrapper_document_sha256_current": (
+                        wrapper_integrity.get("document_sha256_current")
+                    ),
+                    "wrapper_source_sha256_current": (
+                        wrapper_integrity.get("source_sha256_current")
+                    ),
+                    "wrapper_identity_manifest_valid": (
+                        wrapper_integrity.get(
+                            "wrapper_identity_manifest_valid"
+                        )
+                    ),
+                    "wrapper_revision_state_binding_valid": (
+                        wrapper_integrity.get(
+                            "wrapper_revision_state_binding_valid"
+                        )
+                    ),
+                    "legacy_revision_state_binding_valid": (
+                        wrapper_integrity.get(
+                            "legacy_revision_state_binding_valid"
+                        )
+                    ),
                 }
             )
 
@@ -3648,7 +3782,16 @@ class MaterialsStudioGuiController:
         if project_id is not None or revision is not None:
             existing_window, target_resolution = self._resolve_target_window(project_id=project_id, revision=revision)
         else:
-            existing_window = self.backend.find_window()
+            discovered_window = self.backend.find_window()
+            if discovered_window is not None and not any(
+                item.handle == discovered_window.handle for item in windows
+            ):
+                windows = [discovered_window, *windows]
+            existing_window = _select_live_matstudio_window(
+                processes=processes,
+                windows=windows,
+                preferred=discovered_window,
+            )
         if existing_window is not None and not any(item.handle == existing_window.handle for item in windows):
             windows = [existing_window, *windows]
         window_inventory = self._window_inventory(windows, selected_window=existing_window)
@@ -3668,6 +3811,38 @@ class MaterialsStudioGuiController:
             startup_dialog_open_supported=_backend_startup_dialog_open_supported(self.backend),
         )
         single_window_violation_reasons = list(window_management.get("single_window_violation_reasons") or [])
+        if (
+            existing_window is not None
+            and (project_id is not None or revision is not None)
+            and isinstance(target_resolution, dict)
+            and target_resolution.get("matched_project_window") is True
+        ):
+            metadata = (
+                target_resolution.get("target_project_wrapper_metadata")
+                if isinstance(
+                    target_resolution.get("target_project_wrapper_metadata"),
+                    dict,
+                )
+                else {}
+            )
+            if metadata.get("wrapper_integrity_verified") is not True:
+                single_window_violation_reasons.append(
+                    "target_wrapper_integrity_unverified"
+                )
+            if metadata.get("wrapper_workspace_matches_controller") is not True:
+                single_window_violation_reasons.append(
+                    "target_wrapper_workspace_mismatch"
+                )
+        single_window_violation_reasons = _unique_strings(
+            single_window_violation_reasons
+        )
+        if single_window_violation_reasons:
+            window_management["single_window_policy_ok"] = False
+            window_management["single_window_violation_reasons"] = (
+                single_window_violation_reasons
+            )
+            window_management["ready_for_snapshot"] = False
+            window_management["ready_for_open"] = False
         launch_guard = {
             "process_count": len(processes),
             "window_count": len(window_inventory),
@@ -3760,12 +3935,20 @@ class MaterialsStudioGuiController:
 
     def activate(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
         """激活窗口。"""
+        if project_id is not None:
+            project_id = sanitize_project_id(project_id)
         requested_window, target_resolution = self._require_window(project_id=project_id, revision=revision)
+        self._require_direct_action_target(
+            window=requested_window,
+            target_resolution=target_resolution,
+            project_id=project_id,
+            revision=revision,
+        )
         activated = self.backend.activate_window(requested_window)
         refreshed_window, refreshed_resolution = self._require_window(project_id=project_id, revision=revision)
         window_identity_stable = refreshed_window.handle == requested_window.handle
-        window_management = self._window_management_for_hotload(
-            target_window=refreshed_window,
+        window_management = self._require_direct_action_target(
+            window=refreshed_window,
             target_resolution=refreshed_resolution,
             project_id=project_id,
             revision=revision,
@@ -3799,9 +3982,11 @@ class MaterialsStudioGuiController:
         revision: int | None = None,
     ) -> dict[str, Any]:
         """捕获快照。"""
+        if project_id is not None:
+            project_id = sanitize_project_id(project_id)
         window, target_resolution = self._require_window(project_id=project_id, revision=revision)
-        window_management = self._window_management_for_hotload(
-            target_window=window,
+        window_management = self._require_direct_action_target(
+            window=window,
             target_resolution=target_resolution,
             project_id=project_id,
             revision=revision,
@@ -3858,24 +4043,45 @@ class MaterialsStudioGuiController:
         path = Path(structure_path).expanduser().resolve()
         if not path.exists() or not path.is_file():
             raise GuiError(f"结构文件不存在: {path}")
-        window, target_resolution = self._resolve_target_window(project_id=project_id, revision=revision)
+        window, target_resolution = self._resolve_hotload_target_window(
+            project_id=project_id,
+            revision=revision,
+        )
         if window is None:
             raise GuiError(
                 "No existing Materials Studio window was found. Refusing to launch a new MatStudio.exe "
                 "from open_structure; activate an existing window first, or call material_studio_gui_launch "
                 "only when starting a new GUI session is intentional."
             )
-        window_management = self._window_management_for_hotload(
-            target_window=window,
-            target_resolution=target_resolution,
-            project_id=project_id,
-            revision=revision,
+        hotload_target_project_id = target_resolution.get(
+            "hotload_target_project_id",
+            project_id,
         )
+        hotload_target_revision = target_resolution.get(
+            "hotload_target_revision",
+            revision,
+        )
+        pre_open_hotload_target_resolution = dict(target_resolution)
+        if target_resolution.get("matched_project_window") is True:
+            window_management = self._require_hotload_action_target(
+                window=window,
+                target_resolution=target_resolution,
+                project_id=hotload_target_project_id,
+                revision=hotload_target_revision,
+            )
+        else:
+            window_management = self._window_management_for_hotload(
+                target_window=window,
+                target_resolution=target_resolution,
+                project_id=hotload_target_project_id,
+                revision=hotload_target_revision,
+            )
         single_window_violation_reasons = list(window_management.get("single_window_violation_reasons") or [])
         if single_window_violation_reasons:
             raise GuiError(
                 "Refusing to hot-load a structure while the Materials Studio GUI session violates the "
-                "single-window policy. Close or save extra Materials Studio windows before continuing. "
+                "single-window policy. Supply one exact verified project/revision target, or close or save "
+                "extra windows in the target process before continuing. "
                 f"Violations: {', '.join(single_window_violation_reasons)}"
             )
 
@@ -3910,8 +4116,8 @@ class MaterialsStudioGuiController:
                     "identity, and retry."
                 )
             refreshed_window, refreshed_resolution = self._require_window(
-                project_id=project_id,
-                revision=revision,
+                project_id=hotload_target_project_id,
+                revision=hotload_target_revision,
             )
             if refreshed_window.handle != window.handle:
                 raise GuiError(
@@ -3920,12 +4126,24 @@ class MaterialsStudioGuiController:
                 )
             window = refreshed_window
             target_resolution = refreshed_resolution
-            post_activation_window_management = self._window_management_for_hotload(
-                target_window=window,
-                target_resolution=target_resolution,
-                project_id=project_id,
-                revision=revision,
-            )
+            if target_resolution.get("matched_project_window") is True:
+                post_activation_window_management = (
+                    self._require_hotload_action_target(
+                        window=window,
+                        target_resolution=target_resolution,
+                        project_id=hotload_target_project_id,
+                        revision=hotload_target_revision,
+                    )
+                )
+            else:
+                post_activation_window_management = (
+                    self._window_management_for_hotload(
+                        target_window=window,
+                        target_resolution=target_resolution,
+                        project_id=hotload_target_project_id,
+                        revision=hotload_target_revision,
+                    )
+                )
             if post_activation_window_management.get("activation_required_before_capture_or_input"):
                 raise GuiError(
                     "Refusing same-window GUI input because the target Materials Studio window is still minimized "
@@ -4019,7 +4237,11 @@ class MaterialsStudioGuiController:
             post_open_window_management["single_window_policy_ok"] = (
                 not post_open_single_window_violation_reasons
             )
-        activated_opened_window = self.backend.activate_window(window) if window is not None else False
+        activated_opened_window = bool(
+            window is not None
+            and not post_open_single_window_violation_reasons
+            and self.backend.activate_window(window)
+        )
         payload: dict[str, Any] = {
             "project_id": project_id,
             "revision": revision,
@@ -4033,6 +4255,9 @@ class MaterialsStudioGuiController:
             "same_window_open_used": same_window_open_used,
             "window_management": window_management,
             "post_activation_window_management": post_activation_window_management,
+            "pre_open_hotload_target_resolution": (
+                pre_open_hotload_target_resolution
+            ),
             "post_open_target_window_resolution": post_open_target_resolution,
             "post_open_window_management": post_open_window_management,
             "post_open_single_window_policy_ok": not post_open_single_window_violation_reasons,
@@ -4209,8 +4434,8 @@ class MaterialsStudioGuiController:
         block_reasons: list[str] = []
         if status.get("supported") is not True:
             block_reasons.append("gui_backend_unavailable")
-        if status.get("process_count") != 1:
-            block_reasons.append("exactly_one_matstudio_process_required")
+        if status.get("target_window_pid_is_matstudio_process") is not True:
+            block_reasons.append("target_window_pid_not_matstudio_process")
         if status.get("single_window_policy_ok") is not True:
             block_reasons.extend(
                 str(item)
@@ -5015,8 +5240,8 @@ class MaterialsStudioGuiController:
             block_reasons.append("unsupported_view_definition")
         if status.get("supported") is not True:
             block_reasons.append("gui_backend_unavailable")
-        if status.get("process_count") != 1:
-            block_reasons.append("exactly_one_matstudio_process_required")
+        if status.get("target_window_pid_is_matstudio_process") is not True:
+            block_reasons.append("target_window_pid_not_matstudio_process")
         if not single_window_policy_ok:
             block_reasons.extend(str(item) for item in status.get("single_window_violation_reasons") or [])
         if status.get("target_window_found") is not True:
@@ -5106,7 +5331,9 @@ class MaterialsStudioGuiController:
             "safety_gate": {
                 "activate_target_window_before_screenshot_or_input": True,
                 "verify_project_revision_wrapper_identity": True,
-                "require_exactly_one_matstudio_process": True,
+                "require_exactly_one_matstudio_process": False,
+                "require_effective_target_window_isolation": True,
+                "unrelated_matstudio_processes_allowed": True,
                 "require_single_window_policy_ok": True,
                 "require_post_action_visual_confirmation": True,
                 "pre_activation_screenshot_may_capture_occluding_window": True,
@@ -6621,6 +6848,110 @@ class MaterialsStudioGuiController:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _require_direct_action_target(
+        self,
+        *,
+        window: WindowInfo,
+        target_resolution: dict[str, Any],
+        project_id: str | None,
+        revision: int | None,
+    ) -> dict[str, Any]:
+        """Fail before direct GUI action unless the exact target is isolated."""
+
+        management = self._window_management_for_hotload(
+            target_window=window,
+            target_resolution=target_resolution,
+            project_id=project_id,
+            revision=revision,
+        )
+        reasons = list(management.get("single_window_violation_reasons") or [])
+        if project_id is not None or revision is not None:
+            if target_resolution.get("matched_project_window") is not True:
+                reasons.append("requested_project_revision_window_not_matched")
+            if int(target_resolution.get("matching_window_count") or 0) != 1:
+                reasons.append("requested_project_revision_window_not_unique")
+            if int(management.get("matching_window_count") or 0) != 1:
+                reasons.append("requested_project_revision_live_window_not_unique")
+            if (
+                management.get(
+                    "target_window_matches_requested_project_revision"
+                )
+                is not True
+            ):
+                reasons.append(
+                    "target_window_no_longer_matches_requested_project_revision"
+                )
+            if management.get("target_wrapper_integrity_verified") is not True:
+                reasons.append("target_wrapper_integrity_unverified")
+            if (
+                management.get(
+                    "target_window_wrapper_workspace_matches_controller"
+                )
+                is not True
+            ):
+                reasons.append("target_wrapper_workspace_mismatch")
+        reasons = _unique_strings(reasons)
+        if reasons:
+            raise GuiError(
+                "Refusing direct Materials Studio GUI action because the target "
+                f"window is not uniquely verified: {', '.join(reasons)}"
+            )
+        return management
+
+    def _require_hotload_action_target(
+        self,
+        *,
+        window: WindowInfo,
+        target_resolution: dict[str, Any],
+        project_id: str | None,
+        revision: int | None,
+    ) -> dict[str, Any]:
+        """Allow one authentic stale-source wrapper only as a reload target."""
+
+        management = self._window_management_for_hotload(
+            target_window=window,
+            target_resolution=target_resolution,
+            project_id=project_id,
+            revision=revision,
+        )
+        reasons = list(
+            management.get("single_window_violation_reasons") or []
+        )
+        if project_id is not None or revision is not None:
+            if target_resolution.get("matched_project_window") is not True:
+                reasons.append("requested_project_revision_window_not_matched")
+            if int(target_resolution.get("matching_window_count") or 0) != 1:
+                reasons.append("requested_project_revision_window_not_unique")
+            if int(management.get("matching_window_count") or 0) != 1:
+                reasons.append(
+                    "requested_project_revision_live_window_not_unique"
+                )
+            if (
+                management.get(
+                    "target_window_matches_requested_project_revision"
+                )
+                is not True
+            ):
+                reasons.append(
+                    "target_window_no_longer_matches_requested_project_revision"
+                )
+            if management.get("target_wrapper_identity_verified") is not True:
+                reasons.append("target_wrapper_identity_unverified")
+            if (
+                management.get(
+                    "target_window_wrapper_workspace_matches_controller"
+                )
+                is not True
+            ):
+                reasons.append("target_wrapper_workspace_mismatch")
+        reasons = _unique_strings(reasons)
+        if reasons:
+            raise GuiError(
+                "Refusing Materials Studio GUI hot-load because the target "
+                f"window is not uniquely verified: {', '.join(reasons)}"
+            )
+        return management
+
     def _require_window(
         self,
         *,
@@ -6630,9 +6961,17 @@ class MaterialsStudioGuiController:
         """获取必需的窗口。"""
         if not self.backend.supported:
             raise GuiError(self.backend.unavailable_reason or "GUI 后端不可用。")
-        window, target_resolution = self._resolve_target_window(project_id=project_id, revision=revision)
+        window, target_resolution = self._resolve_target_window(
+            project_id=project_id,
+            revision=revision,
+        )
         if window is None:
             raise GuiError("未找到打开的 Materials Studio 窗口。请先启动 MatStudio.exe。")
+        if int(target_resolution.get("matching_window_count") or 0) > 1:
+            raise GuiError(
+                "Refusing GUI input because more than one live Materials Studio "
+                "window matches the requested project/revision."
+            )
         return window, target_resolution
 
     def _resolve_target_window(
@@ -6643,7 +6982,8 @@ class MaterialsStudioGuiController:
     ) -> tuple[WindowInfo | None, dict[str, Any]]:
         """Prefer a live wrapper window that matches the requested project/revision."""
 
-        selected_window = self.backend.find_window()
+        processes = self.backend.list_processes()
+        discovered_window = self.backend.find_window()
         candidates: list[WindowInfo] = []
         list_windows = getattr(self.backend, "list_windows", None)
         if callable(list_windows):
@@ -6651,8 +6991,19 @@ class MaterialsStudioGuiController:
                 candidates.extend(list_windows())
             except Exception:
                 candidates = []
-        if selected_window is not None and not any(window.handle == selected_window.handle for window in candidates):
-            candidates.insert(0, selected_window)
+        if discovered_window is not None and not any(
+            window.handle == discovered_window.handle for window in candidates
+        ):
+            candidates.insert(0, discovered_window)
+        process_ids = {process.pid for process in processes}
+        candidates = [
+            window for window in candidates if window.pid in process_ids
+        ]
+        selected_window = _select_live_matstudio_window(
+            processes=processes,
+            windows=candidates,
+            preferred=discovered_window,
+        )
 
         requested_target = project_id is not None or revision is not None
         matching: list[tuple[WindowInfo, dict[str, Any]]] = []
@@ -6716,6 +7067,73 @@ class MaterialsStudioGuiController:
             "fallback_used": fallback_window is not None and requested_target,
         }
 
+    def _resolve_hotload_target_window(
+        self,
+        *,
+        project_id: str | None,
+        revision: int | None,
+    ) -> tuple[WindowInfo | None, dict[str, Any]]:
+        """Resolve an exact revision or one unique trusted project predecessor."""
+
+        exact_window, exact_resolution = self._resolve_target_window(
+            project_id=project_id,
+            revision=revision,
+        )
+        exact_resolution = {
+            **exact_resolution,
+            "hotload_requested_project_id": project_id,
+            "hotload_requested_revision": revision,
+            "hotload_target_mode": (
+                "exact_revision"
+                if exact_resolution.get("matched_project_window") is True
+                else "global_single_instance_fallback"
+            ),
+            "hotload_target_project_id": project_id,
+            "hotload_target_revision": revision,
+        }
+        if (
+            project_id is None
+            or exact_resolution.get("matched_project_window") is True
+            or int(exact_resolution.get("matching_window_count") or 0) != 0
+        ):
+            return exact_window, exact_resolution
+
+        project_window, project_resolution = self._resolve_target_window(
+            project_id=project_id,
+            revision=None,
+        )
+        metadata = (
+            project_resolution.get("target_project_wrapper_metadata")
+            if isinstance(
+                project_resolution.get("target_project_wrapper_metadata"),
+                dict,
+            )
+            else {}
+        )
+        if not (
+            project_window is not None
+            and project_resolution.get("matched_project_window") is True
+            and int(project_resolution.get("matching_window_count") or 0) == 1
+            and metadata.get("wrapper_target_identity_verified") is True
+            and metadata.get("wrapper_workspace_matches_controller") is True
+        ):
+            return exact_window, exact_resolution
+        try:
+            target_revision = int(metadata.get("revision"))
+        except (TypeError, ValueError):
+            return exact_window, exact_resolution
+        return project_window, {
+            **project_resolution,
+            "hotload_requested_project_id": project_id,
+            "hotload_requested_revision": revision,
+            "hotload_target_mode": "existing_project_revision",
+            "hotload_target_project_id": project_id,
+            "hotload_target_revision": target_revision,
+            "hotload_target_revision_precedes_requested": bool(
+                revision is not None and target_revision < revision
+            ),
+        }
+
     def _create_project_wrapper(
         self,
         structure_path: Path,
@@ -6741,6 +7159,7 @@ class MaterialsStudioGuiController:
 
         project_path = project_dir / f"{project_name}.stp"
         metadata_path = project_dir / "metadata.json"
+        identity_path = project_dir / "wrapper_identity.json"
         metadata = {
             "project_id": project_id,
             "project_label": project_label,
@@ -6788,14 +7207,40 @@ class MaterialsStudioGuiController:
         project_path.write_text(project_xml, encoding="utf-8")
         project_sha256, project_size = _sha256_file(project_path)
         document_sha256, document_size = _sha256_file(document_path)
+        source_sha256, source_size = _sha256_file(structure_path)
+        identity = {
+            "identity_schema_version": 1,
+            "identity_profile": "materials_studio_revision_wrapper_identity_v1",
+            "project_name": project_name,
+            "project_id": project_id,
+            "revision": revision,
+            "source_path": str(structure_path),
+            "source_sha256": source_sha256,
+            "source_size_bytes": source_size,
+            "document_name": document_name,
+            "document_sha256": document_sha256,
+            "document_size_bytes": document_size,
+            "project_file_sha256": project_sha256,
+            "project_file_size_bytes": project_size,
+        }
+        identity_path.write_text(
+            json.dumps(identity, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        identity_sha256, identity_size = _sha256_file(identity_path)
         metadata.update(
             {
-                "wrapper_schema_version": 2,
-                "wrapper_profile": "materials_studio_20_1_project_wrapper_v1",
+                "wrapper_schema_version": 3,
+                "wrapper_profile": "materials_studio_20_1_project_wrapper_v2",
                 "project_file_sha256": project_sha256,
                 "project_file_size_bytes": project_size,
                 "document_sha256": document_sha256,
                 "document_size_bytes": document_size,
+                "source_sha256": source_sha256,
+                "source_size_bytes": source_size,
+                "identity_manifest_name": identity_path.name,
+                "identity_manifest_sha256": identity_sha256,
+                "identity_manifest_size_bytes": identity_size,
             }
         )
         metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -6804,6 +7249,7 @@ class MaterialsStudioGuiController:
             "project_path": str(project_path),
             "document_path": str(document_path),
             "metadata_path": str(metadata_path),
+            "identity_manifest_path": str(identity_path),
             "source_path": str(structure_path),
             "open_note": "Generated .stp wrapper so Materials Studio opens with an active project.",
         }
@@ -7149,8 +7595,8 @@ def _local_view_replay_status_block_reasons(
     )
     if status.get("supported") is not True:
         reasons.append("gui_backend_unavailable")
-    if status.get("process_count") != 1:
-        reasons.append("exactly_one_matstudio_process_required")
+    if status.get("target_window_pid_is_matstudio_process") is not True:
+        reasons.append("target_window_pid_not_matstudio_process")
     if status.get("single_window_policy_ok") is not True:
         reasons.extend(
             str(item) for item in status.get("single_window_violation_reasons") or []
@@ -7370,8 +7816,8 @@ def _view_replay_runtime_ui_binding(
     reasons: list[str] = []
     if status.get("supported") is not True:
         reasons.append("gui_backend_unavailable")
-    if status.get("process_count") != 1:
-        reasons.append("exactly_one_matstudio_process_required")
+    if status.get("target_window_pid_is_matstudio_process") is not True:
+        reasons.append("target_window_pid_not_matstudio_process")
     if status.get("single_window_policy_ok") is not True:
         reasons.append("single_window_policy_not_verified")
     if status.get("target_window_found") is not True:
@@ -12082,6 +12528,12 @@ def _window_management_receipt(
     requested_target = requested_project_id is not None or requested_revision is not None
     selected_entry = _window_inventory_entry(window_inventory, selected_window.handle if selected_window else None)
     target_entry = _window_inventory_entry(window_inventory, target_window.handle if target_window else None)
+    matched_project_window = bool(target_resolution and target_resolution.get("matched_project_window"))
+    matching_window_count = (
+        int(target_resolution.get("matching_window_count") or 0)
+        if isinstance(target_resolution, dict)
+        else 0
+    )
     wrapper_entries = [entry for entry in window_inventory if entry.get("project_wrapper_metadata")]
     external_wrapper_entries = [
         entry
@@ -12107,18 +12559,44 @@ def _window_management_receipt(
         target_entry
         and target_entry.get("wrapper_provenance_status") == "ambiguous_across_trusted_workspaces"
     )
+    exact_target_context_selected = bool(
+        requested_target
+        and matched_project_window
+        and matching_window_count == 1
+        and target_entry is not None
+    )
     workspace_context_mismatch_reasons: list[str] = []
-    if selected_workspace_mismatch:
-        workspace_context_mismatch_reasons.append("selected_wrapper_belongs_to_trusted_external_workspace")
-    if target_workspace_mismatch:
-        workspace_context_mismatch_reasons.append("target_wrapper_belongs_to_trusted_external_workspace")
-    if selected_workspace_ambiguous:
-        workspace_context_mismatch_reasons.append("selected_wrapper_workspace_provenance_ambiguous")
-    if target_workspace_ambiguous:
-        workspace_context_mismatch_reasons.append("target_wrapper_workspace_provenance_ambiguous")
+    if exact_target_context_selected:
+        if target_workspace_mismatch:
+            workspace_context_mismatch_reasons.append(
+                "target_wrapper_belongs_to_trusted_external_workspace"
+            )
+        if target_workspace_ambiguous:
+            workspace_context_mismatch_reasons.append(
+                "target_wrapper_workspace_provenance_ambiguous"
+            )
+    else:
+        if selected_workspace_mismatch:
+            workspace_context_mismatch_reasons.append(
+                "selected_wrapper_belongs_to_trusted_external_workspace"
+            )
+        if target_workspace_mismatch:
+            workspace_context_mismatch_reasons.append(
+                "target_wrapper_belongs_to_trusted_external_workspace"
+            )
+        if selected_workspace_ambiguous:
+            workspace_context_mismatch_reasons.append(
+                "selected_wrapper_workspace_provenance_ambiguous"
+            )
+        if target_workspace_ambiguous:
+            workspace_context_mismatch_reasons.append(
+                "target_wrapper_workspace_provenance_ambiguous"
+            )
     workspace_context_mismatch = bool(workspace_context_mismatch_reasons)
     context_entry = (
-        selected_entry
+        target_entry
+        if exact_target_context_selected
+        else selected_entry
         if selected_entry and selected_entry.get("project_wrapper_metadata")
         else target_entry
         if target_entry and target_entry.get("project_wrapper_metadata")
@@ -12167,16 +12645,120 @@ def _window_management_receipt(
         "recommended_working_dir": recommended_working_dir,
         "automatic_workspace_adoption_allowed": False,
     }
+    matstudio_process_ids = {process.pid for process in processes}
+    for entry in window_inventory:
+        entry["pid_is_matstudio_process"] = bool(
+            entry.get("pid") in matstudio_process_ids
+        )
+    matstudio_window_entries = [
+        entry
+        for entry in window_inventory
+        if entry.get("pid") in matstudio_process_ids
+    ]
+    ignored_non_matstudio_window_entries = [
+        entry
+        for entry in window_inventory
+        if entry.get("pid") not in matstudio_process_ids
+    ]
+    matching_window_entries: list[dict[str, Any]] = []
+    if requested_target:
+        for entry in matstudio_window_entries:
+            if not isinstance(entry.get("project_wrapper_metadata"), dict):
+                continue
+            if (
+                requested_project_id is not None
+                and entry.get("project_id") != requested_project_id
+            ):
+                continue
+            if requested_revision is not None:
+                try:
+                    entry_revision = int(entry.get("revision"))
+                except (TypeError, ValueError):
+                    continue
+                if entry_revision != int(requested_revision):
+                    continue
+            matching_window_entries.append(entry)
+    live_matching_window_count = len(matching_window_entries)
+    target_window_matches_requested_project_revision = bool(
+        requested_target
+        and target_entry is not None
+        and any(
+            entry.get("handle") == target_entry.get("handle")
+            for entry in matching_window_entries
+        )
+    )
     mcp_title_entries = [
-        entry for entry in window_inventory if _project_name_from_window_title(str(entry.get("title") or "")) is not None
+        entry
+        for entry in matstudio_window_entries
+        if _project_name_from_window_title(str(entry.get("title") or "")) is not None
     ]
-    primary_entries = [entry for entry in window_inventory if _is_primary_materials_studio_window_entry(entry)]
-    dialog_entries = [entry for entry in window_inventory if _is_materials_studio_dialog_entry(entry)]
+    primary_entries = [
+        entry
+        for entry in matstudio_window_entries
+        if _is_primary_materials_studio_window_entry(entry)
+    ]
+    all_dialog_entries = [
+        entry
+        for entry in matstudio_window_entries
+        if _is_materials_studio_dialog_entry(entry)
+    ]
+    target_process_id = target_entry.get("pid") if target_entry else None
+    selected_process_id = selected_entry.get("pid") if selected_entry else None
+    target_window_pid_is_matstudio_process = bool(
+        target_process_id is not None
+        and target_process_id in matstudio_process_ids
+    )
+    selected_window_pid_is_matstudio_process = bool(
+        selected_process_id is not None
+        and selected_process_id in matstudio_process_ids
+    )
+    target_process_primary_entries = [
+        entry
+        for entry in primary_entries
+        if target_process_id is not None and entry.get("pid") == target_process_id
+    ]
+    target_process_dialog_entries = [
+        entry
+        for entry in all_dialog_entries
+        if target_process_id is not None and entry.get("pid") == target_process_id
+    ]
+    exact_target_process_candidate = bool(
+        requested_target
+        and matched_project_window
+        and live_matching_window_count == 1
+        and target_window_matches_requested_project_revision
+        and target_entry is not None
+        and target_entry.get("wrapper_target_identity_verified") is True
+        and target_entry.get("wrapper_workspace_matches_controller") is True
+        and target_window_pid_is_matstudio_process
+    )
+    exact_target_process_isolated = bool(
+        exact_target_process_candidate
+        and len(target_process_primary_entries) == 1
+        and target_process_primary_entries[0].get("handle") == target_entry.get("handle")
+    )
+    global_multiple_processes_detected = len(processes) > 1
+    global_multiple_primary_windows_detected = len(primary_entries) > 1
+    project_scoped_multi_instance_isolation = bool(
+        global_multiple_processes_detected and exact_target_process_isolated
+    )
+    dialog_entries = (
+        target_process_dialog_entries
+        if project_scoped_multi_instance_isolation
+        else all_dialog_entries
+    )
+    unrelated_dialog_entries = [
+        entry for entry in all_dialog_entries if entry not in dialog_entries
+    ]
     file_association_dialog_entries = [
-        entry for entry in window_inventory if _is_file_association_dialog_entry(entry)
+        entry for entry in dialog_entries if _is_file_association_dialog_entry(entry)
     ]
-    welcome_dialog_entries = [entry for entry in window_inventory if _is_welcome_dialog_entry(entry)]
-    startup_dialog_entries = [entry for entry in window_inventory if _is_startup_dialog_entry(entry)]
+    welcome_dialog_entries = [
+        entry for entry in dialog_entries if _is_welcome_dialog_entry(entry)
+    ]
+    startup_dialog_entries = [
+        entry for entry in dialog_entries if _is_startup_dialog_entry(entry)
+    ]
     resolvable_startup_dialog_entries = (
         startup_dialog_entries if startup_dialog_open_supported else []
     )
@@ -12213,7 +12795,6 @@ def _window_management_receipt(
     activation_required_before_capture_or_input = bool(
         target_window is not None and interaction_activation_reasons
     )
-    matched_project_window = bool(target_resolution and target_resolution.get("matched_project_window"))
     fallback_used = bool(target_resolution and target_resolution.get("fallback_used"))
     blocking_dialog_entries = [
         entry for entry in dialog_entries if not _is_file_association_dialog_entry(entry)
@@ -12224,12 +12805,64 @@ def _window_management_receipt(
 
     warnings: list[str] = []
     single_window_violation_reasons: list[str] = []
-    if len(processes) > 1:
+    if target_window is not None and not target_window_pid_is_matstudio_process:
+        warnings.append("target_window_pid_not_matstudio_process")
+        single_window_violation_reasons.append(
+            "target_window_pid_not_matstudio_process"
+        )
+    if requested_target and live_matching_window_count > 1:
+        warnings.append("requested_project_revision_window_ambiguous")
+        single_window_violation_reasons.append(
+            "requested_project_revision_window_ambiguous"
+        )
+    if requested_target and live_matching_window_count != matching_window_count:
+        warnings.append("requested_project_revision_window_inventory_changed")
+        single_window_violation_reasons.append(
+            "requested_project_revision_window_inventory_changed"
+        )
+    if (
+        requested_target
+        and matched_project_window
+        and not target_window_matches_requested_project_revision
+    ):
+        warnings.append("target_project_revision_window_identity_changed")
+        single_window_violation_reasons.append(
+            "target_project_revision_window_identity_changed"
+        )
+    if requested_target and matched_project_window and target_entry is not None:
+        if target_entry.get("wrapper_target_identity_verified") is not True:
+            warnings.append("target_wrapper_identity_unverified")
+            single_window_violation_reasons.append(
+                "target_wrapper_identity_unverified"
+            )
+        elif target_entry.get("wrapper_integrity_verified") is not True:
+            warnings.append("target_wrapper_source_outdated_reload_required")
+        if (
+            target_entry.get("wrapper_workspace_matches_controller")
+            is not True
+        ):
+            warnings.append("target_wrapper_workspace_mismatch")
+            single_window_violation_reasons.append(
+                "target_wrapper_workspace_mismatch"
+            )
+    if global_multiple_processes_detected:
         warnings.append("multiple_matstudio_processes_detected")
-        single_window_violation_reasons.append("multiple_matstudio_processes_detected")
-    if len(primary_entries) > 1:
+        if not project_scoped_multi_instance_isolation:
+            single_window_violation_reasons.append(
+                "multiple_matstudio_processes_detected"
+            )
+    if global_multiple_primary_windows_detected:
         warnings.append("multiple_matstudio_windows_detected")
-        single_window_violation_reasons.append("multiple_matstudio_windows_detected")
+        if not project_scoped_multi_instance_isolation:
+            single_window_violation_reasons.append(
+                "multiple_matstudio_windows_detected"
+            )
+    if project_scoped_multi_instance_isolation:
+        warnings.append("project_scoped_multi_instance_isolation_active")
+    if ignored_non_matstudio_window_entries:
+        warnings.append("non_matstudio_title_match_ignored")
+    if unrelated_dialog_entries:
+        warnings.append("unrelated_matstudio_dialogs_ignored")
     if file_association_dialog_entries:
         warnings.append("file_association_dialog_detected")
     elif welcome_dialog_entries:
@@ -12256,6 +12889,17 @@ def _window_management_receipt(
     if processes and target_window is None:
         warnings.append("matstudio_process_without_usable_window")
 
+    current_revision_loaded = bool(
+        requested_target
+        and matched_project_window
+        and live_matching_window_count == 1
+        and target_window_matches_requested_project_revision
+        and target_window_pid_is_matstudio_process
+        and target_entry is not None
+        and target_entry.get("wrapper_integrity_verified") is True
+        and target_entry.get("wrapper_workspace_matches_controller") is True
+    )
+    needs_reload = bool(requested_target and not current_revision_loaded)
     if target_window is None:
         if processes:
             recommended_tool = "material_studio_gui_status"
@@ -12268,7 +12912,7 @@ def _window_management_receipt(
     elif single_window_violation_reasons:
         recommended_tool = "material_studio_gui_status"
         recommended_action = "close_save_extra_matstudio_windows_then_retry_hotload"
-        ready_for_snapshot = True
+        ready_for_snapshot = False
         ready_for_open = False
     elif resolvable_startup_dialog_entries and not unresolved_blocking_dialog_entries:
         recommended_tool = "material_studio_gui_open_structure"
@@ -12285,7 +12929,7 @@ def _window_management_receipt(
         recommended_action = "rerun_preflight_with_visible_wrapper_workspace_before_implicit_followup"
         ready_for_snapshot = True
         ready_for_open = True
-    elif requested_target and not matched_project_window:
+    elif needs_reload:
         recommended_tool = "material_studio_gui_open_structure"
         recommended_action = "reload_requested_project_revision_in_gui"
         ready_for_snapshot = False
@@ -12315,7 +12959,6 @@ def _window_management_receipt(
     startup_dialog_open_ready = bool(
         resolvable_startup_dialog_entries and not unresolved_blocking_dialog_entries
     )
-    needs_reload = bool(requested_target and not matched_project_window)
     ready_for_snapshot = bool(ready_for_snapshot and not activation_required_before_capture_or_input)
     can_hotload_without_new_window = bool(
         target_window is not None
@@ -12372,12 +13015,35 @@ def _window_management_receipt(
     elif recommended_tool == "material_studio_gui_activate":
         payload_hint["take_snapshot"] = True
 
+    unrelated_process_ids = sorted(
+        process.pid
+        for process in processes
+        if target_process_id is None or process.pid != target_process_id
+    )
+    unrelated_primary_window_entries = [
+        entry
+        for entry in primary_entries
+        if target_process_id is None or entry.get("pid") != target_process_id
+    ]
+    if project_scoped_multi_instance_isolation:
+        window_isolation_mode = "exact_project_target_process"
+    elif not global_multiple_processes_detected and len(primary_entries) <= 1:
+        window_isolation_mode = "global_single_instance"
+    else:
+        window_isolation_mode = "global_single_instance_violation"
+
     return {
         "status": status,
         "process_count": len(processes),
         "window_count": len(window_inventory),
+        "matstudio_window_count": len(matstudio_window_entries),
+        "ignored_non_matstudio_window_count": len(
+            ignored_non_matstudio_window_entries
+        ),
         "primary_window_count": len(primary_entries),
         "dialog_window_count": len(dialog_entries),
+        "global_dialog_window_count": len(all_dialog_entries),
+        "unrelated_dialog_window_count": len(unrelated_dialog_entries),
         "blocking_dialog_count": len(blocking_dialog_entries),
         "unresolved_blocking_dialog_count": len(unresolved_blocking_dialog_entries),
         "resolvable_startup_dialog_count": len(resolvable_startup_dialog_entries),
@@ -12391,8 +13057,17 @@ def _window_management_receipt(
         "unmatched_mcp_title_window_count": unmatched_mcp_title_count,
         "requested_project_id": requested_project_id,
         "requested_revision": requested_revision,
+        "matching_window_count": live_matching_window_count,
+        "resolved_matching_window_count": matching_window_count,
+        "target_window_matches_requested_project_revision": (
+            target_window_matches_requested_project_revision
+        ),
         "selected_window_handle": selected_window.handle if selected_window else None,
         "selected_window_title": selected_window.title if selected_window else None,
+        "selected_process_id": selected_process_id,
+        "selected_window_pid_is_matstudio_process": (
+            selected_window_pid_is_matstudio_process
+        ),
         "selected_window_project_id": selected_entry.get("project_id") if selected_entry else None,
         "selected_window_revision": selected_entry.get("revision") if selected_entry else None,
         "selected_window_wrapper_workspace_root": (
@@ -12404,6 +13079,9 @@ def _window_management_receipt(
         "selected_window_has_project_metadata": bool(selected_entry and selected_entry.get("project_wrapper_metadata")),
         "target_window_handle": target_window.handle if target_window else None,
         "target_window_title": target_window.title if target_window else None,
+        "target_window_pid_is_matstudio_process": (
+            target_window_pid_is_matstudio_process
+        ),
         "target_window_project_id": target_entry.get("project_id") if target_entry else None,
         "target_window_revision": target_entry.get("revision") if target_entry else None,
         "target_window_wrapper_workspace_root": (
@@ -12413,6 +13091,50 @@ def _window_management_receipt(
             target_entry.get("wrapper_workspace_matches_controller") if target_entry else None
         ),
         "target_window_has_project_metadata": bool(target_entry and target_entry.get("project_wrapper_metadata")),
+        "target_wrapper_integrity_verified": (
+            target_entry.get("wrapper_integrity_verified")
+            if target_entry
+            else None
+        ),
+        "target_wrapper_integrity_status": (
+            target_entry.get("wrapper_integrity_status")
+            if target_entry
+            else None
+        ),
+        "target_wrapper_identity_verified": (
+            target_entry.get("wrapper_target_identity_verified")
+            if target_entry
+            else None
+        ),
+        "target_wrapper_identity_status": (
+            target_entry.get("wrapper_target_identity_status")
+            if target_entry
+            else None
+        ),
+        "target_process_id": target_process_id,
+        "target_process_primary_window_count": len(
+            target_process_primary_entries
+        ),
+        "target_process_dialog_window_count": len(
+            target_process_dialog_entries
+        ),
+        "exact_target_process_candidate": exact_target_process_candidate,
+        "exact_target_process_isolated": exact_target_process_isolated,
+        "project_scoped_multi_instance_isolation": (
+            project_scoped_multi_instance_isolation
+        ),
+        "window_isolation_mode": window_isolation_mode,
+        "global_multiple_processes_detected": (
+            global_multiple_processes_detected
+        ),
+        "global_multiple_primary_windows_detected": (
+            global_multiple_primary_windows_detected
+        ),
+        "unrelated_process_count": len(unrelated_process_ids),
+        "unrelated_process_ids": unrelated_process_ids,
+        "unrelated_primary_window_count": len(
+            unrelated_primary_window_entries
+        ),
         "target_window_is_selected": target_window_is_selected,
         "target_window_is_visible": target_window_is_visible,
         "target_window_is_minimized": target_window_is_minimized,
@@ -12447,7 +13169,7 @@ def _window_management_receipt(
         "can_hotload_without_new_window": can_hotload_without_new_window,
         "can_apply_current_revision_without_new_window": can_apply_current_revision_without_new_window,
         "ready_for_next_live_edit": ready_for_next_live_edit,
-        "current_revision_loaded": bool(requested_target and matched_project_window),
+        "current_revision_loaded": current_revision_loaded,
         "needs_reload": needs_reload,
         "needs_activation": needs_activation,
         "needs_snapshot": status == "ready_for_same_window_live_edit",
@@ -12540,14 +13262,20 @@ def _project_name_from_window_title(title: str) -> str | None:
     """Return the Materials Studio project name prefix from a window title."""
 
     project_name = _raw_project_name_from_window_title(title)
-    return _safe_component(project_name) if project_name else None
+    if (
+        project_name is None
+        or _safe_component(project_name) != project_name
+        or title != f"{project_name} - Materials Studio"
+    ):
+        return None
+    return project_name
 
 
 def _raw_project_name_from_window_title(title: str) -> str | None:
     """Return the exact Materials Studio project name prefix without normalization."""
 
-    normalized = title.strip()
     suffix = " - Materials Studio"
+    normalized = title.strip()
     if not normalized.endswith(suffix):
         return None
     project_name = normalized[: -len(suffix)].strip()
@@ -12648,6 +13376,10 @@ def _wrapper_project_path_provenance(
                 reasons.append("project_xml_viewer_binding_missing")
 
     attestation_valid = False
+    identity_manifest_valid = False
+    revision_identity_binding_valid = False
+    revision_state_binding_valid = False
+    source_current_matches_document = False
     project_xml_verification_status = (
         "metadata_attestation_required"
         if project_file_locked
@@ -12655,6 +13387,11 @@ def _wrapper_project_path_provenance(
     )
     document_sha256_current: str | None = None
     document_size_current: int | None = None
+    source_sha256_current: str | None = None
+    source_size_current: int | None = None
+    source_path_current: Path | None = None
+    identity_manifest_path = project_dir / "wrapper_identity.json"
+    identity_manifest_sha256_current: str | None = None
     if metadata is not None:
         if metadata.get("project_name") != project_name:
             reasons.append("metadata_project_name_mismatch")
@@ -12714,15 +13451,97 @@ def _wrapper_project_path_provenance(
             except OSError:
                 reasons.append("wrapper_document_hash_unavailable")
 
+        source_path = metadata.get("source_path")
+        try:
+            source_path_current = (
+                Path(str(source_path)).expanduser().resolve()
+                if isinstance(source_path, str) and source_path
+                else None
+            )
+        except (OSError, RuntimeError, ValueError):
+            source_path_current = None
+        source_valid = bool(
+            source_path_current is not None
+            and _path_is_inside(trusted_root, source_path_current)
+            and source_path_current.is_file()
+        )
+        if not source_valid:
+            reasons.append("wrapper_source_missing_or_outside_workspace")
+        else:
+            try:
+                source_sha256_current, source_size_current = _sha256_file(
+                    source_path_current
+                )
+            except OSError:
+                reasons.append("wrapper_source_hash_unavailable")
+            source_sha256_matches_document = bool(
+                document_sha256_current is not None
+                and source_sha256_current is not None
+                and source_sha256_current == document_sha256_current
+            )
+            source_size_matches_document = bool(
+                document_size_current is not None
+                and source_size_current is not None
+                and source_size_current == document_size_current
+            )
+            source_current_matches_document = bool(
+                source_sha256_matches_document
+                and source_size_matches_document
+            )
+            if not source_sha256_matches_document:
+                reasons.append("wrapper_source_document_sha256_mismatch")
+            if not source_size_matches_document:
+                reasons.append("wrapper_source_document_size_mismatch")
+
+        revision_payload: dict[str, Any] | None = None
+        if project_id_valid and revision_valid:
+            revision_path = (
+                trusted_root
+                / str(project_id)
+                / "revisions"
+                / f"r{metadata_revision:03d}_model_spec.json"
+            )
+            try:
+                candidate = json.loads(
+                    revision_path.read_text(encoding="utf-8")
+                )
+                if isinstance(candidate, dict):
+                    revision_payload = candidate
+            except Exception:
+                revision_payload = None
+            expected_output_dir = (
+                trusted_root
+                / str(project_id)
+                / "outputs"
+                / f"r{metadata_revision:03d}"
+            )
+            revision_identity_binding_valid = bool(
+                revision_payload is not None
+                and revision_payload.get("project_id") == project_id
+                and revision_payload.get("revision") == metadata_revision
+                and source_path_current is not None
+                and _path_is_inside(
+                    expected_output_dir,
+                    source_path_current,
+                )
+            )
+            revision_state_binding_valid = bool(
+                revision_identity_binding_valid
+                and source_current_matches_document
+            )
+        if not revision_identity_binding_valid:
+            reasons.append("wrapper_revision_identity_binding_invalid")
+        elif not source_current_matches_document:
+            reasons.append("wrapper_revision_source_digest_mismatch")
+        if not revision_state_binding_valid:
+            reasons.append("wrapper_revision_state_binding_invalid")
+
         project_digest = metadata.get("project_file_sha256")
         document_digest = metadata.get("document_sha256")
         project_size_attested = metadata.get("project_file_size_bytes")
         document_size_attested = metadata.get("document_size_bytes")
-        attestation_valid = bool(
-            metadata.get("wrapper_schema_version") == 2
-            and metadata.get("wrapper_profile")
-            == "materials_studio_20_1_project_wrapper_v1"
-            and isinstance(project_digest, str)
+        base_attestation_valid = bool(
+            isinstance(project_digest, str)
             and re.fullmatch(r"[0-9a-f]{64}", project_digest)
             and isinstance(document_digest, str)
             and re.fullmatch(r"[0-9a-f]{64}", document_digest)
@@ -12731,6 +13550,101 @@ def _wrapper_project_path_provenance(
             and isinstance(document_size_attested, int)
             and document_size_attested > 0
         )
+        wrapper_schema_version = metadata.get("wrapper_schema_version")
+        wrapper_profile = metadata.get("wrapper_profile")
+        if (
+            wrapper_schema_version == 3
+            and wrapper_profile
+            == "materials_studio_20_1_project_wrapper_v2"
+        ):
+            source_digest = metadata.get("source_sha256")
+            source_size_attested = metadata.get("source_size_bytes")
+            identity_digest = metadata.get("identity_manifest_sha256")
+            identity_size_attested = metadata.get(
+                "identity_manifest_size_bytes"
+            )
+            source_attestation_valid = bool(
+                isinstance(source_digest, str)
+                and re.fullmatch(r"[0-9a-f]{64}", source_digest)
+                and isinstance(source_size_attested, int)
+                and source_size_attested > 0
+            )
+            if not source_attestation_valid:
+                reasons.append("wrapper_source_attestation_invalid")
+            elif (
+                source_digest != source_sha256_current
+                or source_size_attested != source_size_current
+            ):
+                reasons.append("wrapper_source_attestation_current_mismatch")
+
+            identity: dict[str, Any] | None = None
+            if metadata.get("identity_manifest_name") != identity_manifest_path.name:
+                reasons.append("wrapper_identity_manifest_name_invalid")
+            elif not identity_manifest_path.is_file():
+                reasons.append("wrapper_identity_manifest_missing")
+            else:
+                try:
+                    identity_payload = json.loads(
+                        identity_manifest_path.read_text(encoding="utf-8")
+                    )
+                    if isinstance(identity_payload, dict):
+                        identity = identity_payload
+                    else:
+                        reasons.append("wrapper_identity_manifest_not_object")
+                    (
+                        identity_manifest_sha256_current,
+                        identity_manifest_size_current,
+                    ) = _sha256_file(identity_manifest_path)
+                except Exception:
+                    identity_manifest_size_current = None
+                    reasons.append("wrapper_identity_manifest_read_error")
+            if identity is not None:
+                expected_identity = {
+                    "identity_schema_version": 1,
+                    "identity_profile": (
+                        "materials_studio_revision_wrapper_identity_v1"
+                    ),
+                    "project_name": project_name,
+                    "project_id": project_id,
+                    "revision": metadata_revision,
+                    "source_path": str(source_path_current)
+                    if source_path_current is not None
+                    else None,
+                    "source_sha256": source_digest,
+                    "source_size_bytes": source_size_attested,
+                    "document_name": document_name,
+                    "document_sha256": document_sha256_current,
+                    "document_size_bytes": document_size_current,
+                    "project_file_sha256": project_digest,
+                    "project_file_size_bytes": project_size_attested,
+                }
+                identity_manifest_valid = bool(
+                    identity == expected_identity
+                    and isinstance(identity_digest, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", identity_digest)
+                    and identity_digest == identity_manifest_sha256_current
+                    and isinstance(identity_size_attested, int)
+                    and identity_size_attested > 0
+                    and identity_size_attested == identity_manifest_size_current
+                )
+            if not identity_manifest_valid:
+                reasons.append("wrapper_identity_manifest_binding_invalid")
+            attestation_valid = bool(
+                base_attestation_valid
+                and source_attestation_valid
+                and identity_manifest_valid
+                and revision_identity_binding_valid
+            )
+        elif (
+            wrapper_schema_version == 2
+            and wrapper_profile
+            == "materials_studio_20_1_project_wrapper_v1"
+        ):
+            attestation_valid = bool(
+                base_attestation_valid and revision_identity_binding_valid
+            )
+        else:
+            reasons.append("wrapper_schema_or_profile_unsupported")
         if not attestation_valid:
             reasons.append("wrapper_attestation_missing_or_invalid")
         if (
@@ -12771,11 +13685,32 @@ def _wrapper_project_path_provenance(
                 }:
                     reasons.append("project_xml_document_url_mismatch")
 
+    reasons = _unique_strings(reasons)
+    source_drift_reason_codes = {
+        "wrapper_source_document_sha256_mismatch",
+        "wrapper_source_document_size_mismatch",
+        "wrapper_source_attestation_current_mismatch",
+        "wrapper_revision_source_digest_mismatch",
+        "wrapper_revision_state_binding_invalid",
+    }
+    target_identity_reason_codes = [
+        reason
+        for reason in reasons
+        if reason not in source_drift_reason_codes
+    ]
+    target_identity_verified = not target_identity_reason_codes
     verified = not reasons
     return {
         "verified": verified,
         "status": "verified_revision_wrapper" if verified else "unverified_wrapper",
         "reason_codes": reasons,
+        "target_identity_verified": target_identity_verified,
+        "target_identity_status": (
+            "verified_revision_reload_target"
+            if target_identity_verified
+            else "unverified_reload_target"
+        ),
+        "target_identity_reason_codes": target_identity_reason_codes,
         "project_name": project_name,
         "project_path": str(resolved_project),
         "metadata_path": str(metadata_path),
@@ -12786,8 +13721,25 @@ def _wrapper_project_path_provenance(
         "project_file_locked": project_file_locked,
         "project_xml_verification_status": project_xml_verification_status,
         "wrapper_attestation_valid": attestation_valid,
+        "wrapper_identity_manifest_valid": identity_manifest_valid,
+        "wrapper_revision_state_binding_valid": (
+            revision_state_binding_valid
+        ),
+        "wrapper_revision_identity_binding_valid": (
+            revision_identity_binding_valid
+        ),
+        "source_current_matches_document": source_current_matches_document,
+        "legacy_revision_state_binding_valid": revision_state_binding_valid,
         "project_sha256_current": project_sha256_current,
         "document_sha256_current": document_sha256_current,
+        "source_sha256_current": source_sha256_current,
+        "source_path_current": (
+            str(source_path_current) if source_path_current is not None else None
+        ),
+        "identity_manifest_path": str(identity_manifest_path),
+        "identity_manifest_sha256_current": (
+            identity_manifest_sha256_current
+        ),
     }
 
 
@@ -13054,6 +14006,23 @@ def _window_priority(window: WindowInfo, *, foreground_handle: int | None = None
     else:
         title_rank = 10
     return (title_rank, foreground_rank, -_window_area(window), window.title)
+
+
+def _select_live_matstudio_window(
+    *,
+    processes: list[ProcessInfo],
+    windows: list[WindowInfo],
+    preferred: WindowInfo | None,
+) -> WindowInfo | None:
+    """Select only a window owned by the live MatStudio process inventory."""
+
+    process_ids = {process.pid for process in processes}
+    if preferred is not None and preferred.pid in process_ids:
+        return preferred
+    for window in windows:
+        if window.pid in process_ids:
+            return window
+    return None
 
 
 def _find_windows(*, title: str | None = None, pid: int | None = None) -> list[WindowInfo]:

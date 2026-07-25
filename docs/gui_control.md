@@ -860,12 +860,17 @@ a relaxed geometry, charge state, or formation energy. Preview remains the
 default, while explicit execute/hot-load continues through the existing
 single-window GUI path.
 Diamond NV-center scaffolds follow the same single-window hot-load path. The
-deterministic 2x2x2 structure may be materialized and opened in the verified
-existing Materials Studio window. Explicit NV0 and NV- states bind exact
-structured CASTEP total-charge and initial-spin settings; unresolved and
-legacy-unbound states remain fail-closed. The audit exports the bound
-N-vacancy pair, charge-state contract, expected settings, observed settings,
-and match status in `semiconductor_defect_complexes.csv` and
+deterministic scaffold defaults to 2x2x2 and accepts explicit cubic 2x2x2
+through 4x4x4 conventional-cell matrices. The selected structure may be
+materialized and opened in the verified existing Materials Studio window; this
+does not launch a second process. The 3x3x3 path provides a 215-atom
+post-vacancy model for the live smoke workflow and clears the compact 2x2x2
+small-cell heuristic. Explicit NV0 and NV- states bind exact structured CASTEP
+total-charge and initial-spin settings; unresolved and legacy-unbound states
+remain fail-closed. The audit exports the bound N-vacancy pair, supercell and
+charge-state contracts, expected settings, observed settings, and match status
+in `semiconductor_defect_complexes.csv`,
+`semiconductor_finite_size.csv`, and
 `semiconductor_charge_balance.csv`. GUI hot-loading does not execute CASTEP or
 prove that the requested electronic state was obtained.
 Explicitly distributed alloy or dopant-fraction requests use a deterministic

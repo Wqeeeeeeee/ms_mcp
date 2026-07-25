@@ -12,11 +12,14 @@ from typing import Any, Sequence
 
 from .semiconductor_contracts import (
     DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
-    DIAMOND_NV_CENTER_SUPERCELL,
+    DIAMOND_NV_CENTER_DEFAULT_SUPERCELL,
+    DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+    DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
     DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
     DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
     DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
     diamond_nv_expected_castep_settings,
+    normalize_diamond_nv_supercell,
 )
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
@@ -2917,7 +2920,7 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
             "generated_by_tool": "material_studio_live_modeling_request",
             "response_template_id": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
             "example_request": (
-                "Build a diamond NV- center in a 2x2x2 supercell and export "
+                "Build a diamond NV- center in a 3x3x3 supercell and export "
                 "defect diagnostics."
             ),
             "terms": [
@@ -2929,11 +2932,19 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
                 "\u91d1\u521a\u77f3\u6c2e\u7a7a\u4f4d\u4e2d\u5fc3",
             ],
             "notes": (
-                "Deterministic 2x2x2 diamond conventional-cell scaffold with "
+                "Deterministic cubic diamond conventional-cell scaffold with "
                 "one substitutional N and one verified nearest-neighbor C vacancy. "
+                "The default is 2x2x2 and reviewed explicit repeats are 2 through 4. "
                 "NV0/NV- labels are request metadata only until the Materials Studio "
                 "20.1 CASTEP charge and spin settings are explicitly bound."
             ),
+            "default_supercell": list(DIAMOND_NV_CENTER_DEFAULT_SUPERCELL),
+            "supported_supercell_contract": {
+                "shape": "cubic",
+                "min_repeat": DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
+                "max_repeat": DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+                "base_cell": "diamond_conventional_8_atom",
+            },
             "model_type": "crystal",
             "model_name": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
             "structure_family": "diamond nitrogen vacancy defect complex",
@@ -11317,19 +11328,12 @@ def _infer_diamond_nv_center_template(
     try:
         charge_state = _diamond_nv_charge_state_request(text)
         requested_supercell = _match_make_supercell(text)
-        if (
-            requested_supercell is not None
-            and requested_supercell != DIAMOND_NV_CENTER_SUPERCELL
-        ):
-            requested_label = "x".join(str(value) for value in requested_supercell)
-            raise ValueError(
-                "Diamond NV-center v1 supports only the reviewed 2x2x2 "
-                f"conventional-cell scaffold, not {requested_label}."
-            )
+        supercell_matrix = normalize_diamond_nv_supercell(requested_supercell)
         spec = _diamond_nv_center_spec(
             user_request=user_request,
             project_id=project_id,
             charge_state=charge_state,
+            supercell_matrix=supercell_matrix,
         )
     except ValueError as exc:
         return NaturalLanguagePlan(
@@ -11341,18 +11345,19 @@ def _infer_diamond_nv_center_template(
                 "A diamond nitrogen-vacancy request matched but could not be "
                 "constructed under the reviewed structural contract.",
                 str(exc),
-                "Use NV center, NV0, or NV- with the deterministic 2x2x2 "
-                "diamond scaffold.",
+                "Use NV center, NV0, or NV- with a cubic 2x2x2 through "
+                "4x4x4 diamond scaffold.",
             ],
         )
     charge_label = str(charge_state["charge_state_label"])
+    supercell_label = "x".join(str(value) for value in supercell_matrix)
     return NaturalLanguagePlan(
         kind="spec",
         payload=spec.model_dump(mode="json"),
         confidence=0.94,
         template_id=DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
         notes=[
-            "Generated a deterministic 2x2x2 diamond supercell with one "
+            f"Generated a deterministic {supercell_label} diamond supercell with one "
             "substitutional N and one verified nearest-neighbor C vacancy.",
             (
                 "Charge state remains unresolved and no electronic charge or "
@@ -11378,7 +11383,10 @@ def _diamond_nv_center_spec(
     user_request: str,
     project_id: str | None,
     charge_state: dict[str, Any],
+    supercell_matrix: tuple[int, int, int] = DIAMOND_NV_CENTER_DEFAULT_SUPERCELL,
 ) -> ModelSpec:
+    supercell_matrix = normalize_diamond_nv_supercell(supercell_matrix)
+    supercell_label = "x".join(str(value) for value in supercell_matrix)
     payload = _load_example("diamond_cubic_spec.json")
     chosen_project_id = project_id or _project_id(
         DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
@@ -11411,7 +11419,7 @@ def _diamond_nv_center_spec(
             operations=[
                 {
                     "type": "make_supercell",
-                    "matrix": list(DIAMOND_NV_CENTER_SUPERCELL),
+                    "matrix": list(supercell_matrix),
                 }
             ],
         ),
@@ -11547,6 +11555,19 @@ def _diamond_nv_center_spec(
         **charge_spin_request,
     }
     metadata_updates = {
+        "diamond_nv_supercell_contract": {
+            "schema_version": "diamond_nv_supercell_contract_v1",
+            "matrix": list(supercell_matrix),
+            "cubic_repeat": supercell_matrix[0],
+            "base_template_id": DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
+            "base_conventional_cell_atom_count": len(base.model.basis_atoms),
+            "host_site_count_before_defect": len(supercell.model.basis_atoms),
+            "atom_count_after_defect": len(supercell.model.basis_atoms) - 1,
+            "min_supported_cubic_repeat": DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
+            "max_supported_cubic_repeat": DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+            "selection": "explicit_request_or_default",
+            "source": "natural_language_diamond_nv_center",
+        },
         "semiconductor_dopant_sites": [dopant_record],
         "last_semiconductor_dopant_site": dopant_record,
         "defects": [vacancy_record],
@@ -11578,7 +11599,7 @@ def _diamond_nv_center_spec(
             },
         ],
         "nl_composite_operations": [
-            "make_supercell 2x2x2",
+            f"make_supercell {supercell_label}",
             f"substitute_atom {nitrogen_site.id}->N",
             f"delete_atom {vacancy_site.id}",
             f"bind_defect_complex {complex_id}",

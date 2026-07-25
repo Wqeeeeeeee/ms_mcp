@@ -284,15 +284,21 @@ In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
 Diamond nitrogen-vacancy requests use the discoverable virtual template
-`diamond_nitrogen_vacancy_center`. The v1 route always builds the reviewed
-2x2x2 conventional diamond scaffold, substitutes `C1_000` with N, removes the
-nearest periodic `C2_000`, and exports defect, charge-balance, finite-size, and
-view diagnostics. Explicit NV0 and NV- labels bind reviewed structured CASTEP
+`diamond_nitrogen_vacancy_center`. The route defaults to the reviewed 2x2x2
+conventional diamond scaffold and accepts explicit cubic 2x2x2 through 4x4x4
+matrices. Smaller, larger, and anisotropic requests fail closed. It substitutes
+`C1_000` with N, removes the nearest periodic `C2_000`, and records the selected
+matrix, host-site count, and post-defect atom count in a versioned supercell
+contract. The finite-size JSON and CSV diagnostics independently check that
+contract against the current structure. The 2x2x2 model remains a compact
+preview and carries the small-cell warning; an explicit 3x3x3 model has 215
+atoms after the vacancy and clears the current dilute-cell heuristic.
+Explicit NV0 and NV- labels bind reviewed structured CASTEP
 initial-state settings as well as metadata; they are not calculated electronic
 states. NV0 uses total charge 0 and initial spin 1, while NV- uses total charge
 -1 and initial spin 2. Both use collinear spin, disable formal-spin
 initialization, and keep total spin fixed. Unsupported charge labels or
-supercells are rejected rather than falling back to pristine diamond.
+supercell matrices are rejected rather than falling back to pristine diamond.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
 InN(0001), ZnO(0001), hydrogen-backed 3C-SiC `(001)` Si/C-face slabs,
 hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as

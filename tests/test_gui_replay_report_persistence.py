@@ -68,6 +68,32 @@ class FakeGuiBackend:
         return {"method": "fake", "path": str(path)}
 
 
+class MultiProcessFakeGuiBackend(FakeGuiBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unrelated_window = WindowInfo(
+            handle=202,
+            title="Other - Materials Studio",
+            pid=3333,
+            rect=(0, 0, 900, 700),
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=False,
+        )
+
+    def list_processes(self) -> list[ProcessInfo]:
+        return [
+            ProcessInfo(name="MatStudio.exe", pid=2222),
+            ProcessInfo(name="MatStudio.exe", pid=3333),
+        ]
+
+    def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
+        windows = [self.window, self.unrelated_window]
+        if pid is None:
+            return windows
+        return [window for window in windows if window.pid == pid]
+
+
 def _tiny_bmp() -> bytes:
     width = 2
     height = 2
@@ -634,6 +660,70 @@ def test_live_status_preserves_loaded_revision_while_target_is_minimized(
         "material_studio_gui_activate"
     )
     assert status["gui_status"]["activation_required_before_capture_or_input"] is True
+
+
+def test_live_status_accepts_exact_project_target_amid_unrelated_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created, gui, _, _ = _prepare_replay_project(
+        tmp_path,
+        monkeypatch,
+        create_execution_mode=ExecutionMode.PREVIEW,
+    )
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+    executed = server.material_studio_gui_apply_current_revision(
+        project_id=created["project_id"],
+        execution_mode=ExecutionMode.EXECUTE,
+        open_in_gui=False,
+        take_snapshot=False,
+        export_view_audit=False,
+        working_dir=str(tmp_path),
+    )
+    structure_path = Path(executed["planned_outputs"]["structure"])
+    wrapper = gui._create_project_wrapper(
+        structure_path,
+        project_id=created["project_id"],
+        revision=created["revision"],
+    )
+    backend = MultiProcessFakeGuiBackend()
+    backend.window = WindowInfo(
+        handle=101,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2222,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    gui.backend = backend
+
+    status = server.material_studio_live_project_status(
+        project_id=created["project_id"],
+        include_gui_status=True,
+        working_dir=str(tmp_path),
+    )
+    evidence = status["live_status_hotload_evidence"]
+    management = status["gui_status"]["window_management"]
+
+    assert management["process_count"] == 2
+    assert management["project_scoped_multi_instance_isolation"] is True
+    assert management["window_isolation_mode"] == (
+        "exact_project_target_process"
+    )
+    assert management["single_window_policy_ok"] is True
+    assert management["target_process_id"] == 2222
+    assert management["unrelated_process_ids"] == [3333]
+    assert evidence["verified"] is True
+    assert evidence["loaded_revision_verified"] is True
+    assert evidence["binding_blocking_reasons"] == []
+    assert "matstudio_process_count_not_one" not in evidence[
+        "blocking_reasons"
+    ]
+    assert "matstudio_window_count_not_one" not in evidence[
+        "blocking_reasons"
+    ]
+    assert status["modeling_report"]["gui"]["hot_loaded_from_live_status"] is True
 
 
 def test_apply_current_preview_does_not_recover_live_state_from_failed_result(

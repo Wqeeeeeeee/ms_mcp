@@ -428,6 +428,30 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["gui"]["open_structure_policy"][
         "auto_launch_before_open_when_window_missing"
     ] is False
+    for capabilities in (full, compact):
+        session_policy = capabilities["gui"]["single_window_session_policy"]
+        assert session_policy[
+            "material_studio_gui_launch_refuses_multiple_matstudio_windows"
+        ] is False
+        assert session_policy[
+            "material_studio_gui_launch_refuses_unscoped_multiple_matstudio_windows"
+        ] is True
+        assert session_policy["hotload_refuses_multiple_matstudio_windows"] is False
+        assert session_policy[
+            "hotload_refuses_ambiguous_or_same_process_multiple_windows"
+        ] is True
+        assert session_policy[
+            "execute_open_in_gui_preflight_blocks_multiple_windows"
+        ] is False
+        assert session_policy[
+            "execute_open_in_gui_preflight_blocks_unscoped_multiple_windows"
+        ] is True
+        assert capabilities["gui"]["open_structure_policy"][
+            "refuses_multiple_matstudio_windows"
+        ] is False
+        assert capabilities["gui"]["open_structure_policy"][
+            "refuses_unscoped_multiple_matstudio_windows"
+        ] is True
     assert "material_studio_live_modeling_request" == compact["live_entry_tool"]
     assert compact["visual_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
         "gui_evidence_reaudit"
@@ -593,6 +617,53 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert _json_size(compact) * 4 < _json_size(full)
 
 
+def test_compact_capabilities_hard_budget_bounds_large_schema_catalog(
+    monkeypatch,
+) -> None:
+    core = {
+        "model_spec": "model_spec.schema.json",
+        "molecule_spec": "molecule_spec.schema.json",
+        "crystal_spec": "crystal_spec.schema.json",
+        "forcite_spec": "forcite_spec.schema.json",
+        "castep_spec": "castep_spec.schema.json",
+        "semantic_patch": "patch_spec.schema.json",
+    }
+    expanded = {
+        key: {
+            "filename": filename,
+            "package_relative_path": f"schemas/{filename}",
+            "path": f"C:/schemas/{filename}",
+        }
+        for key, filename in core.items()
+    }
+    for index in range(500):
+        filename = f"future_{index:03d}_{'x' * 120}.schema.json"
+        expanded[f"future_schema_{index:03d}"] = {
+            "filename": filename,
+            "package_relative_path": f"schemas/{filename}",
+            "path": f"C:/schemas/{filename}",
+        }
+    monkeypatch.setattr(server, "_schema_capability_paths", lambda: expanded)
+
+    compact = server.material_studio_live_capabilities(
+        response_mode="compact"
+    )
+    receipt = compact["response_compaction"]
+    response_bytes = _json_size(compact)
+
+    assert response_bytes < server.COMPACT_RESPONSE_MAX_BYTES
+    assert receipt["response_bytes"] == response_bytes
+    assert receipt["headroom_bytes"] == (
+        server.COMPACT_RESPONSE_MAX_BYTES - response_bytes
+    )
+    assert receipt["semantic_core_preserved"] is True
+    assert receipt["omitted_schema_count"] >= 490
+    assert "schemas.additional_entries" in receipt["omitted_fields"]
+    assert compact["schemas"]["model_spec"] == core["model_spec"]
+    assert compact["schemas"]["semantic_patch"] == core["semantic_patch"]
+    assert len(compact["schemas"]) <= 16
+
+
 def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> None:
     monkeypatch.setattr(
         server.runner,
@@ -623,10 +694,11 @@ def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> 
                 "window_found": True,
                 "window_count": 1,
                 "live_window_count": 1,
-                "selected_window_handle": 303,
-                "single_window_policy_ok": True,
-                "single_window_violation_reasons": [],
-                "local_uia_view_replay_supported": True,
+                    "selected_window_handle": 303,
+                    "single_window_policy_ok": True,
+                    "single_window_violation_reasons": [],
+                    "target_window_pid_is_matstudio_process": True,
+                    "local_uia_view_replay_supported": True,
                 "local_uia_view_replay_unavailable_reason": None,
                 "local_uia_view_replay_view_names": ["front", "isometric"],
                 "local_uia_miller_plane_transaction_supported": True,
@@ -658,8 +730,9 @@ def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> 
                     "target_window_is_selected": True,
                     "target_window_is_visible": True,
                     "target_window_is_minimized": False,
-                    "target_window_is_foreground": True,
-                    "single_window_policy_ok": True,
+                        "target_window_is_foreground": True,
+                        "target_window_pid_is_matstudio_process": True,
+                        "single_window_policy_ok": True,
                     "single_window_violation_reasons": [],
                     "ready_for_next_live_edit": True,
                     "recommended_tool": "material_studio_gui_snapshot",
@@ -703,11 +776,12 @@ def test_view_replay_runtime_availability_fails_closed_without_miller_backend() 
     standard_only = server._view_replay_runtime_availability(
         {
             "local_uia_view_replay_supported": True,
-            "local_uia_miller_plane_transaction_supported": False,
-            "single_window_policy_ok": True,
-            "process_count": 1,
-            "window_count": 1,
-        }
+                "local_uia_miller_plane_transaction_supported": False,
+                "single_window_policy_ok": True,
+                "target_window_pid_is_matstudio_process": True,
+                "process_count": 1,
+                "window_count": 1,
+            }
     )
     assert standard_only["status"] == "standard_and_isometric_only"
     assert standard_only["transactional_miller_implemented"] is True

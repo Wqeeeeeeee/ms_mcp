@@ -73,7 +73,10 @@ class _GuiBackend:
 
     def list_processes(self) -> list[ProcessInfo]:
         processes = [ProcessInfo(name="MatStudio.exe", pid=self.window.pid or 202)]
-        if self.extra_window is not None:
+        if (
+            self.extra_window is not None
+            and self.extra_window.pid != self.window.pid
+        ):
             processes.append(ProcessInfo(name="MatStudio.exe", pid=self.extra_window.pid or 303))
         return processes
 
@@ -161,8 +164,20 @@ def _controller(tmp_path: Path) -> tuple[MaterialsStudioGuiController, _GuiBacke
         backend=backend,
         view_replay_backend=replay,
     )
-    structure = tmp_path / "model.cif"
+    structure = tmp_path / "fit_project" / "outputs" / "r002" / "model.cif"
+    structure.parent.mkdir(parents=True, exist_ok=True)
     structure.write_text("data_model\n", encoding="utf-8")
+    revision_path = (
+        tmp_path
+        / "fit_project"
+        / "revisions"
+        / "r002_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": "fit_project", "revision": 2}),
+        encoding="utf-8",
+    )
     wrapper = controller._create_project_wrapper(
         structure,
         project_id="fit_project",
@@ -235,7 +250,7 @@ def test_fit_to_view_execute_captures_evidence_and_preserves_structure(
     assert "fit_to_view" in log_path.read_text(encoding="utf-8")
 
 
-def test_fit_to_view_refuses_multiple_matstudio_processes_before_probe_or_input(
+def test_fit_to_view_allows_unrelated_matstudio_process_for_exact_target(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -258,9 +273,44 @@ def test_fit_to_view_refuses_multiple_matstudio_processes_before_probe_or_input(
         take_snapshot=True,
     )
 
+    assert result["status"] == "executed"
+    assert result["execution_ready"] is True
+    assert result["preflight"]["single_window_policy_ok"] is True
+    assert result["preflight"]["block_reasons"] == []
+    assert len(replay.probe_calls) == 1
+    assert len(replay.execute_calls) == 1
+    assert len(backend.captured) == 2
+
+
+def test_fit_to_view_refuses_second_primary_window_in_target_process(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(gui_module, "_materials_studio_view_command_evidence", _command_evidence)
+    controller, backend, replay, _structure = _controller(tmp_path)
+    backend.extra_window = WindowInfo(
+        handle=303,
+        title="extra - Materials Studio",
+        pid=backend.window.pid,
+        rect=(0, 0, 600, 400),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+
+    result = controller.fit_to_view(
+        project_id="fit_project",
+        revision=2,
+        execution_mode="execute",
+        take_snapshot=True,
+    )
+
     assert result["status"] == "blocked"
     assert result["execution_ready"] is False
-    assert "exactly_one_matstudio_process_required" in result["preflight"]["block_reasons"]
+    assert (
+        "multiple_matstudio_windows_detected"
+        in result["preflight"]["block_reasons"]
+    )
     assert replay.probe_calls == []
     assert replay.execute_calls == []
     assert backend.captured == []
@@ -285,8 +335,17 @@ def test_mcp_fit_to_view_defaults_preview_and_persists_execute_report(
     )
     ProjectStore(tmp_path).create_project(spec)
     controller, backend, replay, structure = _controller(tmp_path)
+    server_structure = (
+        tmp_path
+        / "fit_server_project"
+        / "outputs"
+        / "r000"
+        / structure.name
+    )
+    server_structure.parent.mkdir(parents=True, exist_ok=True)
+    server_structure.write_bytes(structure.read_bytes())
     wrapper = controller._create_project_wrapper(
-        structure,
+        server_structure,
         project_id="fit_server_project",
         revision=0,
     )

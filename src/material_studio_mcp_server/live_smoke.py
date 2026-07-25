@@ -1334,7 +1334,14 @@ def _effective_views_from_live_response(
 
 
 _POSTEXECUTION_ACTIVATE_PAYLOAD_KEYS = frozenset(
-    {"project_id", "revision", "take_snapshot", "views", "working_dir"}
+    {
+        "project_id",
+        "revision",
+        "take_snapshot",
+        "views",
+        "working_dir",
+        "use_unscoped_existing_window",
+    }
 )
 _POSTEXECUTION_OPEN_PAYLOAD_KEYS = frozenset(
     {
@@ -1586,22 +1593,39 @@ def _validate_preexecution_execution_block(
         execution_payload == _dict(block.get("execution_retry_payload")),
         "execution_payload_not_exact_block_payload",
     )
-    require(
-        activation_payload.get("project_id") == project_id,
-        "activation_payload_project_mismatch",
-        expected=project_id,
-        observed=activation_payload.get("project_id"),
+    unscoped_activation = (
+        activation_payload.get("use_unscoped_existing_window") is True
     )
-    require(
-        _revision_identity(activation_payload.get("revision")) == revision,
-        "activation_payload_revision_mismatch",
-        expected=revision,
-        observed=activation_payload.get("revision"),
-    )
-    require(
-        activation_payload.get("take_snapshot") is True,
-        "activation_payload_snapshot_gate_missing",
-    )
+    if unscoped_activation:
+        require(
+            "project_id" not in activation_payload,
+            "unscoped_activation_payload_has_project",
+        )
+        require(
+            "revision" not in activation_payload,
+            "unscoped_activation_payload_has_revision",
+        )
+        require(
+            activation_payload.get("take_snapshot") is False,
+            "unscoped_activation_payload_snapshot_gate_invalid",
+        )
+    else:
+        require(
+            activation_payload.get("project_id") == project_id,
+            "activation_payload_project_mismatch",
+            expected=project_id,
+            observed=activation_payload.get("project_id"),
+        )
+        require(
+            _revision_identity(activation_payload.get("revision")) == revision,
+            "activation_payload_revision_mismatch",
+            expected=revision,
+            observed=activation_payload.get("revision"),
+        )
+        require(
+            activation_payload.get("take_snapshot") is True,
+            "activation_payload_snapshot_gate_missing",
+        )
     require(
         execution_payload.get("project_id") == project_id,
         "execution_payload_project_mismatch",
@@ -1880,22 +1904,39 @@ def _validate_postexecution_hotload_block(
         open_payload == _dict(block.get("gui_open_retry_payload")),
         "open_payload_not_exact_block_payload",
     )
-    require(
-        activation_payload.get("project_id") == project_id,
-        "activation_payload_project_mismatch",
-        expected=project_id,
-        observed=activation_payload.get("project_id"),
+    unscoped_activation = (
+        activation_payload.get("use_unscoped_existing_window") is True
     )
-    require(
-        _revision_identity(activation_payload.get("revision")) == revision,
-        "activation_payload_revision_mismatch",
-        expected=revision,
-        observed=activation_payload.get("revision"),
-    )
-    require(
-        activation_payload.get("take_snapshot") is True,
-        "activation_payload_snapshot_gate_missing",
-    )
+    if unscoped_activation:
+        require(
+            "project_id" not in activation_payload,
+            "unscoped_activation_payload_has_project",
+        )
+        require(
+            "revision" not in activation_payload,
+            "unscoped_activation_payload_has_revision",
+        )
+        require(
+            activation_payload.get("take_snapshot") is False,
+            "unscoped_activation_payload_snapshot_gate_invalid",
+        )
+    else:
+        require(
+            activation_payload.get("project_id") == project_id,
+            "activation_payload_project_mismatch",
+            expected=project_id,
+            observed=activation_payload.get("project_id"),
+        )
+        require(
+            _revision_identity(activation_payload.get("revision")) == revision,
+            "activation_payload_revision_mismatch",
+            expected=revision,
+            observed=activation_payload.get("revision"),
+        )
+        require(
+            activation_payload.get("take_snapshot") is True,
+            "activation_payload_snapshot_gate_missing",
+        )
     require(
         open_payload.get("project_id") == project_id,
         "open_payload_project_mismatch",

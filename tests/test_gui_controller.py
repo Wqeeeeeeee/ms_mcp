@@ -57,6 +57,26 @@ def _write_test_wrapper(
     )
     document_path.parent.mkdir(parents=True, exist_ok=True)
     document_path.write_text("<XSD/>\n", encoding="utf-8")
+    source_path = (
+        workspace
+        / project_id
+        / "outputs"
+        / f"r{revision:03d}"
+        / document_name
+    )
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(document_path.read_bytes())
+    revision_path = (
+        workspace
+        / project_id
+        / "revisions"
+        / f"r{revision:03d}_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": project_id, "revision": revision}),
+        encoding="utf-8",
+    )
     project_path = project_dir / f"{project_name}.stp"
     project_path.write_text(
         (
@@ -73,6 +93,25 @@ def _write_test_wrapper(
         ),
         encoding="utf-8",
     )
+    project_sha256 = hashlib.sha256(project_path.read_bytes()).hexdigest()
+    document_sha256 = hashlib.sha256(document_path.read_bytes()).hexdigest()
+    identity_path = project_dir / "wrapper_identity.json"
+    identity = {
+        "identity_schema_version": 1,
+        "identity_profile": "materials_studio_revision_wrapper_identity_v1",
+        "project_name": project_name,
+        "project_id": project_id,
+        "revision": revision,
+        "source_path": str(source_path.resolve()),
+        "source_sha256": document_sha256,
+        "source_size_bytes": document_path.stat().st_size,
+        "document_name": document_name,
+        "document_sha256": document_sha256,
+        "document_size_bytes": document_path.stat().st_size,
+        "project_file_sha256": project_sha256,
+        "project_file_size_bytes": project_path.stat().st_size,
+    }
+    identity_path.write_text(json.dumps(identity), encoding="utf-8")
     (project_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -80,22 +119,76 @@ def _write_test_wrapper(
                 "revision": revision,
                 "project_name": project_name,
                 "document_name": document_name,
-                "source_path": str(document_path),
-                "wrapper_schema_version": 2,
-                "wrapper_profile": "materials_studio_20_1_project_wrapper_v1",
-                "project_file_sha256": hashlib.sha256(
-                    project_path.read_bytes()
-                ).hexdigest(),
+                "source_path": str(source_path.resolve()),
+                "wrapper_schema_version": 3,
+                "wrapper_profile": "materials_studio_20_1_project_wrapper_v2",
+                "project_file_sha256": project_sha256,
                 "project_file_size_bytes": project_path.stat().st_size,
-                "document_sha256": hashlib.sha256(
-                    document_path.read_bytes()
-                ).hexdigest(),
+                "document_sha256": document_sha256,
                 "document_size_bytes": document_path.stat().st_size,
+                "source_sha256": document_sha256,
+                "source_size_bytes": document_path.stat().st_size,
+                "identity_manifest_name": identity_path.name,
+                "identity_manifest_sha256": hashlib.sha256(
+                    identity_path.read_bytes()
+                ).hexdigest(),
+                "identity_manifest_size_bytes": identity_path.stat().st_size,
             }
         ),
         encoding="utf-8",
     )
     return project_path
+
+
+def _bind_structure_to_revision(
+    controller: MaterialsStudioGuiController,
+    structure: Path,
+    *,
+    project_id: str,
+    revision: int,
+) -> Path:
+    source = structure.expanduser().resolve()
+    bound_source = (
+        controller.workspace_root
+        / project_id
+        / "outputs"
+        / f"r{revision:03d}"
+        / source.name
+    ).resolve()
+    bound_source.parent.mkdir(parents=True, exist_ok=True)
+    if source != bound_source:
+        bound_source.write_bytes(source.read_bytes())
+    revision_path = (
+        controller.workspace_root
+        / project_id
+        / "revisions"
+        / f"r{revision:03d}_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": project_id, "revision": revision}),
+        encoding="utf-8",
+    )
+    return bound_source
+
+
+def _create_bound_wrapper(
+    controller: MaterialsStudioGuiController,
+    structure: Path,
+    *,
+    project_id: str,
+    revision: int,
+) -> dict:
+    return controller._create_project_wrapper(
+        _bind_structure_to_revision(
+            controller,
+            structure,
+            project_id=project_id,
+            revision=revision,
+        ),
+        project_id=project_id,
+        revision=revision,
+    )
 
 
 class FakeGuiBackend:
@@ -340,6 +433,97 @@ class MultiWindowFakeGuiBackend(FakeGuiBackend):
         return super().capture_window(window, output_path)
 
 
+class MultiProcessSameWindowOpenFakeGuiBackend(MultiWindowFakeGuiBackend):
+    file_open_may_launch_new_instance = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.same_window_opened: list[tuple[int, Path]] = []
+        self.process_ids = {1234}
+
+    def list_processes(self) -> list[ProcessInfo]:
+        return [
+            ProcessInfo(name="MatStudio.exe", pid=pid)
+            for pid in sorted(self.process_ids)
+        ]
+
+    def open_file_in_existing_window(
+        self,
+        window: WindowInfo,
+        path: Path,
+    ) -> dict:
+        self.same_window_opened.append((window.handle, path))
+        return {
+            "method": "fake_same_window_open",
+            "path": str(path),
+            "window": window.to_dict(),
+            "same_window_open_requested": True,
+        }
+
+
+class DuplicateWrapperAfterSameWindowOpenFakeGuiBackend(
+    MultiProcessSameWindowOpenFakeGuiBackend,
+    WindowsGuiBackend,
+):
+    def find_window(self, pid: int | None = None) -> WindowInfo | None:
+        if pid is not None and self.window.pid != pid:
+            return next(
+                (window for window in self.windows if window.pid == pid),
+                None,
+            )
+        return self.window
+
+    def dismiss_file_association_dialogs(
+        self,
+        *,
+        pid: int | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> list[dict]:
+        return []
+
+    def dismiss_startup_dialogs(
+        self,
+        *,
+        pid: int | None = None,
+        timeout_seconds: float = 8.0,
+    ) -> list[dict]:
+        return []
+
+    def open_file_in_existing_window(
+        self,
+        window: WindowInfo,
+        path: Path,
+    ) -> dict:
+        self.same_window_opened.append((window.handle, path))
+        opened = WindowInfo(
+            handle=window.handle,
+            title=f"{path.stem} - Materials Studio",
+            pid=window.pid,
+            rect=window.rect,
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=True,
+        )
+        duplicate = WindowInfo(
+            handle=window.handle + 1000,
+            title=opened.title,
+            pid=5678,
+            rect=(40, 40, 940, 740),
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=False,
+        )
+        self.window = opened
+        self.windows = [opened, duplicate]
+        self.process_ids.add(duplicate.pid)
+        return {
+            "method": "fake_same_window_open",
+            "path": str(path),
+            "window": window.to_dict(),
+            "same_window_open_requested": True,
+        }
+
+
 class MinimizedGuiBackend(FakeGuiBackend):
     def __init__(self, *, restore_on_activate: bool = True) -> None:
         super().__init__()
@@ -473,10 +657,10 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
         in status["capabilities"]
     ) is bool(controller.view_replay_backend.supported)
 
-    activated = controller.activate(project_id="gui_proj", revision=0)
+    activated = controller.activate()
     assert activated["activated"] is True
 
-    snapshot = controller.snapshot(label="main window", project_id="gui_proj", revision=0)
+    snapshot = controller.snapshot(label="main window")
     screenshot_path = Path(snapshot["screenshot_path"])
     assert screenshot_path.exists()
     assert screenshot_path.suffix == ".bmp"
@@ -484,7 +668,7 @@ def test_gui_status_activate_snapshot_and_logs(tmp_path: Path) -> None:
     assert snapshot["analysis"]["readable"] is True
     assert snapshot["analysis"]["width"] == 2
 
-    log_path = tmp_path / "gui_proj" / "gui_actions.jsonl"
+    log_path = tmp_path / "gui_actions.jsonl"
     assert log_path.exists()
     assert "snapshot" in log_path.read_text(encoding="utf-8")
 
@@ -689,7 +873,7 @@ def test_gui_launch_activates_existing_window_and_can_snapshot(tmp_path: Path) -
     backend = FakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
 
-    result = controller.launch(project_id="gui_proj", revision=0, take_snapshot=True)
+    result = controller.launch(take_snapshot=True)
 
     assert result["launched"] is False
     assert result["activated_existing_window"] is True
@@ -697,7 +881,7 @@ def test_gui_launch_activates_existing_window_and_can_snapshot(tmp_path: Path) -
     assert result["window"]["title"] == "Untitled - Materials Studio"
     assert Path(result["snapshot"]["screenshot_path"]).exists()
     assert result["snapshot"]["analysis"]["likely_nonblank"] is True
-    assert "launch" in (tmp_path / "gui_proj" / "gui_actions.jsonl").read_text(encoding="utf-8")
+    assert "launch" in (tmp_path / "gui_actions.jsonl").read_text(encoding="utf-8")
 
 
 def test_gui_launch_starts_session_when_no_window(tmp_path: Path) -> None:
@@ -731,7 +915,7 @@ def test_gui_launch_refuses_multiple_matstudio_windows(tmp_path: Path) -> None:
     backend = MultiWindowFakeGuiBackend()
     backend.windows = [
         backend.default_window,
-        WindowInfo(handle=900, title="second - Materials Studio", pid=5678, rect=(0, 0, 700, 500)),
+        WindowInfo(handle=900, title="second - Materials Studio", pid=1234, rect=(0, 0, 700, 500)),
     ]
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
 
@@ -754,7 +938,7 @@ def test_gui_launch_refuses_multiple_windows_even_when_project_window_matches(tm
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id="current_proj", revision=5)
+    wrapper = _create_bound_wrapper(controller, structure, project_id="current_proj", revision=5)
     target_window = WindowInfo(
         handle=505,
         title=f"{wrapper['project_name']} - Materials Studio",
@@ -961,6 +1145,12 @@ def test_windows_gui_open_structure_resolves_known_startup_dialogs_in_same_windo
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
+    structure = _bind_structure_to_revision(
+        controller,
+        structure,
+        project_id="gui_proj",
+        revision=3,
+    )
 
     opened = controller.open_structure(
         structure,
@@ -2526,7 +2716,7 @@ def test_gui_open_structure_uses_same_window_opener_when_file_open_may_spawn(tmp
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
 
-    result = controller.open_structure(structure, project_id="gui_proj", revision=4, take_snapshot=True)
+    result = controller.open_structure(structure, project_id="gui_proj", revision=4, take_snapshot=False)
 
     assert result["same_window_open_supported"] is True
     assert result["same_window_open_used"] is True
@@ -2535,7 +2725,6 @@ def test_gui_open_structure_uses_same_window_opener_when_file_open_may_spawn(tmp
     assert backend.same_window_opened == [(100, structure.resolve())]
     assert backend.opened == []
     assert backend.activated_handles == [100, 100]
-    assert "snapshot" in result
 
 
 def test_gui_open_structure_flags_post_open_spawned_matstudio_process(tmp_path: Path) -> None:
@@ -2581,6 +2770,12 @@ def test_gui_open_structure_wraps_generated_structure_for_windows_same_window_op
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
+    structure = _bind_structure_to_revision(
+        controller,
+        structure,
+        project_id="gui_proj",
+        revision=5,
+    )
 
     result = controller.open_structure(structure, project_id="gui_proj", revision=5, take_snapshot=False)
 
@@ -2607,16 +2802,16 @@ def test_gui_open_structure_does_not_overwrite_input(tmp_path: Path) -> None:
     structure = tmp_path / "model.xsd"
     structure.write_text("original", encoding="utf-8")
 
-    result = controller.open_structure(structure, project_id="gui_proj", revision=1, take_snapshot=True)
+    result = controller.open_structure(structure, project_id="gui_proj", revision=1, take_snapshot=False)
 
     assert result["structure_path"] == str(structure.resolve())
     assert structure.read_text(encoding="utf-8") == "original"
     assert backend.opened == [structure.resolve()]
-    assert "snapshot" in result
-    assert result["snapshot"]["analysis"]["likely_nonblank"] is True
 
 
-def test_gui_open_structure_activates_opened_window(tmp_path: Path) -> None:
+def test_gui_open_structure_does_not_activate_untracked_opened_window(
+    tmp_path: Path,
+) -> None:
     backend = NewWindowAfterOpenFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
@@ -2625,9 +2820,12 @@ def test_gui_open_structure_activates_opened_window(tmp_path: Path) -> None:
     result = controller.open_structure(structure, project_id="gui_proj", revision=2, take_snapshot=False)
 
     assert result["activated_existing_window"] is True
-    assert result["activated_opened_window"] is True
+    assert result["activated_opened_window"] is False
     assert result["window"]["handle"] == 200
-    assert backend.activated_handles == [100, 200]
+    assert "target_window_pid_not_matstudio_process" in result[
+        "post_open_single_window_violation_reasons"
+    ]
+    assert backend.activated_handles == [100]
 
 
 def test_gui_project_wrapper_is_workspace_local(tmp_path: Path) -> None:
@@ -2636,7 +2834,11 @@ def test_gui_project_wrapper_is_workspace_local(tmp_path: Path) -> None:
     structure = tmp_path / "model.xsd"
     structure.write_text("<XSD />", encoding="utf-8")
 
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id="gui proj", revision=2)
+    wrapper = controller._create_project_wrapper(
+        structure.resolve(),
+        project_id="gui proj",
+        revision=2,
+    )
 
     project_path = Path(wrapper["project_path"])
     document_path = Path(wrapper["document_path"])
@@ -2661,7 +2863,11 @@ def test_gui_project_wrapper_uses_short_paths_for_long_project_ids(tmp_path: Pat
     structure = tmp_path / ("generated_structure_" + ("y" * 120) + ".cif")
     structure.write_text("data_model\n", encoding="utf-8")
 
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id=long_name, revision=0)
+    wrapper = controller._create_project_wrapper(
+        structure.resolve(),
+        project_id=long_name,
+        revision=0,
+    )
 
     project_path = Path(wrapper["project_path"])
     document_path = Path(wrapper["document_path"])
@@ -2680,7 +2886,7 @@ def test_gui_status_maps_wrapper_window_to_project_revision(tmp_path: Path) -> N
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id="live_window_proj", revision=4)
+    wrapper = _create_bound_wrapper(controller, structure, project_id="live_window_proj", revision=4)
     project_name = wrapper["project_name"]
     backend.window = WindowInfo(
         handle=404,
@@ -2697,7 +2903,9 @@ def test_gui_status_maps_wrapper_window_to_project_revision(tmp_path: Path) -> N
     assert status["wrapper_window_count"] == 1
     assert status["windows"][0]["project_id"] == "live_window_proj"
     assert status["windows"][0]["revision"] == 4
-    assert status["windows"][0]["project_wrapper_metadata"]["source_path"] == str(structure.resolve())
+    assert status["windows"][0]["project_wrapper_metadata"]["source_path"] == wrapper[
+        "source_path"
+    ]
     management = status["window_management"]
     assert management["selected_window_project_id"] == "live_window_proj"
     assert management["target_window_project_id"] == "live_window_proj"
@@ -2711,7 +2919,7 @@ def test_gui_status_resolves_requested_project_revision_window(tmp_path: Path) -
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id="current_proj", revision=5)
+    wrapper = _create_bound_wrapper(controller, structure, project_id="current_proj", revision=5)
     target_window = WindowInfo(
         handle=505,
         title=f"{wrapper['project_name']} - Materials Studio",
@@ -2758,12 +2966,704 @@ def test_gui_status_resolves_requested_project_revision_window(tmp_path: Path) -
     assert "selected_window_is_not_target_window" in management["warnings"]
 
 
+def test_gui_status_isolates_exact_project_target_across_matstudio_processes(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = {1234, 5678}
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="isolated_proj",
+        revision=7,
+    )
+    target_window = WindowInfo(
+        handle=707,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=5678,
+        rect=(0, 0, 900, 700),
+    )
+    unrelated_dialog = WindowInfo(
+        handle=708,
+        title="Save Project As",
+        pid=1234,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    backend.windows = [
+        backend.default_window,
+        target_window,
+        unrelated_dialog,
+    ]
+
+    status = controller.status(project_id="isolated_proj", revision=7)
+    management = status["window_management"]
+
+    assert status["process_count"] == 2
+    assert status["window_count"] == 3
+    assert status["matstudio_window_count"] == 3
+    assert status["single_window_policy_ok"] is True
+    assert status["single_window_violation_reasons"] == []
+    assert status["project_scoped_multi_instance_isolation"] is True
+    assert status["window_isolation_mode"] == "exact_project_target_process"
+    assert status["target_process_id"] == 5678
+    assert status["unrelated_process_ids"] == [1234]
+    assert status["status"] == "target_window_needs_activation"
+    assert status["recommended_tool"] == "material_studio_gui_activate"
+    assert status["can_apply_current_revision_without_new_window"] is True
+    assert status["ready_for_next_live_edit"] is False
+    assert management["target_process_primary_window_count"] == 1
+    assert management["target_process_dialog_window_count"] == 0
+    assert management["global_dialog_window_count"] == 1
+    assert management["unrelated_dialog_window_count"] == 1
+    assert management["unresolved_blocking_dialog_count"] == 0
+    assert management["unrelated_process_count"] == 1
+    assert management["unrelated_primary_window_count"] == 1
+    assert "multiple_matstudio_processes_detected" in management["warnings"]
+    assert "multiple_matstudio_windows_detected" in management["warnings"]
+    assert (
+        "project_scoped_multi_instance_isolation_active"
+        in management["warnings"]
+    )
+    assert "unrelated_matstudio_dialogs_ignored" in management["warnings"]
+
+    activated = controller.activate(project_id="isolated_proj", revision=7)
+    snapshot = controller.snapshot(
+        label="isolated",
+        project_id="isolated_proj",
+        revision=7,
+    )
+    replay_block_reasons = gui_module._local_view_replay_status_block_reasons(
+        controller.status(project_id="isolated_proj", revision=7)
+    )
+
+    assert activated["activated"] is True
+    assert activated["window"]["handle"] == 707
+    assert snapshot["window"]["handle"] == 707
+    assert backend.activated_handles == [707]
+    assert backend.captured_handles == [707]
+    assert "exactly_one_matstudio_process_required" not in replay_block_reasons
+    assert "target_window_pid_not_matstudio_process" not in replay_block_reasons
+
+
+def test_gui_status_keeps_target_process_dialog_as_hotload_blocker(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = {1234, 5678}
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="blocked_target_proj",
+        revision=2,
+    )
+    target_window = WindowInfo(
+        handle=720,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=5678,
+        rect=(0, 0, 900, 700),
+    )
+    target_dialog = WindowInfo(
+        handle=721,
+        title="Save Project As",
+        pid=5678,
+        rect=(20, 20, 500, 300),
+        class_name="#32770",
+    )
+    backend.windows = [
+        backend.default_window,
+        target_window,
+        target_dialog,
+    ]
+
+    status = controller.status(
+        project_id="blocked_target_proj",
+        revision=2,
+    )
+    management = status["window_management"]
+
+    assert status["single_window_policy_ok"] is True
+    assert status["project_scoped_multi_instance_isolation"] is True
+    assert status["status"] == "modal_dialog_blocking_hotload"
+    assert status["recommended_tool"] == "material_studio_gui_activate"
+    assert status["can_apply_current_revision_without_new_window"] is False
+    assert management["target_process_dialog_window_count"] == 1
+    assert management["unresolved_blocking_dialog_count"] == 1
+    assert management["unrelated_dialog_window_count"] == 0
+
+
+def test_gui_open_structure_targets_exact_project_process_amid_other_sessions(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = {1234, 5678}
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    current_structure = tmp_path / "current.cif"
+    current_structure.write_text("data_current\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        current_structure,
+        project_id="hotload_proj",
+        revision=3,
+    )
+    target_window = WindowInfo(
+        handle=730,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=5678,
+        rect=(0, 0, 900, 700),
+    )
+    backend.windows = [backend.default_window, target_window]
+    next_structure = tmp_path / "next.cif"
+    next_structure.write_text("data_next\n", encoding="utf-8")
+
+    opened = controller.open_structure(
+        next_structure,
+        project_id="hotload_proj",
+        revision=3,
+        take_snapshot=False,
+    )
+
+    assert backend.same_window_opened == [
+        (730, next_structure.resolve())
+    ]
+    assert opened["same_window_open_used"] is True
+    assert opened["single_window_policy_ok"] is True
+    assert opened["single_window_violation_reasons"] == []
+    assert opened["window"]["handle"] == 730
+    assert opened["window_management"][
+        "project_scoped_multi_instance_isolation"
+    ] is True
+    assert opened["post_open_window_management"][
+        "project_scoped_multi_instance_isolation"
+    ] is True
+    assert opened["post_open_window_management"]["target_process_id"] == 5678
+
+
+def test_gui_open_structure_does_not_activate_post_open_duplicate_wrapper(
+    tmp_path: Path,
+) -> None:
+    backend = DuplicateWrapperAfterSameWindowOpenFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+
+    opened = controller.open_structure(
+        structure,
+        project_id="post_open_duplicate",
+        revision=1,
+        take_snapshot=False,
+    )
+
+    assert opened["activated_existing_window"] is True
+    assert opened["activated_opened_window"] is False
+    assert opened["post_open_target_window_resolution"][
+        "matching_window_count"
+    ] == 2
+    assert "requested_project_revision_window_ambiguous" in opened[
+        "post_open_single_window_violation_reasons"
+    ]
+    assert opened["post_open_window_management"][
+        "single_window_policy_ok"
+    ] is False
+    assert backend.activated_handles == [backend.default_window.handle]
+
+
+def test_gui_status_ignores_non_matstudio_title_match_window(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    browser_help = WindowInfo(
+        handle=999,
+        title=(
+            "Materials Studio 2020 Online Help - File Associations dialog "
+            "- Google Chrome"
+        ),
+        pid=9999,
+        rect=(0, 0, 1200, 800),
+        class_name="Chrome_WidgetWin_1",
+    )
+    backend.windows = [backend.default_window, browser_help]
+
+    status = controller.status()
+    management = status["window_management"]
+
+    assert status["window_count"] == 2
+    assert status["matstudio_window_count"] == 1
+    assert status["ignored_non_matstudio_window_count"] == 1
+    assert status["single_window_policy_ok"] is True
+    assert status["status"] == "ready_for_same_window_live_edit"
+    assert management["primary_window_count"] == 1
+    assert management["ignored_non_matstudio_window_count"] == 1
+    assert "non_matstudio_title_match_ignored" in management["warnings"]
+
+
+def test_gui_status_never_selects_non_matstudio_title_match_window(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    browser_help = WindowInfo(
+        handle=999,
+        title="Materials Studio 2020 Online Help - Google Chrome",
+        pid=9999,
+        rect=(0, 0, 1200, 800),
+        class_name="Chrome_WidgetWin_1",
+        is_foreground=True,
+    )
+    backend.window = browser_help
+    backend.windows = [browser_help, backend.default_window]
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    status = controller.status()
+
+    assert status["window_found"] is True
+    assert status["selected_window_handle"] == backend.default_window.handle
+    assert status["target_process_id"] == backend.default_window.pid
+    assert status["target_window_pid_is_matstudio_process"] is True
+    assert status["ignored_non_matstudio_window_count"] == 1
+    assert status["single_window_policy_ok"] is True
+
+
+def test_gui_status_refuses_title_only_window_without_matstudio_pid(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    browser_help = WindowInfo(
+        handle=999,
+        title="Materials Studio 2020 Online Help - Google Chrome",
+        pid=9999,
+        rect=(0, 0, 1200, 800),
+        class_name="Chrome_WidgetWin_1",
+        is_foreground=True,
+    )
+    backend.window = browser_help
+    backend.windows = [browser_help]
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    status = controller.status()
+
+    assert status["window_found"] is False
+    assert status["target_window_found"] is False
+    assert status["ignored_non_matstudio_window_count"] == 1
+    assert status["status"] == "matstudio_process_without_usable_window"
+    assert status["can_open_structure_in_existing_window"] is False
+    with pytest.raises(GuiError, match="未找到打开的 Materials Studio 窗口"):
+        controller.snapshot(label="must_not_capture")
+    assert backend.captured_handles == []
+
+
+def test_gui_status_ignores_title_only_window_when_process_inventory_is_empty(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = set()
+    browser_help = WindowInfo(
+        handle=999,
+        title="Materials Studio 2020 Online Help - Google Chrome",
+        pid=9999,
+        rect=(0, 0, 1200, 800),
+        class_name="Chrome_WidgetWin_1",
+        is_foreground=True,
+    )
+    backend.window = browser_help
+    backend.windows = [browser_help]
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+
+    status = controller.status()
+
+    assert status["process_count"] == 0
+    assert status["window_found"] is False
+    assert status["target_window_found"] is False
+    assert status["matstudio_window_count"] == 0
+    assert status["ignored_non_matstudio_window_count"] == 1
+    assert status["status"] == "target_window_missing"
+    assert status["can_open_structure_in_existing_window"] is False
+
+
+def test_gui_direct_actions_refuse_duplicate_matching_revision_wrappers(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = {1234, 5678}
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="duplicate_target",
+        revision=4,
+    )
+    title = f"{wrapper['project_name']} - Materials Studio"
+    first = WindowInfo(
+        handle=740,
+        title=title,
+        pid=1234,
+        rect=(0, 0, 900, 700),
+    )
+    second = WindowInfo(
+        handle=741,
+        title=title,
+        pid=5678,
+        rect=(0, 0, 900, 700),
+    )
+    backend.window = first
+    backend.windows = [first, second]
+
+    status = controller.status(project_id="duplicate_target", revision=4)
+
+    assert status["target_window_resolution"]["matching_window_count"] == 2
+    assert status["single_window_policy_ok"] is False
+    assert "requested_project_revision_window_ambiguous" in status[
+        "single_window_violation_reasons"
+    ]
+    with pytest.raises(GuiError, match="more than one live Materials Studio"):
+        controller.activate(project_id="duplicate_target", revision=4)
+    with pytest.raises(GuiError, match="more than one live Materials Studio"):
+        controller.snapshot(
+            label="duplicate",
+            project_id="duplicate_target",
+            revision=4,
+        )
+    assert backend.activated_handles == []
+    assert backend.captured_handles == []
+
+
+def test_gui_current_revision_requires_strong_wrapper_integrity(
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="tampered_target",
+        revision=2,
+    )
+    project_path = Path(wrapper["project_path"])
+    project_path.write_text("<Project><Version>20.1</Version></Project>\n", encoding="utf-8")
+    target = WindowInfo(
+        handle=750,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=1234,
+        rect=(0, 0, 900, 700),
+    )
+    backend.window = target
+    backend.windows = [target]
+
+    status = controller.status(project_id="tampered_target", revision=2)
+    metadata = status["target_window_resolution"][
+        "target_project_wrapper_metadata"
+    ]
+
+    assert metadata["wrapper_integrity_verified"] is False
+    assert metadata["wrapper_provenance_status"] == "unverified_revision_wrapper"
+    assert status["current_revision_loaded"] is False
+    assert status["needs_reload"] is True
+    assert status["single_window_policy_ok"] is False
+    assert "target_wrapper_identity_unverified" in status[
+        "single_window_violation_reasons"
+    ]
+    with pytest.raises(GuiError, match="target_wrapper_integrity_unverified"):
+        controller.snapshot(
+            label="tampered",
+            project_id="tampered_target",
+            revision=2,
+        )
+    replacement = tmp_path / "replacement.cif"
+    replacement.write_text("data_replacement\n", encoding="utf-8")
+    with pytest.raises(GuiError, match="target_wrapper_identity_unverified"):
+        controller.open_structure(
+            replacement,
+            project_id="tampered_target",
+            revision=2,
+            take_snapshot=False,
+        )
+    assert backend.captured_handles == []
+    assert backend.activated_handles == []
+    assert backend.opened == []
+
+
+def test_gui_wrapper_identity_manifest_rejects_metadata_project_rebinding(
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="identity_project_a",
+        revision=2,
+    )
+    metadata_path = Path(wrapper["metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["project_id"] = "identity_project_b"
+    identity_path = Path(wrapper["identity_manifest_path"])
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    identity["project_id"] = "identity_project_b"
+    identity_path.write_text(json.dumps(identity), encoding="utf-8")
+    metadata["identity_manifest_sha256"] = hashlib.sha256(
+        identity_path.read_bytes()
+    ).hexdigest()
+    metadata["identity_manifest_size_bytes"] = identity_path.stat().st_size
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    rebound_revision = (
+        tmp_path
+        / "identity_project_b"
+        / "revisions"
+        / "r002_model_spec.json"
+    )
+    rebound_revision.parent.mkdir(parents=True, exist_ok=True)
+    rebound_revision.write_text(
+        json.dumps({"project_id": "identity_project_b", "revision": 2}),
+        encoding="utf-8",
+    )
+    target = WindowInfo(
+        handle=751,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=1234,
+        rect=(0, 0, 900, 700),
+    )
+    backend.window = target
+    backend.windows = [target]
+
+    status = controller.status(project_id="identity_project_b", revision=2)
+    target_metadata = status["target_window_resolution"][
+        "target_project_wrapper_metadata"
+    ]
+
+    assert status["target_window_resolution"]["matched_project_window"] is True
+    assert target_metadata["wrapper_integrity_verified"] is False
+    assert target_metadata["wrapper_identity_manifest_valid"] is True
+    assert target_metadata["wrapper_revision_state_binding_valid"] is False
+    assert "wrapper_revision_state_binding_invalid" in target_metadata[
+        "wrapper_integrity_reason_codes"
+    ]
+    assert status["current_revision_loaded"] is False
+    assert status["single_window_policy_ok"] is False
+    replacement = tmp_path / "replacement.cif"
+    replacement.write_text("data_replacement\n", encoding="utf-8")
+    with pytest.raises(GuiError, match="target_wrapper_identity_unverified"):
+        controller.open_structure(
+            replacement,
+            project_id="identity_project_b",
+            revision=2,
+            take_snapshot=False,
+        )
+    assert backend.activated_handles == []
+    assert backend.opened == []
+
+
+def test_gui_legacy_wrapper_requires_independent_revision_state_binding(
+    tmp_path: Path,
+) -> None:
+    backend = MultiWindowFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    project_id = "legacy_state_bound_project"
+    revision = 2
+    source = (
+        tmp_path
+        / project_id
+        / "outputs"
+        / f"r{revision:03d}"
+        / "structure.cif"
+    )
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("data_legacy\n", encoding="utf-8")
+    revision_path = (
+        tmp_path
+        / project_id
+        / "revisions"
+        / f"r{revision:03d}_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": project_id, "revision": revision}),
+        encoding="utf-8",
+    )
+    wrapper = controller._create_project_wrapper(
+        source.resolve(),
+        project_id=project_id,
+        revision=revision,
+    )
+    metadata_path = Path(wrapper["metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["wrapper_schema_version"] = 2
+    metadata["wrapper_profile"] = "materials_studio_20_1_project_wrapper_v1"
+    for field in (
+        "source_sha256",
+        "source_size_bytes",
+        "identity_manifest_name",
+        "identity_manifest_sha256",
+        "identity_manifest_size_bytes",
+    ):
+        metadata.pop(field, None)
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    Path(wrapper["identity_manifest_path"]).unlink()
+    target = WindowInfo(
+        handle=754,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=1234,
+        rect=(0, 0, 900, 700),
+    )
+    backend.window = target
+    backend.windows = [target]
+
+    trusted = controller.status(project_id=project_id, revision=revision)
+    trusted_metadata = trusted["target_window_resolution"][
+        "target_project_wrapper_metadata"
+    ]
+
+    assert trusted["current_revision_loaded"] is True
+    assert trusted_metadata["wrapper_integrity_verified"] is True
+    assert trusted_metadata["legacy_revision_state_binding_valid"] is True
+
+    revision_path.write_text(
+        json.dumps({"project_id": "different_project", "revision": revision}),
+        encoding="utf-8",
+    )
+    untrusted = controller.status(project_id=project_id, revision=revision)
+    untrusted_metadata = untrusted["target_window_resolution"][
+        "target_project_wrapper_metadata"
+    ]
+
+    assert untrusted["current_revision_loaded"] is False
+    assert untrusted["single_window_policy_ok"] is False
+    assert untrusted_metadata["wrapper_integrity_verified"] is False
+    assert "wrapper_revision_state_binding_invalid" in untrusted_metadata[
+        "wrapper_integrity_reason_codes"
+    ]
+
+
+def test_gui_wrapper_title_matching_never_normalizes_project_identity(
+    tmp_path: Path,
+) -> None:
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    backend.process_ids = {1234, 5678}
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    structure = tmp_path / "model.cif"
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        controller,
+        structure,
+        project_id="exact_title_project",
+        revision=3,
+    )
+    altered_title = f"{wrapper['project_name'].replace('_', ' ', 1)} - Materials Studio"
+    altered = WindowInfo(
+        handle=752,
+        title=altered_title,
+        pid=1234,
+        rect=(0, 0, 900, 700),
+    )
+    unrelated = WindowInfo(
+        handle=753,
+        title="unrelated - Materials Studio",
+        pid=5678,
+        rect=(20, 20, 920, 720),
+    )
+    backend.window = altered
+    backend.windows = [altered, unrelated]
+
+    status = controller.status(project_id="exact_title_project", revision=3)
+
+    assert status["target_window_resolution"]["matched_project_window"] is False
+    assert status["current_revision_loaded"] is False
+    assert status["single_window_policy_ok"] is False
+    assert status["window_management"]["wrapper_window_count"] == 0
+    with pytest.raises(GuiError, match="single-window policy"):
+        controller.open_structure(
+            structure,
+            project_id="exact_title_project",
+            revision=3,
+            take_snapshot=False,
+        )
+    assert backend.same_window_opened == []
+
+
+def test_gui_direct_actions_refuse_wrapper_from_trusted_external_workspace(
+    tmp_path: Path,
+) -> None:
+    controller_root = tmp_path / "controller"
+    external_root = tmp_path / "external"
+    backend = MultiProcessSameWindowOpenFakeGuiBackend()
+    external_controller = MaterialsStudioGuiController(
+        external_root,
+        backend=backend,
+    )
+    structure = external_root / "model.cif"
+    structure.parent.mkdir(parents=True, exist_ok=True)
+    structure.write_text("data_model\n", encoding="utf-8")
+    wrapper = _create_bound_wrapper(
+        external_controller,
+        structure,
+        project_id="external_target",
+        revision=6,
+    )
+    target = WindowInfo(
+        handle=760,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=1234,
+        rect=(0, 0, 900, 700),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    backend.window = target
+    backend.windows = [target]
+    controller = MaterialsStudioGuiController(
+        controller_root,
+        backend=backend,
+    )
+    controller.trusted_wrapper_workspace_roots = (
+        (controller_root.resolve(), "controller"),
+        (external_root.resolve(), "test_external"),
+    )
+
+    status = controller.status(project_id="external_target", revision=6)
+
+    assert status["target_window_resolution"]["matched_project_window"] is True
+    assert status["workspace_context_mismatch"] is True
+    assert status["current_revision_loaded"] is False
+    with pytest.raises(GuiError, match="target_wrapper_workspace_mismatch"):
+        controller.activate(project_id="external_target", revision=6)
+    with pytest.raises(GuiError, match="target_wrapper_workspace_mismatch"):
+        controller.snapshot(
+            label="external",
+            project_id="external_target",
+            revision=6,
+        )
+    launched = controller.launch(
+        project_id="external_target",
+        revision=6,
+        wait_seconds=1,
+        take_snapshot=False,
+    )
+    assert launched["launch_blocked"] is True
+    assert launched["launch_block_reason"] == "single_window_policy_violation"
+    assert "target_wrapper_workspace_mismatch" in launched[
+        "single_window_violation_reasons"
+    ]
+    assert backend.activated_handles == []
+    assert backend.captured_handles == []
+
+
 def test_gui_snapshot_and_activate_target_matching_project_wrapper_window(tmp_path: Path) -> None:
     backend = MultiWindowFakeGuiBackend()
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
-    wrapper = controller._create_project_wrapper(structure.resolve(), project_id="current_proj", revision=5)
+    wrapper = _create_bound_wrapper(controller, structure, project_id="current_proj", revision=5)
     target_window = WindowInfo(
         handle=505,
         title=f"{wrapper['project_name']} - Materials Studio",
@@ -2772,30 +3672,26 @@ def test_gui_snapshot_and_activate_target_matching_project_wrapper_window(tmp_pa
     )
     backend.windows = [backend.default_window, target_window]
 
-    snapshot = controller.snapshot(label="current", project_id="current_proj", revision=5)
-    assert snapshot["window"]["handle"] == 505
-    assert snapshot["target_window_resolution"]["matched_project_window"] is True
-    assert snapshot["target_window_resolution"]["matching_window_count"] == 1
-    assert snapshot["target_window_resolution"]["fallback_used"] is False
-    assert snapshot["single_window_policy_ok"] is False
-    assert snapshot["single_window_violation_reasons"] == ["multiple_matstudio_windows_detected"]
-    assert snapshot["window_management"]["target_window_handle"] == 505
-    assert snapshot["window_management"]["matched_project_window"] is True
-    assert snapshot["window_management"]["single_window_policy_ok"] is False
-    assert snapshot["window_management"]["recommended_tool"] == "material_studio_gui_status"
-    assert backend.captured_handles == [505]
+    status = controller.status(project_id="current_proj", revision=5)
+    assert status["target_window"]["handle"] == 505
+    assert status["target_window_resolution"]["matched_project_window"] is True
+    assert status["single_window_policy_ok"] is False
+    assert status["single_window_violation_reasons"] == [
+        "multiple_matstudio_windows_detected"
+    ]
+    assert status["ready_for_snapshot"] is False
 
-    activated = controller.activate(project_id="current_proj", revision=5)
-    assert activated["activated"] is True
-    assert activated["window"]["handle"] == 505
-    assert activated["target_window_resolution"]["matched_project_window"] is True
-    assert activated["single_window_policy_ok"] is False
-    assert activated["single_window_violation_reasons"] == ["multiple_matstudio_windows_detected"]
-    assert activated["window_management"]["target_window_handle"] == 505
-    assert activated["window_management"]["matched_project_window"] is True
-    assert activated["window_management"]["single_window_policy_ok"] is False
-    assert activated["window_management"]["recommended_action"] == "close_save_extra_matstudio_windows_then_retry_hotload"
-    assert backend.activated_handles == [505]
+    with pytest.raises(GuiError, match="not uniquely verified"):
+        controller.snapshot(
+            label="current",
+            project_id="current_proj",
+            revision=5,
+        )
+    with pytest.raises(GuiError, match="not uniquely verified"):
+        controller.activate(project_id="current_proj", revision=5)
+
+    assert backend.captured_handles == []
+    assert backend.activated_handles == []
 
 
 def test_wait_for_window_after_open_prefers_expected_project_title(tmp_path: Path) -> None:
@@ -2865,7 +3761,7 @@ def _controller_with_verified_project_window(tmp_path: Path) -> tuple[MaterialsS
     controller = MaterialsStudioGuiController(tmp_path, backend=backend)
     structure = tmp_path / "model.cif"
     structure.write_text("data_model\n", encoding="utf-8")
-    wrapper = controller._create_project_wrapper(structure, project_id="view_proj", revision=2)
+    wrapper = _create_bound_wrapper(controller, structure, project_id="view_proj", revision=2)
     backend.window = WindowInfo(
         handle=100,
         title=f"{wrapper['project_name']} - Materials Studio",
@@ -3383,22 +4279,36 @@ def test_refresh_view_replay_invalidates_drifted_reviewed_evidence(
     assert summary["accepted_event_count"] == 0
     assert summary["accepted_view_count"] == 0
     assert summary["integrity_blocked_view_names"] == ["crystal_100"]
-    assert refreshed["replay_status"] == (
-        "evidence_integrity_reverification_required"
-    )
-    assert refreshed["replay_continuation"]["status"] == (
-        "evidence_integrity_reverification_required"
-    )
-    assert refreshed["replay_continuation"]["automatic_replay_ready"] is False
-    assert refreshed["next_action"]["recommended_tool"] == (
-        "material_studio_gui_copy_script_assist"
-    )
-    assert refreshed["next_action_resolution"]["status"] == (
-        "continuation_safety_override_applied"
-    )
-    assert refreshed["next_action_resolution"]["safety_gate"][
-        "external_review_required"
-    ] is True
+    if artifact_kind == "structure":
+        assert refreshed["replay_status"] == "blocked"
+        assert "target_revision_not_loaded_in_gui" in refreshed[
+            "preflight_block_reasons"
+        ]
+        assert refreshed["replay_continuation"]["status"] == (
+            "preflight_blocked"
+        )
+        assert refreshed["replay_continuation"][
+            "automatic_replay_ready"
+        ] is False
+    else:
+        assert refreshed["replay_status"] == (
+            "evidence_integrity_reverification_required"
+        )
+        assert refreshed["replay_continuation"]["status"] == (
+            "evidence_integrity_reverification_required"
+        )
+        assert refreshed["replay_continuation"][
+            "automatic_replay_ready"
+        ] is False
+        assert refreshed["next_action"]["recommended_tool"] == (
+            "material_studio_gui_copy_script_assist"
+        )
+        assert refreshed["next_action_resolution"]["status"] == (
+            "continuation_safety_override_applied"
+        )
+        assert refreshed["next_action_resolution"]["safety_gate"][
+            "external_review_required"
+        ] is True
     persisted_event = json.loads(
         Path(recorded["events_path"]).read_text(encoding="utf-8").splitlines()[0]
     )

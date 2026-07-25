@@ -31,7 +31,7 @@ construction remains disabled until Copy Script output confirms the local API.
 - `material_studio_gui_copy_script_assist`: returns a checklist plus a non-callable reviewed-evidence payload template for extracting exact Materials Studio Copy Script output, with status scoped to the latest current project when no project context is supplied. The template explicitly requires exact window binding and a workspace screenshot and never authorizes script execution.
 - `material_studio_gui_prepare_view_replay`: resolves the requested/current revision, computes deterministic Cartesian, crystal-direction, reciprocal-plane-normal, or surface/interface-frame camera parameters, and writes `gui_view_replay_manifest.json` under that revision. Optional `runtime_accessibility_evidence` records named Reset/Movement observations in `gui_view_replay_accessibility_preflight.json`; optional `runtime_ui_evidence` records the separate Miller-plane probe in `gui_view_replay_runtime_preflight.json`. Either artifact is written only after exact revision, wrapper handle/title, and single-window binding succeeds. The tool never activates the window or changes the GUI.
 - `material_studio_gui_execute_view_replay`: performs a read-only local UIA probe by default. With explicit `execution_mode="execute"`, it executes exactly one pending front/back/right/left/top/bottom, reviewed isometric, or automation-ready Miller-plane recipe in the existing verified window. Reset and Movement Options use UIA `InvokePattern`; arrows are sent only after the unique enabled/visible `CViewer3DCtrl` accepts semantic keyboard focus. Isometric additionally binds the exact owned Movement window, writes only `numNudgeAngle` through ValuePattern, verifies `numNudgeFactor=2.0` and disabled `cmdNudge*` buttons, closes Movement before each keyboard stage, and restores 45 degrees on success or partial failure. Miller execution is a separate transaction: it captures the pre-action viewport without Reset, verifies the modeless Miller dialog and Properties selection, derives one click from fresh pixel differences, invokes the live-mapped native View Onto command, captures the aligned view, then undoes exactly View Onto and Create Plane and verifies byte-exact viewport restoration. The tool never uses blind/stale coordinates or viewport modifiers and never records visual acceptance. It persists the refreshed preflight, aligned or post-action BMP, structure SHA-256 comparison, and a deliberately incomplete record template.
-- `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the single-window policy passes. For `source="reviewed_copy_script"`, `reviewed_copy_script_evidence`, exact handle/title binding, and a workspace screenshot are mandatory. The script is archived only as inert evidence after static safety checks and is never executed.
+- `material_studio_gui_record_view_replay`: records Computer Use, reviewed Copy Script, or human evidence for one prepared view in append-only `gui_view_replay_events.jsonl`. Evidence is accepted only when the wrapper identifies the exact project/revision, the current revision is loaded, and the effective global-single or exact-project process-isolation policy passes. For `source="reviewed_copy_script"`, `reviewed_copy_script_evidence`, exact handle/title binding, and a workspace screenshot are mandatory. The script is archived only as inert evidence after static safety checks and is never executed.
 
 Live status recommends the read-only Fit-to-View preview when a fresh current-revision
 snapshot specifically reports `low_contrast_or_not_fit_to_view`, no capture limitation
@@ -81,7 +81,7 @@ causes prior replay trust to fail closed until those views are reviewed.
 - `material_studio_live_project_status`: summarizes the current revision, saved script, planned outputs, latest change, persisted `view_audit.json`/`report.json` receipt, computed audit, `modeling_health`, optional GUI status, and next action. If the audit JSON is missing a GUI-open artifact but `report.json` still has `gui_open`, status uses that fallback to preserve current-revision GUI checks.
   It also returns `gui_view_replay` with the current revision's replay manifest/event paths, replay status, preflight, confirmed-view counts, last event, and next action so resumed sessions and watchdog checks can continue without scanning the workspace.
   `gui_view_replay.progress` is the stable `material_studio_gui_view_replay_progress_v1` receipt in both full and compact modes; its discovery metadata is exposed as `material_studio_live_capabilities.view_replay_progress_contract`. It reports the current target and manifest identities, binding state, requested/supported/accepted/pending counts and names, evidence-integrity and journal status, terminal continuation state, and `trusted_complete`. Completion is fail-closed: the accepted names must agree with their count, pending names/count must agree with the remaining supported views, all supported views must be confirmed, current-revision binding must pass, evidence integrity must be verified, and the append-only event journal must be consistent. Flat accepted/pending fields remain compatibility aliases; use `progress.trusted_complete`, not a count or `replay_status` alone, for the final replay-progress decision.
-- `material_studio_live_watchdog_status`: returns a fixed small read-only observation for timers and resumed agents. It binds the expected revision, compares an optional prior state fingerprint, reports one-process/one-window state when GUI probing is enabled, and preserves execution, replay, normality, calculation, and action boundaries. Its 20-minute `poll_action` is the only action eligible for unattended invocation; it never executes a patch, calculation, GUI activation, replay, or revision write.
+- `material_studio_live_watchdog_status`: returns a fixed small read-only observation for timers and resumed agents. It binds the expected revision, compares an optional prior state fingerprint, reports the effective window-isolation state when GUI probing is enabled, and preserves execution, replay, normality, calculation, and action boundaries. Its 20-minute `poll_action` is the only action eligible for unattended invocation; it never executes a patch, calculation, GUI activation, replay, or revision write.
 - `material_studio_model_export_view_audit`: exports `modeling_health`, model-health checks, semiconductor health checks, stable spec fingerprints, rounded atom coordinates, and per-view projection parameters for front/back/right/left/top/bottom/isometric-style inspection.
 - `material_studio_model_export_view_bundle`: writes `view_audit.json` plus CSV tables for atoms, bonds, bond angles, dihedrals, connectivity, close contacts, crystal nearest neighbors, crystal coordination, semiconductor lattice volume/density, semiconductor neighbor-pair distances, semiconductor local environments, semiconductor interface profiles, semiconductor interface quality, MOS/gate-stack diagnostics, metal/semiconductor contact diagnostics, semiconductor composition, nominal charge-balance/valence-electron summaries, semiconductor calculation-preflight summaries, reciprocal-lattice/k-point summaries, band-path preflight summaries, band-alignment metadata preflight summaries, semiconductor sublattice balance, semiconductor layer profiles, semiconductor dopants, p-n junctions, dopant fractions, alloy fractions, finite-size/dilution preflight, vacancy/defect and defect-complex summaries, heterostructure strain, surface termination, surface polarity/asymmetry, view summaries, per-view atom projections, projection overlaps, a health summary, and a compact modeling-report summary.
 
@@ -97,6 +97,47 @@ window whose title matches the wrapper project name before treating the open as
 settled. The Windows same-window path fails closed when that exact title does
 not appear in the requested MatStudio PID; it does not treat another visible
 Materials Studio window as success.
+
+Wrapper schema v3 writes a separate `wrapper_identity.json` beside the `.stp`.
+That identity manifest binds the raw exact generated project name,
+project/revision, canonical source SHA-256/size, copied document SHA-256/size,
+and project SHA-256/size. `metadata.json` is not accepted as identity evidence
+unless it agrees with the manifest and current files. All wrapper schemas also
+require an independent immutable revision spec with the same project/revision,
+a source inside that exact `outputs/rNNN` directory, and matching
+source/document hashes. Window-title parsing does not normalize spaces or
+punctuation into a generated name. Legacy schema-v2 wrappers use this same
+revision-state gate even though they lack the separate identity manifest.
+
+Status deliberately separates `wrapper_target_identity_verified` from
+`wrapper_integrity_verified`. Target identity means the exact project window is
+still a trusted destination for reloading that revision. Full integrity also
+means the canonical source currently matches the document already represented
+by the wrapper. An expected source update may therefore keep target identity
+valid while setting `current_revision_loaded=false`; this reports
+`target_revision_not_loaded_in_gui` and requires an explicit same-window reload
+before activation, snapshot, Fit-to-View, or view replay can claim the revision
+is current.
+
+Multiple Materials Studio processes may remain open for independent agents or
+projects. A project-scoped action is allowed only when the requested
+project/revision resolves to one verified wrapper in the controller workspace,
+that wrapper belongs to one live MatStudio PID, and the PID owns exactly one
+primary Materials Studio window. The controller then scopes dialogs, activation,
+File/Open, snapshots, and post-open verification to that PID and window.
+Unrelated MatStudio processes remain visible in status as warnings but do not
+block the exact target. An unscoped request, duplicate wrapper, fallback target,
+workspace mismatch, or second primary window in the target PID still fails
+closed. Window-title matches whose PID is absent from the MatStudio process
+inventory, including browser help pages, are reported as ignored rather than
+counted as Materials Studio windows.
+
+Isolation is checked again after File/Open. If the open spawns another
+MatStudio process, produces duplicate matching wrappers, or otherwise loses the
+unique target, the result is a partial failure: generated/executed artifacts are
+preserved and must not be rerun, but the report keeps `hot_loaded=false`.
+Fit-to-View and view-replay preparation are not attempted until a later explicit
+status/open continuation establishes one isolated exact target.
 
 Native startup and File/Open dialogs are bound to both the requested MatStudio
 PID and their Win32 owner chain. Controls that can enter a modal loop use
@@ -231,14 +272,15 @@ until they are observed after the GUI action. `record_call_ready=false` remains
 in the continuation and preflight safety receipt until that observation exists.
 
 The local executor serializes one action per project/revision and rechecks the
-single-process, single-window, foreground, and wrapper binding immediately
-before input and again afterward. A standard-view failure after Reset may leave
-a partial camera orientation, but no acceptance event is written; retrying the
-same recipe starts from Reset again. Miller execution instead requires its
-bounded cleanup to restore the exact pre-action viewport or reports failure.
-The post-action/aligned screenshot and mechanical receipt are evidence to
-review, not proof that the requested camera or native crystal roll is visually
-correct.
+effective target-window isolation, live target PID, foreground state, and exact
+wrapper binding immediately before input and again afterward. Unrelated
+MatStudio processes are allowed only for a uniquely verified project-scoped
+target. A standard-view failure after Reset may leave a partial camera
+orientation, but no acceptance event is written; retrying the same recipe
+starts from Reset again. Miller execution instead requires its bounded cleanup
+to restore the exact pre-action viewport or reports failure. The
+post-action/aligned screenshot and mechanical receipt are evidence to review,
+not proof that the requested camera or native crystal roll is visually correct.
 
 For a reviewed Copy Script path, the record call also supplies the exact script
 text and review attestations in `reviewed_copy_script_evidence`. The server

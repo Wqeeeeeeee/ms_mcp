@@ -4421,11 +4421,13 @@ def _view_replay_runtime_availability(
     single_window_ok = gui_status.get("single_window_policy_ok") is True
     process_count = gui_status.get("process_count")
     window_count = gui_status.get("window_count")
+    target_window_pid_verified = (
+        gui_status.get("target_window_pid_is_matstudio_process") is True
+    )
     session_gate_ready = bool(
         backend_supported
         and single_window_ok
-        and process_count == 1
-        and window_count == 1
+        and target_window_pid_verified
     )
     return {
         "schema_version": 1,
@@ -4450,6 +4452,9 @@ def _view_replay_runtime_availability(
         "process_count": process_count,
         "window_count": window_count,
         "single_window_policy_ok": single_window_ok,
+        "target_window_pid_is_matstudio_process": (
+            target_window_pid_verified
+        ),
         "session_gate_ready": session_gate_ready,
         "execution_requires_project_recipe_preflight": True,
         "execution_requires_automation_ready_recipe": True,
@@ -8327,31 +8332,60 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             ],
             "single_window_session_policy": {
                 "enabled": True,
-                "goal": "keep live modeling in one Materials Studio GUI session/window",
+                "goal": (
+                    "keep each live modeling request bound to one exact "
+                    "Materials Studio project/revision process and window"
+                ),
                 "status_fields": [
                     "single_window_policy_ok",
                     "single_window_violation_reasons",
+                    "window_isolation_mode",
+                    "project_scoped_multi_instance_isolation",
+                    "target_process_id",
+                    "unrelated_process_ids",
                     "window_management.single_window_policy_ok",
                     "window_management.single_window_violation_reasons",
+                    "window_management.window_isolation_mode",
+                    "window_management.project_scoped_multi_instance_isolation",
+                    "window_management.target_process_primary_window_count",
+                    "window_management.unrelated_process_ids",
                 ],
                 "hotload_requires_existing_window": True,
                 "auto_launch_during_open_allowed": False,
                 "material_studio_gui_launch_reuses_existing_window": True,
                 "material_studio_gui_launch_refuses_process_without_window": True,
-                "material_studio_gui_launch_refuses_multiple_matstudio_windows": True,
+                "material_studio_gui_launch_refuses_multiple_matstudio_windows": False,
+                "material_studio_gui_launch_refuses_unscoped_multiple_matstudio_windows": True,
+                "material_studio_gui_launch_allows_exact_project_target_process": True,
                 "material_studio_gui_open_structure_never_launches_matstudio": True,
                 "material_studio_gui_apply_current_revision_reuses_existing_window": True,
-                "hotload_refuses_multiple_matstudio_windows": True,
-                "execute_open_in_gui_preflight_blocks_multiple_windows": True,
+                "hotload_refuses_multiple_matstudio_windows": False,
+                "hotload_refuses_ambiguous_or_same_process_multiple_windows": True,
+                "hotload_allows_unrelated_matstudio_processes_with_exact_target": True,
+                "execute_open_in_gui_preflight_blocks_multiple_windows": False,
+                "execute_open_in_gui_preflight_blocks_unscoped_multiple_windows": True,
+                "legacy_multiple_window_boolean_scope_changed": True,
+                "exact_target_requirements": [
+                    "one matching project/revision wrapper",
+                    "verified revision wrapper provenance",
+                    "controller workspace match",
+                    "target PID present in the live MatStudio process inventory",
+                    "one primary Materials Studio window in the target PID",
+                ],
+                "unrelated_process_dialogs_are_not_target_dialogs": True,
+                "non_matstudio_title_matches_are_ignored_by_pid": True,
                 "explicit_blank_session_launch_tool": "material_studio_gui_launch",
-                "when_multiple_windows_detected": "activate the target project window or close/save extra Materials Studio windows before hot-loading another revision",
+                "when_multiple_windows_detected": (
+                    "use an exact project/revision target; otherwise close/save "
+                    "extra Materials Studio windows before hot-loading"
+                ),
             },
             "recommended_workflow": [
                 "Run material_studio_live_session_preflight before the first live modeling request.",
                 "Use material_studio_live_modeling_request for natural-language semiconductor modeling.",
                 "Use ModelSpec/SemanticPatch as the structural source of truth.",
                 "Use explicit live GUI wording or execution_mode=execute when hot-loading is intended.",
-                "Keep a single Materials Studio GUI window for hot-loaded revisions; close/save extra windows before continuing live edits.",
+                "Keep each hot-loaded revision bound to one exact Materials Studio PID/window; unrelated verified sessions may remain open.",
                 "Run material_studio_live_project_status after hot-loading before reporting the model as normal.",
             ],
             "activate_policy": {
@@ -8377,7 +8411,11 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "uses_existing_matstudio_window": True,
                 "requires_existing_matstudio_window": True,
                 "single_window_policy_enforced_before_open": True,
-                "refuses_multiple_matstudio_windows": True,
+                "refuses_multiple_matstudio_windows": False,
+                "refuses_unscoped_multiple_matstudio_windows": True,
+                "allows_exact_project_target_amid_unrelated_processes": True,
+                "refuses_multiple_primary_windows_in_target_process": True,
+                "ignores_unrelated_process_dialogs": True,
                 "requires_explicit_activation_before_gui_input": True,
                 "refuses_automatic_activation_for_inactive_target": True,
                 "activation_retry_tool": "material_studio_gui_activate",
@@ -8773,7 +8811,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                     "non_collinear_only"
                 ),
                 "crystallographic_direction_legacy_review_gate_field_is_conservative": True,
-                "requires_exactly_one_matstudio_process": True,
+                "requires_exactly_one_matstudio_process": False,
+                "requires_effective_target_window_isolation": True,
+                "unrelated_matstudio_processes_allowed": True,
                 "requires_project_revision_window_identity": True,
                 "requires_activation_before_screenshot_or_input": True,
                 "pre_activation_screenshot_may_capture_occluding_window": True,
@@ -12033,7 +12073,10 @@ def _latest_project_gui_preflight_summary(
         if isinstance(gui_status.get("window_management"), dict)
         else {}
     )
-    loaded_current_revision = bool(matching_windows)
+    loaded_current_revision = bool(
+        matching_windows
+        or _gui_status_verified_current_target(gui_status)
+    )
     return {
         "available": True,
         "evaluation_active": expected_structure_exists,
@@ -12110,9 +12153,75 @@ def _latest_project_gui_preflight_summary(
     }
 
 
+def _gui_status_verified_current_target(gui_status: dict[str, Any]) -> bool:
+    """Return whether the controller verified one exact current target."""
+
+    target_resolution = (
+        gui_status.get("target_window_resolution")
+        if isinstance(gui_status.get("target_window_resolution"), dict)
+        else {}
+    )
+    metadata = (
+        target_resolution.get("target_project_wrapper_metadata")
+        if isinstance(
+            target_resolution.get("target_project_wrapper_metadata"),
+            dict,
+        )
+        else {}
+    )
+    window_management = (
+        gui_status.get("window_management")
+        if isinstance(gui_status.get("window_management"), dict)
+        else {}
+    )
+    return bool(
+        gui_status.get("current_revision_loaded") is True
+        and gui_status.get("single_window_policy_ok") is True
+        and gui_status.get("target_window_pid_is_matstudio_process") is True
+        and target_resolution.get("matched_project_window") is True
+        and int(target_resolution.get("matching_window_count") or 0) == 1
+        and metadata.get("wrapper_integrity_verified") is True
+        and metadata.get("wrapper_workspace_matches_controller") is True
+        and metadata.get("wrapper_provenance_status")
+        == "verified_revision_wrapper"
+        and window_management.get("target_window_pid_is_matstudio_process")
+        is True
+    )
+
+
+def _gui_status_window_is_trusted(window: dict[str, Any]) -> bool:
+    """Return whether a controller inventory row is safe as live evidence."""
+
+    metadata = (
+        window.get("project_wrapper_metadata")
+        if isinstance(window.get("project_wrapper_metadata"), dict)
+        else {}
+    )
+    return bool(
+        window.get("pid_is_matstudio_process") is True
+        and _first_not_none(
+            window.get("wrapper_integrity_verified"),
+            metadata.get("wrapper_integrity_verified"),
+        )
+        is True
+        and _first_not_none(
+            window.get("wrapper_workspace_matches_controller"),
+            metadata.get("wrapper_workspace_matches_controller"),
+        )
+        is True
+        and (
+            window.get("wrapper_provenance_status")
+            or metadata.get("wrapper_provenance_status")
+        )
+        == "verified_revision_wrapper"
+    )
+
+
 def _gui_status_window_matches_project(response: dict[str, Any], window: dict[str, Any]) -> bool:
     """Return True when a GUI inventory row maps to the expected project revision and structure."""
 
+    if not _gui_status_window_is_trusted(window):
+        return False
     consistency = _gui_status_window_consistency(response, window, prefix="window")
     if consistency.get("window_project_matches_current") is False:
         return False
@@ -24292,6 +24401,33 @@ def _single_window_hotload_block(gui_status: dict[str, Any] | None) -> dict[str,
     status = gui_status if isinstance(gui_status, dict) else {}
     window_management = status.get("window_management") if isinstance(status.get("window_management"), dict) else {}
     single_window = _single_window_policy_summary(status, window_management)
+    if (
+        status.get("workspace_context_mismatch") is True
+        or window_management.get("workspace_context_mismatch") is True
+    ):
+        return {
+            "blocked": True,
+            "reason": "workspace_context_mismatch",
+            "message": (
+                "Refusing to execute and hot-load through a Materials Studio "
+                "wrapper owned by a different workspace."
+            ),
+            "single_window_policy_ok": single_window.get(
+                "single_window_policy_ok"
+            ),
+            "single_window_violation_reasons": [
+                "target_wrapper_workspace_mismatch"
+            ],
+            "recommended_tool": "material_studio_live_session_preflight",
+            "recommended_action": (
+                "rerun_preflight_with_the_visible_wrapper_workspace"
+            ),
+            "recommended_working_dir": (
+                status.get("recommended_working_dir")
+                or window_management.get("recommended_working_dir")
+            ),
+            "window_management": window_management or None,
+        }
     if single_window.get("single_window_policy_ok") is not False:
         return None
     reasons = single_window.get("single_window_violation_reasons") or []
@@ -24299,8 +24435,9 @@ def _single_window_hotload_block(gui_status: dict[str, Any] | None) -> dict[str,
         "blocked": True,
         "reason": "single_window_policy_violation",
         "message": (
-            "Refusing to execute and hot-load while multiple Materials Studio windows or processes are "
-            "detected. Close/save extra Materials Studio windows and retry."
+            "Refusing to execute and hot-load because the Materials Studio "
+            "target is not isolated. Supply an exact verified project/revision "
+            "target, or close/save extra target-process windows and retry."
         ),
         "single_window_policy_ok": False,
         "single_window_violation_reasons": reasons,
@@ -24326,6 +24463,174 @@ def _with_single_window_hotload_block(
         "gui_open_warning": block["message"],
         "single_window_hotload_block": block,
     }
+
+
+def _gui_status_for_revision_hotload(
+    gui: MaterialsStudioGuiController,
+    *,
+    project_id: str,
+    revision: int,
+) -> dict[str, Any]:
+    """Resolve a future revision through one trusted existing project window."""
+
+    exact = gui.status(project_id=project_id, revision=revision)
+    exact_resolution = (
+        exact.get("target_window_resolution")
+        if isinstance(exact.get("target_window_resolution"), dict)
+        else {}
+    )
+    exact_management = (
+        exact.get("window_management")
+        if isinstance(exact.get("window_management"), dict)
+        else {}
+    )
+    exact_policy_ok = (
+        exact_management.get("single_window_policy_ok")
+        if "single_window_policy_ok" in exact_management
+        else exact.get("single_window_policy_ok")
+    )
+    if (
+        exact_policy_ok is True
+        or exact_resolution.get("matched_project_window") is True
+    ):
+        exact["hotload_target_resolution"] = {
+            "mode": (
+                "exact_revision"
+                if exact_resolution.get("matched_project_window") is True
+                else "global_single_instance_fallback"
+            ),
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+            "target_project_id": (
+                (exact.get("window_management") or {}).get(
+                    "target_window_project_id"
+                )
+            ),
+            "target_revision": (
+                (exact.get("window_management") or {}).get(
+                    "target_window_revision"
+                )
+            ),
+        }
+        return exact
+
+    resolve_hotload_target = getattr(
+        gui,
+        "_resolve_hotload_target_window",
+        None,
+    )
+    if not callable(resolve_hotload_target):
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+    hotload_window, hotload_resolution = resolve_hotload_target(
+        project_id=project_id,
+        revision=revision,
+    )
+    if (
+        hotload_window is None
+        or hotload_resolution.get("hotload_target_mode")
+        != "existing_project_revision"
+    ):
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+    try:
+        target_revision = int(
+            hotload_resolution.get("hotload_target_revision")
+        )
+    except (TypeError, ValueError):
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+
+    project_status = gui.status(
+        project_id=project_id,
+        revision=target_revision,
+    )
+    project_resolution = (
+        project_status.get("target_window_resolution")
+        if isinstance(
+            project_status.get("target_window_resolution"),
+            dict,
+        )
+        else {}
+    )
+    metadata = (
+        project_resolution.get("target_project_wrapper_metadata")
+        if isinstance(
+            project_resolution.get("target_project_wrapper_metadata"),
+            dict,
+        )
+        else {}
+    )
+    if not (
+        project_status.get("single_window_policy_ok") is True
+        and project_status.get("target_window_pid_is_matstudio_process") is True
+        and project_status.get("workspace_context_mismatch") is not True
+        and project_resolution.get("matched_project_window") is True
+        and int(project_resolution.get("matching_window_count") or 0) == 1
+        and metadata.get("wrapper_target_identity_verified") is True
+        and metadata.get("wrapper_workspace_matches_controller") is True
+    ):
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+
+    try:
+        metadata_revision = int(metadata.get("revision"))
+    except (TypeError, ValueError):
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+    if metadata_revision != target_revision:
+        exact["hotload_target_resolution"] = {
+            "mode": "unresolved",
+            "requested_project_id": project_id,
+            "requested_revision": revision,
+        }
+        return exact
+    inherited = dict(project_status)
+    inherited_management = (
+        dict(project_status.get("window_management"))
+        if isinstance(project_status.get("window_management"), dict)
+        else {}
+    )
+    inherited_management["current_revision_loaded"] = False
+    inherited_management["needs_reload"] = True
+    inherited["window_management"] = inherited_management
+    inherited["current_revision_loaded"] = False
+    inherited["needs_reload"] = True
+    inherited["hotload_target_resolution"] = {
+        "mode": "existing_project_revision",
+        "requested_project_id": project_id,
+        "requested_revision": revision,
+        "target_project_id": project_id,
+        "target_revision": target_revision,
+        "target_revision_precedes_requested": target_revision < revision,
+        "target_window_handle": inherited_management.get(
+            "target_window_handle"
+        ),
+        "target_window_title": inherited_management.get(
+            "target_window_title"
+        ),
+    }
+    return inherited
 
 
 def _gui_apply_current_execution_retry_payload(
@@ -24442,10 +24747,15 @@ def _gui_activation_retry_payload(
     revision: int | None,
     working_dir: str | Path | None,
     views: list[str] | None,
+    use_unscoped_existing_window: bool = False,
 ) -> dict[str, Any]:
     """Build a directly callable activation payload for the existing target."""
 
-    payload: dict[str, Any] = {"take_snapshot": True}
+    payload: dict[str, Any] = {
+        "take_snapshot": not use_unscoped_existing_window,
+    }
+    if use_unscoped_existing_window:
+        payload["use_unscoped_existing_window"] = True
     if project_id is not None:
         payload["project_id"] = project_id
     if revision is not None:
@@ -24512,11 +24822,44 @@ def _gui_activation_preexecution_block(
     if requirement is None:
         return None
 
+    status = gui_status if isinstance(gui_status, dict) else {}
+    window_management = (
+        status.get("window_management")
+        if isinstance(status.get("window_management"), dict)
+        else {}
+    )
+    target_binding_verified = bool(
+        window_management.get("target_window_pid_is_matstudio_process") is True
+        and window_management.get("target_wrapper_integrity_verified") is True
+        and window_management.get(
+            "target_window_wrapper_workspace_matches_controller"
+        )
+        is True
+    )
+    activation_project_id = (
+        window_management.get("target_window_project_id")
+        if target_binding_verified
+        else None
+    )
+    activation_revision = (
+        window_management.get("target_window_revision")
+        if target_binding_verified
+        else None
+    )
     activation_payload = _gui_activation_retry_payload(
-        project_id=project_id,
-        revision=revision,
+        project_id=(
+            str(activation_project_id)
+            if activation_project_id is not None
+            else None
+        ),
+        revision=(
+            int(activation_revision)
+            if type(activation_revision) is int
+            else None
+        ),
         working_dir=working_dir,
         views=views,
+        use_unscoped_existing_window=not target_binding_verified,
     )
     return {
         "blocked": True,
@@ -24529,6 +24872,8 @@ def _gui_activation_preexecution_block(
         ),
         "project_id": project_id,
         "revision": revision,
+        "activation_target_project_id": activation_project_id,
+        "activation_target_revision": activation_revision,
         **requirement,
         "recommended_tool": "material_studio_gui_activate",
         "recommended_action": "activate_exact_existing_window_before_revision_execution",
@@ -24555,11 +24900,44 @@ def _gui_activation_postexecution_block(
     requirement = _gui_activation_requirement(gui_status)
     if requirement is None:
         return None
+    status = gui_status if isinstance(gui_status, dict) else {}
+    window_management = (
+        status.get("window_management")
+        if isinstance(status.get("window_management"), dict)
+        else {}
+    )
+    target_binding_verified = bool(
+        window_management.get("target_window_pid_is_matstudio_process") is True
+        and window_management.get("target_wrapper_integrity_verified") is True
+        and window_management.get(
+            "target_window_wrapper_workspace_matches_controller"
+        )
+        is True
+    )
+    activation_project_id = (
+        window_management.get("target_window_project_id")
+        if target_binding_verified
+        else None
+    )
+    activation_revision = (
+        window_management.get("target_window_revision")
+        if target_binding_verified
+        else None
+    )
     activation_payload = _gui_activation_retry_payload(
-        project_id=project_id,
-        revision=revision,
+        project_id=(
+            str(activation_project_id)
+            if activation_project_id is not None
+            else None
+        ),
+        revision=(
+            int(activation_revision)
+            if type(activation_revision) is int
+            else None
+        ),
         working_dir=working_dir,
         views=views,
+        use_unscoped_existing_window=not target_binding_verified,
     )
     return {
         "blocked": True,
@@ -24572,6 +24950,8 @@ def _gui_activation_postexecution_block(
         ),
         "project_id": project_id,
         "revision": revision,
+        "activation_target_project_id": activation_project_id,
+        "activation_target_revision": activation_revision,
         **requirement,
         "execution_already_completed": True,
         "execution_retry_allowed": False,
@@ -24830,7 +25210,7 @@ def _current_revision_gui_evidence_scope(
     """Return whether GUI evidence is actually bound to this project revision."""
 
     sources: list[str] = []
-    if isinstance(gui_open, dict):
+    if _gui_open_artifact_isolation_verified(gui_open):
         sources.append("current_request_gui_open_artifact")
     if external_visual_confirmation_ok:
         sources.append("current_request_visual_confirmation")
@@ -24841,6 +25221,117 @@ def _current_revision_gui_evidence_scope(
     if int(revision_consistency.get("matching_window_count") or 0) > 0:
         sources.append("live_matching_window_current_revision_match")
     return bool(sources), sources
+
+
+def _gui_open_artifact_isolation_verified(
+    gui_open: dict[str, Any] | None,
+) -> bool:
+    """Return whether a GUI-open receipt retained one isolated target."""
+
+    if not isinstance(gui_open, dict) or not gui_open:
+        return False
+    post_open_management = (
+        gui_open.get("post_open_window_management")
+        if isinstance(gui_open.get("post_open_window_management"), dict)
+        else {}
+    )
+    if gui_open.get("post_open_single_window_policy_ok") is False:
+        return False
+    if gui_open.get("single_window_policy_ok") is False:
+        return False
+    if post_open_management.get("single_window_policy_ok") is False:
+        return False
+    return True
+
+
+def _with_gui_open_postcondition_block(
+    response: dict[str, Any],
+    gui_open: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert an ambiguous post-open result into a durable partial failure."""
+
+    if _gui_open_artifact_isolation_verified(gui_open):
+        return response
+    reasons = _dedupe_strings(
+        [
+            *list(gui_open.get("post_open_single_window_violation_reasons") or []),
+            *list(gui_open.get("single_window_violation_reasons") or []),
+        ]
+    )
+    if not reasons:
+        reasons = ["post_open_target_isolation_unverified"]
+    execution_completed = bool(
+        isinstance(response.get("result"), dict)
+        and response["result"].get("success") is True
+    )
+    message = (
+        "The structure open completed, but the target Materials Studio window "
+        "was no longer uniquely isolated afterward. No Fit-to-View or view "
+        "replay action was attempted."
+    )
+    blocked = {
+        **response,
+        "ok": False,
+        "partial_success": True,
+        "status": (
+            "execution_completed_gui_target_ambiguous"
+            if execution_completed
+            else "gui_open_target_ambiguous"
+        ),
+        "error": message,
+        "gui_open_warning": message,
+        "gui_input_started": True,
+        "structure_reopened": True,
+        "hotload_completion_verified": False,
+        "execution_completed_before_gui_ambiguity": execution_completed,
+        "execution_must_not_repeat": execution_completed,
+        "recommended_tool": "material_studio_gui_status",
+        "recommended_action": "resolve_post_open_target_ambiguity",
+        "gui_open_postcondition_block": {
+            "blocked": True,
+            "reason": reasons[0],
+            "blocking_reasons": reasons,
+            "post_open_single_window_policy_ok": gui_open.get(
+                "post_open_single_window_policy_ok"
+            ),
+            "post_open_window_management": gui_open.get(
+                "post_open_window_management"
+            ),
+            "execution_already_completed": execution_completed,
+            "execution_retry_allowed": False if execution_completed else None,
+            "result_artifacts_preserved": execution_completed,
+            "recommended_tool": "material_studio_gui_status",
+            "recommended_action": "resolve_post_open_target_ambiguity",
+        },
+    }
+    if response.get("post_hotload_fit_to_view_requested") is True:
+        blocked["post_hotload_fit_to_view"] = {
+            **dict(response.get("post_hotload_fit_to_view") or {}),
+            "requested": True,
+            "status": "blocked_post_open_target_ambiguous",
+            "completed": False,
+            "gui_input_performed": False,
+            "structure_modified": False,
+            "required_next_step": (
+                "Resolve the returned target ambiguity before explicitly "
+                "retrying Fit-to-View for the current revision."
+            ),
+        }
+    if response.get("post_hotload_view_replay_prepare_requested") is True:
+        blocked["post_hotload_view_replay_prepare"] = {
+            **dict(response.get("post_hotload_view_replay_prepare") or {}),
+            "requested": True,
+            "status": "blocked_post_open_target_ambiguous",
+            "prepared": False,
+            "gui_input_performed": False,
+            "gui_modified": False,
+            "structure_modified": False,
+            "revision_created": False,
+            "required_next_step": (
+                "Resolve the returned target ambiguity before preparing view replay."
+            ),
+        }
+    return blocked
 
 
 def _gui_report_summary(
@@ -24881,6 +25372,7 @@ def _gui_report_summary(
     window = (
         (gui_open or {}).get("window")
         or (snapshot or {}).get("window")
+        or gui_status.get("target_window")
         or gui_status.get("window")
         or {}
     )
@@ -24888,13 +25380,28 @@ def _gui_report_summary(
         window = {}
     warnings = [str(item) for item in snapshot_analysis.get("warnings", []) or []]
     revision_consistency = _gui_current_revision_consistency(response, gui_open)
+    gui_open_isolation_verified = _gui_open_artifact_isolation_verified(
+        gui_open
+    )
+    current_gui_open_postcondition_failed = bool(
+        isinstance(gui_open, dict)
+        and gui_open
+        and not gui_open_isolation_verified
+    )
     live_status_hotload = _live_status_current_revision_hotload_evidence(
         response,
         gui_status=gui_status,
         revision_consistency=revision_consistency,
     )
+    if current_gui_open_postcondition_failed:
+        live_status_hotload = {
+            **live_status_hotload,
+            "verified": False,
+            "blocked_by_current_gui_open_postcondition": True,
+            "blocking_reason": "post_open_target_isolation_unverified",
+        }
     response["live_status_hotload_evidence"] = live_status_hotload
-    hot_loaded = bool(gui_open) or live_status_hotload["verified"]
+    hot_loaded = gui_open_isolation_verified or live_status_hotload["verified"]
     local_visual_validation = _gui_visual_validation(
         snapshot_analysis,
         hot_loaded,
@@ -24919,6 +25426,9 @@ def _gui_report_summary(
             external_visual_confirmation_ok=external_visual_confirmation_ok,
         )
     )
+    if current_gui_open_postcondition_failed:
+        current_revision_gui_evidence_applicable = False
+        current_revision_gui_evidence_sources = []
     open_identity = _gui_open_identity_verification(
         response=response,
         gui_open=gui_open,
@@ -24955,8 +25465,11 @@ def _gui_report_summary(
         "window_title": window.get("title"),
         "window_handle": window.get("handle"),
         "hot_loaded": hot_loaded,
-        "hot_loaded_from_gui_open_artifact": bool(gui_open),
+        "hot_loaded_from_gui_open_artifact": gui_open_isolation_verified,
         "hot_loaded_from_live_status": live_status_hotload["verified"],
+        "current_gui_open_postcondition_failed": (
+            current_gui_open_postcondition_failed
+        ),
         "live_status_hotload_evidence": live_status_hotload,
         **revision_consistency,
         **open_identity,
@@ -25155,10 +25668,11 @@ def _live_status_current_revision_hotload_evidence(
         binding_reasons.append("target_window_missing")
     if gui_status.get("single_window_policy_ok") is not True:
         binding_reasons.append("single_window_policy_unverified")
-    if int(window_management.get("process_count") or 0) != 1:
-        binding_reasons.append("matstudio_process_count_not_one")
-    if int(window_management.get("window_count") or 0) != 1:
-        binding_reasons.append("matstudio_window_count_not_one")
+    if (
+        window_management.get("target_window_pid_is_matstudio_process")
+        is not True
+    ):
+        binding_reasons.append("target_window_pid_not_matstudio_process")
     if gui_status.get("current_revision_loaded") is not True:
         binding_reasons.append("gui_status_current_revision_not_loaded")
     if revision_consistency.get("loaded_current_revision") is not True:
@@ -25190,6 +25704,8 @@ def _live_status_current_revision_hotload_evidence(
         binding_reasons.append("wrapper_workspace_mismatch")
     if wrapper.get("wrapper_provenance_status") != "verified_revision_wrapper":
         binding_reasons.append("wrapper_provenance_unverified")
+    if wrapper.get("wrapper_integrity_verified") is not True:
+        binding_reasons.append("wrapper_integrity_unverified")
 
     binding_reasons = _dedupe_strings(binding_reasons)
     loaded_revision_verified = not binding_reasons
@@ -25350,7 +25866,10 @@ def _gui_current_revision_consistency(response: dict[str, Any], gui_open: dict[s
         if _gui_status_window_matches_project(response, window)
     ]
     matching_window = matching_windows[0] if matching_windows else None
-    window_loaded_current_revision = bool(matching_windows) or bool(target_resolution.get("matched_project_window"))
+    verified_target_loaded = _gui_status_verified_current_target(gui_status)
+    window_loaded_current_revision = bool(
+        matching_windows or verified_target_loaded
+    )
 
     stale_reasons = []
     if gui_open is None and not window_loaded_current_revision:
@@ -25392,7 +25911,7 @@ def _gui_current_revision_consistency(response: dict[str, Any], gui_open: dict[s
         "stale_reasons": stale_reasons,
         "matching_window_count": len(matching_windows),
         "target_window_resolution": target_resolution or None,
-        "target_window_matched_project_window": target_resolution.get("matched_project_window"),
+        "target_window_matched_project_window": verified_target_loaded,
         "target_window_matching_window_count": target_resolution.get("matching_window_count"),
         "target_window_handle": target_resolution.get("target_handle"),
         "target_window_title": target_resolution.get("target_title"),
@@ -25476,6 +25995,8 @@ def _gui_status_window_consistency(
             f"{prefix}_project_id": None,
             f"{prefix}_revision": None,
             f"{prefix}_structure_path": None,
+            f"{prefix}_pid_is_matstudio_process": None,
+            f"{prefix}_wrapper_integrity_verified": None,
             f"{prefix}_wrapper_workspace_root": None,
             f"{prefix}_wrapper_workspace_matches_controller": None,
             f"{prefix}_wrapper_provenance_status": None,
@@ -25492,6 +26013,19 @@ def _gui_status_window_consistency(
     window_project_id = window.get("project_id") or metadata.get("project_id")
     window_revision = window.get("revision") if window.get("revision") is not None else metadata.get("revision")
     window_structure = window.get("source_path") or metadata.get("source_path")
+    pid_is_matstudio_process = window.get("pid_is_matstudio_process")
+    wrapper_integrity_verified = _first_not_none(
+        window.get("wrapper_integrity_verified"),
+        metadata.get("wrapper_integrity_verified"),
+    )
+    wrapper_workspace_matches_controller = _first_not_none(
+        window.get("wrapper_workspace_matches_controller"),
+        metadata.get("wrapper_workspace_matches_controller"),
+    )
+    wrapper_provenance_status = (
+        window.get("wrapper_provenance_status")
+        or metadata.get("wrapper_provenance_status")
+    )
 
     project_matches = None
     if window_project_id and expected_project_id:
@@ -25517,6 +26051,19 @@ def _gui_status_window_consistency(
         stale_reasons.append(f"{prefix}_structure_does_not_match_current_structure")
 
     has_live_metadata = any(value is not None for value in (window_project_id, window_revision, window_structure))
+    if has_live_metadata and pid_is_matstudio_process is not True:
+        stale_reasons.append(
+            f"{prefix}_pid_not_verified_as_live_matstudio_process"
+        )
+    if has_live_metadata and wrapper_integrity_verified is not True:
+        stale_reasons.append(f"{prefix}_wrapper_integrity_unverified")
+    if has_live_metadata and wrapper_workspace_matches_controller is not True:
+        stale_reasons.append(f"{prefix}_wrapper_workspace_mismatch")
+    if (
+        has_live_metadata
+        and wrapper_provenance_status != "verified_revision_wrapper"
+    ):
+        stale_reasons.append(f"{prefix}_wrapper_provenance_unverified")
     if not has_live_metadata:
         identity_verification = "unverified"
     elif stale_reasons:
@@ -25529,6 +26076,10 @@ def _gui_status_window_consistency(
         f"{prefix}_project_id": window_project_id,
         f"{prefix}_revision": window_revision,
         f"{prefix}_structure_path": window_structure,
+        f"{prefix}_pid_is_matstudio_process": pid_is_matstudio_process,
+        f"{prefix}_wrapper_integrity_verified": (
+            wrapper_integrity_verified
+        ),
         f"{prefix}_wrapper_workspace_root": window.get("wrapper_workspace_root") or metadata.get(
             "wrapper_workspace_root"
         ),
@@ -25536,9 +26087,7 @@ def _gui_status_window_consistency(
             window.get("wrapper_workspace_matches_controller"),
             metadata.get("wrapper_workspace_matches_controller"),
         ),
-        f"{prefix}_wrapper_provenance_status": window.get("wrapper_provenance_status") or metadata.get(
-            "wrapper_provenance_status"
-        ),
+        f"{prefix}_wrapper_provenance_status": wrapper_provenance_status,
         f"{prefix}_project_matches_current": project_matches,
         f"{prefix}_revision_matches_current": revision_matches,
         f"{prefix}_structure_path_matches_current": structure_matches,
@@ -39369,6 +39918,10 @@ def _compact_capabilities_gui(value: Any) -> dict[str, Any]:
                 "requires_existing_matstudio_window",
                 "single_window_policy_enforced_before_open",
                 "refuses_multiple_matstudio_windows",
+                "refuses_unscoped_multiple_matstudio_windows",
+                "allows_exact_project_target_amid_unrelated_processes",
+                "refuses_multiple_primary_windows_in_target_process",
+                "ignores_unrelated_process_dialogs",
                 "auto_launch_before_open_when_window_missing",
                 "same_window_open_method",
                 "generated_structure_project_wrapper",
@@ -42242,17 +42795,79 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _bounded_capability_schema_catalog(
+    value: Any,
+) -> tuple[dict[str, str], int]:
+    """Return a deterministic bounded schema filename catalog."""
+
+    if not isinstance(value, dict):
+        return {}, 0
+    priority = (
+        "model_spec",
+        "molecule_spec",
+        "crystal_spec",
+        "forcite_spec",
+        "castep_spec",
+        "semantic_patch",
+    )
+    ordered_keys = [
+        *[key for key in priority if key in value],
+        *sorted(str(key) for key in value if str(key) not in priority),
+    ]
+    bounded: dict[str, str] = {}
+    for key in ordered_keys:
+        raw = value.get(key)
+        if isinstance(raw, dict):
+            raw = raw.get("filename")
+        if not isinstance(raw, str) or not raw or len(raw) > 255:
+            continue
+        if len(key) > 128:
+            continue
+        bounded[key] = raw
+        if len(bounded) >= 16:
+            break
+    return bounded, max(len(value) - len(bounded), 0)
+
+
 def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
     """Guarantee a bounded discovery receipt as capability catalogs grow."""
 
     bounded = dict(compact)
-    receipt = {
-        "budget_bytes": COMPACT_RESPONSE_MAX_BYTES,
-        "hard_budget_applied": False,
-        "omitted_fields": [],
-    }
+    schemas, omitted_schema_count = _bounded_capability_schema_catalog(
+        bounded.get("schemas")
+    )
+    if "schemas" in bounded:
+        bounded["schemas"] = schemas
+    semantic_core_fields = tuple(
+        key
+        for key in (
+            "ok",
+            "live_entry_tool",
+            "live_status_tool",
+            "response_mode",
+            "response_schema",
+            "schemas",
+        )
+        if key in bounded
+    )
+    receipt = _compact_response_receipt(
+        detail_paths={},
+        semantic_core_fields=semantic_core_fields,
+    )
+    if omitted_schema_count:
+        receipt["omitted_fields"].append("schemas.additional_entries")
+        receipt["omitted_schema_count"] = omitted_schema_count
     bounded["response_compaction"] = receipt
-    if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+
+    def fits(payload: dict[str, Any]) -> bool:
+        _finalize_live_compact_response(
+            payload,
+            receipt,
+            semantic_core_fields,
+        )
+        return _compact_json_size_bytes(payload) < COMPACT_RESPONSE_MAX_BYTES
+
+    if fits(bounded):
         return bounded
 
     receipt["hard_budget_applied"] = True
@@ -42264,11 +42879,50 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
                 "natural_language.cjk_semiconductor_hotload_examples"
             )
         bounded["natural_language"] = natural_language
-    for key in ("schemas", "view_replay_confirmation_entry", "visual_confirmation_entry"):
+    gui = bounded.get("gui")
+    if isinstance(gui, dict):
+        gui = dict(gui)
+        if gui.pop("recommended_workflow", None) is not None:
+            receipt["omitted_fields"].append("gui.recommended_workflow")
+        if gui.pop("automation_boundary", None) is not None:
+            receipt["omitted_fields"].append("gui.automation_boundary")
+        single_window_policy = gui.get("single_window_session_policy")
+        if isinstance(single_window_policy, dict):
+            single_window_policy = dict(single_window_policy)
+            if single_window_policy.pop("exact_target_requirements", None) is not None:
+                receipt["omitted_fields"].append(
+                    "gui.single_window_session_policy.exact_target_requirements"
+                )
+            for key in ("goal", "when_multiple_windows_detected"):
+                if single_window_policy.pop(key, None) is not None:
+                    receipt["omitted_fields"].append(
+                        f"gui.single_window_session_policy.{key}"
+                    )
+            if isinstance(single_window_policy.get("status_fields"), list):
+                single_window_policy["status_fields"] = [
+                    "single_window_policy_ok",
+                    "single_window_violation_reasons",
+                    "window_management.window_isolation_mode",
+                    (
+                        "window_management."
+                        "project_scoped_multi_instance_isolation"
+                    ),
+                    "window_management.target_process_id",
+                    "window_management.unrelated_process_ids",
+                ]
+                receipt["omitted_fields"].append(
+                    "gui.single_window_session_policy.status_fields_extended"
+                )
+            gui["single_window_session_policy"] = single_window_policy
+        bounded["gui"] = gui
+    if fits(bounded):
+        return bounded
+
+    for key in ("view_replay_confirmation_entry", "visual_confirmation_entry"):
         if key in bounded:
             bounded.pop(key, None)
             receipt["omitted_fields"].append(key)
-        if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+        if fits(bounded):
             return bounded
 
     domain = bounded.get("domain_focus")
@@ -42281,8 +42935,9 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
                 domain.pop(key, None)
                 receipt["omitted_fields"].append(f"domain_focus.{key}")
         bounded["domain_focus"] = domain
-    if _compact_json_size_bytes(bounded) < COMPACT_RESPONSE_MAX_BYTES:
+    if fits(bounded):
         return bounded
+
     minimal = _mapping_subset(
         bounded,
         (
@@ -42291,33 +42946,15 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "live_entry_tool",
             "live_status_tool",
             "live_watchdog_tool",
-            "live_watchdog_contract",
-            "normality_decision_contract",
-            "view_replay_progress_contract",
             "live_update_tool",
-            "runtime_provenance_contract",
-            "codex_config_status_contract",
-            "dopant_metadata_reconcile_tool",
-            "recommended_kpoint_remediation_action_id",
-            "recommended_calculation_settings_confirmation_field",
-            "recommended_calculation_settings_requires_explicit_confirmation",
-            "castep_calculation_preview_handoff",
-            "recommended_calculation_settings_receipt_recovery_field",
-            "recommended_calculation_settings_receipt_recovery_policy",
-            "castep_geometry_optimization",
-            "castep_electronic_calculation",
             "default_execution_mode",
-            "response_modes",
             "response_mode",
             "response_schema",
             "supported_response_modes",
             "max_response_bytes",
             "target_response_bytes",
             "full_detail_hint",
-            "runner_status",
-            "runtime_provenance",
-            "gui_status",
-            "view_replay_runtime_availability",
+            "schemas",
             "domain_focus",
             "diagnostics",
             "gui_tools",
@@ -42326,13 +42963,38 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
     )
     receipt["omitted_fields"].append("oversized_capability_catalogs")
     minimal["response_compaction"] = receipt
-    for key in ("domain_focus", "diagnostics", "response_modes"):
-        if _compact_json_size_bytes(minimal) < COMPACT_RESPONSE_MAX_BYTES:
-            break
+    for key in ("domain_focus", "diagnostics", "safety", "gui_tools"):
+        if fits(minimal):
+            return minimal
         if key in minimal:
             minimal.pop(key, None)
             receipt["omitted_fields"].append(key)
-    return minimal
+    if fits(minimal):
+        return minimal
+
+    essential = _mapping_subset(
+        minimal,
+        (
+            "ok",
+            "live_preflight_tool",
+            "live_entry_tool",
+            "live_status_tool",
+            "response_mode",
+            "response_schema",
+            "supported_response_modes",
+            "max_response_bytes",
+            "target_response_bytes",
+            "full_detail_hint",
+            "schemas",
+        ),
+    )
+    receipt["omitted_fields"].append("nonessential_capability_sections")
+    essential["response_compaction"] = receipt
+    if not fits(essential):
+        raise RuntimeError(
+            "Essential compact capability response exceeded the hard budget"
+        )
+    return essential
 
 
 def _compact_revision_delta(value: Any) -> dict[str, Any] | None:
@@ -48737,7 +49399,11 @@ def material_studio_live_update_with_patch(
             else {}
         )
         gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=project_id, revision=info.revision)
+        gui_status = _gui_status_for_revision_hotload(
+            gui,
+            project_id=project_id,
+            revision=info.revision,
+        )
         response: dict[str, Any] = {
             "ok": True,
             "workflow": patch_workflow,
@@ -53157,7 +53823,11 @@ def material_studio_live_modeling_request(
             diff=["create_project"],
         )
         gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=model_spec.project_id, revision=info.revision)
+        gui_status = _gui_status_for_revision_hotload(
+            gui,
+            project_id=model_spec.project_id,
+            revision=info.revision,
+        )
         response: dict[str, Any] = {
             "ok": True,
             "workflow": "create",
@@ -53994,6 +54664,20 @@ def _prepare_view_replay_after_high_level_hotload(
             )
         response["post_hotload_view_replay_prepare"] = receipt
         return response
+    if not _gui_open_artifact_isolation_verified(gui_open):
+        receipt.update(
+            {
+                "status": "blocked_post_open_target_ambiguous",
+                "prepared": False,
+                "prepared_after_gui_artifact_transaction": False,
+                "required_next_step": (
+                    "Resolve the post-open Materials Studio target ambiguity "
+                    "before preparing view replay."
+                ),
+            }
+        )
+        response["post_hotload_view_replay_prepare"] = receipt
+        return response
 
     if _ACTIVE_GUI_ARTIFACT_REPORT_TRANSACTION.get() is not None:
         raise GuiError(
@@ -54509,7 +55193,8 @@ def _finalize_high_level_gui_hotload(
                     )
                     retry_payload = artifact_open_retry_payload
                 try:
-                    fresh_gui_status = gui.status(
+                    fresh_gui_status = _gui_status_for_revision_hotload(
+                        gui,
                         project_id=spec.project_id,
                         revision=spec.revision,
                     )
@@ -54553,7 +55238,14 @@ def _finalize_high_level_gui_hotload(
                         )
                         if record_gui_open_artifact:
                             audit_artifacts.append({"type": "gui_open", "result": response["gui_open"]})
-                        if fit_to_view_after_open:
+                        response = _with_gui_open_postcondition_block(
+                            response,
+                            response["gui_open"],
+                        )
+                        if (
+                            response.get("ok") is not False
+                            and fit_to_view_after_open
+                        ):
                             response = _execute_post_hotload_fit_to_view(
                                 response=response,
                                 gui=gui,
@@ -55111,7 +55803,13 @@ def _gui_visual_confirmation_binding(
         if isinstance(gui_status.get("window_management"), dict)
         else {}
     )
-    window = gui_status.get("window") if isinstance(gui_status.get("window"), dict) else {}
+    window = (
+        gui_status.get("target_window")
+        if isinstance(gui_status.get("target_window"), dict)
+        else gui_status.get("window")
+        if isinstance(gui_status.get("window"), dict)
+        else {}
+    )
     actual_handle = window_management.get("target_window_handle") or window.get("handle")
     actual_title = window_management.get("target_window_title") or window.get("title")
     reasons: list[str] = []
@@ -55125,6 +55823,20 @@ def _gui_visual_confirmation_binding(
         reasons.append("target_window_not_matched_to_project")
     if window_management.get("target_window_has_project_metadata") is not True:
         reasons.append("target_window_missing_wrapper_metadata")
+    if (
+        window_management.get("target_window_pid_is_matstudio_process")
+        is not True
+    ):
+        reasons.append("target_window_pid_not_matstudio_process")
+    if window_management.get("target_wrapper_integrity_verified") is not True:
+        reasons.append("target_wrapper_integrity_unverified")
+    if (
+        window_management.get(
+            "target_window_wrapper_workspace_matches_controller"
+        )
+        is not True
+    ):
+        reasons.append("target_wrapper_workspace_mismatch")
     if window_management.get("target_window_project_id") != project_id:
         reasons.append("target_window_project_mismatch")
     if window_management.get("target_window_revision") != revision:
@@ -55616,12 +56328,29 @@ def material_studio_gui_activate(
     revision: Annotated[int | None, Field(description="可选的用于 GUI 日志记录的修订版本。", ge=0)] = None,
     take_snapshot: Annotated[bool, Field(description="激活后捕获并持久化当前 GUI 快照。")] = False,
     views: Annotated[list[str] | None, Field(description="Optional standard view names for persisted diagnostics.")] = None,
+    use_unscoped_existing_window: Annotated[
+        bool,
+        Field(description="Activate the globally isolated existing window without project evidence binding."),
+    ] = False,
     working_dir: Annotated[str | None, Field(description="可选的 GUI 工作区根目录。")] = None,
 ) -> dict[str, Any]:
     """将现有的 Materials Studio 窗口带到前台。"""
 
     try:
-        context = _resolve_gui_action_context(project_id=project_id, revision=revision, working_dir=working_dir)
+        if use_unscoped_existing_window:
+            if project_id is not None or revision is not None or take_snapshot:
+                raise ValueError(
+                    "use_unscoped_existing_window requires project_id=None, revision=None, and take_snapshot=false"
+                )
+            context = {
+                "project_id": None,
+                "revision": None,
+                "project_resolution": None,
+                "resolved": False,
+                "reason": "explicit_unscoped_existing_window",
+            }
+        else:
+            context = _resolve_gui_action_context(project_id=project_id, revision=revision, working_dir=working_dir)
         gui = _gui_controller(working_dir)
 
         def perform_activation() -> dict[str, Any]:
@@ -55638,6 +56367,7 @@ def material_studio_gui_activate(
             result["resolved_latest_current_for_activate"] = (
                 project_id is None and revision is None and context.get("reason") == "latest_current_project"
             )
+            result["unscoped_existing_window_activation"] = use_unscoped_existing_window
             if take_snapshot:
                 try:
                     snapshot = gui.snapshot(
@@ -55813,7 +56543,13 @@ def _record_gui_visual_confirmation_action(
         if isinstance(gui_status.get("window_management"), dict)
         else {}
     )
-    window = gui_status.get("window") if isinstance(gui_status.get("window"), dict) else {}
+    window = (
+        gui_status.get("target_window")
+        if isinstance(gui_status.get("target_window"), dict)
+        else gui_status.get("window")
+        if isinstance(gui_status.get("window"), dict)
+        else {}
+    )
     resolved_expected_window_handle = int(
         expected_window_handle
         or window_management.get("target_window_handle")
@@ -56208,8 +56944,19 @@ def _open_gui_structure_action(
                 },
             }
 
-    gui_status = gui.status(project_id=log_project_id, revision=log_revision)
+    if log_project_id is not None and log_revision is not None:
+        gui_status = _gui_status_for_revision_hotload(
+            gui,
+            project_id=str(log_project_id),
+            revision=int(log_revision),
+        )
+    else:
+        gui_status = gui.status(
+            project_id=log_project_id,
+            revision=log_revision,
+        )
     response_base["gui_status"] = gui_status
+    response_base["pre_open_gui_status"] = gui_status
     blocked_response = _with_single_window_hotload_block(response_base, gui_status)
     if blocked_response is not response_base:
         return blocked_response
@@ -56293,7 +57040,8 @@ def _open_gui_structure_action(
             "prepared_after_gui_artifact_transaction": False,
             "report_rewritten_after_prepare": False,
         }
-    if fit_to_view_after_open:
+    response = _with_gui_open_postcondition_block(response, opened)
+    if response.get("ok") is not False and fit_to_view_after_open:
         response = _execute_post_hotload_fit_to_view(
             response=response,
             gui=gui,
@@ -57320,7 +58068,11 @@ def material_studio_gui_apply_current_revision(
         script = script_path.read_text(encoding="utf-8")
         script_validation = validate_generated_script(script)
         generated = _generate_structured_script(spec, store)
-        gui_status = gui.status(project_id=project_id, revision=spec.revision)
+        gui_status = _gui_status_for_revision_hotload(
+            gui,
+            project_id=project_id,
+            revision=spec.revision,
+        )
         persisted_context = (
             _persisted_live_context_for_export(store, spec)
             if mode == ExecutionMode.PREVIEW

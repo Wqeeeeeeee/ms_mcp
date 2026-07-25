@@ -510,8 +510,20 @@ def _controller(tmp_path: Path) -> tuple[
         backend=gui_backend,
         view_replay_backend=replay_backend,
     )
-    structure = tmp_path / "model.cif"
+    structure = tmp_path / "view_proj" / "outputs" / "r002" / "model.cif"
+    structure.parent.mkdir(parents=True, exist_ok=True)
     structure.write_text("data_model\n", encoding="utf-8")
+    revision_path = (
+        tmp_path
+        / "view_proj"
+        / "revisions"
+        / "r002_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(
+        json.dumps({"project_id": "view_proj", "revision": 2}),
+        encoding="utf-8",
+    )
     wrapper = controller._create_project_wrapper(
         structure,
         project_id="view_proj",

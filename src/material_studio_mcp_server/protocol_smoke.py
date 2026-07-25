@@ -136,6 +136,22 @@ _SCHEMA_EXPECTATIONS: dict[str, dict[str, set[str]]] = {
         },
         "required": set(),
     },
+    "material_studio_gui_open_structure": {
+        "properties": {
+            "structure_path",
+            "project_id",
+            "revision",
+            "take_snapshot",
+            "export_view_audit",
+            "reuse_existing_window_only",
+            "views",
+            "working_dir",
+            "fit_to_view_after_open",
+            "prepare_view_replay_after_open",
+            "recover_legacy_wrapper",
+        },
+        "required": {"structure_path"},
+    },
     "material_studio_live_update_with_patch": {
         "properties": {
             "project_id",

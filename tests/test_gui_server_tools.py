@@ -28,6 +28,7 @@ from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.specs import ModelSpec
 from material_studio_mcp_server.state import store as store_module
 from material_studio_mcp_server.state.execution import begin_execution_attempt
+from material_studio_mcp_server.translators import write_crystal_cif
 
 
 def _write_current_diagnostic_contract_artifacts(
@@ -764,6 +765,27 @@ class ProcessOnlyFakeGuiBackend(LaunchingFakeGuiBackend):
     def launch_app(self) -> dict:
         self.launch_count += 1
         raise AssertionError("launch_app must not be called while MatStudio.exe is already running")
+
+
+def _downgrade_wrapper_to_unattested_legacy(wrapper: dict) -> None:
+    metadata_path = Path(wrapper["metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    for field in (
+        "wrapper_schema_version",
+        "wrapper_profile",
+        "project_file_sha256",
+        "project_file_size_bytes",
+        "document_sha256",
+        "document_size_bytes",
+        "source_sha256",
+        "source_size_bytes",
+        "identity_manifest_name",
+        "identity_manifest_sha256",
+        "identity_manifest_size_bytes",
+    ):
+        metadata.pop(field, None)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    Path(wrapper["identity_manifest_path"]).unlink()
 
 
 class FakeRunner:
@@ -9571,6 +9593,14 @@ def test_live_capabilities_lists_templates_patches_and_schemas() -> None:
     assert capabilities["gui"]["open_structure_policy"]["requires_explicit_activation_before_gui_input"] is True
     assert capabilities["gui"]["open_structure_policy"]["refuses_automatic_activation_for_inactive_target"] is True
     assert capabilities["gui"]["open_structure_policy"]["activation_retry_tool"] == "material_studio_gui_activate"
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_supported"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_parameter"] == "recover_legacy_wrapper"
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_default_open_blocked"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_requires_explicit_confirmation"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_requires_current_crystal_cif_match"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_may_activate_exact_eligible_window"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_post_open_v3_identity_required"] is True
+    assert capabilities["gui"]["open_structure_policy"]["legacy_wrapper_recovery_launches_new_process"] is False
     assert capabilities["gui"]["open_structure_policy"]["artifact_only_open_retry_tool"] == "material_studio_gui_open_structure"
     assert capabilities["gui"]["open_structure_policy"]["postexecution_target_state_revalidated"] is True
     assert capabilities["gui"]["open_structure_policy"]["postexecution_focus_loss_preserves_execution_result"] is True
@@ -12145,6 +12175,218 @@ def test_gui_open_structure_returns_single_window_block_for_multiple_windows(
     ]
     assert opened["single_window_hotload_block"]["recommended_tool"] == "material_studio_gui_status"
     assert backend.opened == []
+
+
+def test_gui_open_structure_requires_explicit_legacy_recovery_and_reuses_window(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectScopedMultiProcessGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: controller,
+    )
+    project_id = "server_legacy_crystal_recovery"
+    payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "gallium_arsenide_zincblende_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload["project_id"] = project_id
+    created = server.material_studio_model_create_from_spec(
+        payload,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    spec = server._structured_store(str(tmp_path)).load_current(project_id)
+    structure = Path(created["planned_outputs"]["structure"])
+    structure.parent.mkdir(parents=True, exist_ok=True)
+    write_crystal_cif(spec.model, structure)
+    wrapper = controller._create_project_wrapper(
+        structure.resolve(),
+        project_id=project_id,
+        revision=spec.revision,
+    )
+    _downgrade_wrapper_to_unattested_legacy(wrapper)
+    target = WindowInfo(
+        handle=607,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=4444,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=False,
+    )
+    backend.window = target
+    backend.windows = [target]
+
+    blocked = server.material_studio_gui_open_structure(
+        structure_path=str(structure),
+        project_id=project_id,
+        revision=spec.revision,
+        take_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    block = blocked["single_window_hotload_block"]
+    assert block["reason"] == "legacy_wrapper_recovery_required"
+    assert block["needs_user_confirmation"] is True
+    assert block["safe_to_call_without_confirmation"] is False
+    assert block["payload_hint"]["recover_legacy_wrapper"] is True
+    assert block["payload_hint"]["structure_path"] == str(structure.resolve())
+    assert backend.opened_on_handles == []
+    assert backend.activated_handles == []
+
+    recovered = server.material_studio_gui_open_structure(
+        structure_path=str(structure),
+        project_id=project_id,
+        revision=spec.revision,
+        take_snapshot=False,
+        recover_legacy_wrapper=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert recovered["ok"] is True, recovered.get("error")
+    assert recovered["legacy_wrapper_recovery_requested"] is True
+    assert recovered["gui_open"]["legacy_wrapper_recovery_completed"] is True
+    assert recovered["gui_open"]["post_open_single_window_policy_ok"] is True
+    assert backend.activated_handles
+    assert set(backend.activated_handles) == {target.handle}
+    assert len(backend.opened_on_handles) == 1
+    assert backend.opened_on_handles[0][0] == target.handle
+    assert backend.opened_on_handles[0][1].suffix.lower() == ".stp"
+    assert backend.window is not None
+    assert backend.window.handle == target.handle
+    assert backend.window.pid == target.pid
+
+
+def test_gui_open_structure_retry_payload_preserves_legacy_recovery_flag(
+    tmp_path: Path,
+) -> None:
+    structure = tmp_path / "project" / "outputs" / "r000" / "structure.cif"
+    payload = server._gui_open_structure_retry_payload(
+        structure_path=structure,
+        project_id="legacy_retry_project",
+        revision=0,
+        take_snapshot=False,
+        export_view_audit=True,
+        reuse_existing_window_only=True,
+        views=["front", "top"],
+        working_dir=tmp_path,
+        fit_to_view_after_open=True,
+        prepare_view_replay_after_open=True,
+        recover_legacy_wrapper=True,
+    )
+
+    assert payload == {
+        "structure_path": str(structure.resolve()),
+        "take_snapshot": False,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "project_id": "legacy_retry_project",
+        "revision": 0,
+        "views": ["front", "top"],
+        "fit_to_view_after_open": True,
+        "prepare_view_replay_after_open": True,
+        "recover_legacy_wrapper": True,
+        "working_dir": str(tmp_path.resolve()),
+    }
+
+
+def test_gui_open_structure_legacy_recovery_rejects_historical_revision(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    backend = ProjectScopedMultiProcessGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    monkeypatch.setattr(
+        server,
+        "_gui_controller",
+        lambda working_dir=None: controller,
+    )
+    project_id = "legacy_historical_revision"
+    payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "gallium_arsenide_zincblende_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload["project_id"] = project_id
+    created = server.material_studio_model_create_from_spec(
+        payload,
+        working_dir=str(tmp_path),
+    )
+    assert created["ok"] is True
+    revision_zero = server._structured_store(str(tmp_path)).get_revision(
+        project_id,
+        0,
+    )
+    structure = Path(created["planned_outputs"]["structure"])
+    structure.parent.mkdir(parents=True, exist_ok=True)
+    write_crystal_cif(revision_zero.model, structure)
+    wrapper = controller._create_project_wrapper(
+        structure.resolve(),
+        project_id=project_id,
+        revision=0,
+    )
+    _downgrade_wrapper_to_unattested_legacy(wrapper)
+    target = WindowInfo(
+        handle=608,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=4444,
+        rect=(0, 0, 1024, 768),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    backend.window = target
+    backend.windows = [target]
+    patched = server.material_studio_model_modify_with_patch(
+        project_id=project_id,
+        base_revision=0,
+        patch={
+            "operations": [
+                {
+                    "type": "set_metadata",
+                    "metadata_updates": {"advanced_after_legacy_wrapper": True},
+                }
+            ]
+        },
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+    )
+    assert patched["ok"] is True
+    assert patched["revision"] == 1
+
+    status = controller.status(project_id=project_id, revision=0)
+    recovery = status["window_management"]["legacy_wrapper_recovery"]
+    assert recovery["detected"] is True
+    assert recovery["eligible"] is False
+    assert "legacy_wrapper_revision_is_not_current" in recovery[
+        "blocking_reasons"
+    ]
+
+    blocked = server.material_studio_gui_open_structure(
+        structure_path=str(structure),
+        project_id=project_id,
+        revision=0,
+        take_snapshot=False,
+        recover_legacy_wrapper=True,
+        working_dir=str(tmp_path),
+    )
+
+    assert blocked["ok"] is False
+    assert blocked["status"] == "legacy_wrapper_recovery_artifact_blocked"
+    assert "legacy_wrapper_recovery_requires_current_revision" in blocked[
+        "blocking_reasons"
+    ]
+    assert blocked["legacy_wrapper_recovery_current_pointer"]["revision"] == 1
+    assert backend.opened_on_handles == []
+    assert backend.activated_handles == []
 
 
 def test_gui_open_structure_requires_explicit_activation_before_gui_input(

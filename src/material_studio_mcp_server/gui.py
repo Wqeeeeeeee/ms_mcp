@@ -40,8 +40,11 @@ from .gui_uia import (
     ViewReplayAutomationBackend,
     local_uia_view_replay_implementation_contract,
 )
+from .parsers.cif import validate_crystal_cif_against_spec
 from .parsers.copy_script import analyze_reviewed_copy_script
-from .state.store import default_workspace_root, sanitize_project_id
+from .specs.crystal import CrystalSpec
+from .specs.project import ModelSpec
+from .state.store import ProjectStore, default_workspace_root, sanitize_project_id
 
 
 class GuiError(RuntimeError):
@@ -62,6 +65,18 @@ VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
 CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION = 5
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 8
 GUI_BACKEND_ENV = "MATERIAL_STUDIO_MCP_GUI_BACKEND"
+LEGACY_WRAPPER_RECOVERY_SCHEMA = "material_studio_gui_legacy_wrapper_recovery_v1"
+LEGACY_WRAPPER_RECOVERY_ALLOWED_REASON_CODES = frozenset(
+    {
+        "wrapper_schema_or_profile_unsupported",
+        "wrapper_attestation_missing_or_invalid",
+        "project_file_sha256_mismatch",
+        "project_file_size_mismatch",
+        "wrapper_document_sha256_mismatch",
+        "wrapper_document_size_mismatch",
+        "locked_project_without_valid_attestation",
+    }
+)
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -3077,6 +3092,12 @@ class MaterialsStudioGuiController:
             "workspace_context": window_management.get("workspace_context"),
             "workspace_context_mismatch": bool(window_management.get("workspace_context_mismatch")),
             "recommended_working_dir": window_management.get("recommended_working_dir"),
+            "legacy_wrapper_recovery": window_management.get(
+                "legacy_wrapper_recovery"
+            ),
+            "legacy_wrapper_recovery_ready": bool(
+                window_management.get("legacy_wrapper_recovery_ready")
+            ),
             "matstudio_exe": str(matstudio_exe) if matstudio_exe else None,
             "open_strategy": open_strategy,
             "open_strategy_may_launch_new_instance": file_open_may_launch_new_instance,
@@ -4037,6 +4058,7 @@ class MaterialsStudioGuiController:
         revision: int | None = None,
         take_snapshot: bool = True,
         reuse_existing_window_only: bool = True,
+        recover_legacy_wrapper: bool = False,
     ) -> dict[str, Any]:
         """Open a structure in Materials Studio GUI."""
 
@@ -4062,7 +4084,19 @@ class MaterialsStudioGuiController:
             revision,
         )
         pre_open_hotload_target_resolution = dict(target_resolution)
-        if target_resolution.get("matched_project_window") is True:
+        legacy_wrapper_recovery_preflight: dict[str, Any] | None = None
+        if recover_legacy_wrapper:
+            window_management = self._require_legacy_wrapper_recovery_target(
+                window=window,
+                target_resolution=target_resolution,
+                project_id=hotload_target_project_id,
+                revision=hotload_target_revision,
+                structure_path=path,
+            )
+            legacy_wrapper_recovery_preflight = dict(
+                window_management.get("legacy_wrapper_recovery") or {}
+            )
+        elif target_resolution.get("matched_project_window") is True:
             window_management = self._require_hotload_action_target(
                 window=window,
                 target_resolution=target_resolution,
@@ -4076,7 +4110,15 @@ class MaterialsStudioGuiController:
                 project_id=hotload_target_project_id,
                 revision=hotload_target_revision,
             )
-        single_window_violation_reasons = list(window_management.get("single_window_violation_reasons") or [])
+        single_window_violation_reasons = list(
+            window_management.get("single_window_violation_reasons") or []
+        )
+        if recover_legacy_wrapper:
+            single_window_violation_reasons = [
+                reason
+                for reason in single_window_violation_reasons
+                if reason != "target_wrapper_identity_unverified"
+            ]
         if single_window_violation_reasons:
             raise GuiError(
                 "Refusing to hot-load a structure while the Materials Studio GUI session violates the "
@@ -4126,7 +4168,17 @@ class MaterialsStudioGuiController:
                 )
             window = refreshed_window
             target_resolution = refreshed_resolution
-            if target_resolution.get("matched_project_window") is True:
+            if recover_legacy_wrapper:
+                post_activation_window_management = (
+                    self._require_legacy_wrapper_recovery_target(
+                        window=window,
+                        target_resolution=target_resolution,
+                        project_id=hotload_target_project_id,
+                        revision=hotload_target_revision,
+                        structure_path=path,
+                    )
+                )
+            elif target_resolution.get("matched_project_window") is True:
                 post_activation_window_management = (
                     self._require_hotload_action_target(
                         window=window,
@@ -4227,6 +4279,31 @@ class MaterialsStudioGuiController:
                 post_open_window_management[
                     "recommended_action"
                 ] = "close_save_extra_matstudio_windows_then_retry_hotload"
+        legacy_wrapper_recovery_completed = False
+        if recover_legacy_wrapper:
+            post_open_metadata = (
+                post_open_target_resolution.get(
+                    "target_project_wrapper_metadata"
+                )
+                if isinstance(post_open_target_resolution, dict)
+                and isinstance(
+                    post_open_target_resolution.get(
+                        "target_project_wrapper_metadata"
+                    ),
+                    dict,
+                )
+                else {}
+            )
+            legacy_wrapper_recovery_completed = bool(
+                wrapper is not None
+                and post_open_metadata.get("wrapper_integrity_verified") is True
+                and post_open_metadata.get("wrapper_target_identity_verified")
+                is True
+            )
+            if not legacy_wrapper_recovery_completed:
+                post_open_single_window_violation_reasons.append(
+                    "legacy_wrapper_recovery_post_open_identity_unverified"
+                )
         post_open_single_window_violation_reasons = _unique_strings(
             post_open_single_window_violation_reasons
         )
@@ -4253,6 +4330,13 @@ class MaterialsStudioGuiController:
             "reuse_existing_window_only": reuse_existing_window_only,
             "same_window_open_supported": _backend_same_window_open_supported(self.backend),
             "same_window_open_used": same_window_open_used,
+            "legacy_wrapper_recovery_requested": recover_legacy_wrapper,
+            "legacy_wrapper_recovery_preflight": (
+                legacy_wrapper_recovery_preflight
+            ),
+            "legacy_wrapper_recovery_completed": (
+                legacy_wrapper_recovery_completed
+            ),
             "window_management": window_management,
             "post_activation_window_management": post_activation_window_management,
             "pre_open_hotload_target_resolution": (
@@ -6949,6 +7033,48 @@ class MaterialsStudioGuiController:
             raise GuiError(
                 "Refusing Materials Studio GUI hot-load because the target "
                 f"window is not uniquely verified: {', '.join(reasons)}"
+            )
+        return management
+
+    def _require_legacy_wrapper_recovery_target(
+        self,
+        *,
+        window: WindowInfo,
+        target_resolution: dict[str, Any],
+        project_id: str | None,
+        revision: int | None,
+        structure_path: Path,
+    ) -> dict[str, Any]:
+        """Allow replacement of one old wrapper only from its validated crystal CIF."""
+
+        management = self._window_management_for_hotload(
+            target_window=window,
+            target_resolution=target_resolution,
+            project_id=project_id,
+            revision=revision,
+        )
+        recovery = (
+            management.get("legacy_wrapper_recovery")
+            if isinstance(management.get("legacy_wrapper_recovery"), dict)
+            else {}
+        )
+        reasons = list(recovery.get("blocking_reasons") or [])
+        if not isinstance(self.backend, WindowsGuiBackend):
+            reasons.append("legacy_wrapper_recovery_requires_windows_backend")
+        if recovery.get("eligible") is not True:
+            reasons.append("legacy_wrapper_recovery_not_eligible")
+        expected_source = recovery.get("source_path")
+        if not expected_source or not _same_resolved_path(
+            Path(str(expected_source)),
+            structure_path,
+        ):
+            reasons.append("legacy_wrapper_recovery_structure_path_mismatch")
+        reasons = _unique_strings(reasons)
+        if reasons:
+            raise GuiError(
+                "Refusing legacy Materials Studio wrapper recovery because "
+                "the exact immutable crystal and single-window gates did not "
+                f"pass: {', '.join(reasons)}"
             )
         return management
 
@@ -12509,6 +12635,251 @@ def _unique_strings(values: list[str]) -> list[str]:
     return result
 
 
+def _legacy_wrapper_recovery_artifact_receipt(
+    *,
+    controller_workspace_root: Path,
+    target_entry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Validate whether an old wrapper can be replaced from immutable crystal state."""
+
+    receipt: dict[str, Any] = {
+        "schema": LEGACY_WRAPPER_RECOVERY_SCHEMA,
+        "detected": False,
+        "artifact_recovery_ready": False,
+        "eligible": False,
+        "status": "not_applicable",
+        "blocking_reasons": [],
+        "automatic_adoption_allowed": False,
+        "safe_to_treat_as_loaded": False,
+        "structure_modified": False,
+        "gui_input_performed": False,
+        "wrapper_written": False,
+        "runner_called": False,
+    }
+    metadata = (
+        target_entry.get("project_wrapper_metadata")
+        if isinstance(target_entry, dict)
+        and isinstance(target_entry.get("project_wrapper_metadata"), dict)
+        else {}
+    )
+    wrapper_schema = metadata.get("wrapper_schema_version")
+    wrapper_profile = metadata.get("wrapper_profile")
+    legacy_schema = bool(
+        (wrapper_schema is None and wrapper_profile is None)
+        or (wrapper_schema == 1 and wrapper_profile is None)
+    )
+    identity_fields_present = any(
+        metadata.get(field) not in {None, ""}
+        for field in (
+            "identity_manifest_name",
+            "identity_manifest_sha256",
+            "identity_manifest_size_bytes",
+        )
+    )
+    candidate_detected = bool(
+        metadata.get("wrapper_provenance_status")
+        == "unverified_revision_wrapper"
+        and metadata.get("wrapper_target_identity_verified") is not True
+        and legacy_schema
+        and not identity_fields_present
+    )
+    if not candidate_detected:
+        return receipt
+
+    receipt.update(
+        {
+            "detected": True,
+            "status": "artifact_validation_required",
+            "wrapper_schema_version": wrapper_schema,
+            "wrapper_profile": wrapper_profile,
+            "wrapper_provenance_status": metadata.get(
+                "wrapper_provenance_status"
+            ),
+            "legacy_revision_state_binding_valid": metadata.get(
+                "legacy_revision_state_binding_valid"
+            ),
+            "wrapper_target_identity_reason_codes": list(
+                metadata.get("wrapper_target_identity_reason_codes") or []
+            ),
+            "wrapper_integrity_reason_codes": list(
+                metadata.get("wrapper_integrity_reason_codes") or []
+            ),
+        }
+    )
+    blockers: list[str] = []
+    target_reason_codes = {
+        str(item)
+        for item in metadata.get("wrapper_target_identity_reason_codes") or []
+        if str(item)
+    }
+    integrity_reason_codes = {
+        str(item)
+        for item in metadata.get("wrapper_integrity_reason_codes") or []
+        if str(item)
+    }
+    if not target_reason_codes:
+        blockers.append("legacy_wrapper_identity_failure_reasons_missing")
+    if not target_reason_codes.issubset(
+        LEGACY_WRAPPER_RECOVERY_ALLOWED_REASON_CODES
+    ):
+        blockers.append("legacy_wrapper_has_nonrecoverable_identity_failure")
+    if not integrity_reason_codes.issubset(
+        LEGACY_WRAPPER_RECOVERY_ALLOWED_REASON_CODES
+    ):
+        blockers.append("legacy_wrapper_has_nonrecoverable_integrity_failure")
+    if metadata.get("legacy_revision_state_binding_valid") is not True:
+        blockers.append("legacy_revision_state_binding_unverified")
+    if metadata.get("source_inside_wrapper_workspace") is not True:
+        blockers.append("legacy_wrapper_source_not_inside_workspace")
+    if metadata.get("wrapper_workspace_matches_controller") is not True:
+        blockers.append("legacy_wrapper_workspace_mismatch")
+
+    project_id = metadata.get("project_id")
+    try:
+        project_id_valid = bool(
+            isinstance(project_id, str)
+            and project_id
+            and sanitize_project_id(project_id) == project_id
+        )
+    except ValueError:
+        project_id_valid = False
+    if not project_id_valid:
+        blockers.append("legacy_wrapper_project_id_invalid")
+
+    raw_revision = metadata.get("revision")
+    revision = (
+        raw_revision
+        if type(raw_revision) is int and raw_revision >= 0
+        else None
+    )
+    if revision is None:
+        blockers.append("legacy_wrapper_revision_invalid")
+
+    workspace_root = controller_workspace_root.expanduser().resolve()
+    source_path: Path | None = None
+    raw_source_path = metadata.get("source_path")
+    try:
+        source_path = (
+            Path(str(raw_source_path)).expanduser().resolve()
+            if raw_source_path
+            else None
+        )
+    except (OSError, RuntimeError, ValueError):
+        source_path = None
+    if source_path is None or not source_path.is_file():
+        blockers.append("legacy_wrapper_source_missing")
+
+    spec: ModelSpec | None = None
+    revision_path: Path | None = None
+    current_resolution: dict[str, Any] | None = None
+    if project_id_valid and revision is not None:
+        revision_path = (
+            workspace_root
+            / str(project_id)
+            / "revisions"
+            / f"r{revision:03d}_model_spec.json"
+        ).resolve()
+        expected_output_dir = (
+            workspace_root
+            / str(project_id)
+            / "outputs"
+            / f"r{revision:03d}"
+        ).resolve()
+        expected_source_path = (
+            expected_output_dir / f"structure_r{revision:03d}.cif"
+        ).resolve()
+        if source_path is not None and not _path_is_inside(
+            expected_output_dir,
+            source_path,
+        ):
+            blockers.append("legacy_wrapper_source_not_in_exact_revision_output")
+        if source_path is not None and not _same_resolved_path(
+            expected_source_path,
+            source_path,
+        ):
+            blockers.append(
+                "legacy_wrapper_source_not_exact_revision_structure"
+            )
+        try:
+            _ensure_inside(workspace_root, revision_path)
+            spec = ModelSpec.model_validate_json(
+                revision_path.read_text(encoding="utf-8")
+            )
+        except Exception:
+            spec = None
+            blockers.append("legacy_wrapper_immutable_spec_invalid")
+        try:
+            current_spec, current_resolution = ProjectStore(
+                workspace_root
+            ).resolve_current(str(project_id))
+            if current_spec.revision != revision:
+                blockers.append("legacy_wrapper_revision_is_not_current")
+        except Exception:
+            blockers.append("legacy_wrapper_current_revision_unresolved")
+    if spec is not None:
+        if spec.project_id != project_id or spec.revision != revision:
+            blockers.append("legacy_wrapper_immutable_spec_identity_mismatch")
+        if not isinstance(spec.model, CrystalSpec):
+            blockers.append("legacy_wrapper_recovery_requires_crystal_spec")
+
+    structure_validation: dict[str, Any] | None = None
+    if (
+        spec is not None
+        and isinstance(spec.model, CrystalSpec)
+        and source_path is not None
+        and source_path.is_file()
+    ):
+        structure_validation = validate_crystal_cif_against_spec(
+            spec.model,
+            source_path,
+        )
+        if structure_validation.get("status") != "matched":
+            blockers.append("legacy_wrapper_structure_does_not_match_spec")
+
+    compact_validation = None
+    if isinstance(structure_validation, dict):
+        compact_validation = {
+            key: structure_validation.get(key)
+            for key in (
+                "status",
+                "ok",
+                "structure_path",
+                "sha256",
+                "expected_atom_count",
+                "actual_atom_count",
+                "atom_count_matches",
+                "element_counts_match",
+                "atom_ids_match",
+                "atom_elements_match",
+                "fractional_coordinates_match",
+                "lattice_matches",
+                "errors",
+            )
+        }
+    blockers = _unique_strings(blockers)
+    receipt.update(
+        {
+            "project_id": project_id if project_id_valid else None,
+            "revision": revision,
+            "working_dir": str(workspace_root),
+            "source_path": str(source_path) if source_path is not None else None,
+            "immutable_spec_path": (
+                str(revision_path) if revision_path is not None else None
+            ),
+            "current_revision_resolution": current_resolution,
+            "structure_artifact_validation": compact_validation,
+            "blocking_reasons": blockers,
+            "artifact_recovery_ready": not blockers,
+            "status": (
+                "artifact_recovery_ready"
+                if not blockers
+                else "artifact_validation_blocked"
+            ),
+        }
+    )
+    return receipt
+
+
 def _window_management_receipt(
     *,
     controller_workspace_root: Path,
@@ -12803,6 +13174,116 @@ def _window_management_receipt(
         entry for entry in blocking_dialog_entries if entry not in resolvable_startup_dialog_entries
     ]
 
+    legacy_wrapper_recovery = _legacy_wrapper_recovery_artifact_receipt(
+        controller_workspace_root=controller_workspace_root,
+        target_entry=target_entry,
+    )
+    if legacy_wrapper_recovery.get("detected") is True:
+        recovery_blockers = list(
+            legacy_wrapper_recovery.get("blocking_reasons") or []
+        )
+        if not requested_target:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_requires_explicit_project_revision"
+            )
+        if (
+            legacy_wrapper_recovery.get("project_id")
+            != requested_project_id
+            or legacy_wrapper_recovery.get("revision")
+            != requested_revision
+        ):
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_requested_identity_mismatch"
+            )
+        if not matched_project_window or live_matching_window_count != 1:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_target_window_not_unique"
+            )
+        if not target_window_matches_requested_project_revision:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_target_window_changed"
+            )
+        if not target_window_pid_is_matstudio_process:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_target_pid_not_matstudio"
+            )
+        if len(processes) != 1 or len(primary_entries) != 1:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_requires_global_single_window"
+            )
+        elif (
+            target_entry is None
+            or primary_entries[0].get("handle") != target_entry.get("handle")
+        ):
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_target_not_only_primary_window"
+            )
+        if all_dialog_entries:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_requires_no_open_dialogs"
+            )
+        if not same_window_open_supported:
+            recovery_blockers.append(
+                "legacy_wrapper_recovery_same_window_open_unavailable"
+            )
+        recovery_blockers = _unique_strings(recovery_blockers)
+        recovery_eligible = not recovery_blockers
+        recovery_payload = None
+        if recovery_eligible:
+            recovery_payload = {
+                "structure_path": legacy_wrapper_recovery.get("source_path"),
+                "project_id": requested_project_id,
+                "revision": requested_revision,
+                "take_snapshot": True,
+                "export_view_audit": True,
+                "reuse_existing_window_only": True,
+                "recover_legacy_wrapper": True,
+                "fit_to_view_after_open": False,
+                "prepare_view_replay_after_open": False,
+                "working_dir": str(controller_workspace_root.resolve()),
+            }
+        legacy_wrapper_recovery.update(
+            {
+                "eligible": recovery_eligible,
+                "status": (
+                    "explicit_same_window_recovery_ready"
+                    if recovery_eligible
+                    else "recovery_blocked"
+                ),
+                "blocking_reasons": recovery_blockers,
+                "target_window_handle": (
+                    target_entry.get("handle") if target_entry else None
+                ),
+                "target_window_title": (
+                    target_entry.get("title") if target_entry else None
+                ),
+                "target_process_id": target_process_id,
+                "global_process_count": len(processes),
+                "global_primary_window_count": len(primary_entries),
+                "dialog_window_count": len(all_dialog_entries),
+                "same_window_open_supported": same_window_open_supported,
+                "recommended_tool": (
+                    "material_studio_gui_open_structure"
+                    if recovery_eligible
+                    else None
+                ),
+                "recommended_action": (
+                    "replace_legacy_wrapper_with_verified_v3_in_same_window"
+                    if recovery_eligible
+                    else None
+                ),
+                "needs_user_confirmation": recovery_eligible,
+                "safe_to_call_without_confirmation": False,
+                "payload_hint_is_directly_callable": recovery_eligible,
+                "payload_hint": recovery_payload,
+                "execute_revalidates_all_gates": True,
+                "new_process_launch_allowed": False,
+            }
+        )
+    legacy_wrapper_recovery_eligible = bool(
+        legacy_wrapper_recovery.get("eligible") is True
+    )
+
     warnings: list[str] = []
     single_window_violation_reasons: list[str] = []
     if target_window is not None and not target_window_pid_is_matstudio_process:
@@ -12909,6 +13390,13 @@ def _window_management_receipt(
             recommended_action = "explicitly_launch_or_activate_materials_studio_only_if_intended"
         ready_for_snapshot = False
         ready_for_open = False
+    elif legacy_wrapper_recovery_eligible:
+        recommended_tool = "material_studio_gui_open_structure"
+        recommended_action = (
+            "replace_legacy_wrapper_with_verified_v3_in_same_window"
+        )
+        ready_for_snapshot = False
+        ready_for_open = False
     elif single_window_violation_reasons:
         recommended_tool = "material_studio_gui_status"
         recommended_action = "close_save_extra_matstudio_windows_then_retry_hotload"
@@ -12954,7 +13442,10 @@ def _window_management_receipt(
         ready_for_snapshot = True
         ready_for_open = True
 
-    needs_single_window_resolution = bool(single_window_violation_reasons)
+    needs_single_window_resolution = bool(
+        single_window_violation_reasons
+        and not legacy_wrapper_recovery_eligible
+    )
     needs_dialog_resolution = bool(unresolved_blocking_dialog_entries)
     startup_dialog_open_ready = bool(
         resolvable_startup_dialog_entries and not unresolved_blocking_dialog_entries
@@ -12977,6 +13468,8 @@ def _window_management_receipt(
     )
     if target_window is None:
         status = "matstudio_process_without_usable_window" if processes else "target_window_missing"
+    elif legacy_wrapper_recovery_eligible:
+        status = "legacy_wrapper_recovery_required"
     elif needs_single_window_resolution:
         status = "single_window_policy_violation"
     elif needs_dialog_resolution:
@@ -12994,12 +13487,17 @@ def _window_management_receipt(
     else:
         status = "ready_for_same_window_live_edit"
 
-    payload_hint: dict[str, Any] = {
-        "project_id": requested_project_id,
-        "revision": requested_revision,
-        "reuse_existing_window_only": True,
-    }
-    if workspace_context_mismatch:
+    if legacy_wrapper_recovery_eligible:
+        payload_hint = dict(
+            legacy_wrapper_recovery.get("payload_hint") or {}
+        )
+    else:
+        payload_hint = {
+            "project_id": requested_project_id,
+            "revision": requested_revision,
+            "reuse_existing_window_only": True,
+        }
+    if workspace_context_mismatch and not legacy_wrapper_recovery_eligible:
         payload_hint.update(
             {
                 "working_dir": recommended_working_dir,
@@ -13007,7 +13505,10 @@ def _window_management_receipt(
                 "revision": workspace_context.get("recommended_revision"),
             }
         )
-    if recommended_tool == "material_studio_gui_open_structure":
+    if (
+        recommended_tool == "material_studio_gui_open_structure"
+        and not legacy_wrapper_recovery_eligible
+    ):
         payload_hint["execution_mode"] = "execute"
         payload_hint["open_in_gui"] = True
     elif recommended_tool == "material_studio_gui_snapshot":
@@ -13149,6 +13650,8 @@ def _window_management_receipt(
         "workspace_context_mismatch": workspace_context_mismatch,
         "recommended_working_dir": recommended_working_dir,
         "automatic_workspace_adoption_allowed": False,
+        "legacy_wrapper_recovery": legacy_wrapper_recovery,
+        "legacy_wrapper_recovery_ready": legacy_wrapper_recovery_eligible,
         "same_window_open_supported": same_window_open_supported,
         "startup_dialog_open_supported": startup_dialog_open_supported,
         "startup_dialog_open_ready": startup_dialog_open_ready,

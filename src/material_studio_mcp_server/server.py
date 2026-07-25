@@ -8419,6 +8419,16 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "requires_explicit_activation_before_gui_input": True,
                 "refuses_automatic_activation_for_inactive_target": True,
                 "activation_retry_tool": "material_studio_gui_activate",
+                "legacy_wrapper_recovery_supported": True,
+                "legacy_wrapper_recovery_parameter": "recover_legacy_wrapper",
+                "legacy_wrapper_recovery_default_open_blocked": True,
+                "legacy_wrapper_recovery_requires_explicit_confirmation": True,
+                "legacy_wrapper_recovery_requires_schema_less_or_v1_without_identity_manifest": True,
+                "legacy_wrapper_recovery_requires_global_single_process_window_no_dialogs": True,
+                "legacy_wrapper_recovery_requires_current_crystal_cif_match": True,
+                "legacy_wrapper_recovery_may_activate_exact_eligible_window": True,
+                "legacy_wrapper_recovery_post_open_v3_identity_required": True,
+                "legacy_wrapper_recovery_launches_new_process": False,
                 "artifact_only_open_retry_tool": "material_studio_gui_open_structure",
                 "postexecution_target_state_revalidated": True,
                 "postexecution_focus_loss_preserves_execution_result": True,
@@ -24431,6 +24441,33 @@ def _single_window_hotload_block(gui_status: dict[str, Any] | None) -> dict[str,
     if single_window.get("single_window_policy_ok") is not False:
         return None
     reasons = single_window.get("single_window_violation_reasons") or []
+    legacy_recovery = (
+        window_management.get("legacy_wrapper_recovery")
+        if isinstance(window_management.get("legacy_wrapper_recovery"), dict)
+        else {}
+    )
+    if legacy_recovery.get("eligible") is True:
+        return {
+            "blocked": True,
+            "reason": "legacy_wrapper_recovery_required",
+            "message": (
+                "Refusing a normal hot-load because the only Materials Studio "
+                "window uses an unattested legacy wrapper. Use the explicit "
+                "validated same-window recovery action; the legacy window is "
+                "not trusted as the current revision."
+            ),
+            "single_window_policy_ok": False,
+            "single_window_violation_reasons": reasons,
+            "recommended_tool": legacy_recovery.get("recommended_tool"),
+            "recommended_action": legacy_recovery.get(
+                "recommended_action"
+            ),
+            "needs_user_confirmation": True,
+            "safe_to_call_without_confirmation": False,
+            "payload_hint": legacy_recovery.get("payload_hint"),
+            "legacy_wrapper_recovery": legacy_recovery,
+            "window_management": window_management or None,
+        }
     return {
         "blocked": True,
         "reason": "single_window_policy_violation",
@@ -24781,6 +24818,7 @@ def _gui_open_structure_retry_payload(
     working_dir: str | Path | None,
     fit_to_view_after_open: bool = False,
     prepare_view_replay_after_open: bool = False,
+    recover_legacy_wrapper: bool = False,
 ) -> dict[str, Any]:
     """Build an artifact-only same-window open continuation."""
 
@@ -24800,6 +24838,8 @@ def _gui_open_structure_retry_payload(
         payload["fit_to_view_after_open"] = True
     if prepare_view_replay_after_open:
         payload["prepare_view_replay_after_open"] = True
+    if recover_legacy_wrapper:
+        payload["recover_legacy_wrapper"] = True
     return _workspace_bound_payload_hint(
         "material_studio_gui_open_structure",
         payload,
@@ -39926,6 +39966,11 @@ def _compact_capabilities_gui(value: Any) -> dict[str, Any]:
                 "same_window_open_method",
                 "generated_structure_project_wrapper",
                 "never_overwrite_user_input_files",
+                "legacy_wrapper_recovery_supported",
+                "legacy_wrapper_recovery_default_open_blocked",
+                "legacy_wrapper_recovery_requires_explicit_confirmation",
+                "legacy_wrapper_recovery_post_open_v3_identity_required",
+                "legacy_wrapper_recovery_launches_new_process",
             ),
         ),
         (
@@ -56707,6 +56752,7 @@ def _open_gui_structure_action(
     reuse_existing_window_only: bool,
     fit_to_view_after_open: bool,
     prepare_view_replay_after_open: bool,
+    recover_legacy_wrapper: bool,
     views: list[str] | None,
     working_dir: str | None,
     transaction: dict[str, Any] | None,
@@ -56731,6 +56777,7 @@ def _open_gui_structure_action(
             if prepare_view_replay_after_open
             else "default_disabled"
         ),
+        "legacy_wrapper_recovery_requested": recover_legacy_wrapper,
     }
     if transaction is not None:
         response_base["gui_action_transaction"] = transaction
@@ -56897,6 +56944,79 @@ def _open_gui_structure_action(
                     ),
                 }
 
+        if recover_legacy_wrapper:
+            recovery_block_reasons: list[str] = []
+            recovery_current_spec, recovery_current_pointer = (
+                store.resolve_current(target_spec.project_id)
+            )
+            response_base["legacy_wrapper_recovery_current_pointer"] = (
+                recovery_current_pointer
+            )
+            if recovery_current_spec.revision != target_spec.revision:
+                recovery_block_reasons.append(
+                    "legacy_wrapper_recovery_requires_current_revision"
+                )
+            if not isinstance(target_spec.model, CrystalSpec):
+                recovery_block_reasons.append(
+                    "legacy_wrapper_recovery_requires_crystal_spec"
+                )
+            if not expected_structure or not _same_path(
+                requested_structure,
+                expected_structure,
+            ):
+                recovery_block_reasons.append(
+                    "legacy_wrapper_recovery_requires_exact_current_artifact"
+                )
+            recovery_validation = (
+                validate_crystal_cif_against_spec(
+                    target_spec.model,
+                    requested_structure,
+                )
+                if isinstance(target_spec.model, CrystalSpec)
+                else None
+            )
+            if (
+                not isinstance(recovery_validation, dict)
+                or recovery_validation.get("status") != "matched"
+            ):
+                recovery_block_reasons.append(
+                    "legacy_wrapper_recovery_structure_does_not_match_spec"
+                )
+            response_base["legacy_wrapper_recovery_artifact_validation"] = (
+                recovery_validation
+            )
+            if recovery_block_reasons:
+                message = (
+                    "Refusing legacy wrapper recovery because the requested "
+                    "artifact is not the exact validated current CrystalSpec."
+                )
+                return {
+                    **response_base,
+                    "ok": False,
+                    "status": "legacy_wrapper_recovery_artifact_blocked",
+                    "error": message,
+                    "gui_open_warning": message,
+                    "gui_input_started": False,
+                    "structure_reopened": False,
+                    "blocking_reasons": _dedupe_strings(
+                        recovery_block_reasons
+                    ),
+                }
+    elif recover_legacy_wrapper:
+        message = (
+            "Refusing legacy wrapper recovery without an exact structured "
+            "project/revision context."
+        )
+        return {
+            **response_base,
+            "ok": False,
+            "status": "legacy_wrapper_recovery_context_blocked",
+            "error": message,
+            "gui_open_warning": message,
+            "gui_input_started": False,
+            "structure_reopened": False,
+        }
+
     combined_postopen_requested = bool(
         fit_to_view_after_open or prepare_view_replay_after_open
     )
@@ -56957,9 +57077,39 @@ def _open_gui_structure_action(
         )
     response_base["gui_status"] = gui_status
     response_base["pre_open_gui_status"] = gui_status
-    blocked_response = _with_single_window_hotload_block(response_base, gui_status)
-    if blocked_response is not response_base:
-        return blocked_response
+    legacy_recovery_status = (
+        (gui_status.get("window_management") or {}).get(
+            "legacy_wrapper_recovery"
+        )
+        if isinstance(gui_status.get("window_management"), dict)
+        else {}
+    )
+    if recover_legacy_wrapper:
+        if (
+            not isinstance(legacy_recovery_status, dict)
+            or legacy_recovery_status.get("eligible") is not True
+        ):
+            message = (
+                "Refusing legacy wrapper recovery because the live exact-window "
+                "recovery gates are no longer satisfied."
+            )
+            return {
+                **response_base,
+                "ok": False,
+                "status": "legacy_wrapper_recovery_preflight_blocked",
+                "error": message,
+                "gui_open_warning": message,
+                "gui_input_started": False,
+                "structure_reopened": False,
+                "legacy_wrapper_recovery": legacy_recovery_status,
+            }
+    else:
+        blocked_response = _with_single_window_hotload_block(
+            response_base,
+            gui_status,
+        )
+        if blocked_response is not response_base:
+            return blocked_response
     gui_open_retry_payload = _gui_open_structure_retry_payload(
         structure_path=structure_path,
         project_id=log_project_id,
@@ -56971,16 +57121,22 @@ def _open_gui_structure_action(
         working_dir=working_dir,
         fit_to_view_after_open=fit_to_view_after_open,
         prepare_view_replay_after_open=prepare_view_replay_after_open,
+        recover_legacy_wrapper=recover_legacy_wrapper,
     )
-    activation_blocked_response = _with_gui_open_activation_block(
-        response_base,
-        gui_status,
-        project_id=log_project_id,
-        revision=log_revision,
-        working_dir=working_dir,
-        views=views,
-        gui_open_retry_payload=gui_open_retry_payload,
-    )
+    if recover_legacy_wrapper:
+        # The controller activates the exact eligible legacy window and repeats
+        # the full recovery preflight before sending the file-open input.
+        activation_blocked_response = response_base
+    else:
+        activation_blocked_response = _with_gui_open_activation_block(
+            response_base,
+            gui_status,
+            project_id=log_project_id,
+            revision=log_revision,
+            working_dir=working_dir,
+            views=views,
+            gui_open_retry_payload=gui_open_retry_payload,
+        )
     if activation_blocked_response is not response_base:
         if combined_postopen_requested:
             activation_blocked_response = (
@@ -56998,13 +57154,15 @@ def _open_gui_structure_action(
             )
         return activation_blocked_response
 
-    opened = gui.open_structure(
-        structure_path,
-        project_id=log_project_id,
-        revision=log_revision,
-        take_snapshot=take_snapshot,
-        reuse_existing_window_only=reuse_existing_window_only,
-    )
+    open_kwargs: dict[str, Any] = {
+        "project_id": log_project_id,
+        "revision": log_revision,
+        "take_snapshot": take_snapshot,
+        "reuse_existing_window_only": reuse_existing_window_only,
+    }
+    if recover_legacy_wrapper:
+        open_kwargs["recover_legacy_wrapper"] = True
+    opened = gui.open_structure(structure_path, **open_kwargs)
     response: dict[str, Any] = {**response_base, **opened}
     response["gui_open"] = opened
     response["structured_sync_context"] = sync_context
@@ -57114,6 +57272,7 @@ def material_studio_gui_open_structure(
     working_dir: Annotated[str | None, Field(description="可选的 GUI 工作区根目录。")] = None,
     fit_to_view_after_open: Annotated[bool, Field(description="After opening the exact current structured artifact, execute Fit-to-View and bind a final snapshot in the same GUI artifact transaction.")] = False,
     prepare_view_replay_after_open: Annotated[bool, Field(description="After the exact artifact is opened and its report transaction is released, prepare the current revision's view-replay manifest without GUI input.")] = False,
+    recover_legacy_wrapper: Annotated[bool, Field(description="Explicitly replace one globally unique unattested legacy wrapper with a verified v3 wrapper after immutable CrystalSpec/CIF validation. Never launches another MS process.")] = False,
 ) -> dict[str, Any]:
     """在正在运行的 Materials Studio GUI 中打开现有的结构文件。"""
 
@@ -57124,6 +57283,7 @@ def material_studio_gui_open_structure(
             or revision is not None
             or fit_to_view_after_open
             or prepare_view_replay_after_open
+            or recover_legacy_wrapper
         )
         if structured_context_requested:
             try:
@@ -57200,6 +57360,7 @@ def material_studio_gui_open_structure(
                     reuse_existing_window_only=reuse_existing_window_only,
                     fit_to_view_after_open=fit_to_view_after_open,
                     prepare_view_replay_after_open=prepare_view_replay_after_open,
+                    recover_legacy_wrapper=recover_legacy_wrapper,
                     views=views,
                     working_dir=working_dir,
                     transaction=transaction,
@@ -57216,6 +57377,7 @@ def material_studio_gui_open_structure(
                 reuse_existing_window_only=reuse_existing_window_only,
                 fit_to_view_after_open=fit_to_view_after_open,
                 prepare_view_replay_after_open=prepare_view_replay_after_open,
+                recover_legacy_wrapper=recover_legacy_wrapper,
                 views=views,
                 working_dir=working_dir,
                 transaction=None,

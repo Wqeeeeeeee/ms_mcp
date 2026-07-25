@@ -92,7 +92,11 @@ from .roundtrip import (
     plan_roundtrip_audit,
 )
 from .semiconductor_contracts import (
+    DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
     DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+    DIAMOND_NV_REVIEWED_BACKEND_STATUSES,
+    diamond_nv_castep_binding_receipt,
 )
 from .runtime_provenance import (
     RUNTIME_DEPLOYMENT_SCHEMA,
@@ -118,6 +122,7 @@ from .scripts import (
 )
 from .specs.common import ExecutionMode, ModelType
 from .specs.castep import (
+    CASTEP_CHARGE_SPIN_API_CONTRACT,
     CastepCellOptimization,
     CastepCellOptimizationValue,
     CastepDipoleCorrection,
@@ -125,6 +130,7 @@ from .specs.castep import (
     CastepDosIntegrationMethodValue,
     CastepEnergySpec,
     CastepOptimizationAlgorithmValue,
+    CastepSpinTreatmentValue,
     CastepTask,
     CastepTaskValue,
 )
@@ -523,6 +529,30 @@ class CastepEnergyInput(BaseModel):
         description="CASTEP task with a verified Materials Studio 20.1 API mapping.",
     )
     functional: str = Field(default="PBE", description="Exchange-correlation functional setting.", min_length=1, max_length=100)
+    total_charge: int | None = Field(
+        default=None,
+        description="Optional total charge on the unit cell.",
+        ge=-9999,
+        le=9999,
+    )
+    spin_treatment: CastepSpinTreatmentValue | None = Field(
+        default=None,
+        description="Optional documented CASTEP spin treatment.",
+    )
+    use_formal_spin: bool | None = Field(
+        default=None,
+        description="Use atom formal spins for the initial spin population.",
+    )
+    initial_spin: int | None = Field(
+        default=None,
+        description="Initial number of unpaired electrons.",
+        ge=-9999,
+        le=9999,
+    )
+    optimize_total_spin: bool | None = Field(
+        default=None,
+        description="Allow CASTEP to vary total spin for the current SCF state.",
+    )
     cutoff_energy_ev: int | None = Field(default=None, description="Optional cutoff energy in eV.", ge=1, le=100_000)
     kpoint_separation: float | None = Field(
         default=None,
@@ -566,6 +596,11 @@ class CastepEnergyInput(BaseModel):
             task=self.task,
             quality=self.quality,
             functional=self.functional,
+            total_charge=self.total_charge,
+            spin_treatment=self.spin_treatment,
+            use_formal_spin=self.use_formal_spin,
+            initial_spin=self.initial_spin,
+            optimize_total_spin=self.optimize_total_spin,
             cutoff_energy_ev=self.cutoff_energy_ev,
             kpoint_separation=self.kpoint_separation,
             kpoints=self.kpoints,
@@ -4517,6 +4552,44 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "unsupported_execution_status": (
                 "preview_only_no_dedicated_execution_tool"
             ),
+        },
+        "castep_charge_spin_settings": {
+            "materials_studio_api_contract": CASTEP_CHARGE_SPIN_API_CONTRACT,
+            "structured_fields": [
+                "total_charge",
+                "spin_treatment",
+                "use_formal_spin",
+                "initial_spin",
+                "optimize_total_spin",
+            ],
+            "materialscript_properties": [
+                "Charge",
+                "SpinTreatment",
+                "UseFormalSpin",
+                "InitialSpin",
+                "OptimizeTotalSpin",
+            ],
+            "spin_treatments": [
+                "Non-polarized",
+                "Collinear",
+                "Non-collinear",
+            ],
+            "diamond_nv0_initial_state": {
+                "Charge": 0,
+                "SpinTreatment": "Collinear",
+                "UseFormalSpin": "No",
+                "InitialSpin": 1,
+                "OptimizeTotalSpin": "No",
+            },
+            "diamond_nv_minus_initial_state": {
+                "Charge": -1,
+                "SpinTreatment": "Collinear",
+                "UseFormalSpin": "No",
+                "InitialSpin": 2,
+                "OptimizeTotalSpin": "No",
+            },
+            "settings_do_not_prove_computed_charge_or_spin_state": True,
+            "execute_requires_explicit_confirmation": True,
         },
         "castep_geometry_optimization": {
             "tool": "material_studio_castep_relax_current",
@@ -13177,6 +13250,26 @@ def material_studio_castep_energy_script(
         str,
         Field(description="Exchange-correlation functional setting.", min_length=1, max_length=100),
     ] = "PBE",
+    total_charge: Annotated[
+        int | None,
+        Field(description="Optional total charge on the unit cell.", ge=-9999, le=9999),
+    ] = None,
+    spin_treatment: Annotated[
+        CastepSpinTreatmentValue | None,
+        Field(description="Optional documented CASTEP spin treatment."),
+    ] = None,
+    use_formal_spin: Annotated[
+        bool | None,
+        Field(description="Use atom formal spins for the initial spin population."),
+    ] = None,
+    initial_spin: Annotated[
+        int | None,
+        Field(description="Initial number of unpaired electrons.", ge=-9999, le=9999),
+    ] = None,
+    optimize_total_spin: Annotated[
+        bool | None,
+        Field(description="Allow CASTEP to vary total spin for the current SCF state."),
+    ] = None,
     cutoff_energy_ev: Annotated[
         int | None,
         Field(description="Optional cutoff energy in eV.", ge=1, le=100_000),
@@ -13243,6 +13336,11 @@ def material_studio_castep_energy_script(
         quality=quality,
         task=task,
         functional=functional,
+        total_charge=total_charge,
+        spin_treatment=spin_treatment,
+        use_formal_spin=use_formal_spin,
+        initial_spin=initial_spin,
+        optimize_total_spin=optimize_total_spin,
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
@@ -13258,6 +13356,11 @@ def material_studio_castep_energy_script(
         task=params.task,
         quality=params.quality,
         functional=params.functional,
+        total_charge=params.total_charge,
+        spin_treatment=params.spin_treatment,
+        use_formal_spin=params.use_formal_spin,
+        initial_spin=params.initial_spin,
+        optimize_total_spin=params.optimize_total_spin,
         cutoff_energy_ev=params.cutoff_energy_ev,
         kpoint_separation=params.kpoint_separation,
         kpoints=params.kpoints,
@@ -13275,6 +13378,13 @@ def material_studio_castep_energy_script(
         quality=spec.quality,
         task=spec.task.value,
         functional=spec.functional,
+        total_charge=spec.total_charge,
+        spin_treatment=(
+            spec.spin_treatment.value if spec.spin_treatment is not None else None
+        ),
+        use_formal_spin=spec.use_formal_spin,
+        initial_spin=spec.initial_spin,
+        optimize_total_spin=spec.optimize_total_spin,
         cutoff_energy_ev=spec.cutoff_energy_ev,
         kpoint_separation=spec.kpoint_separation,
         kpoints=spec.kpoints,
@@ -26434,6 +26544,15 @@ def _semiconductor_calculation_action_hint(
                     "backend_spin_binding_status": charge_balance.get(
                         "backend_spin_binding_status"
                     ),
+                    "expected_castep_charge_spin_settings": charge_balance.get(
+                        "expected_castep_charge_spin_settings"
+                    ),
+                    "observed_castep_charge_spin_settings": charge_balance.get(
+                        "observed_castep_charge_spin_settings"
+                    ),
+                    "castep_charge_spin_field_matches": charge_balance.get(
+                        "castep_charge_spin_field_matches"
+                    ),
                     "structure_hotload_remains_allowed": True,
                     "blocking_reasons": semiconductor_blocking_reasons,
                 }
@@ -35173,6 +35292,13 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
                 "dipole_correction_enabled",
                 "dipole_correction_api_contract",
                 "dipole_correction_api_property",
+                "total_charge",
+                "spin_treatment",
+                "use_formal_spin",
+                "initial_spin",
+                "optimize_total_spin",
+                "charge_spin_settings_configured",
+                "charge_spin_api_contract",
                 "ready_for_requested_task_preflight",
                 "requires_prior_relaxed_structure",
                 "settings_review_required",
@@ -35230,6 +35356,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
                 "backend_charge_binding_status",
                 "backend_spin_binding_status",
                 "charge_spin_backend_binding_ready",
+                "expected_castep_charge_spin_settings",
+                "observed_castep_charge_spin_settings",
+                "castep_charge_spin_field_matches",
                 "odd_electron_warning",
                 "spin_charge_review_required",
                 "spin_polarization_review_required",
@@ -48534,6 +48663,11 @@ def _effective_castep_relaxation_spec(
     *,
     quality: str | None,
     functional: str | None,
+    total_charge: int | None,
+    spin_treatment: Any | None,
+    use_formal_spin: bool | None,
+    initial_spin: int | None,
+    optimize_total_spin: bool | None,
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None,
@@ -48569,6 +48703,14 @@ def _effective_castep_relaxation_spec(
         task=CastepTask.GEOMETRY_OPTIMIZATION,
         quality=selected("quality", quality, "Medium"),
         functional=selected("functional", functional, "PBE"),
+        total_charge=selected("total_charge", total_charge),
+        spin_treatment=selected("spin_treatment", spin_treatment),
+        use_formal_spin=selected("use_formal_spin", use_formal_spin),
+        initial_spin=selected("initial_spin", initial_spin),
+        optimize_total_spin=selected(
+            "optimize_total_spin",
+            optimize_total_spin,
+        ),
         cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
         kpoint_separation=selected_separation,
         kpoints=selected_kpoints,
@@ -48601,6 +48743,7 @@ def _effective_castep_relaxation_spec(
 
 def _castep_defect_charge_spin_preflight(
     spec: ModelSpec,
+    simulation: CastepEnergySpec | None = None,
 ) -> dict[str, Any]:
     """Return the fail-closed CASTEP gate for charged/spin defect models."""
 
@@ -48631,19 +48774,122 @@ def _castep_defect_charge_spin_preflight(
     backend_spin_status = str(
         request.get("backend_spin_binding_status") or ""
     )
+    effective_simulation = (
+        simulation
+        if simulation is not None
+        else spec.simulation
+        if isinstance(spec.simulation, CastepEnergySpec)
+        else None
+    )
+    binding = diamond_nv_castep_binding_receipt(
+        charge_state_label,
+        effective_simulation,
+    )
+    expected_settings = binding.get("expected_settings") or {}
+    expected_charge = expected_settings.get("total_charge")
+    expected_multiplicity = (
+        int(expected_settings["initial_spin"]) + 1
+        if expected_settings.get("initial_spin") is not None
+        else None
+    )
+    expected_spin_state = {
+        "NV0": "doublet",
+        "NV-": "triplet",
+    }.get(charge_state_label)
+    backend_statuses_match = bool(
+        backend_charge_status
+        and backend_charge_status == backend_spin_status
+    )
+    backend_status_reviewed = bool(
+        backend_statuses_match
+        and backend_charge_status in DIAMOND_NV_REVIEWED_BACKEND_STATUSES
+    )
+    metadata_bound = bool(
+        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+    )
     metadata_fail_closed = bool(
-        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
-        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+        backend_charge_status
+        in {
+            DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+            DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
+        }
+        and backend_spin_status == backend_charge_status
         and request.get("calculation_execution_ready") is False
         and request.get("state_result_computed") is False
     )
-    blockers = []
+    state_metadata_consistent = bool(
+        (
+            not charge_state_explicit
+            and expected_settings == {}
+            and request.get("requested_net_charge_e") is None
+            and request.get("reference_spin_multiplicity") is None
+            and request.get("reference_spin_state") is None
+        )
+        or (
+            charge_state_explicit
+            and expected_settings
+            and request.get("requested_net_charge_e") == expected_charge
+            and request.get("reference_spin_multiplicity")
+            == expected_multiplicity
+            and request.get("reference_spin_state") == expected_spin_state
+        )
+    )
+    complex_contract_fields = (
+        "charge_state_label",
+        "charge_state_explicit",
+        "requested_net_charge_e",
+        "reference_spin_multiplicity",
+        "reference_spin_state",
+        "backend",
+        "backend_charge_binding_status",
+        "backend_spin_binding_status",
+        "calculation_execution_ready",
+        "structure_hotload_allowed",
+        "state_result_computed",
+    )
+    complex_metadata_consistent = bool(
+        complexes
+        and all(
+            all(
+                item.get(field) == request.get(field)
+                for field in complex_contract_fields
+            )
+            for item in complexes
+        )
+    )
+    metadata_contract_valid = bool(
+        backend_status_reviewed
+        and state_metadata_consistent
+        and complex_metadata_consistent
+        and request.get("backend") == "Materials Studio 20.1 CASTEP"
+        and request.get("structure_hotload_allowed") is True
+        and request.get("state_result_computed") is False
+        and (
+            (
+                metadata_bound
+                and request.get("calculation_execution_ready") is True
+            )
+            or (
+                not metadata_bound
+                and request.get("calculation_execution_ready") is False
+            )
+        )
+    )
+    execution_ready = bool(
+        charge_state_explicit
+        and binding.get("exact_match") is True
+        and metadata_bound
+        and metadata_contract_valid
+    )
+    blockers: list[str] = []
     if not charge_state_explicit:
         blockers.append("defect_charge_state_unresolved")
-    blockers.append(
-        "defect_charge_spin_settings_not_supported_by_current_castep_schema"
-    )
-    if not metadata_fail_closed:
+    elif binding.get("exact_match") is not True:
+        blockers.append("defect_charge_spin_settings_missing_or_mismatched")
+    elif not metadata_bound:
+        blockers.append("defect_charge_spin_metadata_binding_not_committed")
+    if not metadata_contract_valid:
         blockers.append("defect_charge_spin_metadata_contract_invalid")
     return {
         "applicable": True,
@@ -48657,13 +48903,21 @@ def _castep_defect_charge_spin_preflight(
         ),
         "backend_charge_binding_status": backend_charge_status or None,
         "backend_spin_binding_status": backend_spin_status or None,
+        "backend_status_reviewed": backend_status_reviewed,
+        "metadata_bound": metadata_bound,
         "metadata_fail_closed": metadata_fail_closed,
-        "execution_ready": False,
+        "complex_metadata_consistent": complex_metadata_consistent,
+        "metadata_contract_valid": metadata_contract_valid,
+        "structured_castep_binding": binding,
+        "expected_castep_settings": binding.get("expected_settings"),
+        "observed_castep_settings": binding.get("observed_settings"),
+        "execution_ready": execution_ready,
         "blocking_reasons": blockers,
         "required_next_step": (
-            "Bind reviewed Materials Studio 20.1 CASTEP net-charge and "
-            "spin-polarization settings in the structured schema before "
-            "any CASTEP execution."
+            None
+            if execution_ready
+            else "Select NV0 or NV-, then bind the exact reviewed Materials "
+            "Studio 20.1 CASTEP charge and initial-spin settings before execution."
         ),
         "structure_materialization_allowed": True,
         "same_window_gui_hotload_allowed": True,
@@ -48722,7 +48976,7 @@ def _castep_relaxation_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
-    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec, simulation)
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
         "task_is_geometry_optimization": (
@@ -48800,6 +49054,11 @@ def _effective_castep_electronic_spec(
     task: Any | None,
     quality: str | None,
     functional: str | None,
+    total_charge: int | None,
+    spin_treatment: Any | None,
+    use_formal_spin: bool | None,
+    initial_spin: int | None,
+    optimize_total_spin: bool | None,
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None,
@@ -48861,6 +49120,14 @@ def _effective_castep_electronic_spec(
         task=normalized_task,
         quality=selected("quality", quality, "Medium"),
         functional=selected("functional", functional, "PBE"),
+        total_charge=selected("total_charge", total_charge),
+        spin_treatment=selected("spin_treatment", spin_treatment),
+        use_formal_spin=selected("use_formal_spin", use_formal_spin),
+        initial_spin=selected("initial_spin", initial_spin),
+        optimize_total_spin=selected(
+            "optimize_total_spin",
+            optimize_total_spin,
+        ),
         cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
         kpoint_separation=selected_separation,
         kpoints=selected_kpoints,
@@ -49079,7 +49346,7 @@ def _castep_electronic_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
-    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec, simulation)
     expected_document = RESULT_DOCUMENT_BY_TASK[simulation.task]
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
@@ -49347,6 +49614,26 @@ def material_studio_castep_run_current(
             max_length=100,
         ),
     ] = None,
+    total_charge: Annotated[
+        int | None,
+        Field(description="Optional unit-cell total-charge override.", ge=-9999, le=9999),
+    ] = None,
+    spin_treatment: Annotated[
+        CastepSpinTreatmentValue | None,
+        Field(description="Optional documented CASTEP spin-treatment override."),
+    ] = None,
+    use_formal_spin: Annotated[
+        bool | None,
+        Field(description="Optional UseFormalSpin override."),
+    ] = None,
+    initial_spin: Annotated[
+        int | None,
+        Field(description="Optional initial unpaired-electron count.", ge=-9999, le=9999),
+    ] = None,
+    optimize_total_spin: Annotated[
+        bool | None,
+        Field(description="Optional OptimizeTotalSpin override."),
+    ] = None,
     cutoff_energy_ev: Annotated[
         int | None,
         Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000),
@@ -49513,6 +49800,11 @@ def material_studio_castep_run_current(
             task=task,
             quality=quality,
             functional=functional,
+            total_charge=total_charge,
+            spin_treatment=spin_treatment,
+            use_formal_spin=use_formal_spin,
+            initial_spin=initial_spin,
+            optimize_total_spin=optimize_total_spin,
             cutoff_energy_ev=cutoff_energy_ev,
             kpoint_separation=kpoint_separation,
             kpoints=kpoints,
@@ -50314,6 +50606,11 @@ def material_studio_castep_relax_current(
     execution_mode: Annotated[ExecutionMode, Field(description="preview returns the exact script and gates; execute runs CASTEP and promotes only a converged result.")] = ExecutionMode.PREVIEW,
     quality: Annotated[str | None, Field(description="Optional CASTEP quality override.", min_length=1, max_length=100)] = None,
     functional: Annotated[str | None, Field(description="Optional exchange-correlation functional override.", min_length=1, max_length=100)] = None,
+    total_charge: Annotated[int | None, Field(description="Optional unit-cell total-charge override.", ge=-9999, le=9999)] = None,
+    spin_treatment: Annotated[CastepSpinTreatmentValue | None, Field(description="Optional documented CASTEP spin-treatment override.")] = None,
+    use_formal_spin: Annotated[bool | None, Field(description="Optional UseFormalSpin override.")] = None,
+    initial_spin: Annotated[int | None, Field(description="Optional initial unpaired-electron count.", ge=-9999, le=9999)] = None,
+    optimize_total_spin: Annotated[bool | None, Field(description="Optional OptimizeTotalSpin override.")] = None,
     cutoff_energy_ev: Annotated[int | None, Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000)] = None,
     kpoint_separation: Annotated[float | None, Field(description="Optional primary SCF k-point separation override.", gt=0, le=10)] = None,
     kpoints: Annotated[tuple[int, int, int] | None, Field(description="Optional primary SCF custom k-point grid override.")] = None,
@@ -50381,6 +50678,11 @@ def material_studio_castep_relax_current(
             base_spec,
             quality=quality,
             functional=functional,
+            total_charge=total_charge,
+            spin_treatment=spin_treatment,
+            use_formal_spin=use_formal_spin,
+            initial_spin=initial_spin,
+            optimize_total_spin=optimize_total_spin,
             cutoff_energy_ev=cutoff_energy_ev,
             kpoint_separation=kpoint_separation,
             kpoints=kpoints,
@@ -51381,6 +51683,13 @@ def material_studio_live_modeling_request(
                         task=electronic_payload.get("task"),
                         quality=electronic_payload.get("quality"),
                         functional=electronic_payload.get("functional"),
+                        total_charge=electronic_payload.get("total_charge"),
+                        spin_treatment=electronic_payload.get("spin_treatment"),
+                        use_formal_spin=electronic_payload.get("use_formal_spin"),
+                        initial_spin=electronic_payload.get("initial_spin"),
+                        optimize_total_spin=electronic_payload.get(
+                            "optimize_total_spin"
+                        ),
                         cutoff_energy_ev=electronic_payload.get("cutoff_energy_ev"),
                         kpoint_separation=electronic_payload.get("kpoint_separation"),
                         kpoints=electronic_payload.get("kpoints"),
@@ -51502,6 +51811,13 @@ def material_studio_live_modeling_request(
                         expected_revision=current_spec.revision,
                         quality=relaxation_payload.get("quality"),
                         functional=relaxation_payload.get("functional"),
+                        total_charge=relaxation_payload.get("total_charge"),
+                        spin_treatment=relaxation_payload.get("spin_treatment"),
+                        use_formal_spin=relaxation_payload.get("use_formal_spin"),
+                        initial_spin=relaxation_payload.get("initial_spin"),
+                        optimize_total_spin=relaxation_payload.get(
+                            "optimize_total_spin"
+                        ),
                         cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
                         kpoint_separation=relaxation_payload.get("kpoint_separation"),
                         kpoints=relaxation_payload.get("kpoints"),

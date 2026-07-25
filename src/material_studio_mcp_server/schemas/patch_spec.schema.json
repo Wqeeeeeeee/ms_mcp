@@ -41,6 +41,16 @@
       "title": "CastepOptimizationAlgorithm",
       "type": "string"
     },
+    "CastepSpinTreatment": {
+      "description": "Spin treatments documented by Materials Studio 20.1.",
+      "enum": [
+        "Non-polarized",
+        "Collinear",
+        "Non-collinear"
+      ],
+      "title": "CastepSpinTreatment",
+      "type": "string"
+    },
     "CastepTask": {
       "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
       "enum": [
@@ -69,11 +79,6 @@
       "additionalProperties": false,
       "description": "分数坐标向量。",
       "properties": {
-        "allow_outside_cell": {
-          "default": false,
-          "title": "Allow Outside Cell",
-          "type": "boolean"
-        },
         "x": {
           "title": "X",
           "type": "number"
@@ -85,6 +90,11 @@
         "z": {
           "title": "Z",
           "type": "number"
+        },
+        "allow_outside_cell": {
+          "default": false,
+          "title": "Allow Outside Cell",
+          "type": "boolean"
         }
       },
       "required": [
@@ -104,26 +114,26 @@
           "title": "A",
           "type": "number"
         },
+        "b": {
+          "exclusiveMinimum": 0,
+          "title": "B",
+          "type": "number"
+        },
+        "c": {
+          "exclusiveMinimum": 0,
+          "title": "C",
+          "type": "number"
+        },
         "alpha": {
           "exclusiveMaximum": 180,
           "exclusiveMinimum": 0,
           "title": "Alpha",
           "type": "number"
         },
-        "b": {
-          "exclusiveMinimum": 0,
-          "title": "B",
-          "type": "number"
-        },
         "beta": {
           "exclusiveMaximum": 180,
           "exclusiveMinimum": 0,
           "title": "Beta",
-          "type": "number"
-        },
-        "c": {
-          "exclusiveMinimum": 0,
-          "title": "C",
           "type": "number"
         },
         "gamma": {
@@ -148,21 +158,40 @@
       "additionalProperties": false,
       "description": "语义补丁操作。\n\n属性:\n    operation: 操作类型\n    id: 原子 ID\n    element: 元素符号\n    xyz_angstrom: 笛卡尔坐标\n    atom_id: 原子 ID\n    atom1: 第一个原子 ID\n    atom2: 第二个原子 ID\n    bond_type: 键类型\n    new_element: 新元素符号\n    total_charge: 总电荷\n    spin_multiplicity: 自旋多重度\n    forcefield: 力场名称\n    quality: 计算质量\n    charge_assignment: 电荷分配模式\n    max_iterations: 最大迭代次数\n    convergence: 收敛级别\n    functional: 交换关联泛函\n    cutoff_energy_ev: 截断能量\n    kpoint_separation: k 点间距\n    kpoints: k 点网格\n    matrix: 超胞矩阵\n    axis: 轴\n    thickness_angstrom: 厚度\n    lattice: 晶格规格\n    fractional: 分数坐标\n    nearest_cartesian_angstrom: 最近笛卡尔坐标",
       "properties": {
-        "angle_degrees": {
-          "anyOf": [
-            {
-              "maximum": 360,
-              "minimum": -360,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
+        "type": {
+          "enum": [
+            "add_atom",
+            "delete_atom",
+            "add_bond",
+            "delete_bond",
+            "set_bond_type",
+            "substitute_atom",
+            "set_atom_position",
+            "translate_crystal_atoms",
+            "rotate_crystal_atoms",
+            "make_commensurate_twisted_bilayer",
+            "make_commensurate_tmd_heterobilayer",
+            "set_total_charge",
+            "set_spin_multiplicity",
+            "set_forcite_optimization",
+            "set_castep_energy",
+            "make_supercell",
+            "add_vacuum",
+            "set_vacuum",
+            "center_slab",
+            "set_lattice",
+            "set_metadata",
+            "reconcile_dopant_metadata",
+            "set_interface_gap",
+            "set_gate_stack_interface_gap",
+            "set_gate_stack_thickness",
+            "set_p_gan_gate_cap_thickness",
+            "set_quantum_well_thickness"
           ],
-          "default": null,
-          "title": "Angle Degrees"
+          "title": "Type",
+          "type": "string"
         },
-        "atom1": {
+        "id": {
           "anyOf": [
             {
               "type": "string"
@@ -172,9 +201,9 @@
             }
           ],
           "default": null,
-          "title": "Atom1"
+          "title": "Id"
         },
-        "atom2": {
+        "element": {
           "anyOf": [
             {
               "type": "string"
@@ -184,7 +213,18 @@
             }
           ],
           "default": null,
-          "title": "Atom2"
+          "title": "Element"
+        },
+        "xyz_angstrom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Vector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "atom_id": {
           "anyOf": [
@@ -214,17 +254,9 @@
           "default": null,
           "title": "Atom Ids"
         },
-        "axis": {
+        "atom1": {
           "anyOf": [
             {
-              "enum": [
-                "a",
-                "b",
-                "c",
-                "x",
-                "y",
-                "z"
-              ],
               "type": "string"
             },
             {
@@ -232,49 +264,19 @@
             }
           ],
           "default": null,
-          "title": "Axis"
+          "title": "Atom1"
         },
-        "band_structure_energy_max_ev": {
+        "atom2": {
           "anyOf": [
             {
-              "maximum": 100,
-              "minimum": 0,
-              "type": "number"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Band Structure Energy Max Ev"
-        },
-        "band_structure_energy_tolerance_ev": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Band Structure Energy Tolerance Ev"
-        },
-        "band_structure_extra_bands": {
-          "anyOf": [
-            {
-              "maximum": 999,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Band Structure Extra Bands"
+          "title": "Atom2"
         },
         "bond_type": {
           "anyOf": [
@@ -288,18 +290,7 @@
           "default": null,
           "title": "Bond Type"
         },
-        "cell_optimization": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepCellOptimization"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "charge_assignment": {
+        "new_element": {
           "anyOf": [
             {
               "type": "string"
@@ -309,12 +300,25 @@
             }
           ],
           "default": null,
-          "title": "Charge Assignment"
+          "title": "New Element"
         },
-        "commensurate_m": {
+        "total_charge": {
           "anyOf": [
             {
-              "maximum": 100,
+              "maximum": 9999,
+              "minimum": -9999,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Charge"
+        },
+        "spin_multiplicity": {
+          "anyOf": [
+            {
               "minimum": 1,
               "type": "integer"
             },
@@ -323,193 +327,7 @@
             }
           ],
           "default": null,
-          "title": "Commensurate M"
-        },
-        "commensurate_n": {
-          "anyOf": [
-            {
-              "maximum": 99,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Commensurate N"
-        },
-        "convergence": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Convergence"
-        },
-        "cutoff_energy_ev": {
-          "anyOf": [
-            {
-              "maximum": 100000,
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Cutoff Energy Ev"
-        },
-        "dipole_correction": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepDipoleCorrection"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "displacement_convergence_angstrom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Displacement Convergence Angstrom"
-        },
-        "distance_angstrom": {
-          "anyOf": [
-            {
-              "maximum": 1000,
-              "minimum": -1000,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Distance Angstrom"
-        },
-        "dos_energy_max_ev": {
-          "anyOf": [
-            {
-              "maximum": 100,
-              "minimum": 0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Energy Max Ev"
-        },
-        "dos_energy_tolerance_ev": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-08,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Energy Tolerance Ev"
-        },
-        "dos_extra_bands": {
-          "anyOf": [
-            {
-              "maximum": 999,
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Extra Bands"
-        },
-        "dos_integration_method": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepDosIntegrationMethod"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "dos_smearing_width_ev": {
-          "anyOf": [
-            {
-              "maximum": 100,
-              "minimum": 0.005,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dos Smearing Width Ev"
-        },
-        "element": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Element"
-        },
-        "energy_convergence_ev_per_atom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-09,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Energy Convergence Ev Per Atom"
-        },
-        "force_convergence_ev_per_angstrom": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 1e-07,
-              "maximum": 100,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Force Convergence Ev Per Angstrom"
+          "title": "Spin Multiplicity"
         },
         "forcefield": {
           "anyOf": [
@@ -523,10 +341,60 @@
           "default": null,
           "title": "Forcefield"
         },
-        "fractional": {
+        "quality": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FractionalVector3"
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quality"
+        },
+        "charge_assignment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charge Assignment"
+        },
+        "max_iterations": {
+          "anyOf": [
+            {
+              "maximum": 1000000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Iterations"
+        },
+        "convergence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Convergence"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepTask"
             },
             {
               "type": "null"
@@ -546,31 +414,68 @@
           "default": null,
           "title": "Functional"
         },
-        "id": {
+        "spin_treatment": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/CastepSpinTreatment"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Id"
+          "default": null
         },
-        "interlayer_distance_angstrom": {
+        "use_formal_spin": {
           "anyOf": [
             {
-              "exclusiveMinimum": 0,
-              "maximum": 100,
-              "type": "number"
+              "type": "boolean"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Interlayer Distance Angstrom"
+          "title": "Use Formal Spin"
+        },
+        "initial_spin": {
+          "anyOf": [
+            {
+              "maximum": 9999,
+              "minimum": -9999,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initial Spin"
+        },
+        "optimize_total_spin": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optimize Total Spin"
+        },
+        "cutoff_energy_ev": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cutoff Energy Ev"
         },
         "kpoint_separation": {
           "anyOf": [
@@ -611,10 +516,197 @@
           "default": null,
           "title": "Kpoints"
         },
-        "lattice": {
+        "properties_kpoint_separation": {
           "anyOf": [
             {
-              "$ref": "#/$defs/LatticeSpec"
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Properties Kpoint Separation"
+        },
+        "band_structure_energy_max_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Energy Max Ev"
+        },
+        "band_structure_extra_bands": {
+          "anyOf": [
+            {
+              "maximum": 999,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Extra Bands"
+        },
+        "band_structure_energy_tolerance_ev": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Band Structure Energy Tolerance Ev"
+        },
+        "dos_energy_max_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Energy Max Ev"
+        },
+        "dos_extra_bands": {
+          "anyOf": [
+            {
+              "maximum": 999,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Extra Bands"
+        },
+        "dos_energy_tolerance_ev": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Energy Tolerance Ev"
+        },
+        "dos_smearing_width_ev": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0.005,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dos Smearing Width Ev"
+        },
+        "dos_integration_method": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepDosIntegrationMethod"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dipole_correction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepDipoleCorrection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "displacement_convergence_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-08,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Displacement Convergence Angstrom"
+        },
+        "energy_convergence_ev_per_atom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-09,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Energy Convergence Ev Per Atom"
+        },
+        "force_convergence_ev_per_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 1e-07,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Force Convergence Ev Per Angstrom"
+        },
+        "cell_optimization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepCellOptimization"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "optimization_algorithm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepOptimizationAlgorithm"
             },
             {
               "type": "null"
@@ -647,6 +739,128 @@
           "default": null,
           "title": "Matrix"
         },
+        "axis": {
+          "anyOf": [
+            {
+              "enum": [
+                "a",
+                "b",
+                "c",
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "distance_angstrom": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distance Angstrom"
+        },
+        "angle_degrees": {
+          "anyOf": [
+            {
+              "maximum": 360,
+              "minimum": -360,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Angle Degrees"
+        },
+        "pivot_fractional": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FractionalVector3"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "wrap_fractional": {
+          "default": true,
+          "title": "Wrap Fractional",
+          "type": "boolean"
+        },
+        "commensurate_m": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commensurate M"
+        },
+        "commensurate_n": {
+          "anyOf": [
+            {
+              "maximum": 99,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commensurate N"
+        },
+        "interlayer_distance_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interlayer Distance Angstrom"
+        },
+        "twist_orientation": {
+          "anyOf": [
+            {
+              "enum": [
+                "counterclockwise",
+                "clockwise"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Twist Orientation"
+        },
         "max_atoms": {
           "anyOf": [
             {
@@ -661,61 +875,11 @@
           "default": null,
           "title": "Max Atoms"
         },
-        "max_iterations": {
+        "top_layer_material": {
           "anyOf": [
             {
-              "maximum": 1000000,
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Max Iterations"
-        },
-        "max_strain_percent": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 10,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Max Strain Percent"
-        },
-        "metadata_updates": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Metadata Updates"
-        },
-        "nearest_cartesian_angstrom": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Vector3"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "new_element": {
-          "anyOf": [
-            {
+              "maxLength": 16,
+              "minLength": 3,
               "type": "string"
             },
             {
@@ -723,68 +887,7 @@
             }
           ],
           "default": null,
-          "title": "New Element"
-        },
-        "optimization_algorithm": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CastepOptimizationAlgorithm"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "pivot_fractional": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/FractionalVector3"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "properties_kpoint_separation": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 10,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Properties Kpoint Separation"
-        },
-        "quality": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Quality"
-        },
-        "spin_multiplicity": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Spin Multiplicity"
+          "title": "Top Layer Material"
         },
         "strain_policy": {
           "anyOf": [
@@ -802,6 +905,33 @@
           ],
           "default": null,
           "title": "Strain Policy"
+        },
+        "max_strain_percent": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Strain Percent"
+        },
+        "thickness_angstrom": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thickness Angstrom"
         },
         "target_interface": {
           "anyOf": [
@@ -838,10 +968,10 @@
           "default": null,
           "title": "Target Layer"
         },
-        "task": {
+        "lattice": {
           "anyOf": [
             {
-              "$ref": "#/$defs/CastepTask"
+              "$ref": "#/$defs/LatticeSpec"
             },
             {
               "type": "null"
@@ -849,100 +979,18 @@
           ],
           "default": null
         },
-        "thickness_angstrom": {
+        "fractional": {
           "anyOf": [
             {
-              "exclusiveMinimum": 0,
-              "type": "number"
+              "$ref": "#/$defs/FractionalVector3"
             },
             {
               "type": "null"
             }
           ],
-          "default": null,
-          "title": "Thickness Angstrom"
+          "default": null
         },
-        "top_layer_material": {
-          "anyOf": [
-            {
-              "maxLength": 16,
-              "minLength": 3,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Top Layer Material"
-        },
-        "total_charge": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Total Charge"
-        },
-        "twist_orientation": {
-          "anyOf": [
-            {
-              "enum": [
-                "counterclockwise",
-                "clockwise"
-              ],
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Twist Orientation"
-        },
-        "type": {
-          "enum": [
-            "add_atom",
-            "delete_atom",
-            "add_bond",
-            "delete_bond",
-            "set_bond_type",
-            "substitute_atom",
-            "set_atom_position",
-            "translate_crystal_atoms",
-            "rotate_crystal_atoms",
-            "make_commensurate_twisted_bilayer",
-            "make_commensurate_tmd_heterobilayer",
-            "set_total_charge",
-            "set_spin_multiplicity",
-            "set_forcite_optimization",
-            "set_castep_energy",
-            "make_supercell",
-            "add_vacuum",
-            "set_vacuum",
-            "center_slab",
-            "set_lattice",
-            "set_metadata",
-            "reconcile_dopant_metadata",
-            "set_interface_gap",
-            "set_gate_stack_interface_gap",
-            "set_gate_stack_thickness",
-            "set_p_gan_gate_cap_thickness",
-            "set_quantum_well_thickness"
-          ],
-          "title": "Type",
-          "type": "string"
-        },
-        "wrap_fractional": {
-          "default": true,
-          "title": "Wrap Fractional",
-          "type": "boolean"
-        },
-        "xyz_angstrom": {
+        "nearest_cartesian_angstrom": {
           "anyOf": [
             {
               "$ref": "#/$defs/Vector3"
@@ -952,6 +1000,19 @@
             }
           ],
           "default": null
+        },
+        "metadata_updates": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata Updates"
         }
       },
       "required": [
@@ -989,19 +1050,14 @@
   "additionalProperties": false,
   "description": "语义补丁。\n\n属性:\n    project_id: 项目 ID\n    base_revision: 基础修订版本\n    operations: 操作列表\n    run_after_apply: 应用后是否运行\n    execution_mode: 执行模式\n    force: 是否强制",
   "properties": {
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
     "base_revision": {
       "minimum": 0,
       "title": "Base Revision",
       "type": "integer"
-    },
-    "execution_mode": {
-      "$ref": "#/$defs/ExecutionMode",
-      "default": "preview"
-    },
-    "force": {
-      "default": false,
-      "title": "Force",
-      "type": "boolean"
     },
     "operations": {
       "items": {
@@ -1011,13 +1067,18 @@
       "title": "Operations",
       "type": "array"
     },
-    "project_id": {
-      "title": "Project Id",
-      "type": "string"
-    },
     "run_after_apply": {
       "default": false,
       "title": "Run After Apply",
+      "type": "boolean"
+    },
+    "execution_mode": {
+      "$ref": "#/$defs/ExecutionMode",
+      "default": "preview"
+    },
+    "force": {
+      "default": false,
+      "title": "Force",
       "type": "boolean"
     }
   },

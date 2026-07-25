@@ -8,6 +8,11 @@ from typing import Any
 
 from .runner import perl_string
 from .specs.castep import (
+    CASTEP_INITIAL_SPIN_API_PROPERTY,
+    CASTEP_OPTIMIZE_TOTAL_SPIN_API_PROPERTY,
+    CASTEP_SPIN_TREATMENT_API_PROPERTY,
+    CASTEP_TOTAL_CHARGE_API_PROPERTY,
+    CASTEP_USE_FORMAL_SPIN_API_PROPERTY,
     CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
     CastepEnergySpec,
     CastepTask,
@@ -91,6 +96,28 @@ def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialSc
         ("Quality", spec.quality),
         ("XCFunctional", spec.functional),
     ]
+    if spec.total_charge is not None:
+        settings.append((CASTEP_TOTAL_CHARGE_API_PROPERTY, spec.total_charge))
+    if spec.spin_treatment is not None:
+        settings.append(
+            (CASTEP_SPIN_TREATMENT_API_PROPERTY, spec.spin_treatment.value)
+        )
+    if spec.use_formal_spin is not None:
+        settings.append(
+            (
+                CASTEP_USE_FORMAL_SPIN_API_PROPERTY,
+                "Yes" if spec.use_formal_spin else "No",
+            )
+        )
+    if spec.initial_spin is not None:
+        settings.append((CASTEP_INITIAL_SPIN_API_PROPERTY, spec.initial_spin))
+    if spec.optimize_total_spin is not None:
+        settings.append(
+            (
+                CASTEP_OPTIMIZE_TOTAL_SPIN_API_PROPERTY,
+                "Yes" if spec.optimize_total_spin else "No",
+            )
+        )
     if spec.cutoff_energy_ev is not None:
         settings.extend(
             [

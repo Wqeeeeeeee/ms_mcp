@@ -2281,6 +2281,27 @@ class WindowsGuiBackend:
     supported = os.name == "nt"
     file_open_may_launch_new_instance = True
     startup_dialog_open_supported = True
+
+    def __init__(
+        self,
+        *,
+        trusted_write_workspace_roots: tuple[Path, ...] | None = None,
+    ) -> None:
+        self.trusted_write_workspace_roots = tuple(
+            root.expanduser().resolve()
+            for root in (trusted_write_workspace_roots or ())
+        )
+
+    def configure_trusted_write_workspace_roots(
+        self,
+        roots: tuple[Path, ...],
+    ) -> None:
+        """Bind write authorization to controller-owned workspace roots."""
+
+        self.trusted_write_workspace_roots = tuple(
+            root.expanduser().resolve()
+            for root in roots
+        )
     unavailable_reason = None if supported else "本地 GUI 回退仅在 Windows 上可用。"
 
     def list_processes(self) -> list[ProcessInfo]:
@@ -2517,6 +2538,11 @@ class WindowsGuiBackend:
             raise GuiError(f"Structure file does not exist: {path}")
         if window.handle <= 0:
             raise GuiError("Existing Materials Studio window handle is invalid.")
+        source_wrapper_provenance = _source_wrapper_auto_save_provenance(
+            source_window=window,
+            target_project_path=path,
+            trusted_workspace_roots=self.trusted_write_workspace_roots,
+        )
         before_pids = {process.pid for process in self.list_processes()}
         pre_dismissed_dialogs = self.dismiss_startup_dialogs(pid=window.pid, timeout_seconds=2.0)
         if not self.activate_window(window):
@@ -2526,6 +2552,7 @@ class WindowsGuiBackend:
             pid=window.pid,
             source_window=window,
             path=path,
+            source_wrapper_provenance=source_wrapper_provenance,
         )
         if startup_open is not None:
             after_pids = {process.pid for process in self.list_processes()}
@@ -2540,7 +2567,17 @@ class WindowsGuiBackend:
             }
 
         _send_ctrl_open_shortcut()
-        dialog = _find_file_open_dialog(pid=window.pid, timeout_seconds=10.0)
+        pre_open_prompts = _resolve_same_window_pre_open_prompts(
+            pid=window.pid,
+            source_window=window,
+            source_wrapper_provenance=source_wrapper_provenance,
+            timeout_seconds=30.0,
+        )
+        dialog = _find_file_open_dialog(
+            pid=window.pid,
+            timeout_seconds=10.0,
+            owner_root_handle=window.handle,
+        )
         if dialog is None:
             raise GuiError(
                 "The existing Materials Studio window did not expose a File/Open dialog after Ctrl+O. "
@@ -2548,30 +2585,59 @@ class WindowsGuiBackend:
                 "window, then snapshot/audit the project."
             )
 
-        field_result = _set_common_dialog_filename(dialog.handle, str(path))
-        _click_dialog_ok(dialog.handle)
+        dialog_owner_chain = _window_owner_chain(dialog.handle)
+        submission = _submit_current_file_open_dialog(
+            pid=window.pid,
+            owner_root_handle=window.handle,
+            initial_dialog=dialog,
+            expected_path=str(path),
+        )
+        path_binding = submission.get("path_binding")
+        field_result = (
+            path_binding.get("filename_field")
+            if isinstance(path_binding, dict)
+            else None
+        )
+        dialog_closed = bool(submission.get("dialogs_absent"))
         handled_prompts = _resolve_same_window_open_prompts(
             pid=window.pid,
             source_window=window,
             path_text=str(path),
+            source_wrapper_provenance=source_wrapper_provenance,
             timeout_seconds=60.0,
         )
-        dialog_closed = _wait_for_window_absent(dialog.handle, timeout_seconds=12.0)
+        expected_window = _wait_for_project_window(
+            pid=window.pid,
+            expected_project_name=path.stem,
+            timeout_seconds=30.0,
+        )
+        if expected_window is None:
+            raise GuiError(
+                "The File/Open dialog closed, but the exact MCP wrapper project did not become visible "
+                "in the requested Materials Studio process."
+            )
         after_pids = {process.pid for process in self.list_processes()}
         spawned_pids = sorted(after_pids - before_pids)
         return {
+            "dialog_protocol_schema_version": 2,
             "method": "existing_window_file_open_dialog",
             "path": str(path),
             "window": window.to_dict(),
             "dialog": dialog.to_dict(),
+            "dialog_owner_chain": dialog_owner_chain,
             "filename_field": field_result,
+            "path_binding": path_binding,
+            "dialog_submission": submission,
+            "pre_open_prompts": pre_open_prompts,
             "handled_prompts": handled_prompts,
             "dialog_closed": dialog_closed,
+            "expected_project_window": expected_window.to_dict(),
             "process_count_before": len(before_pids),
             "process_count_after": len(after_pids),
             "spawned_process_ids": spawned_pids,
             "same_window_open_requested": True,
             "pre_dismissed_dialogs": pre_dismissed_dialogs,
+            "source_wrapper_provenance": source_wrapper_provenance,
         }
 
     def launch_app(self) -> dict[str, Any]:
@@ -2630,13 +2696,34 @@ class WindowsGuiBackend:
                 continue
             for dialog in dialogs:
                 is_file_association = dialog.title == "Materials Studio File Associations"
-                ok_button = ctypes.windll.user32.GetDlgItem(ctypes.c_void_p(dialog.handle), 1)
-                if is_file_association and ok_button:
-                    ctypes.windll.user32.SendMessageW(ctypes.c_void_p(ok_button), 0x00F5, 0, 0)  # BM_CLICK
-                else:
-                    ctypes.windll.user32.PostMessageW(ctypes.c_void_p(dialog.handle), 0x0010, 0, 0)  # WM_CLOSE
-                dismissed.append(dialog.to_dict())
-            time.sleep(0.75)
+                owner_chain = _window_owner_chain(dialog.handle)
+                cancellation = _cancel_dialog(
+                    dialog.handle,
+                    pid=dialog.pid if dialog.pid is not None else pid,
+                    owner_root_handle=owner_chain[-1] if owner_chain else None,
+                    dialog_title=dialog.title,
+                    timeout_seconds=max(2.0, min(timeout_seconds, 5.0)),
+                )
+                submission = cancellation["submission"]
+                action = (
+                    "cancel_file_association_dialog"
+                    if is_file_association
+                    else "cancel_known_startup_dialog"
+                )
+                closed = cancellation["closed"]
+                dismissed.append(
+                    {
+                        **dialog.to_dict(),
+                        "action": action,
+                        "submission": submission,
+                        "closed": closed,
+                        "cancellation": cancellation,
+                    }
+                )
+                if not closed:
+                    raise GuiError(
+                        f"Known Materials Studio startup dialog did not close: {dialog.title}"
+                    )
         return dismissed
 
 
@@ -2892,6 +2979,10 @@ class MaterialsStudioGuiController:
             self.backend = NullGuiBackend()
         else:
             self.backend = WindowsGuiBackend() if os.name == "nt" else NullGuiBackend()
+        if isinstance(self.backend, WindowsGuiBackend):
+            self.backend.configure_trusted_write_workspace_roots(
+                (self.workspace_root,)
+            )
         self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend(
             window_capture_fn=_capture_window_bmp,
         )
@@ -6695,6 +6786,18 @@ class MaterialsStudioGuiController:
 </Project>
 """
         project_path.write_text(project_xml, encoding="utf-8")
+        project_sha256, project_size = _sha256_file(project_path)
+        document_sha256, document_size = _sha256_file(document_path)
+        metadata.update(
+            {
+                "wrapper_schema_version": 2,
+                "wrapper_profile": "materials_studio_20_1_project_wrapper_v1",
+                "project_file_sha256": project_sha256,
+                "project_file_size_bytes": project_size,
+                "document_sha256": document_sha256,
+                "document_size_bytes": document_size,
+            }
+        )
         metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
         return {
             "project_name": project_name,
@@ -6718,12 +6821,16 @@ class MaterialsStudioGuiController:
 
         deadline = time.monotonic() + timeout_seconds
         latest = previous_window
-        expected_project_name = _safe_component(expected_project_name) if expected_project_name else None
+        expected_project_title = (
+            f"{expected_project_name} - Materials Studio"
+            if expected_project_name
+            else None
+        )
         while time.monotonic() < deadline:
             time.sleep(poll_interval_seconds)
             candidates: list[WindowInfo] = []
             list_windows = getattr(self.backend, "list_windows", None)
-            if expected_project_name and callable(list_windows):
+            if expected_project_title and callable(list_windows):
                 try:
                     if isinstance(self.backend, WindowsGuiBackend) and target_pid is not None:
                         candidates.extend(list_windows(pid=target_pid))
@@ -6742,13 +6849,12 @@ class MaterialsStudioGuiController:
                 title = candidate.title.lower()
                 if "file associations" in title:
                     continue
-                project_name = _project_name_from_window_title(candidate.title)
-                if expected_project_name and project_name == expected_project_name:
+                if expected_project_title and candidate.title == expected_project_title:
                     return candidate
                 if "materials studio" in title:
-                    if not expected_project_name:
+                    if not expected_project_title:
                         return candidate
-        return latest
+        return None if expected_project_title else latest
 
     def _screenshot_path(self, *, label: str, project_id: str | None, revision: int | None) -> Path:
         """获取截图路径。"""
@@ -12433,12 +12539,334 @@ def _safe_component(value: str) -> str:
 def _project_name_from_window_title(title: str) -> str | None:
     """Return the Materials Studio project name prefix from a window title."""
 
+    project_name = _raw_project_name_from_window_title(title)
+    return _safe_component(project_name) if project_name else None
+
+
+def _raw_project_name_from_window_title(title: str) -> str | None:
+    """Return the exact Materials Studio project name prefix without normalization."""
+
     normalized = title.strip()
     suffix = " - Materials Studio"
     if not normalized.endswith(suffix):
         return None
     project_name = normalized[: -len(suffix)].strip()
-    return _safe_component(project_name) if project_name else None
+    return project_name or None
+
+
+def _wrapper_project_path_provenance(
+    project_path: Path,
+    *,
+    workspace_root: Path,
+    allow_locked_attestation: bool = False,
+) -> dict[str, Any]:
+    """Verify one generated wrapper inside an explicitly trusted workspace."""
+
+    trusted_root = workspace_root.expanduser().resolve()
+    try:
+        resolved_project = project_path.expanduser().resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {
+            "verified": False,
+            "status": "project_path_invalid",
+            "project_path": str(project_path),
+            "workspace_root": str(trusted_root),
+            "error": str(exc),
+        }
+
+    project_name = resolved_project.stem
+    project_dir = resolved_project.parent
+    gui_projects_dir = project_dir.parent
+    name_match = re.fullmatch(
+        r"msmcp_r(?P<revision>\d{3,})_(?P<unique>[0-9a-f]{10})",
+        project_name,
+    )
+    expected_project = project_dir / f"{project_name}.stp"
+    path_shape_valid = bool(
+        resolved_project.suffix.lower() == ".stp"
+        and project_dir.name == project_name
+        and _same_resolved_path(
+            gui_projects_dir,
+            trusted_root / "gui_projects",
+        )
+        and _same_resolved_path(resolved_project, expected_project)
+        and _path_is_inside(trusted_root, resolved_project)
+    )
+    metadata_path = project_dir / "metadata.json"
+    reasons: list[str] = []
+    if name_match is None:
+        reasons.append("project_name_not_strict_generated_revision_wrapper")
+    if not path_shape_valid:
+        reasons.append("project_path_not_in_trusted_wrapper_layout")
+    if not resolved_project.is_file():
+        reasons.append("project_file_missing")
+
+    metadata: dict[str, Any] | None = None
+    metadata_error: str | None = None
+    if not metadata_path.is_file():
+        reasons.append("metadata_missing")
+    else:
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                metadata = payload
+            else:
+                reasons.append("metadata_not_object")
+        except Exception as exc:
+            reasons.append("metadata_read_error")
+            metadata_error = str(exc)
+
+    project_xml: ET.Element | None = None
+    project_xml_error: str | None = None
+    project_file_locked = False
+    project_sha256_current: str | None = None
+    project_size_current: int | None = None
+    if resolved_project.is_file():
+        try:
+            project_xml = ET.parse(resolved_project).getroot()
+            project_sha256_current, project_size_current = _sha256_file(
+                resolved_project
+            )
+        except PermissionError as exc:
+            project_file_locked = True
+            project_xml_error = str(exc)
+        except ET.ParseError as exc:
+            reasons.append("project_xml_invalid")
+            project_xml_error = str(exc)
+        except OSError as exc:
+            reasons.append("project_xml_read_error")
+            project_xml_error = str(exc)
+        else:
+            if project_xml.tag != "Project":
+                reasons.append("project_xml_root_invalid")
+            if project_xml.findtext("./Version") != "20.1":
+                reasons.append("project_xml_version_invalid")
+            if (
+                project_xml.findtext("./ViewRegistry/Frame/View/Type")
+                != "SVViewer3D.Viewer3DControl"
+            ):
+                reasons.append("project_xml_viewer_binding_missing")
+
+    attestation_valid = False
+    project_xml_verification_status = (
+        "metadata_attestation_required"
+        if project_file_locked
+        else "direct_project_xml_required"
+    )
+    document_sha256_current: str | None = None
+    document_size_current: int | None = None
+    if metadata is not None:
+        if metadata.get("project_name") != project_name:
+            reasons.append("metadata_project_name_mismatch")
+        try:
+            metadata_revision = int(metadata.get("revision"))
+            revision_valid = metadata_revision >= 0
+        except (TypeError, ValueError):
+            metadata_revision = None
+            revision_valid = False
+        if not revision_valid:
+            reasons.append("metadata_revision_invalid")
+        if (
+            name_match is not None
+            and metadata_revision != int(name_match.group("revision"))
+        ):
+            reasons.append("project_name_revision_metadata_mismatch")
+
+        project_id = metadata.get("project_id")
+        try:
+            project_id_valid = (
+                isinstance(project_id, str)
+                and bool(project_id)
+                and sanitize_project_id(project_id) == project_id
+            )
+        except ValueError:
+            project_id_valid = False
+        if not project_id_valid:
+            reasons.append("metadata_project_id_invalid")
+
+        document_name = metadata.get("document_name")
+        document_path = (
+            project_dir
+            / f"{project_name}_Files"
+            / "Documents"
+            / str(document_name)
+        )
+        document_valid = bool(
+            isinstance(document_name, str)
+            and document_name
+            and Path(document_name).name == document_name
+            and _path_is_inside(project_dir, document_path)
+            and document_path.is_file()
+        )
+        if not document_valid:
+            reasons.append("wrapper_document_missing_or_invalid")
+        elif name_match is not None:
+            expected_document_stem = (
+                f"model_r{name_match.group('revision')}_"
+                f"{name_match.group('unique')}"
+            )
+            if Path(str(document_name)).stem != expected_document_stem:
+                reasons.append("wrapper_document_revision_identity_mismatch")
+            try:
+                document_sha256_current, document_size_current = _sha256_file(
+                    document_path
+                )
+            except OSError:
+                reasons.append("wrapper_document_hash_unavailable")
+
+        project_digest = metadata.get("project_file_sha256")
+        document_digest = metadata.get("document_sha256")
+        project_size_attested = metadata.get("project_file_size_bytes")
+        document_size_attested = metadata.get("document_size_bytes")
+        attestation_valid = bool(
+            metadata.get("wrapper_schema_version") == 2
+            and metadata.get("wrapper_profile")
+            == "materials_studio_20_1_project_wrapper_v1"
+            and isinstance(project_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", project_digest)
+            and isinstance(document_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", document_digest)
+            and isinstance(project_size_attested, int)
+            and project_size_attested > 0
+            and isinstance(document_size_attested, int)
+            and document_size_attested > 0
+        )
+        if not attestation_valid:
+            reasons.append("wrapper_attestation_missing_or_invalid")
+        if (
+            document_sha256_current is not None
+            and document_digest != document_sha256_current
+        ):
+            reasons.append("wrapper_document_sha256_mismatch")
+        if (
+            document_size_current is not None
+            and document_size_attested != document_size_current
+        ):
+            reasons.append("wrapper_document_size_mismatch")
+
+        if project_file_locked:
+            if attestation_valid and allow_locked_attestation:
+                project_xml_verification_status = (
+                    "metadata_attested_current_project_lock"
+                )
+            elif attestation_valid:
+                reasons.append(
+                    "locked_project_not_allowed_for_target_verification"
+                )
+            else:
+                reasons.append("locked_project_without_valid_attestation")
+        elif project_xml is not None:
+            project_xml_verification_status = "direct_project_xml_verified"
+            if project_digest != project_sha256_current:
+                reasons.append("project_file_sha256_mismatch")
+            if project_size_attested != project_size_current:
+                reasons.append("project_file_size_mismatch")
+            if isinstance(document_name, str):
+                document_url = project_xml.findtext(
+                    "./DocumentManager/Document/URL"
+                )
+                if document_url not in {
+                    f".\\{document_name}",
+                    f"./{document_name}",
+                }:
+                    reasons.append("project_xml_document_url_mismatch")
+
+    verified = not reasons
+    return {
+        "verified": verified,
+        "status": "verified_revision_wrapper" if verified else "unverified_wrapper",
+        "reason_codes": reasons,
+        "project_name": project_name,
+        "project_path": str(resolved_project),
+        "metadata_path": str(metadata_path),
+        "workspace_root": str(trusted_root),
+        "metadata": metadata if verified else None,
+        "metadata_error": metadata_error,
+        "project_xml_error": project_xml_error,
+        "project_file_locked": project_file_locked,
+        "project_xml_verification_status": project_xml_verification_status,
+        "wrapper_attestation_valid": attestation_valid,
+        "project_sha256_current": project_sha256_current,
+        "document_sha256_current": document_sha256_current,
+    }
+
+
+def _source_wrapper_auto_save_provenance(
+    *,
+    source_window: WindowInfo,
+    target_project_path: Path,
+    trusted_workspace_roots: tuple[Path, ...],
+) -> dict[str, Any]:
+    """Authorize save-current only within an explicitly trusted workspace."""
+
+    trusted_roots = tuple(
+        root.expanduser().resolve()
+        for root in trusted_workspace_roots
+    )
+    matching_roots = [
+        root
+        for root in trusted_roots
+        if _path_is_inside(root / "gui_projects", target_project_path)
+    ]
+    target = (
+        _wrapper_project_path_provenance(
+            target_project_path,
+            workspace_root=matching_roots[0],
+        )
+        if len(matching_roots) == 1
+        else {
+            "verified": False,
+            "status": "target_workspace_untrusted",
+            "reason_codes": ["target_workspace_untrusted_or_ambiguous"],
+            "project_path": str(target_project_path),
+        }
+    )
+    source_project_name = _raw_project_name_from_window_title(source_window.title)
+    source: dict[str, Any] | None = None
+    reasons: list[str] = []
+    if target.get("verified") is not True:
+        reasons.append("target_wrapper_provenance_unverified")
+    if source_project_name is None:
+        reasons.append("source_window_not_exact_project_title")
+    elif source_window.title != f"{source_project_name} - Materials Studio":
+        reasons.append("source_window_title_not_raw_exact")
+    elif target.get("workspace_root"):
+        source_project_path = (
+            Path(str(target["workspace_root"]))
+            / "gui_projects"
+            / source_project_name
+            / f"{source_project_name}.stp"
+        )
+        source = _wrapper_project_path_provenance(
+            source_project_path,
+            workspace_root=Path(str(target["workspace_root"])),
+            allow_locked_attestation=True,
+        )
+        if source.get("verified") is not True:
+            reasons.append("source_wrapper_provenance_unverified")
+        elif source.get("project_name") != source_project_name:
+            reasons.append("source_window_project_name_mismatch")
+        elif not _same_resolved_path(
+            Path(str(source["workspace_root"])),
+            Path(str(target["workspace_root"])),
+        ):
+            reasons.append("source_target_workspace_mismatch")
+
+    auto_save_allowed = not reasons and source is not None
+    return {
+        "auto_save_allowed": auto_save_allowed,
+        "status": (
+            "verified_same_workspace_revision_wrapper"
+            if auto_save_allowed
+            else "auto_save_not_authorized"
+        ),
+        "reason_codes": reasons,
+        "source_window": source_window.to_dict(),
+        "source_project_name": source_project_name,
+        "source_wrapper": source,
+        "target_wrapper": target,
+        "trusted_workspace_roots": [str(root) for root in trusted_roots],
+    }
 
 
 def _platform_default_workspace_root() -> Path:
@@ -12674,6 +13102,51 @@ def _find_windows(*, title: str | None = None, pid: int | None = None) -> list[W
     return sorted(matches, key=lambda window: _window_priority(window, foreground_handle=foreground_handle))
 
 
+def _window_owner_chain(window_handle: int, *, max_depth: int = 8) -> list[int]:
+    """Return the bounded Win32 owner chain for a top-level or owned dialog."""
+
+    if os.name != "nt" or window_handle <= 0:
+        return []
+    user32 = ctypes.windll.user32
+    chain: list[int] = []
+    seen = {window_handle}
+    current = window_handle
+    for _ in range(max_depth):
+        owner = int(user32.GetWindow(ctypes.c_void_p(current), 4) or 0)  # GW_OWNER
+        if owner <= 0 or owner in seen:
+            break
+        chain.append(owner)
+        seen.add(owner)
+        current = owner
+    return chain
+
+
+def _window_handle_exists(window_handle: int) -> bool:
+    """Return whether a Win32 window handle is still valid."""
+
+    if os.name != "nt" or window_handle <= 0:
+        return False
+    return bool(ctypes.windll.user32.IsWindow(ctypes.c_void_p(window_handle)))
+
+
+def _wait_for_project_window(
+    *,
+    pid: int | None,
+    expected_project_name: str,
+    timeout_seconds: float,
+) -> WindowInfo | None:
+    """Wait for the exact wrapper project title in the requested process."""
+
+    expected_title = f"{expected_project_name} - Materials Studio"
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        for window in _find_windows(pid=pid):
+            if window.title == expected_title:
+                return window
+        time.sleep(0.25)
+    return None
+
+
 def _foreground_window_handle() -> int | None:
     """Return the current foreground window handle when available."""
 
@@ -12707,31 +13180,291 @@ def _press_virtual_key_chord(virtual_keys: list[int], *, pause_seconds: float = 
         time.sleep(pause_seconds)
 
 
-def _find_file_open_dialog(*, pid: int | None, timeout_seconds: float) -> WindowInfo | None:
+def _find_file_open_dialog(
+    *,
+    pid: int | None,
+    timeout_seconds: float,
+    owner_root_handle: int | None = None,
+) -> WindowInfo | None:
     """Find a common file-open dialog owned by Materials Studio."""
 
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        candidates = _find_windows(pid=pid)
-        dialogs = [window for window in candidates if _looks_like_file_open_dialog(window)]
+        dialogs = _owned_file_open_dialogs(
+            pid=pid,
+            owner_root_handle=owner_root_handle,
+        )
         if dialogs:
             return dialogs[0]
         time.sleep(0.25)
     return None
 
 
+def _owned_file_open_dialogs(
+    *,
+    pid: int | None,
+    owner_root_handle: int | None,
+) -> list[WindowInfo]:
+    """Return current file-open dialogs bound to one process and owner tree."""
+
+    dialogs = [
+        window
+        for window in _find_windows(pid=pid)
+        if _looks_like_file_open_dialog(window)
+    ]
+    if owner_root_handle is None:
+        return dialogs
+    return [
+        window
+        for window in dialogs
+        if owner_root_handle in _window_owner_chain(window.handle)
+    ]
+
+
+def _wait_for_owned_file_open_dialogs_absent(
+    *,
+    pid: int | None,
+    owner_root_handle: int | None,
+    timeout_seconds: float,
+    quiet_period_seconds: float = 0.75,
+    poll_interval_seconds: float = 0.1,
+) -> bool:
+    """Wait until the owner tree remains picker-free for a stable quiet period."""
+
+    deadline = time.monotonic() + timeout_seconds
+    quiet_started_at: float | None = None
+    while time.monotonic() < deadline:
+        dialogs = _owned_file_open_dialogs(
+            pid=pid,
+            owner_root_handle=owner_root_handle,
+        )
+        now = time.monotonic()
+        if dialogs:
+            quiet_started_at = None
+        elif quiet_started_at is None:
+            quiet_started_at = now
+        elif now - quiet_started_at >= quiet_period_seconds:
+            return True
+        time.sleep(poll_interval_seconds)
+    return False
+
+
+def _normalized_windows_path_text(value: str) -> str:
+    """Normalize a Windows path string for exact file-dialog binding checks."""
+
+    return os.path.normcase(os.path.normpath(str(Path(value).expanduser())))
+
+
+def _file_dialog_path_matches(observed: str | None, expected: str) -> bool:
+    """Return whether a file-picker observation identifies the exact target path."""
+
+    if not observed:
+        return False
+    return _normalized_windows_path_text(observed) == _normalized_windows_path_text(
+        expected
+    )
+
+
+def _bind_expected_file_open_path(
+    dialog_handle: int,
+    *,
+    expected_path: str,
+) -> dict[str, Any]:
+    """Verify or refill one picker so the submitted path is never inherited blindly."""
+
+    observed_before = _visible_filename_edit_text(
+        dialog_handle,
+        expected=expected_path,
+    )
+    if _file_dialog_path_matches(observed_before, expected_path):
+        return {
+            "ok": True,
+            "expected_path": expected_path,
+            "observed_path_before": observed_before,
+            "observed_path_after": observed_before,
+            "path_refilled": False,
+            "path_observed_exact": True,
+            "path_refill_acknowledged": False,
+            "verification_source": "existing_filename_exact_match",
+            "filename_field": None,
+        }
+
+    field_result = _set_common_dialog_filename(dialog_handle, expected_path)
+    observed_after = _visible_filename_edit_text(
+        dialog_handle,
+        expected=expected_path,
+    )
+    observed_exact = _file_dialog_path_matches(observed_after, expected_path)
+    setter_acknowledged = bool(
+        not field_result.get("verification_warning")
+        and (
+            field_result.get("ok") is True
+            or any(
+                isinstance(item, dict)
+                and isinstance(item.get("result"), dict)
+                and item["result"].get("ok") is True
+                for item in field_result.get("attempted", [])
+            )
+        )
+    )
+    return {
+        "ok": observed_exact or setter_acknowledged,
+        "expected_path": expected_path,
+        "observed_path_before": observed_before,
+        "observed_path_after": observed_after,
+        "path_refilled": True,
+        "path_observed_exact": observed_exact,
+        "path_refill_acknowledged": setter_acknowledged,
+        "verification_source": (
+            "filename_exact_match_after_refill"
+            if observed_exact
+            else "bounded_filename_refill_acknowledged"
+            if setter_acknowledged
+            else "unverified"
+        ),
+        "filename_field": field_result,
+    }
+
+
+def _submit_current_file_open_dialog(
+    *,
+    pid: int | None,
+    owner_root_handle: int | None,
+    initial_dialog: WindowInfo,
+    expected_path: str,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    """Submit the current owned picker, tolerating native HWND recreation."""
+
+    attempts: list[dict[str, Any]] = []
+    initial_handle = initial_dialog.handle
+    for attempt in range(1, max_attempts + 1):
+        current = _find_file_open_dialog(
+            pid=pid,
+            timeout_seconds=2.0,
+            owner_root_handle=owner_root_handle,
+        )
+        if current is None:
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "status": "dialog_not_found",
+                }
+            )
+            continue
+        owner_chain = _window_owner_chain(current.handle)
+        path_binding = _bind_expected_file_open_path(
+            current.handle,
+            expected_path=expected_path,
+        )
+        if not path_binding.get("ok"):
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "status": "target_path_not_verified",
+                    "dialog": current.to_dict(),
+                    "owner_chain": owner_chain,
+                    "path_binding": path_binding,
+                }
+            )
+            continue
+        try:
+            submission = _click_dialog_ok(current.handle)
+        except GuiError as exc:
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "status": "stale_dialog_handle",
+                    "dialog": current.to_dict(),
+                    "owner_chain": owner_chain,
+                    "path_binding": path_binding,
+                    "error": str(exc),
+                }
+            )
+            continue
+        dialogs_absent = _wait_for_owned_file_open_dialogs_absent(
+            pid=pid,
+            owner_root_handle=owner_root_handle,
+            timeout_seconds=12.0,
+        )
+        attempts.append(
+            {
+                "attempt": attempt,
+                "status": "submitted" if dialogs_absent else "dialog_remained_open",
+                "dialog": current.to_dict(),
+                "owner_chain": owner_chain,
+                "path_binding": path_binding,
+                "submission": submission,
+                "dialogs_absent": dialogs_absent,
+            }
+        )
+        if dialogs_absent:
+            return {
+                "ok": True,
+                "initial_dialog_handle": initial_handle,
+                "submitted_dialog_handle": current.handle,
+                "dialog_handle_recreated": current.handle != initial_handle,
+                "dialog": current.to_dict(),
+                "owner_chain": owner_chain,
+                "expected_path": expected_path,
+                "expected_path_verified": True,
+                "expected_path_observed": (
+                    path_binding.get("path_observed_exact") is True
+                ),
+                "path_binding": path_binding,
+                "submission": submission,
+                "dialogs_absent": True,
+                "attempts": attempts,
+            }
+    raise GuiError(
+        "The owned Materials Studio File/Open dialog could not be submitted after "
+        f"{max_attempts} bounded attempts: {attempts}"
+    )
+
+
 def _looks_like_file_open_dialog(window: WindowInfo) -> bool:
     """Return true when a top-level dialog appears to be a file-open dialog."""
 
-    title = window.title.lower()
-    if "file associations" in title or "welcome to materials studio" in title:
+    title = window.title.strip().lower()
+    if (
+        "file associations" in title
+        or "welcome to materials studio" in title
+    ):
         return False
     if (window.class_name or "").lower() != "#32770":
         return False
+    if any(
+        pattern in title
+        for pattern in (
+            "save",
+            "export",
+            "publish",
+            "backup",
+            "upload",
+            "download",
+        )
+    ):
+        return False
     title_patterns = ("open", "select", "browse", "choose", "打开", "选择")
-    if any(pattern in title for pattern in title_patterns):
-        return True
-    return _dialog_has_file_path_controls(window.handle)
+    ascii_title_tokens = set(re.findall(r"[a-z]+", title))
+    if (
+        ascii_title_tokens.intersection(
+            {"open", "select", "browse", "choose", "import", "load"}
+        )
+        or any(pattern in title for pattern in title_patterns[-2:])
+    ):
+        return _dialog_has_file_path_controls(window.handle)
+    return False
+
+
+def _looks_like_non_open_file_dialog(window: WindowInfo) -> bool:
+    """Return true for a path dialog that lacks positive File/Open semantics."""
+
+    return bool(
+        (window.class_name or "").lower() == "#32770"
+        and not _looks_like_file_open_dialog(window)
+        and _dialog_has_file_path_controls(window.handle)
+    )
 
 
 def _dialog_has_file_path_controls(dialog_handle: int) -> bool:
@@ -12740,10 +13473,17 @@ def _dialog_has_file_path_controls(dialog_handle: int) -> bool:
     if os.name != "nt":
         return False
     user32 = ctypes.windll.user32
-    for control_id in (0x0480, 0x047C, 0x047D, 0x047E, 1):
+    for control_id in (0x0480, 0x047C, 0x047D, 0x047E):
         if user32.GetDlgItem(ctypes.c_void_p(dialog_handle), control_id):
             return True
-    return any((_window_class(child) or "").lower() in {"edit", "combobox"} for child in _descendant_windows(dialog_handle))
+    editable = any(
+        (_window_class(child) or "").lower()
+        in {"edit", "combobox", "comboboxex32"}
+        for child in _descendant_windows(dialog_handle)
+    )
+    return editable and bool(
+        user32.GetDlgItem(ctypes.c_void_p(dialog_handle), 1)
+    )
 
 
 def _set_common_dialog_filename(dialog_handle: int, path_text: str) -> dict[str, Any]:
@@ -12805,6 +13545,7 @@ def _open_project_from_startup_dialogs(
     pid: int | None,
     source_window: WindowInfo,
     path: Path,
+    source_wrapper_provenance: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Open a project through the Materials Studio welcome page when present."""
 
@@ -12812,6 +13553,7 @@ def _open_project_from_startup_dialogs(
         window
         for window in _find_windows(pid=pid)
         if (window.class_name or "").lower() == "#32770"
+        and source_window.handle in _window_owner_chain(window.handle)
     ]
     if not dialogs:
         return None
@@ -12820,15 +13562,26 @@ def _open_project_from_startup_dialogs(
     for dialog in dialogs:
         if dialog.title.strip().lower() != "new project":
             continue
-        _cancel_dialog(dialog.handle)
-        _wait_for_window_absent(dialog.handle, timeout_seconds=3.0)
-        handled.append({"action": "cancel_empty_new_project_dialog", "dialog": dialog.to_dict()})
+        cancellation = _cancel_dialog(
+            dialog.handle,
+            pid=pid,
+            owner_root_handle=source_window.handle,
+            dialog_title=dialog.title,
+        )
+        handled.append(
+            {
+                "action": "cancel_empty_new_project_dialog",
+                "dialog": dialog.to_dict(),
+                "cancellation": cancellation,
+            }
+        )
 
     welcome_dialogs = [
         window
         for window in _find_windows(pid=pid)
         if (window.class_name or "").lower() == "#32770"
         and window.title.strip().lower() == "welcome to materials studio"
+        and source_window.handle in _window_owner_chain(window.handle)
     ]
     if welcome_dialogs:
         welcome = welcome_dialogs[0]
@@ -12848,6 +13601,7 @@ def _open_project_from_startup_dialogs(
                 pid=pid,
                 source_window=source_window,
                 path_text=str(path),
+                source_wrapper_provenance=source_wrapper_provenance,
                 timeout_seconds=60.0,
             )
         )
@@ -12856,6 +13610,7 @@ def _open_project_from_startup_dialogs(
             "path": str(path),
             "window": source_window.to_dict(),
             "handled_prompts": handled,
+            "source_wrapper_provenance": source_wrapper_provenance,
         }
 
     remaining = [
@@ -12863,6 +13618,7 @@ def _open_project_from_startup_dialogs(
         for window in _find_windows(pid=pid)
         if (window.class_name or "").lower() == "#32770"
         and "file associations" not in window.title.strip().lower()
+        and source_window.handle in _window_owner_chain(window.handle)
     ]
     if remaining:
         raise GuiError(f"Unhandled Materials Studio dialog before same-window open: {remaining}")
@@ -12912,42 +13668,189 @@ def _open_project_from_welcome_dialog(
         raise GuiError("Materials Studio welcome dialog did not expose the expected existing-project controls.")
 
     _click_button_handle(int(open_button["handle"]))
-    _click_button_handle(int(browse_button["handle"]))
-    browse_dialog = _find_file_open_dialog(pid=pid, timeout_seconds=10.0)
+    browse_submission = _post_button_click_handle(int(browse_button["handle"]))
+    browse_dialog = _find_file_open_dialog(
+        pid=pid,
+        timeout_seconds=10.0,
+        owner_root_handle=dialog_handle,
+    )
     if browse_dialog is None:
         raise GuiError("Materials Studio welcome dialog did not expose its existing-project file picker.")
-    submission_attempts: list[dict[str, Any]] = []
-    field_result: dict[str, Any] = {}
-    picker_closed = False
-    for attempt in range(1, 4):
-        field_result = _set_common_dialog_filename(browse_dialog.handle, path_text)
-        _click_dialog_ok(browse_dialog.handle)
-        picker_closed = _wait_for_window_absent(browse_dialog.handle, timeout_seconds=4.0)
-        submission_attempts.append(
-            {
-                "attempt": attempt,
-                "filename_field": field_result,
-                "picker_closed": picker_closed,
-            }
+    browse_dialog_owner_chain = _window_owner_chain(browse_dialog.handle)
+    picker_submission = _submit_current_file_open_dialog(
+        pid=pid,
+        owner_root_handle=dialog_handle,
+        initial_dialog=browse_dialog,
+        expected_path=path_text,
+    )
+    path_binding = picker_submission.get("path_binding")
+    field_result = (
+        path_binding.get("filename_field")
+        if isinstance(path_binding, dict)
+        else None
+    )
+    picker_closed = bool(picker_submission.get("dialogs_absent"))
+    submission_attempts = [
+        {
+            "attempt": 1,
+            "filename_field": field_result,
+            "path_binding": path_binding,
+            "picker_submission": picker_submission,
+            "picker_closed": picker_closed,
+        }
+    ]
+    expected_project_name = Path(path_text).stem
+    expected_window = _wait_for_project_window(
+        pid=pid,
+        expected_project_name=expected_project_name,
+        timeout_seconds=5.0,
+    )
+    welcome_auto_submitted = expected_window is not None or not _window_handle_exists(
+        dialog_handle
+    )
+    visible_path = ""
+    welcome_submission: dict[str, Any] | None = None
+    if not welcome_auto_submitted:
+        visible_path = _window_text(int(edit_control["handle"]))
+        if visible_path and Path(visible_path).expanduser() != Path(path_text).expanduser():
+            raise GuiError("Materials Studio welcome dialog did not retain the requested MCP project path.")
+        welcome_submission = _post_button_click_handle(int(ok_button["handle"]))
+        if not _wait_for_window_absent(dialog_handle, timeout_seconds=30.0):
+            raise GuiError("Materials Studio welcome dialog did not close after asynchronous project submission.")
+
+    if expected_window is None:
+        expected_window = _wait_for_project_window(
+            pid=pid,
+            expected_project_name=expected_project_name,
+            timeout_seconds=30.0,
         )
-        if picker_closed:
-            break
-        time.sleep(0.25)
-    if not picker_closed:
-        raise GuiError("Materials Studio existing-project file picker did not close after path submission.")
-    visible_path = _window_text(int(edit_control["handle"]))
-    if Path(visible_path).expanduser() != Path(path_text).expanduser():
-        raise GuiError("Materials Studio welcome dialog did not retain the requested MCP project path.")
-    _click_button_handle(int(ok_button["handle"]))
+    if expected_window is None:
+        raise GuiError(
+            "Materials Studio closed its project picker, but the requested MCP wrapper project "
+            "did not become visible in the same process."
+        )
+    picker_path_observed = picker_submission.get("expected_path_observed") is True
+    verified_path = visible_path or (path_text if picker_path_observed else None)
     return {
         "ok": True,
+        "dialog_protocol_schema_version": 2,
+        "requested_path": path_text,
         "target_handle": int(edit_control["handle"]),
         "target_class": str(edit_control.get("class") or ""),
-        "verified_path": visible_path,
+        "verified_path": verified_path,
+        "path_verification": (
+            "welcome_edit_exact_match"
+            if visible_path
+            else "picker_filename_exact_match_plus_exact_project_window"
+            if picker_path_observed
+            else "exact_project_window_only"
+        ),
+        "welcome_auto_submitted": welcome_auto_submitted,
+        "browse_submission": browse_submission,
+        "welcome_submission": welcome_submission,
         "browse_dialog": browse_dialog.to_dict(),
+        "browse_dialog_owner_chain": browse_dialog_owner_chain,
         "filename_field": field_result,
+        "path_binding": path_binding,
+        "picker_submission": picker_submission,
         "filename_submission_attempts": submission_attempts,
+        "expected_project_window": expected_window.to_dict(),
     }
+
+
+def _resolve_same_window_pre_open_prompts(
+    *,
+    pid: int | None,
+    source_window: WindowInfo,
+    source_wrapper_provenance: dict[str, Any],
+    timeout_seconds: float,
+) -> list[dict[str, Any]]:
+    """Resolve save-current prompts before the owned File/Open dialog appears."""
+
+    handled: list[dict[str, Any]] = []
+    deadline = time.monotonic() + timeout_seconds
+    auto_save_allowed = (
+        source_wrapper_provenance.get("auto_save_allowed") is True
+    )
+    while time.monotonic() < deadline:
+        dialogs = [
+            window
+            for window in _find_windows(pid=pid)
+            if (window.class_name or "").lower() == "#32770"
+            and source_window.handle in _window_owner_chain(window.handle)
+        ]
+        if not dialogs:
+            time.sleep(0.25)
+            continue
+        file_open_dialogs = [
+            dialog for dialog in dialogs if _looks_like_file_open_dialog(dialog)
+        ]
+        if file_open_dialogs and len(file_open_dialogs) == len(dialogs):
+            return handled
+
+        acted = False
+        for dialog in dialogs:
+            if _looks_like_non_open_file_dialog(dialog):
+                cancellation = _cancel_dialog(
+                    dialog.handle,
+                    pid=pid,
+                    owner_root_handle=source_window.handle,
+                    dialog_title=dialog.title,
+                )
+                raise GuiError(
+                    "Materials Studio exposed a path dialog without positive File/Open semantics "
+                    "before File/Open. Automatic save/export submission is never authorized. "
+                    f"The dialog was cancelled and verified closed: {cancellation}"
+                )
+            controls = _dialog_controls(dialog.handle)
+            button_texts = {
+                str(control.get("text") or "").lower()
+                for control in controls
+                if control.get("class") == "Button"
+            }
+            if not _looks_like_save_confirmation(dialog, button_texts):
+                continue
+            if not auto_save_allowed:
+                _cancel_dialog(
+                    dialog.handle,
+                    pid=pid,
+                    owner_root_handle=source_window.handle,
+                    dialog_title=dialog.title,
+                )
+                raise GuiError(
+                    "Materials Studio requested permission to save a project whose exact wrapper "
+                    "provenance was not verified in the target workspace. The dialog was cancelled "
+                    "to avoid modifying user files."
+                )
+            owner_chain = _window_owner_chain(dialog.handle)
+            submission = _confirm_yes_dialog(dialog.handle)
+            closed = _wait_for_window_absent(dialog.handle, timeout_seconds=12.0)
+            if not closed:
+                raise GuiError(
+                    "Materials Studio save-current confirmation did not close after the exact Yes button "
+                    "was submitted asynchronously."
+                )
+            handled.append(
+                {
+                    "action": "confirm_save_current_mcp_project_before_open",
+                    "dialog": dialog.to_dict(),
+                    "owner_chain": owner_chain,
+                    "submission": submission,
+                    "closed": True,
+                    "source_wrapper_provenance": source_wrapper_provenance,
+                }
+            )
+            acted = True
+            break
+        if not acted:
+            unresolved = [dialog.to_dict() for dialog in dialogs]
+            raise GuiError(
+                f"Unhandled Materials Studio dialog before File/Open: {unresolved}"
+            )
+        time.sleep(0.25)
+    raise GuiError(
+        "Timed out while waiting for the owned Materials Studio File/Open dialog."
+    )
 
 
 def _resolve_same_window_open_prompts(
@@ -12955,70 +13858,123 @@ def _resolve_same_window_open_prompts(
     pid: int | None,
     source_window: WindowInfo,
     path_text: str,
+    source_wrapper_provenance: dict[str, Any],
     timeout_seconds: float,
 ) -> list[dict[str, Any]]:
     """Handle Materials Studio prompts that appear while reusing one GUI window."""
 
     handled: list[dict[str, Any]] = []
     deadline = time.monotonic() + timeout_seconds
-    auto_save_allowed = _is_mcp_generated_project_title(source_window.title)
+    quiet_started_at: float | None = None
+    auto_save_allowed = (
+        source_wrapper_provenance.get("auto_save_allowed") is True
+    )
     while time.monotonic() < deadline:
         dialogs = [
             window
             for window in _find_windows(pid=pid)
             if (window.class_name or "").lower() == "#32770"
+            and source_window.handle in _window_owner_chain(window.handle)
         ]
         if not dialogs:
-            return handled
+            now = time.monotonic()
+            if quiet_started_at is None:
+                quiet_started_at = now
+            elif now - quiet_started_at >= 0.75:
+                return handled
+            time.sleep(0.1)
+            continue
+        quiet_started_at = None
         acted = False
         for dialog in dialogs:
-            title = dialog.title.lower()
             controls = _dialog_controls(dialog.handle)
             button_texts = {str(control.get("text") or "").lower() for control in controls if control.get("class") == "Button"}
+            if _looks_like_non_open_file_dialog(dialog):
+                cancellation = _cancel_dialog(
+                    dialog.handle,
+                    pid=pid,
+                    owner_root_handle=source_window.handle,
+                    dialog_title=dialog.title,
+                )
+                raise GuiError(
+                    "Materials Studio exposed a path dialog without positive File/Open semantics "
+                    "during same-window hot-load. Automatic save/export submission is never authorized. "
+                    f"The dialog was cancelled and verified closed: {cancellation}"
+                )
             if _looks_like_file_open_dialog(dialog):
-                field_result = _set_common_dialog_filename(dialog.handle, path_text)
-                _click_dialog_ok(dialog.handle)
+                submission = _submit_current_file_open_dialog(
+                    pid=pid,
+                    owner_root_handle=source_window.handle,
+                    initial_dialog=dialog,
+                    expected_path=path_text,
+                )
+                path_binding = submission.get("path_binding")
+                field_result = (
+                    path_binding.get("filename_field")
+                    if isinstance(path_binding, dict)
+                    else None
+                )
                 handled.append(
                     {
+                        "dialog_protocol_schema_version": 2,
                         "action": "resubmit_open_project_dialog",
                         "dialog": dialog.to_dict(),
                         "filename_field": field_result,
+                        "path_binding": path_binding,
+                        "submission": submission,
                     }
                 )
                 acted = True
-                time.sleep(1.0)
-                break
-            if title == "save as":
-                if not auto_save_allowed:
-                    _cancel_dialog(dialog.handle)
-                    raise GuiError(
-                        "Materials Studio requested Save As for a non-MCP project while opening a structure. "
-                        "The dialog was cancelled to avoid overwriting user files."
-                    )
-                _click_dialog_ok(dialog.handle)
-                handled.append({"action": "save_as_current_mcp_project", "dialog": dialog.to_dict()})
-                acted = True
-                time.sleep(1.0)
                 break
             if _looks_like_save_confirmation(dialog, button_texts):
                 if not auto_save_allowed:
-                    _cancel_dialog(dialog.handle)
-                    raise GuiError(
-                        "Materials Studio requested permission to save the current non-MCP project. "
-                        "The dialog was cancelled to avoid modifying user files."
+                    _cancel_dialog(
+                        dialog.handle,
+                        pid=pid,
+                        owner_root_handle=source_window.handle,
+                        dialog_title=dialog.title,
                     )
-                _confirm_yes_dialog(dialog.handle)
-                handled.append({"action": "confirm_save_current_mcp_project", "dialog": dialog.to_dict()})
+                    raise GuiError(
+                        "Materials Studio requested permission to save a project whose exact wrapper "
+                        "provenance was not verified in the target workspace. The dialog was cancelled "
+                        "to avoid modifying user files."
+                    )
+                submission = _confirm_yes_dialog(dialog.handle)
+                closed = _wait_for_window_absent(
+                    dialog.handle,
+                    timeout_seconds=12.0,
+                )
+                if not closed:
+                    raise GuiError(
+                        "Materials Studio save-current confirmation did not close after the exact "
+                        "Yes button was submitted asynchronously."
+                    )
+                handled.append(
+                    {
+                        "action": "confirm_save_current_mcp_project",
+                        "dialog": dialog.to_dict(),
+                        "submission": submission,
+                        "closed": True,
+                        "source_wrapper_provenance": source_wrapper_provenance,
+                    }
+                )
                 acted = True
-                time.sleep(1.0)
                 break
         if not acted:
             unresolved = [dialog.to_dict() for dialog in dialogs]
             raise GuiError(f"Unhandled Materials Studio dialog during same-window open: {unresolved}")
-    remaining = [window.to_dict() for window in _find_windows(pid=pid) if (window.class_name or "").lower() == "#32770"]
+    remaining = [
+        window.to_dict()
+        for window in _find_windows(pid=pid)
+        if (window.class_name or "").lower() == "#32770"
+        and source_window.handle in _window_owner_chain(window.handle)
+    ]
     if remaining:
         raise GuiError(f"Timed out while handling Materials Studio same-window open dialogs: {remaining}")
-    return handled
+    raise GuiError(
+        "Timed out before the owned Materials Studio dialog tree remained absent "
+        "for the stable quiet period."
+    )
 
 
 def _looks_like_save_confirmation(dialog: WindowInfo, button_texts: set[str]) -> bool:
@@ -13029,16 +13985,6 @@ def _looks_like_save_confirmation(dialog: WindowInfo, button_texts: set[str]) ->
     has_yes = any(text in {"&yes", "yes", "是(&y)", "是"} for text in button_texts)
     has_no_or_cancel = any(text in {"&no", "no", "cancel", "取消", "否(&n)", "否"} for text in button_texts)
     return has_yes and has_no_or_cancel
-
-
-def _is_mcp_generated_project_title(title: str) -> bool:
-    """Return whether a Materials Studio title appears to be an MCP wrapper project."""
-
-    project_name = _project_name_from_window_title(title)
-    if not project_name:
-        return False
-    normalized = project_name.lower()
-    return normalized.startswith("msmcp_") or normalized.startswith("ms_mcp_")
 
 
 def _dialog_controls(dialog_handle: int) -> list[dict[str, Any]]:
@@ -13150,29 +14096,117 @@ def _bring_window_foreground(window_handle: int) -> None:
     user32.SetForegroundWindow(hwnd)
 
 
-def _confirm_yes_dialog(dialog_handle: int) -> None:
-    """Confirm a Yes/No Materials Studio dialog."""
+def _confirm_yes_dialog(dialog_handle: int) -> dict[str, Any]:
+    """Asynchronously confirm the exact Yes button in a Materials Studio dialog."""
 
     for child in _descendant_windows(dialog_handle):
         if (_window_class(child) or "").lower() != "button":
             continue
         label = (_window_text(child) or "").lower()
         if label in {"&yes", "yes", "是(&y)", "是"}:
-            _bring_window_foreground(dialog_handle)
-            ctypes.windll.user32.SendMessageW(ctypes.c_void_p(child), 0x00F5, 0, 0)  # BM_CLICK
-            time.sleep(0.2)
-            if ctypes.windll.user32.IsWindow(ctypes.c_void_p(dialog_handle)):
-                _press_enter_on_window(dialog_handle)
-            return
-    _press_enter_on_window(dialog_handle)
+            button_text = _window_text(child)
+            return {
+                **_post_button_click_handle(child),
+                "button_text": button_text,
+                "dialog_handle": dialog_handle,
+            }
+    raise GuiError(
+        "Materials Studio save confirmation did not expose an exact Yes button."
+    )
 
 
-def _cancel_dialog(dialog_handle: int) -> None:
-    """Cancel a modal dialog."""
+def _cancel_dialog(
+    dialog_handle: int,
+    *,
+    timeout_seconds: float = 5.0,
+    pid: int | None = None,
+    owner_root_handle: int | None = None,
+    dialog_title: str | None = None,
+    quiet_period_seconds: float = 0.75,
+    max_replacement_attempts: int = 3,
+) -> dict[str, Any]:
+    """Submit IDCANCEL and drain bounded same-owner replacement dialogs."""
 
-    if os.name != "nt":
-        return
-    ctypes.windll.user32.PostMessageW(ctypes.c_void_p(dialog_handle), 0x0010, 0, 0)  # WM_CLOSE
+    attempts: list[dict[str, Any]] = []
+
+    def cancel_one(handle: int) -> None:
+        submission = _post_dialog_command(handle, 2)
+        closed = _wait_for_window_absent(
+            handle,
+            timeout_seconds=timeout_seconds,
+        )
+        attempt = {
+            "command": "IDCANCEL",
+            "command_id": 2,
+            "dialog_handle": handle,
+            "submission": submission,
+            "closed": closed,
+        }
+        attempts.append(attempt)
+        if not closed:
+            raise GuiError(
+                "Materials Studio dialog did not close after exact asynchronous IDCANCEL: "
+                f"{attempt}"
+            )
+
+    cancel_one(dialog_handle)
+    family_binding_complete = bool(
+        pid is not None and dialog_title is not None
+    )
+    family_stable_absent: bool | None = None
+    if family_binding_complete:
+        normalized_title = str(dialog_title).strip().casefold()
+        deadline = time.monotonic() + timeout_seconds
+        quiet_started_at: float | None = None
+        while time.monotonic() < deadline:
+            replacements = [
+                window
+                for window in _find_windows(pid=pid)
+                if (window.class_name or "").lower() == "#32770"
+                and window.title.strip().casefold() == normalized_title
+                and (
+                    owner_root_handle is None
+                    or owner_root_handle in _window_owner_chain(window.handle)
+                )
+            ]
+            if replacements:
+                quiet_started_at = None
+                if len(replacements) != 1:
+                    raise GuiError(
+                        "Refusing ambiguous replacement-dialog cancellation: "
+                        f"{[window.to_dict() for window in replacements]}"
+                    )
+                if len(attempts) > max_replacement_attempts:
+                    raise GuiError(
+                        "Materials Studio recreated the cancelled dialog more than the "
+                        f"bounded limit: {attempts}"
+                    )
+                cancel_one(replacements[0].handle)
+                continue
+            now = time.monotonic()
+            if quiet_started_at is None:
+                quiet_started_at = now
+            elif now - quiet_started_at >= quiet_period_seconds:
+                family_stable_absent = True
+                break
+            time.sleep(0.1)
+        if family_stable_absent is not True:
+            raise GuiError(
+                "Materials Studio dialog family did not remain absent for the stable "
+                f"quiet period: {attempts}"
+            )
+
+    first = attempts[0]
+    return {
+        **first,
+        "attempts": attempts,
+        "replacement_cancel_count": max(0, len(attempts) - 1),
+        "family_binding_complete": family_binding_complete,
+        "family_stable_absent": family_stable_absent,
+        "dialog_title": dialog_title,
+        "pid": pid,
+        "owner_root_handle": owner_root_handle,
+    }
 
 
 def _press_enter_on_window(window_handle: int) -> None:
@@ -13270,20 +14304,54 @@ def _set_window_text(window_handle: int, text: str) -> bool:
     return bool(ctypes.windll.user32.SetWindowTextW(ctypes.c_void_p(window_handle), text))
 
 
-def _click_dialog_ok(dialog_handle: int) -> None:
-    """Confirm a common file dialog without using screen coordinates."""
+def _post_window_message(
+    window_handle: int,
+    message: int,
+    wparam: int,
+    lparam: int,
+) -> dict[str, Any]:
+    """Post one non-blocking Win32 message to an exact window or control."""
 
     if os.name != "nt":
-        raise GuiError("Win32 file dialogs are only available on Windows.")
-    user32 = ctypes.windll.user32
-    ok_button = int(user32.GetDlgItem(ctypes.c_void_p(dialog_handle), 1) or 0)
-    if ok_button:
-        user32.SendMessageW(ctypes.c_void_p(ok_button), 0x00F5, 0, 0)  # BM_CLICK
-    else:
-        user32.PostMessageW(ctypes.c_void_p(dialog_handle), 0x0111, 1, 0)  # WM_COMMAND, IDOK
-    time.sleep(0.2)
-    if user32.IsWindow(ctypes.c_void_p(dialog_handle)):
-        _press_enter_on_window(dialog_handle)
+        raise GuiError("Win32 dialog messaging is only available on Windows.")
+    posted = bool(
+        ctypes.windll.user32.PostMessageW(
+            ctypes.c_void_p(window_handle),
+            message,
+            wparam,
+            lparam,
+        )
+    )
+    if not posted:
+        raise GuiError(
+            f"Could not post Win32 message 0x{message:04X} to handle {window_handle}."
+        )
+    return {
+        "method": "PostMessageW",
+        "target_handle": window_handle,
+        "message": message,
+        "wparam": wparam,
+        "lparam": lparam,
+        "posted": True,
+    }
+
+
+def _post_dialog_command(dialog_handle: int, command_id: int) -> dict[str, Any]:
+    """Post a non-blocking WM_COMMAND to an exact dialog."""
+
+    return _post_window_message(dialog_handle, 0x0111, command_id, 0)  # WM_COMMAND
+
+
+def _post_button_click_handle(button_handle: int) -> dict[str, Any]:
+    """Post a non-blocking BM_CLICK to an exact button control."""
+
+    return _post_window_message(button_handle, 0x00F5, 0, 0)  # BM_CLICK
+
+
+def _click_dialog_ok(dialog_handle: int) -> dict[str, Any]:
+    """Submit a common dialog asynchronously without screen coordinates."""
+
+    return _post_dialog_command(dialog_handle, 1)  # IDOK
 
 
 def _click_button_handle(button_handle: int) -> None:

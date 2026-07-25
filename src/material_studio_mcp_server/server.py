@@ -87,9 +87,12 @@ from .natural_language import (
 )
 from .runner import MaterialStudioError, MaterialStudioRunner
 from .roundtrip import (
+    ROUNDTRIP_AUDIT_PROFILE,
+    ROUNDTRIP_AUDIT_SCHEMA_VERSION,
     execute_roundtrip_audit,
     not_applicable_roundtrip_receipt,
     plan_roundtrip_audit,
+    verify_visual_bonded_hotload_selection,
 )
 from .semiconductor_contracts import (
     DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
@@ -6223,7 +6226,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             },
             "materials_studio_revision_roundtrip_audit": {
                 "scope": "revision_bound_crystal_cif_import_export_before_gui_hotload",
-                "profile": "generic_crystal_cif_import_export_v1",
+                "profile": ROUNDTRIP_AUDIT_PROFILE,
                 "request_field": "verify_ms_roundtrip",
                 "default_requested": False,
                 "preview_policy": "plan_only_no_runner_no_gui_input",
@@ -23435,6 +23438,9 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
             "output_path",
             "output_sha256",
             "output_confined",
+            "visual_output_path",
+            "visual_bonding_planned",
+            "visual_bonding_required",
             "runner_script_confined",
             "run_root",
             "script_sha256",
@@ -23456,6 +23462,9 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
             "warnings",
         ),
     )
+    visual_bonded_artifact = value.get("visual_bonded_artifact")
+    if isinstance(visual_bonded_artifact, dict):
+        summary["visual_bonded_artifact"] = dict(visual_bonded_artifact)
     if isinstance(gui_invariant, dict):
         summary["gui_invariant"] = _mapping_subset(
             gui_invariant,
@@ -23493,6 +23502,47 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
     return summary
 
 
+def _verified_visual_bonded_hotload_selection(
+    audit: Any,
+    *,
+    canonical_structure_path: Path,
+    project_id: str,
+    revision: int,
+    roundtrip_audit_required: bool = False,
+) -> dict[str, Any]:
+    """Select a receipt-bound visual XSD or return a canonical CIF fallback."""
+
+    return verify_visual_bonded_hotload_selection(
+        audit,
+        canonical_structure_path=canonical_structure_path,
+        project_id=project_id,
+        revision=revision,
+        roundtrip_audit_required=roundtrip_audit_required,
+    )
+
+
+def _select_response_gui_hotload_structure(
+    response: dict[str, Any],
+    *,
+    canonical_structure_path: Path,
+    project_id: str,
+    revision: int,
+) -> tuple[Path, dict[str, Any]]:
+    audit = _materials_studio_roundtrip_audit_from_response(response)
+    selection = _verified_visual_bonded_hotload_selection(
+        audit,
+        canonical_structure_path=canonical_structure_path,
+        project_id=project_id,
+        revision=revision,
+        roundtrip_audit_required=bool(
+            response.get("materials_studio_roundtrip_audit_requested")
+            is True
+            and not isinstance(audit, dict)
+        ),
+    )
+    return Path(selection["selected_structure_path"]), selection
+
+
 def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     """Return a compact display-ready summary for live modeling clients."""
 
@@ -23502,15 +23552,82 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     if not result and isinstance(response.get("result_metadata"), dict):
         result = response["result_metadata"]
+    roundtrip_audit_evidence = _materials_studio_roundtrip_audit_from_response(
+        response
+    )
     roundtrip_audit = _materials_studio_roundtrip_audit_summary(
-        _materials_studio_roundtrip_audit_from_response(response)
+        roundtrip_audit_evidence
     )
     roundtrip_requested = bool(
         response.get("materials_studio_roundtrip_audit_requested")
         or roundtrip_audit is not None
     )
+    persisted_gui_hotload_structure_selection = next(
+        (
+            candidate
+            for candidate in (
+                response.get("gui_hotload_structure_selection"),
+                (response.get("modeling_report") or {}).get(
+                    "gui_hotload_structure_selection"
+                )
+                if isinstance(response.get("modeling_report"), dict)
+                else None,
+                (response.get("persisted_modeling_report") or {}).get(
+                    "gui_hotload_structure_selection"
+                )
+                if isinstance(response.get("persisted_modeling_report"), dict)
+                else None,
+            )
+            if isinstance(candidate, dict)
+        ),
+        None,
+    )
     planned_outputs = response.get("planned_outputs") or {}
     structure = planned_outputs.get("structure")
+    gui_hotload_structure_selection: dict[str, Any] | None = None
+    selection_project_id = response.get("project_id")
+    selection_revision = response.get(
+        "new_revision",
+        response.get("revision"),
+    )
+    if (
+        structure
+        and Path(str(structure)).suffix.casefold() == ".cif"
+        and selection_project_id is not None
+        and type(selection_revision) is int
+        and (
+            isinstance(roundtrip_audit_evidence, dict)
+            or isinstance(persisted_gui_hotload_structure_selection, dict)
+        )
+    ):
+        try:
+            gui_hotload_structure_selection = (
+                _verified_visual_bonded_hotload_selection(
+                    roundtrip_audit_evidence,
+                    canonical_structure_path=Path(str(structure)),
+                    project_id=str(selection_project_id),
+                    revision=selection_revision,
+                    roundtrip_audit_required=bool(
+                        response.get(
+                            "materials_studio_roundtrip_audit_requested"
+                        )
+                        is True
+                        or (
+                            isinstance(
+                                persisted_gui_hotload_structure_selection,
+                                dict,
+                            )
+                            and persisted_gui_hotload_structure_selection.get(
+                                "visual_bonded_requested"
+                            )
+                            is True
+                        )
+                    )
+                    and not isinstance(roundtrip_audit_evidence, dict),
+                )
+            )
+        except Exception:
+            gui_hotload_structure_selection = None
     structure_exists = bool(structure and Path(str(structure)).expanduser().exists())
     structure_artifact_validation = (
         response.get("structure_artifact_validation")
@@ -23855,6 +23972,15 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         report["materials_studio_roundtrip_audit"] = roundtrip_audit
         response["materials_studio_roundtrip_audit_requested"] = True
         response["materials_studio_roundtrip_audit"] = roundtrip_audit
+    if isinstance(gui_hotload_structure_selection, dict):
+        report["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
+        response["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
+    else:
+        response.pop("gui_hotload_structure_selection", None)
     report["change_verification"] = _change_verification_summary(report)
     report["semiconductor_intent"] = _semiconductor_intent_summary(response, report)
     report["normality"] = _modeling_report_normality(report)
@@ -25433,7 +25559,63 @@ def _same_path(left: Any, right: Any) -> bool:
 def _structure_path_matches_current(response: dict[str, Any], candidate: Any, expected: Any) -> bool:
     """Return True for the planned structure or trusted same-revision GUI derivatives."""
 
-    if _same_path(candidate, expected):
+    canonical_path_matches = _same_path(candidate, expected)
+    audit = _materials_studio_roundtrip_audit_from_response(response)
+    report = (
+        response.get("modeling_report")
+        if isinstance(response.get("modeling_report"), dict)
+        else {}
+    )
+    project_id = response.get("project_id", report.get("project_id"))
+    revision = response.get(
+        "new_revision",
+        response.get("revision", report.get("revision")),
+    )
+    persisted_selection = (
+        response.get("gui_hotload_structure_selection")
+        if isinstance(
+            response.get("gui_hotload_structure_selection"),
+            dict,
+        )
+        else report.get("gui_hotload_structure_selection")
+        if isinstance(report.get("gui_hotload_structure_selection"), dict)
+        else {}
+    )
+    roundtrip_audit_required = bool(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or report.get("materials_studio_roundtrip_audit_requested") is True
+        or persisted_selection.get("visual_bonded_requested") is True
+    ) and not isinstance(audit, dict)
+    if (
+        project_id is not None
+        and type(revision) is int
+        and (isinstance(audit, dict) or roundtrip_audit_required)
+    ):
+        try:
+            selection = _verified_visual_bonded_hotload_selection(
+                audit,
+                canonical_structure_path=Path(str(expected)),
+                project_id=str(project_id),
+                revision=revision,
+                roundtrip_audit_required=roundtrip_audit_required,
+            )
+        except Exception:
+            selection = {}
+        if canonical_path_matches:
+            return bool(
+                selection.get("canonical_verified") is True
+                and selection.get("hotload_allowed") is True
+            )
+        if (
+            selection.get("visual_bonded_verified") is True
+            and selection.get("hotload_allowed") is True
+            and _same_path(
+                candidate,
+                selection.get("selected_structure_path"),
+            )
+        ):
+            return True
+    if canonical_path_matches:
         return True
     return _same_revision_structure_derivative(candidate, expected, response.get("new_revision", response.get("revision")))
 
@@ -25462,8 +25644,6 @@ def _same_revision_structure_derivative(candidate: Any, expected: Any, revision:
             return False
 
     if candidate_stem == expected_stem:
-        return True
-    if candidate_stem == f"{expected_stem}_visual_bonded":
         return True
     if candidate_stem.startswith(f"{expected_stem}_msimport"):
         return True
@@ -44066,11 +44246,22 @@ def _execute_or_materialize_structure(
                             artifact = roundtrip_audit.get(key)
                             if artifact and str(artifact) not in created_files:
                                 created_files.append(str(artifact))
+                        visual_artifact = roundtrip_audit.get(
+                            "visual_bonded_artifact"
+                        )
+                        if isinstance(visual_artifact, dict):
+                            visual_path = visual_artifact.get("path")
+                            if (
+                                visual_path
+                                and Path(str(visual_path)).is_file()
+                                and str(visual_path) not in created_files
+                            ):
+                                created_files.append(str(visual_path))
                         result["created_files"] = created_files
                     elif isinstance(spec.model, CrystalSpec):
                         result["materials_studio_roundtrip_audit"] = {
-                            "schema_version": "material_studio_revision_roundtrip_audit_v1",
-                            "profile": "generic_crystal_cif_import_export_v1",
+                            "schema_version": ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+                            "profile": ROUNDTRIP_AUDIT_PROFILE,
                             "project_id": spec.project_id,
                             "revision": spec.revision,
                             "execution_mode": ExecutionMode.EXECUTE.value,
@@ -54154,6 +54345,50 @@ def _finalize_high_level_gui_hotload(
 ) -> dict[str, Any]:
     """Revalidate, hot-load, and publish one high-level response under the GUI lock."""
 
+    canonical_structure_path = structure_path
+    if isinstance(spec.model, CrystalSpec):
+        structure_path, structure_selection = (
+            _select_response_gui_hotload_structure(
+                response,
+                canonical_structure_path=canonical_structure_path,
+                project_id=spec.project_id,
+                revision=spec.revision,
+            )
+        )
+        response["gui_hotload_structure_selection"] = structure_selection
+        if structure_selection.get("hotload_allowed") is not True:
+            message = (
+                "Refusing GUI hot-load because the canonical crystal artifact "
+                "no longer matches its revision-bound round-trip evidence."
+            )
+            response = {
+                **response,
+                "ok": False,
+                "status": "gui_hotload_structure_identity_block",
+                "error": message,
+                "gui_open_warning": message,
+                "gui_input_started": False,
+                "structure_reopened": False,
+                "gui_hotload_structure_block": {
+                    "blocked": True,
+                    "reason": "canonical_structure_identity_failed",
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "selection": structure_selection,
+                    "required_next_step": (
+                        "Preserve the artifacts, inspect the canonical CIF "
+                        "identity mismatch, and explicitly rematerialize the "
+                        "current revision before retrying GUI hot-load."
+                    ),
+                },
+            }
+            return _attach_modeling_health(
+                response,
+                execution_mode=execution_mode,
+                store=store,
+                spec=spec,
+                gui_artifacts=audit_artifacts,
+            )
     artifact_open_retry_payload = _gui_open_structure_retry_payload(
         structure_path=structure_path,
         project_id=spec.project_id,
@@ -54208,6 +54443,71 @@ def _finalize_high_level_gui_hotload(
                     },
                 }
             else:
+                if isinstance(spec.model, CrystalSpec):
+                    structure_path, structure_selection = (
+                        _select_response_gui_hotload_structure(
+                            response,
+                            canonical_structure_path=canonical_structure_path,
+                            project_id=spec.project_id,
+                            revision=spec.revision,
+                        )
+                    )
+                    response["gui_hotload_structure_selection"] = (
+                        structure_selection
+                    )
+                    if structure_selection.get("hotload_allowed") is not True:
+                        message = (
+                            "Refusing GUI hot-load because the canonical "
+                            "crystal artifact changed before the GUI action."
+                        )
+                        response = {
+                            **response,
+                            "ok": False,
+                            "status": "gui_hotload_structure_identity_block",
+                            "error": message,
+                            "gui_open_warning": message,
+                            "gui_input_started": False,
+                            "structure_reopened": False,
+                            "gui_hotload_structure_block": {
+                                "blocked": True,
+                                "reason": (
+                                    "canonical_structure_identity_failed_"
+                                    "before_gui_action"
+                                ),
+                                "project_id": spec.project_id,
+                                "revision": spec.revision,
+                                "selection": structure_selection,
+                            },
+                            "gui_action_transaction": transaction,
+                        }
+                        _attach_gui_artifact_transaction(
+                            response,
+                            transaction,
+                        )
+                        return _attach_modeling_health(
+                            response,
+                            execution_mode=execution_mode,
+                            store=store,
+                            spec=spec,
+                            gui_artifacts=audit_artifacts,
+                        )
+                    artifact_open_retry_payload = (
+                        _gui_open_structure_retry_payload(
+                            structure_path=structure_path,
+                            project_id=spec.project_id,
+                            revision=spec.revision,
+                            take_snapshot=take_snapshot,
+                            export_view_audit=True,
+                            reuse_existing_window_only=True,
+                            views=views,
+                            working_dir=working_dir,
+                            fit_to_view_after_open=fit_to_view_after_open,
+                            prepare_view_replay_after_open=(
+                                prepare_view_replay_after_open
+                            ),
+                        )
+                    )
+                    retry_payload = artifact_open_retry_payload
                 try:
                     fresh_gui_status = gui.status(
                         project_id=spec.project_id,
@@ -54421,6 +54721,7 @@ def _persist_gui_open_structure_report(
     post_open_status: str | None = None,
     post_open_error: str | None = None,
     partial_success: bool = False,
+    gui_hotload_structure_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist revision diagnostics after directly reopening a structure in the GUI."""
 
@@ -54430,6 +54731,9 @@ def _persist_gui_open_structure_report(
     output_dir = store.outputs_dir(project_id, revision)
     report_payload, _ = _read_json_file(output_dir / "view_audit.json")
     report_json_payload, _ = _read_json_file(output_dir / "report.json")
+    result_metadata_payload, _ = _read_json_file(
+        output_dir / "result_metadata.json"
+    )
     view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
         spec,
         views=views,
@@ -54585,6 +54889,18 @@ def _persist_gui_open_structure_report(
         "partial_success": partial_success,
     }
     response["ok"] = post_open_ok
+    persisted_roundtrip_audit = _materials_studio_roundtrip_audit_from_response(
+        result_metadata_payload or {}
+    )
+    if isinstance(persisted_roundtrip_audit, dict):
+        response["materials_studio_roundtrip_audit_requested"] = True
+        response["materials_studio_roundtrip_audit"] = (
+            persisted_roundtrip_audit
+        )
+    if isinstance(gui_hotload_structure_selection, dict):
+        response["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
     response = _attach_modeling_health(
         response,
         execution_mode=ExecutionMode.EXECUTE,
@@ -54625,6 +54941,9 @@ def _persist_gui_open_structure_report(
         "result_metadata_path": response.get("result_metadata_path"),
         "result": response.get("result"),
         "gui_sync_result": response.get("gui_sync_result"),
+        "gui_hotload_structure_selection": response.get(
+            "gui_hotload_structure_selection"
+        ),
         "validation": response.get("validation"),
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
@@ -55682,21 +56001,180 @@ def _open_gui_structure_action(
     if isinstance(sync_context.get("project_resolution"), dict):
         response_base["project_resolution"] = sync_context["project_resolution"]
 
-    combined_postopen_requested = bool(
-        fit_to_view_after_open or prepare_view_replay_after_open
+    target_spec: ModelSpec | None = None
+    current_spec: ModelSpec | None = None
+    current_pointer: dict[str, Any] | None = None
+    expected_structure: str | None = None
+    trusted_visual_artifact = False
+    requested_structure = Path(structure_path).expanduser()
+    visual_like = (
+        requested_structure.suffix.casefold() == ".xsd"
+        and (
+            "_visual_bonded" in requested_structure.stem.casefold()
+            or "ms_roundtrip"
+            in {part.casefold() for part in requested_structure.parts}
+        )
     )
-    if combined_postopen_requested:
+    if visual_like and not sync_context.get("available"):
+        message = (
+            "Refusing to open a visual bonded XSD without an exact structured "
+            "project/revision context and receipt-bound identity."
+        )
+        return {
+            **response_base,
+            "ok": False,
+            "status": "untrusted_visual_bonded_artifact",
+            "error": message,
+            "gui_open_warning": message,
+            "gui_input_started": False,
+            "structure_reopened": False,
+            "requested_structure_path": str(requested_structure),
+            "required_next_step": (
+                "Provide the exact project_id/revision and regenerate the "
+                "visual bonded XSD through explicit revision execution."
+            ),
+        }
+    if sync_context.get("available"):
         store = _structured_store(working_dir)
         target_spec = store.get_revision(str(log_project_id), int(log_revision))
-        current_spec, current_pointer = store.resolve_current(target_spec.project_id)
         generated = _generate_structured_script(target_spec, store)
         expected_structure = (generated.get("planned_outputs") or {}).get(
             "structure"
         )
+        if (
+            expected_structure
+            and isinstance(target_spec.model, CrystalSpec)
+        ):
+            revision_output_dir = store.outputs_dir(
+                target_spec.project_id,
+                target_spec.revision,
+            )
+            result_metadata, _ = _read_json_file(
+                revision_output_dir / "result_metadata.json"
+            )
+            report_json_payload, _ = _read_json_file(
+                revision_output_dir / "report.json"
+            )
+            roundtrip_audit = _materials_studio_roundtrip_audit_from_response(
+                result_metadata or {}
+            )
+            if roundtrip_audit is None:
+                roundtrip_audit = (
+                    _materials_studio_roundtrip_audit_from_response(
+                        report_json_payload or {}
+                    )
+                )
+            persisted_modeling_report = (
+                report_json_payload.get("modeling_report")
+                if isinstance(report_json_payload, dict)
+                and isinstance(
+                    report_json_payload.get("modeling_report"),
+                    dict,
+                )
+                else {}
+            )
+            roundtrip_audit_required = bool(
+                (
+                    isinstance(result_metadata, dict)
+                    and result_metadata.get(
+                        "materials_studio_roundtrip_audit_requested"
+                    )
+                    is True
+                )
+                or (
+                    isinstance(report_json_payload, dict)
+                    and report_json_payload.get(
+                        "materials_studio_roundtrip_audit_requested"
+                    )
+                    is True
+                )
+                or persisted_modeling_report.get(
+                    "materials_studio_roundtrip_audit_requested"
+                )
+                is True
+                or (revision_output_dir / "ms_roundtrip").is_dir()
+            )
+            selection = _verified_visual_bonded_hotload_selection(
+                roundtrip_audit,
+                canonical_structure_path=Path(str(expected_structure)),
+                project_id=target_spec.project_id,
+                revision=target_spec.revision,
+                roundtrip_audit_required=bool(
+                    roundtrip_audit_required
+                    and not isinstance(roundtrip_audit, dict)
+                ),
+            )
+            response_base["gui_hotload_structure_selection"] = selection
+            canonical_requested = _same_path(
+                requested_structure,
+                expected_structure,
+            )
+            if (
+                (canonical_requested or visual_like)
+                and selection.get("hotload_allowed") is not True
+            ):
+                message = (
+                    "Refusing GUI open because the canonical crystal artifact "
+                    "no longer matches its revision-bound round-trip evidence."
+                )
+                return {
+                    **response_base,
+                    "ok": False,
+                    "status": "gui_hotload_structure_identity_block",
+                    "error": message,
+                    "gui_open_warning": message,
+                    "gui_input_started": False,
+                    "structure_reopened": False,
+                    "requested_structure_path": str(requested_structure),
+                    "expected_structure_path": expected_structure,
+                    "required_next_step": (
+                        "Preserve the artifacts, inspect the canonical CIF "
+                        "identity mismatch, and explicitly rematerialize the "
+                        "revision before retrying."
+                    ),
+                }
+            trusted_visual_artifact = bool(
+                selection.get("visual_bonded_verified") is True
+                and _same_path(
+                    selection.get("selected_structure_path"),
+                    requested_structure,
+                )
+            )
+            if visual_like and not trusted_visual_artifact:
+                message = (
+                    "Refusing to bind an unverified visual bonded XSD to the "
+                    "structured revision."
+                )
+                return {
+                    **response_base,
+                    "ok": False,
+                    "status": "untrusted_visual_bonded_artifact",
+                    "error": message,
+                    "gui_open_warning": message,
+                    "gui_input_started": False,
+                    "structure_reopened": False,
+                    "requested_structure_path": str(requested_structure),
+                    "expected_structure_path": expected_structure,
+                    "required_next_step": (
+                        "Retry the canonical CIF or regenerate the receipt-bound "
+                        "visual bonded XSD through explicit revision execution."
+                    ),
+                }
+
+    combined_postopen_requested = bool(
+        fit_to_view_after_open or prepare_view_replay_after_open
+    )
+    if combined_postopen_requested:
+        assert target_spec is not None
+        assert expected_structure is not None
+        current_spec, current_pointer = store.resolve_current(target_spec.project_id)
         hotload_block_reasons: list[str] = []
         if current_spec.revision != target_spec.revision:
             hotload_block_reasons.append("current_revision_advanced_before_artifact_retry")
-        if not expected_structure or not _same_path(expected_structure, structure_path):
+        if not (
+            _same_path(expected_structure, structure_path)
+            or trusted_visual_artifact
+        ):
             hotload_block_reasons.append(
                 "structure_path_not_exact_current_revision_artifact"
             )
@@ -55780,7 +56258,7 @@ def _open_gui_structure_action(
         take_snapshot=take_snapshot,
         reuse_existing_window_only=reuse_existing_window_only,
     )
-    response: dict[str, Any] = {**opened}
+    response: dict[str, Any] = {**response_base, **opened}
     response["gui_open"] = opened
     response["structured_sync_context"] = sync_context
     response["post_hotload_fit_to_view_requested"] = fit_to_view_after_open
@@ -55833,7 +56311,7 @@ def _open_gui_structure_action(
         response["gui_status"] = gui_status
     if isinstance(sync_context.get("project_resolution"), dict):
         response["project_resolution"] = sync_context["project_resolution"]
-    if sync_context.get("available"):
+    if export_view_audit and sync_context.get("available"):
         try:
             structured = _persist_gui_open_structure_report(
                 project_id=str(sync_context["project_id"]),
@@ -55856,6 +56334,9 @@ def _open_gui_structure_action(
                 post_open_status=response.get("status"),
                 post_open_error=response.get("error"),
                 partial_success=response.get("partial_success") is True,
+                gui_hotload_structure_selection=response_base.get(
+                    "gui_hotload_structure_selection"
+                ),
             )
             response.update(structured)
         except Exception as exc:
@@ -55889,7 +56370,14 @@ def material_studio_gui_open_structure(
     """在正在运行的 Materials Studio GUI 中打开现有的结构文件。"""
 
     try:
-        if export_view_audit:
+        structured_context_requested = bool(
+            export_view_audit
+            or project_id is not None
+            or revision is not None
+            or fit_to_view_after_open
+            or prepare_view_replay_after_open
+        )
+        if structured_context_requested:
             try:
                 sync_context = _resolve_gui_open_structure_sync_context(
                     structure_path=structure_path,
@@ -55904,12 +56392,17 @@ def material_studio_gui_open_structure(
                     "error": str(exc),
                 }
         else:
-            sync_context = {"available": False, "reason": "export_view_audit_disabled"}
+            sync_context = {
+                "available": False,
+                "reason": "structured_context_not_requested",
+            }
 
         combined_postopen_requested = bool(
             fit_to_view_after_open or prepare_view_replay_after_open
         )
-        if combined_postopen_requested and not sync_context.get("available"):
+        if combined_postopen_requested and (
+            not export_view_audit or not sync_context.get("available")
+        ):
             return {
                 "ok": False,
                 "status": "structured_context_required_for_postopen_pipeline",
@@ -55930,7 +56423,7 @@ def material_studio_gui_open_structure(
 
         gui = _gui_controller(working_dir)
         opened_response: dict[str, Any]
-        if sync_context.get("available"):
+        if export_view_audit and sync_context.get("available"):
             coverage = [
                 "target_window_revalidation",
                 "gui_open_structure",

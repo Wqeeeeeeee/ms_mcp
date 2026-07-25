@@ -21,6 +21,8 @@ from material_studio_mcp_server.gui import (
     _analyze_bmp_snapshot,
     _window_priority,
 )
+from material_studio_mcp_server.specs import ModelSpec
+from material_studio_mcp_server.translators import write_crystal_cif
 
 
 def _verified_source_wrapper_provenance() -> dict:
@@ -189,6 +191,69 @@ def _create_bound_wrapper(
         project_id=project_id,
         revision=revision,
     )
+
+
+def _create_legacy_crystal_wrapper(
+    controller: MaterialsStudioGuiController,
+    *,
+    project_id: str,
+    revision: int,
+) -> dict:
+    payload = json.loads(
+        Path(
+            "src/material_studio_mcp_server/examples/"
+            "gallium_arsenide_zincblende_spec.json"
+        ).read_text(encoding="utf-8")
+    )
+    payload["project_id"] = project_id
+    payload["revision"] = revision
+    spec = ModelSpec.model_validate(payload)
+    revision_path = (
+        controller.workspace_root
+        / project_id
+        / "revisions"
+        / f"r{revision:03d}_model_spec.json"
+    )
+    revision_path.parent.mkdir(parents=True, exist_ok=True)
+    revision_path.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
+    source_path = (
+        controller.workspace_root
+        / project_id
+        / "outputs"
+        / f"r{revision:03d}"
+        / f"structure_r{revision:03d}.cif"
+    )
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    write_crystal_cif(spec.model, source_path)
+    wrapper = controller._create_project_wrapper(
+        source_path.resolve(),
+        project_id=project_id,
+        revision=revision,
+    )
+    metadata_path = Path(wrapper["metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    for field in (
+        "wrapper_schema_version",
+        "wrapper_profile",
+        "project_file_sha256",
+        "project_file_size_bytes",
+        "document_sha256",
+        "document_size_bytes",
+        "source_sha256",
+        "source_size_bytes",
+        "identity_manifest_name",
+        "identity_manifest_sha256",
+        "identity_manifest_size_bytes",
+    ):
+        metadata.pop(field, None)
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    Path(wrapper["identity_manifest_path"]).unlink()
+    return {
+        "spec": spec,
+        "source_path": source_path.resolve(),
+        "revision_path": revision_path.resolve(),
+        "wrapper": wrapper,
+    }
 
 
 class FakeGuiBackend:
@@ -378,6 +443,32 @@ class StartupDialogWindowsFakeGuiBackend(SameWindowWindowsFakeGuiBackend):
     def open_file_in_existing_window(self, window: WindowInfo, path: Path) -> dict:
         self.dialogs = []
         return super().open_file_in_existing_window(window, path)
+
+
+class MultipleWindowsWindowsFakeGuiBackend(SameWindowWindowsFakeGuiBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.extra_window = WindowInfo(
+            handle=206,
+            title="other_project - Materials Studio",
+            pid=5566,
+            rect=(40, 40, 940, 740),
+            is_visible=True,
+            is_minimized=False,
+            is_foreground=False,
+        )
+
+    def list_processes(self) -> list[ProcessInfo]:
+        return [
+            ProcessInfo(name="MatStudio.exe", pid=self.window.pid or 2233),
+            ProcessInfo(name="MatStudio.exe", pid=self.extra_window.pid or 5566),
+        ]
+
+    def list_windows(self, pid: int | None = None) -> list[WindowInfo]:
+        windows = [self.window, self.extra_window]
+        if pid is None:
+            return windows
+        return [window for window in windows if window.pid == pid]
 
 
 class NewWindowAfterOpenFakeGuiBackend(FakeGuiBackend):
@@ -3372,6 +3463,10 @@ def test_gui_current_revision_requires_strong_wrapper_integrity(
     assert "target_wrapper_identity_unverified" in status[
         "single_window_violation_reasons"
     ]
+    assert status["legacy_wrapper_recovery_ready"] is False
+    assert status["window_management"]["legacy_wrapper_recovery"][
+        "detected"
+    ] is False
     with pytest.raises(GuiError, match="target_wrapper_integrity_unverified"):
         controller.snapshot(
             label="tampered",
@@ -3543,6 +3638,195 @@ def test_gui_legacy_wrapper_requires_independent_revision_state_binding(
     assert "wrapper_revision_state_binding_invalid" in untrusted_metadata[
         "wrapper_integrity_reason_codes"
     ]
+
+
+def test_gui_legacy_wrapper_recovery_replaces_exact_window_with_verified_v3(
+    tmp_path: Path,
+) -> None:
+    backend = SameWindowWindowsFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    project_id = "legacy_crystal_recovery"
+    revision = 0
+    fixture = _create_legacy_crystal_wrapper(
+        controller,
+        project_id=project_id,
+        revision=revision,
+    )
+    wrapper = fixture["wrapper"]
+    original_window = WindowInfo(
+        handle=754,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    backend.window = original_window
+
+    status = controller.status(project_id=project_id, revision=revision)
+    recovery = status["window_management"]["legacy_wrapper_recovery"]
+
+    assert status["status"] == "legacy_wrapper_recovery_required"
+    assert status["current_revision_loaded"] is False
+    assert status["legacy_wrapper_recovery_ready"] is True
+    assert recovery["detected"] is True
+    assert recovery["eligible"] is True
+    assert recovery["structure_artifact_validation"]["status"] == "matched"
+    assert recovery["safe_to_treat_as_loaded"] is False
+    assert recovery["automatic_adoption_allowed"] is False
+    assert recovery["payload_hint"] == {
+        "structure_path": str(fixture["source_path"]),
+        "project_id": project_id,
+        "revision": revision,
+        "take_snapshot": True,
+        "export_view_audit": True,
+        "reuse_existing_window_only": True,
+        "recover_legacy_wrapper": True,
+        "fit_to_view_after_open": False,
+        "prepare_view_replay_after_open": False,
+        "working_dir": str(tmp_path.resolve()),
+    }
+
+    with pytest.raises(GuiError, match="target_wrapper_identity_unverified"):
+        controller.open_structure(
+            fixture["source_path"],
+            project_id=project_id,
+            revision=revision,
+            take_snapshot=False,
+        )
+    assert backend.same_window_opened == []
+
+    opened = controller.open_structure(
+        fixture["source_path"],
+        project_id=project_id,
+        revision=revision,
+        take_snapshot=False,
+        recover_legacy_wrapper=True,
+    )
+
+    assert opened["legacy_wrapper_recovery_requested"] is True
+    assert opened["legacy_wrapper_recovery_completed"] is True
+    assert opened["post_open_single_window_policy_ok"] is True
+    assert opened["window"]["handle"] == original_window.handle
+    assert opened["window"]["pid"] == original_window.pid
+    assert len(backend.same_window_opened) == 1
+    assert backend.same_window_opened[0][0] == original_window.handle
+    post_metadata = opened["post_open_target_window_resolution"][
+        "target_project_wrapper_metadata"
+    ]
+    assert post_metadata["wrapper_schema_version"] == 3
+    assert post_metadata["wrapper_integrity_verified"] is True
+    assert post_metadata["wrapper_target_identity_verified"] is True
+
+
+def test_gui_legacy_wrapper_recovery_rejects_wrong_source_and_cif_mismatch(
+    tmp_path: Path,
+) -> None:
+    backend = SameWindowWindowsFakeGuiBackend()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    project_id = "legacy_crystal_mismatch"
+    fixture = _create_legacy_crystal_wrapper(
+        controller,
+        project_id=project_id,
+        revision=0,
+    )
+    wrapper = fixture["wrapper"]
+    backend.window = WindowInfo(
+        handle=755,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+    wrong_source = tmp_path / "other.cif"
+    wrong_source.write_bytes(fixture["source_path"].read_bytes())
+
+    with pytest.raises(
+        GuiError,
+        match="legacy_wrapper_recovery_structure_path_mismatch",
+    ):
+        controller.open_structure(
+            wrong_source,
+            project_id=project_id,
+            revision=0,
+            take_snapshot=False,
+            recover_legacy_wrapper=True,
+        )
+
+    tampered_cif = fixture["source_path"].read_text(encoding="utf-8").replace(
+        "Ga1 Ga 0 0 0",
+        "Ga1 Ga 0.1 0 0",
+    )
+    fixture["source_path"].write_text(tampered_cif, encoding="utf-8")
+    Path(wrapper["document_path"]).write_text(tampered_cif, encoding="utf-8")
+    blocked = controller.status(project_id=project_id, revision=0)
+    recovery = blocked["window_management"]["legacy_wrapper_recovery"]
+
+    assert recovery["detected"] is True
+    assert recovery["eligible"] is False
+    assert recovery["structure_artifact_validation"]["status"] == "mismatch"
+    assert "legacy_wrapper_structure_does_not_match_spec" in recovery[
+        "blocking_reasons"
+    ]
+    with pytest.raises(GuiError, match="legacy_wrapper_recovery_not_eligible"):
+        controller.open_structure(
+            fixture["source_path"],
+            project_id=project_id,
+            revision=0,
+            take_snapshot=False,
+            recover_legacy_wrapper=True,
+        )
+    assert backend.same_window_opened == []
+
+
+@pytest.mark.parametrize(
+    ("backend_type", "expected_blocker"),
+    [
+        (
+            MultipleWindowsWindowsFakeGuiBackend,
+            "legacy_wrapper_recovery_requires_global_single_window",
+        ),
+        (
+            StartupDialogWindowsFakeGuiBackend,
+            "legacy_wrapper_recovery_requires_no_open_dialogs",
+        ),
+    ],
+)
+def test_gui_legacy_wrapper_recovery_requires_one_window_and_no_dialogs(
+    tmp_path: Path,
+    backend_type,
+    expected_blocker: str,
+) -> None:
+    backend = backend_type()
+    controller = MaterialsStudioGuiController(tmp_path, backend=backend)
+    project_id = "legacy_crystal_window_gate"
+    fixture = _create_legacy_crystal_wrapper(
+        controller,
+        project_id=project_id,
+        revision=0,
+    )
+    wrapper = fixture["wrapper"]
+    backend.window = WindowInfo(
+        handle=756,
+        title=f"{wrapper['project_name']} - Materials Studio",
+        pid=2233,
+        rect=(0, 0, 900, 700),
+        is_visible=True,
+        is_minimized=False,
+        is_foreground=True,
+    )
+
+    status = controller.status(project_id=project_id, revision=0)
+    recovery = status["window_management"]["legacy_wrapper_recovery"]
+
+    assert recovery["detected"] is True
+    assert recovery["eligible"] is False
+    assert expected_blocker in recovery["blocking_reasons"]
+    assert recovery["payload_hint"] is None
+    assert backend.same_window_opened == []
 
 
 def test_gui_wrapper_title_matching_never_normalizes_project_identity(

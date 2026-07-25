@@ -109,6 +109,29 @@ source/document hashes. Window-title parsing does not normalize spaces or
 punctuation into a generated name. Legacy schema-v2 wrappers use this same
 revision-state gate even though they lack the separate identity manifest.
 
+Older schema-less or schema-v1 wrappers are not trusted as loaded revisions.
+When exactly one Materials Studio process and one primary window exist globally,
+no Materials Studio dialog is open, and the visible wrapper resolves to the
+controller workspace, `material_studio_gui_status` performs a read-only recovery
+audit. The audit requires the exact current immutable `CrystalSpec`, its source
+inside `outputs/rNNN`, byte-identical wrapper document/source files, and a CIF
+round trip whose atom IDs, elements, fractional coordinates, and lattice match
+the spec. A passing receipt uses
+`status="legacy_wrapper_recovery_required"`, keeps
+`safe_to_treat_as_loaded=false`, and returns a directly callable but
+confirmation-required `material_studio_gui_open_structure` payload with
+`recover_legacy_wrapper=true`.
+
+The default open path continues to reject that window. After explicit recovery,
+the controller may activate only the audited HWND, repeats the complete audit,
+opens a newly generated v3 wrapper in that same HWND/PID, and verifies the new
+identity manifest before reporting completion. It never launches MatStudio,
+changes the CIF, or creates a model revision. Recovery is refused for historical
+revisions, molecules, wrong paths, malformed or mismatched CIFs, open dialogs,
+extra processes/windows, workspace mismatches, and damaged v2/v3 wrappers. A
+failed post-open v3 verification is partial failure; preserve the artifacts and
+refresh status rather than treating the old wrapper as current.
+
 Status deliberately separates `wrapper_target_identity_verified` from
 `wrapper_integrity_verified`. Target identity means the exact project window is
 still a trusted destination for reloading that revision. Full integrity also

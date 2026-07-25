@@ -1,6 +1,6 @@
 [project]
 name = "materials-studio-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "FastMCP tools for reproducible Materials Studio modeling, live GUI synchronization, and semiconductor diagnostics."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ ms-mcp-protocol-smoke = "material_studio_mcp_server.protocol_smoke:main"
 ms-mcp-config-doctor = "material_studio_mcp_server.codex_config:main"
 ms-mcp-config-register = "material_studio_mcp_server.codex_registration:main"
 ms-mcp-runtime-deploy = "material_studio_mcp_server.runtime_deployment:main"
+ms-mcp-dashboard = "material_studio_mcp_server.read_only_dashboard:main"
 
 [build-system]
 requires = ["hatchling"]

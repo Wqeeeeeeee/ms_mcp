@@ -30,15 +30,36 @@ _API_OBJECT_BY_TASK: dict[CastepTask, str] = {
     CastepTask.PROJECTED_DENSITY_OF_STATES: "Modules->CASTEP->Energy",
     CastepTask.OPTICS: "Modules->CASTEP->Energy",
     CastepTask.PHONON: "Modules->CASTEP->Energy",
+    CastepTask.FREQUENCY: "Modules->CASTEP->Energy",
+    CastepTask.BAND_STRUCTURE_AND_DOS: "Modules->CASTEP->Energy",
+    CastepTask.CHARGE_DENSITY: "Modules->CASTEP->Energy",
+    CastepTask.DENSITY_DIFFERENCE: "Modules->CASTEP->Energy",
     CastepTask.ELASTIC_CONSTANTS: "Modules->CASTEP->ElasticConstants",
 }
 
-_PROPERTY_SETTING_BY_TASK: dict[CastepTask, tuple[str, str]] = {
-    CastepTask.BAND_STRUCTURE: ("CalculateBandStructure", "Dispersion"),
-    CastepTask.DENSITY_OF_STATES: ("CalculateDOS", "Full"),
-    CastepTask.PROJECTED_DENSITY_OF_STATES: ("CalculateDOS", "Partial"),
-    CastepTask.OPTICS: ("CalculateOptics", "Full"),
-    CastepTask.PHONON: ("CalculatePhononDispersion", "Dispersion"),
+_PROPERTY_SETTINGS_BY_TASK: dict[
+    CastepTask,
+    tuple[tuple[str, str], ...],
+] = {
+    CastepTask.BAND_STRUCTURE: (("CalculateBandStructure", "Dispersion"),),
+    CastepTask.DENSITY_OF_STATES: (("CalculateDOS", "Full"),),
+    CastepTask.PROJECTED_DENSITY_OF_STATES: (("CalculateDOS", "Partial"),),
+    CastepTask.OPTICS: (("CalculateOptics", "Full"),),
+    CastepTask.PHONON: (("CalculatePhononDispersion", "Dispersion"),),
+    CastepTask.FREQUENCY: (
+        ("CalculatePhononDOS", "Full"),
+        ("CalculatePhononDispersion", "DispersionAndDos"),
+    ),
+    CastepTask.BAND_STRUCTURE_AND_DOS: (
+        ("CalculateBandStructure", "DispersionAndDos"),
+        ("CalculateDOS", "Full"),
+    ),
+    CastepTask.CHARGE_DENSITY: (
+        ("CalculateChargeDensity", "FieldAndIsosurface"),
+    ),
+    CastepTask.DENSITY_DIFFERENCE: (
+        ("CalculateDensityDifference", "FieldAndIsosurface"),
+    ),
 }
 
 _STRUCTURED_EXECUTION_TOOL_BY_TASK: dict[CastepTask, str] = {
@@ -48,6 +69,15 @@ _STRUCTURED_EXECUTION_TOOL_BY_TASK: dict[CastepTask, str] = {
     CastepTask.DENSITY_OF_STATES: "material_studio_castep_run_current",
     CastepTask.PROJECTED_DENSITY_OF_STATES: "material_studio_castep_run_current",
 }
+
+CASTEP_PREVIEW_ONLY_TASKS = frozenset(
+    {
+        CastepTask.FREQUENCY,
+        CastepTask.BAND_STRUCTURE_AND_DOS,
+        CastepTask.CHARGE_DENSITY,
+        CastepTask.DENSITY_DIFFERENCE,
+    }
+)
 
 _PERL_SCALAR = re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -59,7 +89,13 @@ class CastepMaterialScriptPlan:
     task: CastepTask
     api_object: str
     settings: tuple[tuple[str, str | int | float], ...]
-    property_setting: tuple[str, str] | None
+    property_settings: tuple[tuple[str, str], ...]
+
+    @property
+    def property_setting(self) -> tuple[str, str] | None:
+        """Return the first property flag for compatibility with v1 callers."""
+
+        return self.property_settings[0] if self.property_settings else None
 
     @property
     def run_method(self) -> str:
@@ -78,6 +114,14 @@ class CastepMaterialScriptPlan:
                 if self.property_setting is not None
                 else None
             ),
+            "property_settings": [
+                {"name": name, "value": value}
+                for name, value in self.property_settings
+            ],
+            "structured_execution_supported": (
+                self.task in _STRUCTURED_EXECUTION_TOOL_BY_TASK
+            ),
+            "preview_only": self.task in CASTEP_PREVIEW_ONLY_TASKS,
             "materials_studio_api_contract": CASTEP_MATERIALSCRIPT_CONTRACT,
         }
 
@@ -193,15 +237,14 @@ def build_castep_materialscript_plan(spec: CastepEnergySpec) -> CastepMaterialSc
             ("DOSPreferredIntegrationMethod", spec.dos_integration_method.value)
         )
 
-    property_setting = _PROPERTY_SETTING_BY_TASK.get(task)
-    if property_setting is not None:
-        settings.append(property_setting)
+    property_settings = _PROPERTY_SETTINGS_BY_TASK.get(task, ())
+    settings.extend(property_settings)
 
     return CastepMaterialScriptPlan(
         task=task,
         api_object=_API_OBJECT_BY_TASK[task],
         settings=tuple(settings),
-        property_setting=property_setting,
+        property_settings=property_settings,
     )
 
 

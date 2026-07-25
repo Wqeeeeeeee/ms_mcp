@@ -16,6 +16,12 @@ from .common import (
     Vector3,
 )
 from .crystal import BasisAtomSpec, CrystalOperation, CrystalSpec, LatticeSpec
+from .dmol3 import (
+    DMol3GeometryOptimizationSpec,
+    DMol3Quality,
+    DMol3TheoryLevel,
+    DMol3YesNo,
+)
 from .forcite import ForciteDynamicsSpec, ForciteOptimizationSpec
 from .castep import (
     CastepCellOptimization,
@@ -55,6 +61,10 @@ __all__ = [
     "CastepTask",
     "CrystalOperation",
     "CrystalSpec",
+    "DMol3GeometryOptimizationSpec",
+    "DMol3Quality",
+    "DMol3TheoryLevel",
+    "DMol3YesNo",
     "EnergyValue",
     "ExecutionMode",
     "FileRef",

@@ -30,6 +30,12 @@ from .castep_native import (
 )
 from .cif import parse_crystal_cif, validate_crystal_cif_against_spec
 from .copy_script import analyze_reviewed_copy_script
+from .dmol3_log import (
+    DMol3GeometryResultPayload,
+    DMol3OptimizedAtom,
+    DMol3ResultDocuments,
+    validate_dmol3_geometry_result,
+)
 from .forcite_log import parse_forcite_convergence
 from .structure_summary import parse_structure_summary
 from .tagged_json import NEW_JSON_BEGIN, NEW_JSON_END, extract_any_tagged_json
@@ -42,6 +48,9 @@ __all__ = [
     "parse_castep_energy",
     "CASTEP_ELECTRONIC_RESULT_SCHEMA",
     "CastepElectronicResultPayload",
+    "DMol3GeometryResultPayload",
+    "DMol3OptimizedAtom",
+    "DMol3ResultDocuments",
     "CastepBandKPoint",
     "CastepBandsData",
     "audit_castep_native_artifacts",
@@ -62,6 +71,7 @@ __all__ = [
     "parse_structure_summary",
     "validate_crystal_cif_against_spec",
     "validate_castep_geometry_result",
+    "validate_dmol3_geometry_result",
     "write_castep_band_eigenvalues_csv",
     "write_castep_gaussian_dos_csv",
 ]

@@ -61,6 +61,10 @@
         "ProjectedDensityOfStates",
         "Optics",
         "Phonon",
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
         "ElasticConstants"
       ],
       "title": "CastepTask",

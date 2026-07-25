@@ -122,6 +122,44 @@ CASTEP 计算仍需单独明确确认：
 k 点间距 0.04，不执行。
 ```
 
+## 新增能力（v0.3）
+
+本次变更新增 8 个公共工具，协议发现总数为 49：
+
+- `material_studio_cif_source_search`：预览或执行有边界的 COD 检索。
+- `material_studio_cif_source_ingest`：逐跳校验 HTTPS、DNS 和重定向，
+  保存内容寻址的 CIF 与 provenance；导入时绑定 `FileRef` SHA-256，
+  在 MaterialsScript 中复核摘要，再通过结构化 revision 导入。
+- `material_studio_dmol3_relax_current`：默认预览；仅当 DMol³
+  GeometryOptimization 收敛且原子 ID/元素保持一致时创建新 revision。
+- `material_studio_remote_castep_prepare`、`material_studio_remote_job_record`
+  和 `material_studio_remote_job_status`：生成不可变 CASTEP 交接包并记录外部
+  scheduler 证据；execute 必须回传同一次 preview 的 manifest SHA-256，
+  本服务不会运行 SSH、shell 或远程 scheduler。
+- `material_studio_workspace_snapshot` 与
+  `material_studio_workspace_artifact_read`：只读、限量、拒绝路径穿越与链接逃逸
+  的 workspace 浏览。
+- `ms-mcp-dashboard`：仅绑定 loopback、仅支持 GET/HEAD 的只读本地仪表板。
+
+四个新增 CASTEP 预设 `Frequency`、`BandStructureAndDOS`、
+`ChargeDensity` 和 `DensityDifference` 已有经过审查的 MS 20.1 脚本映射，
+但仍为 preview-only；在结果契约和晋升验证完成前不会被标记为可执行。
+
+无 GUI 实测已完成 COD `1009001` 的在线获取和 MS 20.1 XSD 导入，以及
+water 的 DMol³ Coarse/LDA（`charts=Yes`）收敛优化与 `r000` → `r001`
+晋升。四个新增 CASTEP 预设没有运行计算；远程交接验收也只验证本地不可变
+manifest 和事件日志，没有运行 SSH、scheduler 或提交任务。整个验收过程没有
+操作 Materials Studio GUI。
+
+完整的 33 项能力与安全取舍见
+[DrYe1109/MS-MCP capability absorption matrix](docs/dr_ye_capability_absorption.md)。
+
+启动只读仪表板：
+
+```powershell
+.\.venv\Scripts\ms-mcp-dashboard.exe --workspace workspace --host 127.0.0.1 --port 4877
+```
+
 ## 安全策略
 
 - 新建模和计算默认 `execution_mode="preview"`。
@@ -129,6 +167,9 @@ k 点间距 0.04，不执行。
 - 多窗口或目标窗口不明确时拒绝 GUI 操作。
 - 回滚创建新 revision，不删除历史。
 - 失败、未收敛或证据不完整的计算不会提升为成功 revision。
+- 结构化输出路径被限制在对应 revision/计算目录内，绝对路径和路径穿越会在
+  runner 启动前被拒绝。
+- workspace 读取有大小和类型上限，并拒绝链接/reparse-point 逃逸。
 - GUI 可见不等于模型正常，模型正常也不等于已经可以计算。
 
 ## 开发验证

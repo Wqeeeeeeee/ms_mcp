@@ -558,6 +558,10 @@
         "ProjectedDensityOfStates",
         "Optics",
         "Phonon",
+        "Frequency",
+        "BandStructureAndDOS",
+        "ChargeDensity",
+        "DensityDifference",
         "ElasticConstants"
       ],
       "title": "CastepTask",
@@ -622,6 +626,91 @@
       "title": "CrystalSpec",
       "type": "object"
     },
+    "DMol3GeometryOptimizationSpec": {
+      "additionalProperties": false,
+      "description": "Strict settings for ``Modules->DMol3->GeometryOptimization``.\n\nThe model intentionally exposes only reviewed Materials Studio 20.1\nsettings. In particular, it has no arbitrary ``extraSettings`` escape\nhatch.",
+      "properties": {
+        "module": {
+          "const": "DMol3",
+          "default": "DMol3",
+          "title": "Module",
+          "type": "string"
+        },
+        "task": {
+          "const": "GeometryOptimization",
+          "default": "GeometryOptimization",
+          "title": "Task",
+          "type": "string"
+        },
+        "quality": {
+          "$ref": "#/$defs/DMol3Quality",
+          "default": "Medium"
+        },
+        "theory_level": {
+          "$ref": "#/$defs/DMol3TheoryLevel",
+          "default": "GGA"
+        },
+        "geometry_optimization_quality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DMol3Quality"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "charge": {
+          "default": 0,
+          "maximum": 1000,
+          "minimum": -1000,
+          "title": "Charge",
+          "type": "integer"
+        },
+        "use_symmetry": {
+          "$ref": "#/$defs/DMol3YesNo",
+          "default": "No"
+        },
+        "create_energy_evolution_chart": {
+          "$ref": "#/$defs/DMol3YesNo",
+          "default": "Yes"
+        }
+      },
+      "title": "DMol3GeometryOptimizationSpec",
+      "type": "object"
+    },
+    "DMol3Quality": {
+      "description": "Reviewed Materials Studio 20.1 DMol3 quality presets.",
+      "enum": [
+        "Coarse",
+        "Medium",
+        "Fine"
+      ],
+      "title": "DMol3Quality",
+      "type": "string"
+    },
+    "DMol3TheoryLevel": {
+      "description": "Theory levels documented for the MS 20.1 DMol3 task.",
+      "enum": [
+        "LDA",
+        "GGA",
+        "Hybrid",
+        "m-GGA",
+        "HF"
+      ],
+      "title": "DMol3TheoryLevel",
+      "type": "string"
+    },
+    "DMol3YesNo": {
+      "description": "Exact MaterialsScript toggle strings.",
+      "enum": [
+        "Yes",
+        "No"
+      ],
+      "title": "DMol3YesNo",
+      "type": "string"
+    },
     "DynamicsEnsemble": {
       "description": "动力学系综枚举。",
       "enum": [
@@ -652,6 +741,19 @@
           ],
           "default": null,
           "title": "Role"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
         }
       },
       "required": [
@@ -1134,6 +1236,9 @@
         },
         {
           "$ref": "#/$defs/CastepEnergySpec"
+        },
+        {
+          "$ref": "#/$defs/DMol3GeometryOptimizationSpec"
         },
         {
           "type": "null"

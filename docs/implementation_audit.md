@@ -58,11 +58,65 @@ Two verified points yield pairwise sensitivity evidence; three are required for 
 
 CASTEP geometry-optimization and electronic-result hot-loads now share the structured post-hotload framing and replay-preparation contract. Both direct tools expose `fit_to_view_after_open` and `prepare_view_replay_after_open`; preview returns GUI-inert request receipts. Execute performs Fit-to-View only after the immutable promoted/recorded revision is loaded into the verified single existing window, then releases the GUI artifact/report transaction before preparing the exact result-revision replay manifest. Natural-language CASTEP orchestration injects the view and normality intent before report publication. Replay preparation remains non-mutating, does not create another revision, and does not rewrite the already published modeling report.
 
+## Absorbed DrYe1109/MS-MCP Capabilities
+
+The exact 33-tool comparison and disposition is recorded in
+`docs/dr_ye_capability_absorption.md`. This change preserves the structured
+revision, execution-attempt, and GUI-evidence architecture while adding eight
+public tools, bringing protocol discovery to 49:
+
+- secure preview-first COD search and content-addressed CIF ingestion;
+- strict molecule/singlet DMol3 geometry optimization with convergence and
+  atom-identity gates before revision promotion;
+- immutable, preview/revision/hash-bound remote CASTEP bundle preparation plus a
+  hash-linked local journal for externally observed submission/status evidence;
+  and
+- bounded read-only workspace snapshots/artifact reads shared with a
+  loopback-only GET/HEAD dashboard.
+
+The arbitrary shared GUI script queue, caller-written "current document"
+state, lockless JSON updates, raw settings maps, SSH shell probes, and
+in-place GUI mutations from the compared project were deliberately rejected.
+`Frequency`, `BandStructureAndDOS`, `ChargeDensity`, and `DensityDifference`
+have reviewed Materials Studio 20.1 property mappings but remain
+companion-preview-only until dedicated result validation and promotion
+contracts exist.
+
+## No-GUI Acceptance Evidence
+
+- A live fetch of COD `1009001` produced source SHA-256
+  `9ee5b49616a5d5cbc03740e36d65b4cff9c8dc8df1bd4530c97aaf7603e88225`.
+  The import plan carried that exact `FileRef` digest; generated
+  MaterialsScript used `Digest::SHA`, staged `in.cif` with exclusive-create
+  semantics, and rehashed the source after import. The real Materials Studio
+  20.1 runner produced an XSD successfully.
+- A real MS 20.1 DMol3 water optimization used Coarse quality, LDA, and
+  `charts=Yes`. It converged and promoted `r000` to `r001` with total energy
+  `-47602.3425319718` kcal/mol. The three XSD atom tokens matched with maximum
+  coordinate delta `0`, the report passed verification, and the native chart
+  documents were `in Energies` and `in Convergence`.
+- Public calls for `Frequency`, `BandStructureAndDOS`, `ChargeDensity`, and
+  `DensityDifference` were tested only as previews behind fail-fast
+  runner/materializer/GUI sentinels. No CASTEP calculation was performed.
+- The local remote-handoff lifecycle verified a manifest whose SHA-256 begins
+  `c7b493` and a consistent journal. It performed no SSH, scheduler invocation,
+  remote polling, or job submission.
+- The dashboard was exercised as a source subprocess over loopback read-only
+  routes. Bounded workspace reads, method/Host rejection, preview filesystem
+  purity, and unchanged workspace state were checked conservatively; packaging
+  and wheel results are reported by the release validation rather than inferred
+  here.
+
+No acceptance step drove or modified the Materials Studio GUI. New structured
+output paths are confined to their assigned calculation/revision directories:
+absolute and traversal overrides are rejected before runner execution. The
+workspace readers remain bounded and reject links/reparse-point escapes.
+
 ## Risks And Gaps
 
 `material_studio_run_script` remains intentionally powerful and risky because it executes arbitrary user-supplied Perl. Structured tools now default to preview and validate generated scripts before execution. Crystal lattice construction remains conservative because local Copy Script output should be trusted over guessed API calls.
 
-CASTEP remains an external licensed calculation backend. Unit and protocol tests use fake runners, strict native-file fixtures, and preview calls; they prove transaction, parsing, result recording, derived-file binding, diagnostics, and single-window gating without proving a particular local pseudopotential, queue, license, production band/DOS result, or scientific convergence setup. A read-only installed `.castep` example validates the parser shape, but this increment does not run CASTEP.
+CASTEP remains an external licensed calculation backend. Unit and protocol tests use fake runners, strict native-file fixtures, and preview calls; they prove transaction, parsing, result recording, derived-file binding, diagnostics, and single-window gating without proving a particular local pseudopotential, queue, license, production band/DOS result, or scientific convergence setup. A read-only installed `.castep` example validates the parser shape, but this increment does not run CASTEP. The licensed execution evidence above is DMol3 only and must not be generalized into a CASTEP result claim.
 
 ## Migration
 

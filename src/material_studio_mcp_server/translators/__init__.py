@@ -8,14 +8,22 @@ from .castep_to_perl import (
     render_castep_electronic_script,
     render_castep_geometry_optimization_script,
 )
+from .dmol3_to_perl import (
+    dmol3_calculation_preview_metadata,
+    render_dmol3_geometry_optimization_script,
+    render_dmol3_task_script,
+)
 from .project_to_perl import GeneratedScript, planned_output_file, render_model_to_perl
 
 __all__ = [
     "GeneratedScript",
     "crystal_cif_summary",
+    "dmol3_calculation_preview_metadata",
     "planned_output_file",
     "render_castep_electronic_script",
     "render_castep_geometry_optimization_script",
+    "render_dmol3_geometry_optimization_script",
+    "render_dmol3_task_script",
     "render_model_to_perl",
     "write_crystal_cif",
 ]

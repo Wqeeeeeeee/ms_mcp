@@ -265,6 +265,7 @@ class FileRef(StrictModel):
 
     path: str = Field(min_length=1)
     role: str | None = None
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("path")
     @classmethod

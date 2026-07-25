@@ -61,6 +61,7 @@ VIEW_REPLAY_BASE_RECIPE_SCHEMA_VERSION = 4
 VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
 CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION = 5
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 8
+GUI_BACKEND_ENV = "MATERIAL_STUDIO_MCP_GUI_BACKEND"
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -2885,7 +2886,12 @@ class MaterialsStudioGuiController:
         self.workspace_root = Path(workspace_root).expanduser().resolve() if workspace_root else default_workspace_root()
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.trusted_wrapper_workspace_roots = _trusted_wrapper_workspace_roots(self.workspace_root)
-        self.backend = backend or (WindowsGuiBackend() if os.name == "nt" else NullGuiBackend())
+        if backend is not None:
+            self.backend = backend
+        elif os.environ.get(GUI_BACKEND_ENV, "").strip().lower() == "null":
+            self.backend = NullGuiBackend()
+        else:
+            self.backend = WindowsGuiBackend() if os.name == "nt" else NullGuiBackend()
         self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend(
             window_capture_fn=_capture_window_bmp,
         )

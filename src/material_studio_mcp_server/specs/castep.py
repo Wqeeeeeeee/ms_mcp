@@ -61,9 +61,25 @@ class CastepDosIntegrationMethod(str, Enum):
     INTERPOLATION = "Interpolation"
 
 
+class CastepSpinTreatment(str, Enum):
+    """Spin treatments documented by Materials Studio 20.1."""
+
+    NON_POLARIZED = "Non-polarized"
+    COLLINEAR = "Collinear"
+    NON_COLLINEAR = "Non-collinear"
+
+
 CASTEP_DIPOLE_CORRECTION_API_PROPERTY = "DipoleCorrection"
 CASTEP_DIPOLE_CORRECTION_API_CONTRACT = "Materials Studio 20.1 CASTEP DipoleCorrection"
 CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM = 8.0
+CASTEP_TOTAL_CHARGE_API_PROPERTY = "Charge"
+CASTEP_SPIN_TREATMENT_API_PROPERTY = "SpinTreatment"
+CASTEP_USE_FORMAL_SPIN_API_PROPERTY = "UseFormalSpin"
+CASTEP_INITIAL_SPIN_API_PROPERTY = "InitialSpin"
+CASTEP_OPTIMIZE_TOTAL_SPIN_API_PROPERTY = "OptimizeTotalSpin"
+CASTEP_CHARGE_SPIN_API_CONTRACT = (
+    "Materials Studio 20.1 CASTEP Energy/GeometryOptimization settings"
+)
 
 
 def _normalized_task_token(value: str) -> str:
@@ -206,6 +222,14 @@ def normalize_castep_dos_integration_method(value: Any) -> CastepDosIntegrationM
     )  # type: ignore[return-value]
 
 
+def normalize_castep_spin_treatment(value: Any) -> CastepSpinTreatment:
+    return _normalize_documented_enum(
+        value,
+        enum_type=CastepSpinTreatment,
+        label="CASTEP spin treatment",
+    )  # type: ignore[return-value]
+
+
 CastepCellOptimizationValue = Annotated[
     CastepCellOptimization,
     BeforeValidator(normalize_castep_cell_optimization),
@@ -217,6 +241,10 @@ CastepOptimizationAlgorithmValue = Annotated[
 CastepDosIntegrationMethodValue = Annotated[
     CastepDosIntegrationMethod,
     BeforeValidator(normalize_castep_dos_integration_method),
+]
+CastepSpinTreatmentValue = Annotated[
+    CastepSpinTreatment,
+    BeforeValidator(normalize_castep_spin_treatment),
 ]
 
 
@@ -234,6 +262,11 @@ class CastepEnergySpec(StrictModel):
     task: CastepTaskValue = CastepTask.ENERGY
     functional: str = Field(default="PBE", min_length=1, max_length=100)
     quality: str = Field(default="Medium", min_length=1, max_length=100)
+    total_charge: int | None = Field(default=None, ge=-9999, le=9999)
+    spin_treatment: CastepSpinTreatmentValue | None = None
+    use_formal_spin: bool | None = None
+    initial_spin: int | None = Field(default=None, ge=-9999, le=9999)
+    optimize_total_spin: bool | None = None
     cutoff_energy_ev: int | None = Field(default=None, ge=1, le=100_000)
     kpoint_separation: float | None = Field(default=None, gt=0, le=10)
     kpoints: tuple[int, int, int] | None = None
@@ -279,6 +312,33 @@ class CastepEnergySpec(StrictModel):
     def validate_kpoints(self) -> "CastepEnergySpec":
         """Require one documented primary k-point derivation mode."""
 
+        spin_controls = {
+            "use_formal_spin": self.use_formal_spin,
+            "initial_spin": self.initial_spin,
+            "optimize_total_spin": self.optimize_total_spin,
+        }
+        supplied_spin_controls = [
+            name for name, value in spin_controls.items() if value is not None
+        ]
+        if supplied_spin_controls and self.spin_treatment is None:
+            raise ValueError(
+                "CASTEP spin controls require an explicit spin_treatment: "
+                + ", ".join(supplied_spin_controls)
+            )
+        if self.spin_treatment is CastepSpinTreatment.NON_POLARIZED:
+            if self.initial_spin not in {None, 0}:
+                raise ValueError(
+                    "Non-polarized CASTEP calculations cannot request nonzero initial_spin"
+                )
+            if self.use_formal_spin is not None or self.optimize_total_spin is not None:
+                raise ValueError(
+                    "Non-polarized CASTEP calculations cannot set spin-only controls"
+                )
+        if self.use_formal_spin is True and self.initial_spin is not None:
+            raise ValueError(
+                "UseFormalSpin=Yes obtains initial atomic spins from the structure; "
+                "do not also set initial_spin"
+            )
         if self.kpoints is not None and any(value <= 0 for value in self.kpoints):
             raise ValueError("k-point grid values must be positive integers")
         if self.kpoints is not None and self.kpoint_separation is not None:

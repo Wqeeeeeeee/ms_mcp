@@ -48,7 +48,12 @@ def validate_materialscript(script: str) -> dict[str, object]:
     }
 
 
-def import_export_script(source_file: str | Path, output_file: str | Path) -> str:
+def import_export_script(
+    source_file: str | Path,
+    output_file: str | Path,
+    *,
+    visual_output_file: str | Path | None = None,
+) -> str:
     """创建导入一个文档并导出它的脚本。
 
     参数:
@@ -58,18 +63,78 @@ def import_export_script(source_file: str | Path, output_file: str | Path) -> st
     返回:
         生成的 Perl 脚本
     """
+    visual_output = "" if visual_output_file is None else str(visual_output_file)
+    visual_requested = 0 if visual_output_file is None else 1
     return (
         SCRIPT_HEADER
         + _json_escape_sub()
         + f"""my $source = {perl_string(source_file)};
 my $output = {perl_string(output_file)};
+my $visual_output = {perl_string(visual_output)};
 my $doc = Documents->Import($source);
 $doc->Export($output);
+
+my $visual_requested = {visual_requested};
+my $calculate_bonds_ok = 0;
+my $visual_export_ok = 0;
+my $visual_atom_count = -1;
+my $calculated_bond_count = -1;
+my $unit_cell_bond_count = -1;
+my $calculate_error = "";
+my $visual_export_error = "";
+
+if ($visual_requested) {{
+    {{
+        local $@;
+        my $ok = eval {{
+            $visual_atom_count = $doc->UnitCell->Atoms->Count;
+            my $calculated_bonds = $doc->CalculateBonds(Settings(
+                MinBondLength => 0.60,
+                MaxBondLength => 1.15
+            ));
+            $calculated_bond_count = $calculated_bonds->Count;
+            $unit_cell_bond_count = $doc->UnitCell->Bonds->Count;
+            1;
+        }};
+        if ($ok) {{
+            $calculate_bonds_ok = 1;
+        }} else {{
+            $calculate_error = "$@";
+        }}
+    }}
+    if ($calculate_bonds_ok) {{
+        {{
+            local $@;
+            my $ok = eval {{
+                $doc->Export($visual_output);
+                1;
+            }};
+            if ($ok) {{
+                $visual_export_ok = 1;
+            }} else {{
+                $visual_export_error = "$@";
+            }}
+        }}
+    }}
+}}
+
 print "{JSON_BEGIN}\\n";
 print "{{";
 print "\\\"source\\\":\\\"" . json_escape($source) . "\\\",";
 print "\\\"output\\\":\\\"" . json_escape($output) . "\\\",";
-print "\\\"document_name\\\":\\\"" . json_escape($doc->Name) . "\\\"";
+print "\\\"document_name\\\":\\\"" . json_escape($doc->Name) . "\\\",";
+print "\\\"visual_bonded\\\":{{";
+print "\\\"requested\\\":$visual_requested,";
+print "\\\"output\\\":\\\"" . json_escape($visual_output) . "\\\",";
+print "\\\"criteria\\\":{{\\\"min_bond_length\\\":0.60,\\\"max_bond_length\\\":1.15}},";
+print "\\\"calculate_bonds_ok\\\":$calculate_bonds_ok,";
+print "\\\"visual_export_ok\\\":$visual_export_ok,";
+print "\\\"atom_count\\\":$visual_atom_count,";
+print "\\\"calculated_bond_count\\\":$calculated_bond_count,";
+print "\\\"unit_cell_bond_count\\\":$unit_cell_bond_count,";
+print "\\\"calculate_error\\\":\\\"" . json_escape($calculate_error) . "\\\",";
+print "\\\"export_error\\\":\\\"" . json_escape($visual_export_error) . "\\\"";
+print "}}";
 print "}}\\n";
 print "{JSON_END}\\n";
 """
@@ -295,6 +360,11 @@ def castep_energy_script(
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None = None,
+    total_charge: int | None = None,
+    spin_treatment: str | None = None,
+    use_formal_spin: bool | None = None,
+    initial_spin: int | None = None,
+    optimize_total_spin: bool | None = None,
     dipole_correction: str | None = None,
     max_iterations: int | None = None,
     displacement_convergence_angstrom: float | None = None,
@@ -323,6 +393,11 @@ def castep_energy_script(
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
+        total_charge=total_charge,
+        spin_treatment=spin_treatment,
+        use_formal_spin=use_formal_spin,
+        initial_spin=initial_spin,
+        optimize_total_spin=optimize_total_spin,
         dipole_correction=dipole_correction,
         max_iterations=max_iterations,
         displacement_convergence_angstrom=displacement_convergence_angstrom,

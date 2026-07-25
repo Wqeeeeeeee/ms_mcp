@@ -6,6 +6,30 @@ GUI hot-load. It imports the revision CIF and exports a fresh CIF through the
 configured `RunMatScript.bat` runner, then compares lattice parameters,
 composition, atom coordinates, and periodic atom identity.
 
+For crystal revisions, the same deterministic script also attempts to produce
+an MS-native visual derivative after the canonical CIF export has completed:
+
+- `CalculateBonds` uses run-only `MinBondLength=0.60` and
+  `MaxBondLength=1.15` settings, so user-level BondCalculation settings are
+  neither read nor changed.
+- The in-memory imported document is modified only after the canonical
+  round-trip CIF is exported. The source CIF is never modified.
+- The visual artifact remains inside the unique
+  `ms_roundtrip/<attempt_id>` directory and is never a structure source of
+  truth or calculation input.
+- A valid receipt binds its path and SHA-256, the canonical source path and
+  SHA-256, XSD root element, tagged atom and bond counts, and the fixed bond
+  criteria. Positive tagged bond counts must also correspond to XSD `Bond`
+  elements.
+- Only a `ready` artifact with `gui_hotload_candidate=true` is selected for
+  GUI hot-loading. Missing, zero-bond, malformed, escaped, symlinked, stale, or
+  hash-mismatched XSD artifacts fall back to the canonical CIF.
+
+`CalculateBonds` or visual XSD export failure is intentionally non-fatal to a
+successful CIF round-trip. It appears under `visual_bonded_artifact` and as a
+top-level warning. A runner failure, missing canonical CIF, invalid tagged
+core summary, or failed CIF comparison remains fatal.
+
 The audit is deliberately bounded:
 
 - Preview only creates a plan. It does not call Materials Studio, inspect the
@@ -22,13 +46,18 @@ The audit is deliberately bounded:
   or a violation of the single-window policy fails the audit.
 - The source CIF is hash-checked before and after execution. The generated
   import/export script and tagged JSON summary are bound to the exact source
-  and output paths.
+  and output paths. The path budget also covers the visual XSD.
 
 The receipt is stored in `outputs/rNNN/result_metadata.json` and the audit run
 directory. It is surfaced in `modeling_report`, `modeling_health`, compact
 responses, and live project status. Important fields include
 `real_materials_studio_status`, `source_unchanged`, `gui_invariant`, and
-`comparison`.
+`comparison`. `visual_bonded_artifact` describes the optional visual derivative,
+while `gui_hotload_structure_selection` records whether the GUI received the
+verified XSD or the canonical-CIF fallback. The latter always retains the CIF
+as both `structure_truth_path` and `calculation_input_path`. Visual-only
+validation failures may fall back; canonical-CIF identity failure or loss of a
+required round-trip receipt is fail-closed and prevents GUI open.
 
 This is an artifact and execution-integrity check. It does not run Energy,
 CASTEP, Forcite, geometry optimization, or any other calculation, and

@@ -22,6 +22,31 @@ def test_import_export_script_uses_materialscript() -> None:
     assert "$doc->Export" in script
 
 
+def test_import_export_script_generates_visual_bonded_xsd_after_canonical_export() -> None:
+    script = import_export_script(
+        r"C:\in.cif",
+        r"C:\roundtrip.cif",
+        visual_output_file=r"C:\visual_bonded.xsd",
+    )
+
+    canonical_export = "$doc->Export($output);"
+    calculate_bonds = "$doc->CalculateBonds(Settings("
+    visual_export = "$doc->Export($visual_output);"
+    assert script.index(canonical_export) < script.index(calculate_bonds)
+    assert script.index(calculate_bonds) < script.index(visual_export)
+    assert "MinBondLength => 0.60" in script
+    assert "MaxBondLength => 1.15" in script
+    assert "$doc->UnitCell->Atoms->Count" in script
+    assert "$doc->UnitCell->Bonds->Count" in script
+    assert '"visual_bonded"' not in script
+    assert '\\"visual_bonded\\":{' in script
+    assert script == import_export_script(
+        r"C:\in.cif",
+        r"C:\roundtrip.cif",
+        visual_output_file=r"C:\visual_bonded.xsd",
+    )
+
+
 def test_forcite_script_contains_expected_task() -> None:
     script = forcite_geometry_optimization_script(
         r"C:\in.xsd",

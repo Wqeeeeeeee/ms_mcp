@@ -66,7 +66,7 @@ def test_default_diamond_scenario_and_follow_up_presets() -> None:
     assert "defect diagnostics" in vacancy
 
 
-def test_live_smoke_previews_diamond_nv_center_with_fail_closed_castep(
+def test_live_smoke_previews_bound_diamond_nv_center_with_dilute_supercell(
     tmp_path: Path,
 ) -> None:
     result = live_smoke.run_live_smoke(
@@ -87,7 +87,11 @@ def test_live_smoke_previews_diamond_nv_center_with_fail_closed_castep(
     assert summary["ready_for_calculation"] is False
     assert (
         "semiconductor:defect_charge_spin_backend_unbound"
-        in summary["normality_gate_calculation_only_reasons"]
+        not in summary["normality_gate_calculation_only_reasons"]
+    )
+    assert (
+        "semiconductor:finite_size_or_dilution_warning"
+        not in summary["normality_gate_calculation_only_reasons"]
     )
     assert summary["view_bundle_row_counts"]["semiconductor_defects"] == 1
     assert (
@@ -95,7 +99,7 @@ def test_live_smoke_previews_diamond_nv_center_with_fail_closed_castep(
         == 1
     )
     assert summary["view_bundle_row_counts"]["semiconductor_charge_balance"] == 2
-    assert summary["view_bundle_row_counts"]["view_projections"] == 63
+    assert summary["view_bundle_row_counts"]["view_projections"] == 215
 
 
 def test_default_p_gan_hemt_scenario_and_follow_up_presets() -> None:

@@ -11,7 +11,7 @@ import re
 import subprocess
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from html import unescape
@@ -27,6 +27,8 @@ JSON_END = "__MATERIAL_STUDIO_MCP_JSON_END__"
 
 # 默认作业目录
 DEFAULT_JOBS_DIR = ".material-studio-mcp/jobs"
+MATERIALS_COMPLETION_OK_MARKER = "completion status: (ok)"
+MATERIALS_EXIT_OK_MARKER = "exiting matserver: status ok"
 
 
 class MaterialStudioError(RuntimeError):
@@ -72,6 +74,8 @@ class ScriptRunResult:
     parsed_json: Any | None
     created_files: list[Path]
     duration_seconds: float
+    completion_markers: dict[str, bool] = field(default_factory=dict)
+    success_markers_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """返回 JSON 可序列化的表示。"""
@@ -93,6 +97,8 @@ class ScriptRunResult:
             "parsed_json": self.parsed_json,
             "created_files": [str(path) for path in self.created_files],
             "duration_seconds": self.duration_seconds,
+            "completion_markers": dict(self.completion_markers),
+            "success_markers_required": self.success_markers_required,
         }
 
 
@@ -140,6 +146,7 @@ class MaterialStudioRunner:
         timeout_seconds: int | None = None,
         job_prefix: str = "msjob",
         keep_script_name: str = "script.pl",
+        direct_job_dir: bool = False,
     ) -> ScriptRunResult:
         """将脚本写入隔离的作业目录并启动它。
 
@@ -150,6 +157,7 @@ class MaterialStudioRunner:
             timeout_seconds: 超时时间
             job_prefix: 作业前缀
             keep_script_name: 保存的脚本名称
+            direct_job_dir: 直接使用已创建的空工作目录，不再嵌套 jobs 路径
 
         返回:
             ScriptRunResult 实例
@@ -165,7 +173,11 @@ class MaterialStudioRunner:
             )
 
         # 创建作业目录
-        job_dir = self._create_job_dir(working_dir, job_prefix)
+        job_dir = (
+            self._resolve_direct_job_dir(working_dir)
+            if direct_job_dir
+            else self._create_job_dir(working_dir, job_prefix)
+        )
         before_files = _snapshot_files(job_dir)
         script_path = job_dir / keep_script_name
         script_path.write_text(script, encoding="utf-8")
@@ -205,7 +217,14 @@ class MaterialStudioRunner:
         materials_output = _read_text_if_exists(output_file)
         materials_log = _read_text_if_exists(log_file)
         combined_output = "\n".join(part for part in (stdout, materials_output) if part)
-        success = (not timed_out) and _materials_run_succeeded(return_code, materials_output, materials_log)
+        completion_markers = _materials_completion_markers(materials_output, materials_log)
+        success_markers_required = _requires_success_markers(runner)
+        success = (not timed_out) and _materials_run_succeeded(
+            return_code,
+            materials_output,
+            materials_log,
+            require_success_markers=success_markers_required,
+        )
         created_files = sorted(_snapshot_files(job_dir) - before_files)
 
         return ScriptRunResult(
@@ -225,6 +244,8 @@ class MaterialStudioRunner:
             parsed_json=extract_tagged_json(combined_output),
             created_files=created_files,
             duration_seconds=duration_seconds,
+            completion_markers=completion_markers,
+            success_markers_required=success_markers_required,
         )
 
     def _build_command(self, runner: Path, script_path: Path, args: list[str]) -> list[str]:
@@ -273,6 +294,40 @@ class MaterialStudioRunner:
         safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", job_prefix).strip("._") or "msjob"
         job_dir = jobs_root / f"{safe_prefix}-{stamp}-{uuid.uuid4().hex[:8]}"
         job_dir.mkdir(parents=False, exist_ok=False)
+        return job_dir
+
+    def _resolve_direct_job_dir(self, working_dir: str | Path | None) -> Path:
+        """Validate an already-created empty directory for a confined runner call."""
+
+        if working_dir is None:
+            raise MaterialStudioError(
+                "direct_job_dir=True requires an explicit pre-created working_dir."
+            )
+        raw_path = Path(working_dir).expanduser()
+        if raw_path.is_symlink():
+            raise MaterialStudioError(
+                "The direct Materials Studio job directory cannot be a symlink."
+            )
+        try:
+            job_dir = raw_path.resolve(strict=True)
+        except OSError as exc:
+            raise MaterialStudioError(
+                "The direct Materials Studio job directory must already exist."
+            ) from exc
+        if not job_dir.is_dir():
+            raise MaterialStudioError(
+                "The direct Materials Studio job path must be a directory."
+            )
+        try:
+            has_entries = next(job_dir.iterdir(), None) is not None
+        except OSError as exc:
+            raise MaterialStudioError(
+                "The direct Materials Studio job directory could not be inspected."
+            ) from exc
+        if has_entries:
+            raise MaterialStudioError(
+                "The direct Materials Studio job directory must be empty."
+            )
         return job_dir
 
 
@@ -336,7 +391,32 @@ def _snapshot_files(path: Path) -> set[Path]:
     return {item.resolve() for item in path.rglob("*") if item.is_file()}
 
 
-def _materials_run_succeeded(return_code: int, output: str, log_html: str) -> bool:
+def _materials_completion_markers(output: str, log_html: str) -> dict[str, bool]:
+    """Return explicit MatServer success markers observed in runner artifacts."""
+
+    combined = f"{output}\n{log_html}".casefold()
+    return {
+        "completion_status_ok": MATERIALS_COMPLETION_OK_MARKER in combined,
+        "matserver_exit_status_ok": MATERIALS_EXIT_OK_MARKER in combined,
+    }
+
+
+def _requires_success_markers(runner: Path) -> bool:
+    """Require native MatServer termination evidence for direct RunMatScript calls."""
+
+    return (
+        runner.name.casefold() == "runmatscript.bat"
+        and not os.environ.get("MATERIAL_STUDIO_COMMAND_TEMPLATE")
+    )
+
+
+def _materials_run_succeeded(
+    return_code: int,
+    output: str,
+    log_html: str,
+    *,
+    require_success_markers: bool = False,
+) -> bool:
     """判断 Materials Studio 运行是否成功。
 
     参数:
@@ -349,7 +429,7 @@ def _materials_run_succeeded(return_code: int, output: str, log_html: str) -> bo
     """
     if return_code != 0:
         return False
-    combined = f"{output}\n{log_html}".lower()
+    combined = f"{output}\n{log_html}".casefold()
     failure_markers = (
         "completion status: (fail)",
         "exiting matserver: status failed",
@@ -357,7 +437,11 @@ def _materials_run_succeeded(return_code: int, output: str, log_html: str) -> bo
         "syntax error",
         "execution of -e aborted",
     )
-    return not any(marker in combined for marker in failure_markers)
+    if any(marker in combined for marker in failure_markers):
+        return False
+    if require_success_markers:
+        return all(_materials_completion_markers(output, log_html).values())
+    return True
 
 
 def _html_to_text(value: str) -> str:

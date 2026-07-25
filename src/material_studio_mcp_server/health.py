@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .roundtrip import verify_visual_bonded_hotload_selection
+
 
 def _materials_studio_roundtrip_audit(response: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve the persisted or in-band revision round-trip receipt."""
@@ -554,7 +556,63 @@ def _same_path(left: Any, right: Any) -> bool:
 def _structure_path_matches_current(response: dict[str, Any], candidate: Any, expected: Any) -> bool:
     """Return True for the planned structure or trusted same-revision GUI derivatives."""
 
-    if _same_path(candidate, expected):
+    canonical_path_matches = _same_path(candidate, expected)
+    audit = _materials_studio_roundtrip_audit(response)
+    report = (
+        response.get("modeling_report")
+        if isinstance(response.get("modeling_report"), dict)
+        else {}
+    )
+    project_id = response.get("project_id", report.get("project_id"))
+    revision = response.get(
+        "new_revision",
+        response.get("revision", report.get("revision")),
+    )
+    persisted_selection = (
+        response.get("gui_hotload_structure_selection")
+        if isinstance(
+            response.get("gui_hotload_structure_selection"),
+            dict,
+        )
+        else report.get("gui_hotload_structure_selection")
+        if isinstance(report.get("gui_hotload_structure_selection"), dict)
+        else {}
+    )
+    roundtrip_audit_required = bool(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or report.get("materials_studio_roundtrip_audit_requested") is True
+        or persisted_selection.get("visual_bonded_requested") is True
+    ) and not isinstance(audit, dict)
+    if (
+        project_id is not None
+        and type(revision) is int
+        and (isinstance(audit, dict) or roundtrip_audit_required)
+    ):
+        try:
+            selection = verify_visual_bonded_hotload_selection(
+                audit,
+                canonical_structure_path=Path(str(expected)),
+                project_id=str(project_id),
+                revision=revision,
+                roundtrip_audit_required=roundtrip_audit_required,
+            )
+        except Exception:
+            selection = {}
+        if canonical_path_matches:
+            return bool(
+                selection.get("canonical_verified") is True
+                and selection.get("hotload_allowed") is True
+            )
+        if (
+            selection.get("visual_bonded_verified") is True
+            and selection.get("hotload_allowed") is True
+            and _same_path(
+                candidate,
+                selection.get("selected_structure_path"),
+            )
+        ):
+            return True
+    if canonical_path_matches:
         return True
     return _same_revision_structure_derivative(candidate, expected, response.get("new_revision", response.get("revision")))
 
@@ -583,8 +641,6 @@ def _same_revision_structure_derivative(candidate: Any, expected: Any, revision:
             return False
 
     if candidate_stem == expected_stem:
-        return True
-    if candidate_stem == f"{expected_stem}_visual_bonded":
         return True
     if candidate_stem.startswith(f"{expected_stem}_msimport"):
         return True
@@ -680,6 +736,15 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_backend_spin_binding_status"] = (
             charge_balance.get("backend_spin_binding_status")
         )
+        checks["semiconductor_expected_castep_charge_spin_settings"] = (
+            charge_balance.get("expected_castep_charge_spin_settings")
+        )
+        checks["semiconductor_observed_castep_charge_spin_settings"] = (
+            charge_balance.get("observed_castep_charge_spin_settings")
+        )
+        checks["semiconductor_castep_charge_spin_field_matches"] = (
+            charge_balance.get("castep_charge_spin_field_matches")
+        )
         checks["semiconductor_recommended_spin_treatment"] = charge_balance.get("recommended_spin_treatment")
         checks["semiconductor_charge_balance_next_action"] = charge_balance.get("next_action")
         checks["semiconductor_nominal_dopant_delta_electrons"] = charge_balance.get("nominal_dopant_delta_electrons")
@@ -704,7 +769,7 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         if charge_balance.get("charge_spin_backend_binding_ready") is False:
             warnings.append(
                 "Semiconductor defect charge/spin request is not bound to the "
-                "current CASTEP schema; calculation execution must remain blocked."
+                "exact reviewed CASTEP settings; calculation execution must remain blocked."
             )
 
     calculation = semiconductor.get("calculation_preflight_summary") or {}
@@ -726,6 +791,14 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_calculation_kpoint_mode"] = calculation.get("kpoint_mode")
         checks["semiconductor_calculation_kpoint_separation"] = calculation.get("kpoint_separation")
         checks["semiconductor_calculation_kpoints"] = calculation.get("kpoints")
+        checks["semiconductor_calculation_total_charge"] = calculation.get("total_charge")
+        checks["semiconductor_calculation_spin_treatment"] = calculation.get("spin_treatment")
+        checks["semiconductor_calculation_use_formal_spin"] = calculation.get("use_formal_spin")
+        checks["semiconductor_calculation_initial_spin"] = calculation.get("initial_spin")
+        checks["semiconductor_calculation_optimize_total_spin"] = calculation.get("optimize_total_spin")
+        checks["semiconductor_calculation_charge_spin_settings_configured"] = calculation.get(
+            "charge_spin_settings_configured"
+        )
         checks["semiconductor_calculation_warning_count"] = calculation.get("warning_count", 0)
         if int(calculation.get("warning_count") or 0) > 0:
             warnings.append("Semiconductor calculation preflight has warnings; inspect calculation_preflight_summary before expensive calculations.")
@@ -980,8 +1053,22 @@ def _semiconductor_health_warnings(semiconductor: Any, checks: dict[str, Any]) -
         checks["semiconductor_finite_size_non_passivant_atom_count"] = finite_size.get("non_passivant_atom_count")
         checks["semiconductor_finite_size_max_isolated_fraction"] = finite_size.get("max_isolated_fraction")
         checks["semiconductor_finite_size_max_isolated_kind"] = (finite_size.get("max_isolated_item") or {}).get("kind")
+        checks["semiconductor_nv_supercell_matrix"] = finite_size.get(
+            "supercell_matrix"
+        )
+        checks["semiconductor_nv_supercell_cubic_repeat"] = finite_size.get(
+            "supercell_cubic_repeat"
+        )
+        checks["semiconductor_nv_supercell_contract_integrity_ok"] = (
+            finite_size.get("supercell_contract_integrity_ok")
+        )
         if finite_size.get("finite_size_warning"):
             warnings.append("Semiconductor finite-size/dilution preflight has warnings; inspect finite_size_summary before quantitative defect or dopant calculations.")
+        if finite_size.get("supercell_contract_integrity_ok") is False:
+            warnings.append(
+                "Diamond NV supercell metadata failed current-structure "
+                "consistency checks; inspect finite_size_summary."
+            )
 
     dopant_fraction_summary = semiconductor.get("dopant_fraction_summary") or {}
     if dopant_fraction_summary:

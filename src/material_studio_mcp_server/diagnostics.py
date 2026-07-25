@@ -24,7 +24,14 @@ from .diagnostic_contract import (
     DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
     VIEW_BUNDLE_SCHEMA_VERSION,
 )
-from .semiconductor_contracts import DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+from .semiconductor_contracts import (
+    DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+    DIAMOND_NV_REVIEWED_BACKEND_STATUSES,
+    diamond_nv_castep_binding_receipt,
+    normalize_diamond_nv_supercell,
+)
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     analyze_periodic_site_pair_distribution,
@@ -32,6 +39,7 @@ from .semiconductor_site_selection import (
     audit_periodic_maximin_selection,
 )
 from .specs.castep import (
+    CASTEP_CHARGE_SPIN_API_CONTRACT,
     CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
     CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
     CASTEP_DIPOLE_MINIMUM_VACUUM_ANGSTROM,
@@ -934,6 +942,17 @@ def write_view_audit_bundle(
                 "backend_charge_binding_status",
                 "backend_spin_binding_status",
                 "charge_spin_backend_binding_ready",
+                "expected_castep_total_charge",
+                "observed_castep_total_charge",
+                "expected_castep_spin_treatment",
+                "observed_castep_spin_treatment",
+                "expected_castep_use_formal_spin",
+                "observed_castep_use_formal_spin",
+                "expected_castep_initial_spin",
+                "observed_castep_initial_spin",
+                "expected_castep_optimize_total_spin",
+                "observed_castep_optimize_total_spin",
+                "castep_charge_spin_all_fields_match",
                 "spin_charge_review_required",
             ],
             charge_rows,
@@ -963,6 +982,13 @@ def write_view_audit_bundle(
                 "dipole_correction_enabled",
                 "dipole_correction_api_contract",
                 "dipole_correction_api_property",
+                "total_charge",
+                "spin_treatment",
+                "use_formal_spin",
+                "initial_spin",
+                "optimize_total_spin",
+                "charge_spin_settings_configured",
+                "charge_spin_api_contract",
                 "slab_axis",
                 "slab_kpoint_axis_value",
                 "output_file",
@@ -2404,6 +2430,17 @@ def write_view_audit_bundle(
                     "backend_charge_binding_status",
                     "backend_spin_binding_status",
                     "charge_spin_backend_binding_ready",
+                    "expected_castep_total_charge",
+                    "observed_castep_total_charge",
+                    "expected_castep_spin_treatment",
+                    "observed_castep_spin_treatment",
+                    "expected_castep_use_formal_spin",
+                    "observed_castep_use_formal_spin",
+                    "expected_castep_initial_spin",
+                    "observed_castep_initial_spin",
+                    "expected_castep_optimize_total_spin",
+                    "observed_castep_optimize_total_spin",
+                    "castep_charge_spin_all_fields_match",
                     "calculation_execution_ready",
                     "structure_hotload_allowed",
                     "state_result_computed",
@@ -2431,6 +2468,12 @@ def write_view_audit_bundle(
                 "small_cell_warning",
                 "high_concentration_warning",
                 "finite_size_warning",
+                "supercell_matrix",
+                "supercell_cubic_repeat",
+                "supercell_host_site_count_before_defect",
+                "supercell_atom_count_after_defect",
+                "supercell_contract_integrity_ok",
+                "supercell_contract_errors",
                 "warnings",
             ],
             finite_rows,
@@ -3869,6 +3912,9 @@ def _semiconductor_composition_csv_rows(summary: dict[str, Any]) -> list[dict[st
 
 def _semiconductor_charge_balance_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
+    expected_settings = summary.get("expected_castep_charge_spin_settings") or {}
+    observed_settings = summary.get("observed_castep_charge_spin_settings") or {}
+    field_matches = summary.get("castep_charge_spin_field_matches") or {}
     for element in summary.get("elements", []) or []:
         rows.append(
             {
@@ -3898,6 +3944,23 @@ def _semiconductor_charge_balance_csv_rows(summary: dict[str, Any]) -> list[dict
                 "charge_spin_backend_binding_ready": summary.get(
                     "charge_spin_backend_binding_ready"
                 ),
+                "expected_castep_total_charge": expected_settings.get("total_charge"),
+                "observed_castep_total_charge": observed_settings.get("total_charge"),
+                "expected_castep_spin_treatment": expected_settings.get("spin_treatment"),
+                "observed_castep_spin_treatment": observed_settings.get("spin_treatment"),
+                "expected_castep_use_formal_spin": expected_settings.get("use_formal_spin"),
+                "observed_castep_use_formal_spin": observed_settings.get("use_formal_spin"),
+                "expected_castep_initial_spin": expected_settings.get("initial_spin"),
+                "observed_castep_initial_spin": observed_settings.get("initial_spin"),
+                "expected_castep_optimize_total_spin": expected_settings.get(
+                    "optimize_total_spin"
+                ),
+                "observed_castep_optimize_total_spin": observed_settings.get(
+                    "optimize_total_spin"
+                ),
+                "castep_charge_spin_all_fields_match": bool(
+                    field_matches and all(field_matches.values())
+                ),
                 "spin_charge_review_required": summary.get("spin_charge_review_required"),
             }
         )
@@ -3924,6 +3987,15 @@ def _semiconductor_calculation_preflight_csv_rows(summary: dict[str, Any]) -> li
             "dipole_correction_enabled": summary.get("dipole_correction_enabled"),
             "dipole_correction_api_contract": summary.get("dipole_correction_api_contract"),
             "dipole_correction_api_property": summary.get("dipole_correction_api_property"),
+            "total_charge": summary.get("total_charge"),
+            "spin_treatment": summary.get("spin_treatment"),
+            "use_formal_spin": summary.get("use_formal_spin"),
+            "initial_spin": summary.get("initial_spin"),
+            "optimize_total_spin": summary.get("optimize_total_spin"),
+            "charge_spin_settings_configured": summary.get(
+                "charge_spin_settings_configured"
+            ),
+            "charge_spin_api_contract": summary.get("charge_spin_api_contract"),
             "slab_axis": summary.get("slab_axis"),
             "slab_kpoint_axis_value": summary.get("slab_kpoint_axis_value"),
             "output_file": summary.get("output_file"),
@@ -6391,6 +6463,13 @@ def _semiconductor_defect_csv_rows(summary: dict[str, Any]) -> list[dict[str, An
 def _semiconductor_defect_complex_csv_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     rows = []
     for complex_row in summary.get("complexes", []) or []:
+        expected_settings = (
+            complex_row.get("expected_castep_charge_spin_settings") or {}
+        )
+        observed_settings = (
+            complex_row.get("observed_castep_charge_spin_settings") or {}
+        )
+        field_matches = complex_row.get("castep_charge_spin_field_matches") or {}
         rows.append(
             {
                 "complex_id": complex_row.get("complex_id"),
@@ -6424,6 +6503,23 @@ def _semiconductor_defect_complex_csv_rows(summary: dict[str, Any]) -> list[dict
                 "backend_charge_binding_status": complex_row.get("backend_charge_binding_status"),
                 "backend_spin_binding_status": complex_row.get("backend_spin_binding_status"),
                 "charge_spin_backend_binding_ready": complex_row.get("charge_spin_backend_binding_ready"),
+                "expected_castep_total_charge": expected_settings.get("total_charge"),
+                "observed_castep_total_charge": observed_settings.get("total_charge"),
+                "expected_castep_spin_treatment": expected_settings.get("spin_treatment"),
+                "observed_castep_spin_treatment": observed_settings.get("spin_treatment"),
+                "expected_castep_use_formal_spin": expected_settings.get("use_formal_spin"),
+                "observed_castep_use_formal_spin": observed_settings.get("use_formal_spin"),
+                "expected_castep_initial_spin": expected_settings.get("initial_spin"),
+                "observed_castep_initial_spin": observed_settings.get("initial_spin"),
+                "expected_castep_optimize_total_spin": expected_settings.get(
+                    "optimize_total_spin"
+                ),
+                "observed_castep_optimize_total_spin": observed_settings.get(
+                    "optimize_total_spin"
+                ),
+                "castep_charge_spin_all_fields_match": bool(
+                    field_matches and all(field_matches.values())
+                ),
                 "calculation_execution_ready": complex_row.get("calculation_execution_ready"),
                 "structure_hotload_allowed": complex_row.get("structure_hotload_allowed"),
                 "state_result_computed": complex_row.get("state_result_computed"),
@@ -6449,6 +6545,20 @@ def _semiconductor_finite_size_csv_rows(summary: dict[str, Any]) -> list[dict[st
             "small_cell_warning": summary.get("small_cell_warning"),
             "high_concentration_warning": summary.get("high_concentration_warning"),
             "finite_size_warning": summary.get("finite_size_warning"),
+            "supercell_matrix": _join_vector(summary.get("supercell_matrix")),
+            "supercell_cubic_repeat": summary.get("supercell_cubic_repeat"),
+            "supercell_host_site_count_before_defect": summary.get(
+                "supercell_host_site_count_before_defect"
+            ),
+            "supercell_atom_count_after_defect": summary.get(
+                "supercell_atom_count_after_defect"
+            ),
+            "supercell_contract_integrity_ok": summary.get(
+                "supercell_contract_integrity_ok"
+            ),
+            "supercell_contract_errors": _join_vector(
+                summary.get("supercell_contract_errors")
+            ),
             "warnings": ";".join(str(value) for value in summary.get("warnings", []) or []),
         }
     ]
@@ -7672,6 +7782,7 @@ def _semiconductor_health_summary(
         host_elements=host_elements,
         dopant_elements=dopant_elements,
         dopant_site_summary=dopant_site_summary,
+        simulation=spec.simulation,
     )
     carrier_intent_summary = _carrier_intent_summary(
         metadata,
@@ -14036,6 +14147,7 @@ def _charge_balance_summary(
     host_elements: list[str],
     dopant_elements: list[str],
     dopant_site_summary: dict[str, Any] | None = None,
+    simulation: Any | None = None,
 ) -> dict[str, Any] | None:
     counts = Counter({element: count for element, count in all_element_counts.items() if count > 0})
     if not counts:
@@ -14118,16 +14230,41 @@ def _charge_balance_summary(
     )
     nominal_composition_odd = bool(total_valence % 2)
     odd_electron_warning = bool(charge_adjusted_electron_count % 2)
+    charge_spin_binding = (
+        diamond_nv_castep_binding_receipt(charge_state_label, simulation)
+        if defect_charge_spin_request
+        else None
+    )
+    backend_charge_status = (
+        str(defect_charge_spin_request.get("backend_charge_binding_status") or "")
+        if defect_charge_spin_request
+        else ""
+    )
+    backend_spin_status = (
+        str(defect_charge_spin_request.get("backend_spin_binding_status") or "")
+        if defect_charge_spin_request
+        else ""
+    )
+    metadata_declares_bound = bool(
+        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        and defect_charge_spin_request.get("calculation_execution_ready") is True
+        and defect_charge_spin_request.get("state_result_computed") is False
+    )
     charge_spin_backend_binding_ready = (
         None
         if not defect_charge_spin_request
-        else False
+        else bool(
+            charge_state_explicit
+            and metadata_declares_bound
+            and (charge_spin_binding or {}).get("exact_match") is True
+        )
     )
     charge_state_unresolved = bool(
         defect_charge_spin_request and not charge_state_explicit
     )
     spin_charge_review_required = bool(
-        odd_electron_warning
+        (odd_electron_warning and charge_spin_backend_binding_ready is not True)
         or charge_state_unresolved
         or charge_spin_backend_binding_ready is False
     )
@@ -14189,14 +14326,20 @@ def _charge_balance_summary(
         "charge_adjusted_electron_count_parity": (
             "odd" if charge_adjusted_electron_count % 2 else "even"
         ),
-        "backend_charge_binding_status": (
-            defect_charge_spin_request.get("backend_charge_binding_status")
-        ),
-        "backend_spin_binding_status": (
-            defect_charge_spin_request.get("backend_spin_binding_status")
-        ),
+        "backend_charge_binding_status": backend_charge_status or None,
+        "backend_spin_binding_status": backend_spin_status or None,
         "charge_spin_backend_binding_ready": (
             charge_spin_backend_binding_ready
+        ),
+        "charge_spin_binding_contract": charge_spin_binding,
+        "expected_castep_charge_spin_settings": (
+            (charge_spin_binding or {}).get("expected_settings")
+        ),
+        "observed_castep_charge_spin_settings": (
+            (charge_spin_binding or {}).get("observed_settings")
+        ),
+        "castep_charge_spin_field_matches": (
+            (charge_spin_binding or {}).get("field_matches")
         ),
         "non_passivant_valence_electron_count": non_passivant_valence,
         "passivant_valence_electron_count": passivant_valence,
@@ -14996,6 +15139,13 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
             "dipole_correction_enabled": False,
             "dipole_correction_api_contract": CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
             "dipole_correction_api_property": CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
+            "total_charge": None,
+            "spin_treatment": None,
+            "use_formal_spin": None,
+            "initial_spin": None,
+            "optimize_total_spin": None,
+            "charge_spin_settings_configured": False,
+            "charge_spin_api_contract": CASTEP_CHARGE_SPIN_API_CONTRACT,
             "slab_axis": (lattice_summary or {}).get("surface_axis"),
             "slab_kpoint_axis_value": None,
             "output_file": None,
@@ -15028,6 +15178,26 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
         CastepDipoleCorrection.SELF_CONSISTENT.value,
         CastepDipoleCorrection.NON_SELF_CONSISTENT.value,
     }
+    total_charge = _optional_int(getattr(simulation, "total_charge", None))
+    spin_treatment_value = getattr(simulation, "spin_treatment", None)
+    spin_treatment = (
+        str(getattr(spin_treatment_value, "value", spin_treatment_value))
+        if spin_treatment_value is not None
+        else None
+    )
+    use_formal_spin = getattr(simulation, "use_formal_spin", None)
+    initial_spin = _optional_int(getattr(simulation, "initial_spin", None))
+    optimize_total_spin = getattr(simulation, "optimize_total_spin", None)
+    charge_spin_settings_configured = any(
+        value is not None
+        for value in (
+            total_charge,
+            spin_treatment,
+            use_formal_spin,
+            initial_spin,
+            optimize_total_spin,
+        )
+    )
     lattice_summary = lattice_summary or {}
     is_slab = bool(lattice_summary.get("is_slab"))
     slab_axis = lattice_summary.get("surface_axis")
@@ -15132,6 +15302,13 @@ def _calculation_preflight_summary(spec: ModelSpec, lattice_summary: dict[str, A
         "dipole_correction_enabled": dipole_correction_enabled,
         "dipole_correction_api_contract": CASTEP_DIPOLE_CORRECTION_API_CONTRACT,
         "dipole_correction_api_property": CASTEP_DIPOLE_CORRECTION_API_PROPERTY,
+        "total_charge": total_charge,
+        "spin_treatment": spin_treatment,
+        "use_formal_spin": use_formal_spin,
+        "initial_spin": initial_spin,
+        "optimize_total_spin": optimize_total_spin,
+        "charge_spin_settings_configured": charge_spin_settings_configured,
+        "charge_spin_api_contract": CASTEP_CHARGE_SPIN_API_CONTRACT,
         "slab_axis": slab_axis,
         "slab_kpoint_axis_value": slab_axis_value,
         "output_file": output_file,
@@ -17446,20 +17623,57 @@ def _nitrogen_vacancy_complex_row(
     backend_spin_status = str(
         complex_input.get("backend_spin_binding_status") or ""
     )
-    if backend_charge_status != DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS:
+    backend_statuses_match = bool(
+        backend_charge_status
+        and backend_charge_status == backend_spin_status
+    )
+    if not backend_statuses_match:
         errors.append(
-            f"{label} charge backend binding status is not the reviewed "
-            "fail-closed value."
+            f"{label} charge and spin backend binding statuses differ."
         )
-    if backend_spin_status != DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS:
+    if (
+        backend_charge_status not in DIAMOND_NV_REVIEWED_BACKEND_STATUSES
+        or backend_spin_status not in DIAMOND_NV_REVIEWED_BACKEND_STATUSES
+    ):
         errors.append(
-            f"{label} spin backend binding status is not the reviewed "
-            "fail-closed value."
+            f"{label} backend binding status is not a reviewed structured value."
         )
-    if complex_input.get("calculation_execution_ready") is not False:
+    structured_binding = diamond_nv_castep_binding_receipt(
+        charge_state_label,
+        spec.simulation,
+    )
+    metadata_declares_bound = bool(
+        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+    )
+    charge_spin_backend_binding_ready = bool(
+        metadata_declares_bound
+        and charge_state_explicit
+        and structured_binding.get("exact_match") is True
+    )
+    expected_execution_ready = charge_spin_backend_binding_ready
+    if (
+        complex_input.get("calculation_execution_ready")
+        is not expected_execution_ready
+    ):
         errors.append(
-            f"{label} must keep CASTEP calculation execution blocked."
+            f"{label} calculation readiness does not match its structured "
+            "CASTEP charge/spin binding."
         )
+    if metadata_declares_bound and structured_binding.get("exact_match") is not True:
+        errors.append(
+            f"{label} declares a structured CASTEP binding but the simulation "
+            "settings do not match the reviewed charge state."
+        )
+    if (
+        backend_charge_status
+        in {
+            DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+            DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
+        }
+        and complex_input.get("calculation_execution_ready") is not False
+    ):
+        errors.append(f"{label} unbound legacy metadata must remain fail-closed.")
     if complex_input.get("state_result_computed") is not False:
         errors.append(
             f"{label} must not claim a computed charge or spin state."
@@ -17521,8 +17735,21 @@ def _nitrogen_vacancy_complex_row(
         "reference_spin_state": reference_spin_state,
         "backend_charge_binding_status": backend_charge_status or None,
         "backend_spin_binding_status": backend_spin_status or None,
-        "charge_spin_backend_binding_ready": False,
-        "calculation_execution_ready": False,
+        "charge_spin_backend_binding_ready": charge_spin_backend_binding_ready,
+        "structured_castep_binding": structured_binding,
+        "expected_castep_charge_spin_settings": structured_binding.get(
+            "expected_settings"
+        ),
+        "observed_castep_charge_spin_settings": structured_binding.get(
+            "observed_settings"
+        ),
+        "castep_charge_spin_field_matches": structured_binding.get(
+            "field_matches"
+        ),
+        "calculation_execution_ready": (
+            complex_input.get("calculation_execution_ready") is True
+            and charge_spin_backend_binding_ready
+        ),
         "structure_hotload_allowed": (
             complex_input.get("structure_hotload_allowed") is True
         ),
@@ -17577,6 +17804,70 @@ def _finite_size_summary(
 
     lattice_summary = lattice_summary or {}
     non_passivant_atom_count = _optional_int(lattice_summary.get("non_passivant_atom_count"))
+    supercell_contract_input = (spec.metadata or {}).get(
+        "diamond_nv_supercell_contract"
+    )
+    supercell_contract: dict[str, Any] | None = None
+    if isinstance(supercell_contract_input, dict):
+        contract_errors: list[str] = []
+        raw_matrix = supercell_contract_input.get("matrix")
+        matrix: tuple[int, int, int] | None = None
+        try:
+            if not isinstance(raw_matrix, (list, tuple)) or len(raw_matrix) != 3:
+                raise ValueError("matrix must contain three integer repeats")
+            matrix = normalize_diamond_nv_supercell(
+                tuple(int(value) for value in raw_matrix)
+            )
+        except (TypeError, ValueError) as exc:
+            contract_errors.append(f"invalid_matrix:{exc}")
+        cubic_repeat = _optional_int(
+            supercell_contract_input.get("cubic_repeat")
+        )
+        if matrix is not None and cubic_repeat != matrix[0]:
+            contract_errors.append("cubic_repeat_mismatch")
+        base_atom_count = _optional_int(
+            supercell_contract_input.get("base_conventional_cell_atom_count")
+        )
+        host_site_count = _optional_int(
+            supercell_contract_input.get("host_site_count_before_defect")
+        )
+        atom_count_after_defect = _optional_int(
+            supercell_contract_input.get("atom_count_after_defect")
+        )
+        if (
+            matrix is not None
+            and base_atom_count is not None
+            and host_site_count
+            != base_atom_count * matrix[0] * matrix[1] * matrix[2]
+        ):
+            contract_errors.append("host_site_count_mismatch")
+        if (
+            atom_count_after_defect is not None
+            and non_passivant_atom_count is not None
+            and atom_count_after_defect != non_passivant_atom_count
+        ):
+            contract_errors.append("current_atom_count_mismatch")
+        vacancy_count = _optional_int(
+            (defect_summary or {}).get("vacancy_count")
+        )
+        if (
+            host_site_count is not None
+            and atom_count_after_defect is not None
+            and vacancy_count is not None
+            and atom_count_after_defect != host_site_count - vacancy_count
+        ):
+            contract_errors.append("defect_adjusted_atom_count_mismatch")
+        supercell_contract = {
+            "schema_version": supercell_contract_input.get("schema_version"),
+            "matrix": list(matrix) if matrix is not None else raw_matrix,
+            "cubic_repeat": cubic_repeat,
+            "base_conventional_cell_atom_count": base_atom_count,
+            "host_site_count_before_defect": host_site_count,
+            "atom_count_after_defect": atom_count_after_defect,
+            "current_non_passivant_atom_count": non_passivant_atom_count,
+            "integrity_ok": not contract_errors,
+            "integrity_errors": contract_errors,
+        }
     lengths = [spec.model.lattice.a, spec.model.lattice.b, spec.model.lattice.c]
     max_item = max(items, key=lambda item: float(item.get("fraction") or 0.0))
     max_fraction = _optional_float(max_item.get("fraction")) or 0.0
@@ -17594,6 +17885,11 @@ def _finite_size_summary(
         warnings.append(
             "Semiconductor isolated dopant/defect concentration is high for dilute-defect interpretation; inspect finite_size_summary."
         )
+    if supercell_contract is not None and not supercell_contract["integrity_ok"]:
+        warnings.append(
+            "Diamond NV supercell metadata does not match the current structure; "
+            "inspect the supercell contract before continuing."
+        )
     return {
         "available": True,
         "model": "isolated_dopant_defect_finite_size_heuristic",
@@ -17609,6 +17905,37 @@ def _finite_size_summary(
         "small_cell_warning": small_cell_warning,
         "high_concentration_warning": high_concentration_warning,
         "finite_size_warning": bool(small_cell_warning or high_concentration_warning),
+        "supercell_contract": supercell_contract,
+        "supercell_matrix": (
+            supercell_contract.get("matrix")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_cubic_repeat": (
+            supercell_contract.get("cubic_repeat")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_host_site_count_before_defect": (
+            supercell_contract.get("host_site_count_before_defect")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_atom_count_after_defect": (
+            supercell_contract.get("atom_count_after_defect")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_contract_integrity_ok": (
+            supercell_contract.get("integrity_ok")
+            if supercell_contract is not None
+            else None
+        ),
+        "supercell_contract_errors": (
+            supercell_contract.get("integrity_errors")
+            if supercell_contract is not None
+            else []
+        ),
         "warnings": warnings,
     }
 

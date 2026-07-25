@@ -90,12 +90,19 @@ from .natural_language import (
 )
 from .runner import DEFAULT_JOBS_DIR, MaterialStudioError, MaterialStudioRunner
 from .roundtrip import (
+    ROUNDTRIP_AUDIT_PROFILE,
+    ROUNDTRIP_AUDIT_SCHEMA_VERSION,
     execute_roundtrip_audit,
     not_applicable_roundtrip_receipt,
     plan_roundtrip_audit,
+    verify_visual_bonded_hotload_selection,
 )
 from .semiconductor_contracts import (
+    DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
     DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+    DIAMOND_NV_REVIEWED_BACKEND_STATUSES,
+    diamond_nv_castep_binding_receipt,
 )
 from .runtime_provenance import (
     RUNTIME_DEPLOYMENT_SCHEMA,
@@ -134,6 +141,7 @@ from .scripts import (
 )
 from .specs.common import ExecutionMode, ModelType
 from .specs.castep import (
+    CASTEP_CHARGE_SPIN_API_CONTRACT,
     CastepCellOptimization,
     CastepCellOptimizationValue,
     CastepDipoleCorrection,
@@ -141,6 +149,7 @@ from .specs.castep import (
     CastepDosIntegrationMethodValue,
     CastepEnergySpec,
     CastepOptimizationAlgorithmValue,
+    CastepSpinTreatmentValue,
     CastepTask,
     CastepTaskValue,
 )
@@ -560,6 +569,30 @@ class CastepEnergyInput(BaseModel):
         description="CASTEP task with a verified Materials Studio 20.1 API mapping.",
     )
     functional: str = Field(default="PBE", description="Exchange-correlation functional setting.", min_length=1, max_length=100)
+    total_charge: int | None = Field(
+        default=None,
+        description="Optional total charge on the unit cell.",
+        ge=-9999,
+        le=9999,
+    )
+    spin_treatment: CastepSpinTreatmentValue | None = Field(
+        default=None,
+        description="Optional documented CASTEP spin treatment.",
+    )
+    use_formal_spin: bool | None = Field(
+        default=None,
+        description="Use atom formal spins for the initial spin population.",
+    )
+    initial_spin: int | None = Field(
+        default=None,
+        description="Initial number of unpaired electrons.",
+        ge=-9999,
+        le=9999,
+    )
+    optimize_total_spin: bool | None = Field(
+        default=None,
+        description="Allow CASTEP to vary total spin for the current SCF state.",
+    )
     cutoff_energy_ev: int | None = Field(default=None, description="Optional cutoff energy in eV.", ge=1, le=100_000)
     kpoint_separation: float | None = Field(
         default=None,
@@ -603,6 +636,11 @@ class CastepEnergyInput(BaseModel):
             task=self.task,
             quality=self.quality,
             functional=self.functional,
+            total_charge=self.total_charge,
+            spin_treatment=self.spin_treatment,
+            use_formal_spin=self.use_formal_spin,
+            initial_spin=self.initial_spin,
+            optimize_total_spin=self.optimize_total_spin,
             cutoff_energy_ev=self.cutoff_energy_ev,
             kpoint_separation=self.kpoint_separation,
             kpoints=self.kpoints,
@@ -3649,6 +3687,9 @@ _TOP_LEVEL_MODEL_DIAGNOSTIC_FIELDS = (
     "trusted_clean_view_replay_status",
     "trusted_clean_view_replay_ok",
     "trusted_clean_view_names",
+    "trusted_multiview_gui_evidence_required",
+    "trusted_multiview_gui_evidence_ok",
+    "trusted_multiview_gui_evidence_status",
     "resolved_visual_review_reasons",
     "unresolved_visual_review_reasons",
     "view_selection",
@@ -4615,6 +4656,44 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "unsupported_execution_status": (
                 "preview_only_no_dedicated_execution_tool"
             ),
+        },
+        "castep_charge_spin_settings": {
+            "materials_studio_api_contract": CASTEP_CHARGE_SPIN_API_CONTRACT,
+            "structured_fields": [
+                "total_charge",
+                "spin_treatment",
+                "use_formal_spin",
+                "initial_spin",
+                "optimize_total_spin",
+            ],
+            "materialscript_properties": [
+                "Charge",
+                "SpinTreatment",
+                "UseFormalSpin",
+                "InitialSpin",
+                "OptimizeTotalSpin",
+            ],
+            "spin_treatments": [
+                "Non-polarized",
+                "Collinear",
+                "Non-collinear",
+            ],
+            "diamond_nv0_initial_state": {
+                "Charge": 0,
+                "SpinTreatment": "Collinear",
+                "UseFormalSpin": "No",
+                "InitialSpin": 1,
+                "OptimizeTotalSpin": "No",
+            },
+            "diamond_nv_minus_initial_state": {
+                "Charge": -1,
+                "SpinTreatment": "Collinear",
+                "UseFormalSpin": "No",
+                "InitialSpin": 2,
+                "OptimizeTotalSpin": "No",
+            },
+            "settings_do_not_prove_computed_charge_or_spin_state": True,
+            "execute_requires_explicit_confirmation": True,
         },
         "castep_geometry_optimization": {
             "tool": "material_studio_castep_relax_current",
@@ -6245,7 +6324,7 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             },
             "materials_studio_revision_roundtrip_audit": {
                 "scope": "revision_bound_crystal_cif_import_export_before_gui_hotload",
-                "profile": "generic_crystal_cif_import_export_v1",
+                "profile": ROUNDTRIP_AUDIT_PROFILE,
                 "request_field": "verify_ms_roundtrip",
                 "default_requested": False,
                 "preview_policy": "plan_only_no_runner_no_gui_input",
@@ -13275,6 +13354,26 @@ def material_studio_castep_energy_script(
         str,
         Field(description="Exchange-correlation functional setting.", min_length=1, max_length=100),
     ] = "PBE",
+    total_charge: Annotated[
+        int | None,
+        Field(description="Optional total charge on the unit cell.", ge=-9999, le=9999),
+    ] = None,
+    spin_treatment: Annotated[
+        CastepSpinTreatmentValue | None,
+        Field(description="Optional documented CASTEP spin treatment."),
+    ] = None,
+    use_formal_spin: Annotated[
+        bool | None,
+        Field(description="Use atom formal spins for the initial spin population."),
+    ] = None,
+    initial_spin: Annotated[
+        int | None,
+        Field(description="Initial number of unpaired electrons.", ge=-9999, le=9999),
+    ] = None,
+    optimize_total_spin: Annotated[
+        bool | None,
+        Field(description="Allow CASTEP to vary total spin for the current SCF state."),
+    ] = None,
     cutoff_energy_ev: Annotated[
         int | None,
         Field(description="Optional cutoff energy in eV.", ge=1, le=100_000),
@@ -13341,6 +13440,11 @@ def material_studio_castep_energy_script(
         quality=quality,
         task=task,
         functional=functional,
+        total_charge=total_charge,
+        spin_treatment=spin_treatment,
+        use_formal_spin=use_formal_spin,
+        initial_spin=initial_spin,
+        optimize_total_spin=optimize_total_spin,
         cutoff_energy_ev=cutoff_energy_ev,
         kpoint_separation=kpoint_separation,
         kpoints=kpoints,
@@ -13356,6 +13460,11 @@ def material_studio_castep_energy_script(
         task=params.task,
         quality=params.quality,
         functional=params.functional,
+        total_charge=params.total_charge,
+        spin_treatment=params.spin_treatment,
+        use_formal_spin=params.use_formal_spin,
+        initial_spin=params.initial_spin,
+        optimize_total_spin=params.optimize_total_spin,
         cutoff_energy_ev=params.cutoff_energy_ev,
         kpoint_separation=params.kpoint_separation,
         kpoints=params.kpoints,
@@ -13373,6 +13482,13 @@ def material_studio_castep_energy_script(
         quality=spec.quality,
         task=spec.task.value,
         functional=spec.functional,
+        total_charge=spec.total_charge,
+        spin_treatment=(
+            spec.spin_treatment.value if spec.spin_treatment is not None else None
+        ),
+        use_formal_spin=spec.use_formal_spin,
+        initial_spin=spec.initial_spin,
+        optimize_total_spin=spec.optimize_total_spin,
         cutoff_energy_ev=spec.cutoff_energy_ev,
         kpoint_separation=spec.kpoint_separation,
         kpoints=spec.kpoints,
@@ -17919,6 +18035,18 @@ def _modeling_report_summary_row(response: dict[str, Any], report: dict[str, Any
         ),
         "trusted_clean_view_replay_blocking_reasons": _csv_json_value(
             trusted_clean_view_replay.get("blocking_reasons") or []
+        ),
+        "trusted_multiview_gui_evidence_required": normality_gate.get(
+            "trusted_multiview_gui_evidence_required"
+        ),
+        "trusted_multiview_gui_evidence_ok": normality_gate.get(
+            "trusted_multiview_gui_evidence_ok"
+        ),
+        "trusted_multiview_gui_evidence_status": normality_gate.get(
+            "trusted_multiview_gui_evidence_status"
+        ),
+        "trusted_multiview_gui_evidence_action": _csv_json_value(
+            normality_gate.get("trusted_multiview_gui_evidence_action") or {}
         ),
         "resolved_visual_review_reasons": _csv_json_value(
             normality_gate.get("resolved_visual_review_reasons") or []
@@ -23408,6 +23536,9 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
             "output_path",
             "output_sha256",
             "output_confined",
+            "visual_output_path",
+            "visual_bonding_planned",
+            "visual_bonding_required",
             "runner_script_confined",
             "run_root",
             "script_sha256",
@@ -23416,6 +23547,11 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
             "runner_success",
             "runner_timed_out",
             "runner_duration_seconds",
+            "runner_return_code",
+            "runner_termination_markers",
+            "runner_success_markers_required",
+            "runner_script_bytes_sha256",
+            "runner_path_budget",
             "receipt_path",
             "gui_probe_planned",
             "runner_call_planned",
@@ -23424,6 +23560,9 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
             "warnings",
         ),
     )
+    visual_bonded_artifact = value.get("visual_bonded_artifact")
+    if isinstance(visual_bonded_artifact, dict):
+        summary["visual_bonded_artifact"] = dict(visual_bonded_artifact)
     if isinstance(gui_invariant, dict):
         summary["gui_invariant"] = _mapping_subset(
             gui_invariant,
@@ -23461,6 +23600,47 @@ def _materials_studio_roundtrip_audit_summary(value: Any) -> dict[str, Any] | No
     return summary
 
 
+def _verified_visual_bonded_hotload_selection(
+    audit: Any,
+    *,
+    canonical_structure_path: Path,
+    project_id: str,
+    revision: int,
+    roundtrip_audit_required: bool = False,
+) -> dict[str, Any]:
+    """Select a receipt-bound visual XSD or return a canonical CIF fallback."""
+
+    return verify_visual_bonded_hotload_selection(
+        audit,
+        canonical_structure_path=canonical_structure_path,
+        project_id=project_id,
+        revision=revision,
+        roundtrip_audit_required=roundtrip_audit_required,
+    )
+
+
+def _select_response_gui_hotload_structure(
+    response: dict[str, Any],
+    *,
+    canonical_structure_path: Path,
+    project_id: str,
+    revision: int,
+) -> tuple[Path, dict[str, Any]]:
+    audit = _materials_studio_roundtrip_audit_from_response(response)
+    selection = _verified_visual_bonded_hotload_selection(
+        audit,
+        canonical_structure_path=canonical_structure_path,
+        project_id=project_id,
+        revision=revision,
+        roundtrip_audit_required=bool(
+            response.get("materials_studio_roundtrip_audit_requested")
+            is True
+            and not isinstance(audit, dict)
+        ),
+    )
+    return Path(selection["selected_structure_path"]), selection
+
+
 def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     """Return a compact display-ready summary for live modeling clients."""
 
@@ -23470,15 +23650,82 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
     result = response.get("result") if isinstance(response.get("result"), dict) else {}
     if not result and isinstance(response.get("result_metadata"), dict):
         result = response["result_metadata"]
+    roundtrip_audit_evidence = _materials_studio_roundtrip_audit_from_response(
+        response
+    )
     roundtrip_audit = _materials_studio_roundtrip_audit_summary(
-        _materials_studio_roundtrip_audit_from_response(response)
+        roundtrip_audit_evidence
     )
     roundtrip_requested = bool(
         response.get("materials_studio_roundtrip_audit_requested")
         or roundtrip_audit is not None
     )
+    persisted_gui_hotload_structure_selection = next(
+        (
+            candidate
+            for candidate in (
+                response.get("gui_hotload_structure_selection"),
+                (response.get("modeling_report") or {}).get(
+                    "gui_hotload_structure_selection"
+                )
+                if isinstance(response.get("modeling_report"), dict)
+                else None,
+                (response.get("persisted_modeling_report") or {}).get(
+                    "gui_hotload_structure_selection"
+                )
+                if isinstance(response.get("persisted_modeling_report"), dict)
+                else None,
+            )
+            if isinstance(candidate, dict)
+        ),
+        None,
+    )
     planned_outputs = response.get("planned_outputs") or {}
     structure = planned_outputs.get("structure")
+    gui_hotload_structure_selection: dict[str, Any] | None = None
+    selection_project_id = response.get("project_id")
+    selection_revision = response.get(
+        "new_revision",
+        response.get("revision"),
+    )
+    if (
+        structure
+        and Path(str(structure)).suffix.casefold() == ".cif"
+        and selection_project_id is not None
+        and type(selection_revision) is int
+        and (
+            isinstance(roundtrip_audit_evidence, dict)
+            or isinstance(persisted_gui_hotload_structure_selection, dict)
+        )
+    ):
+        try:
+            gui_hotload_structure_selection = (
+                _verified_visual_bonded_hotload_selection(
+                    roundtrip_audit_evidence,
+                    canonical_structure_path=Path(str(structure)),
+                    project_id=str(selection_project_id),
+                    revision=selection_revision,
+                    roundtrip_audit_required=bool(
+                        response.get(
+                            "materials_studio_roundtrip_audit_requested"
+                        )
+                        is True
+                        or (
+                            isinstance(
+                                persisted_gui_hotload_structure_selection,
+                                dict,
+                            )
+                            and persisted_gui_hotload_structure_selection.get(
+                                "visual_bonded_requested"
+                            )
+                            is True
+                        )
+                    )
+                    and not isinstance(roundtrip_audit_evidence, dict),
+                )
+            )
+        except Exception:
+            gui_hotload_structure_selection = None
     structure_exists = bool(structure and Path(str(structure)).expanduser().exists())
     structure_artifact_validation = (
         response.get("structure_artifact_validation")
@@ -23823,6 +24070,15 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         report["materials_studio_roundtrip_audit"] = roundtrip_audit
         response["materials_studio_roundtrip_audit_requested"] = True
         response["materials_studio_roundtrip_audit"] = roundtrip_audit
+    if isinstance(gui_hotload_structure_selection, dict):
+        report["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
+        response["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
+    else:
+        response.pop("gui_hotload_structure_selection", None)
     report["change_verification"] = _change_verification_summary(report)
     report["semiconductor_intent"] = _semiconductor_intent_summary(response, report)
     report["normality"] = _modeling_report_normality(report)
@@ -25401,7 +25657,63 @@ def _same_path(left: Any, right: Any) -> bool:
 def _structure_path_matches_current(response: dict[str, Any], candidate: Any, expected: Any) -> bool:
     """Return True for the planned structure or trusted same-revision GUI derivatives."""
 
-    if _same_path(candidate, expected):
+    canonical_path_matches = _same_path(candidate, expected)
+    audit = _materials_studio_roundtrip_audit_from_response(response)
+    report = (
+        response.get("modeling_report")
+        if isinstance(response.get("modeling_report"), dict)
+        else {}
+    )
+    project_id = response.get("project_id", report.get("project_id"))
+    revision = response.get(
+        "new_revision",
+        response.get("revision", report.get("revision")),
+    )
+    persisted_selection = (
+        response.get("gui_hotload_structure_selection")
+        if isinstance(
+            response.get("gui_hotload_structure_selection"),
+            dict,
+        )
+        else report.get("gui_hotload_structure_selection")
+        if isinstance(report.get("gui_hotload_structure_selection"), dict)
+        else {}
+    )
+    roundtrip_audit_required = bool(
+        response.get("materials_studio_roundtrip_audit_requested") is True
+        or report.get("materials_studio_roundtrip_audit_requested") is True
+        or persisted_selection.get("visual_bonded_requested") is True
+    ) and not isinstance(audit, dict)
+    if (
+        project_id is not None
+        and type(revision) is int
+        and (isinstance(audit, dict) or roundtrip_audit_required)
+    ):
+        try:
+            selection = _verified_visual_bonded_hotload_selection(
+                audit,
+                canonical_structure_path=Path(str(expected)),
+                project_id=str(project_id),
+                revision=revision,
+                roundtrip_audit_required=roundtrip_audit_required,
+            )
+        except Exception:
+            selection = {}
+        if canonical_path_matches:
+            return bool(
+                selection.get("canonical_verified") is True
+                and selection.get("hotload_allowed") is True
+            )
+        if (
+            selection.get("visual_bonded_verified") is True
+            and selection.get("hotload_allowed") is True
+            and _same_path(
+                candidate,
+                selection.get("selected_structure_path"),
+            )
+        ):
+            return True
+    if canonical_path_matches:
         return True
     return _same_revision_structure_derivative(candidate, expected, response.get("new_revision", response.get("revision")))
 
@@ -25430,8 +25742,6 @@ def _same_revision_structure_derivative(candidate: Any, expected: Any, revision:
             return False
 
     if candidate_stem == expected_stem:
-        return True
-    if candidate_stem == f"{expected_stem}_visual_bonded":
         return True
     if candidate_stem.startswith(f"{expected_stem}_msimport"):
         return True
@@ -26531,6 +26841,15 @@ def _semiconductor_calculation_action_hint(
                     ),
                     "backend_spin_binding_status": charge_balance.get(
                         "backend_spin_binding_status"
+                    ),
+                    "expected_castep_charge_spin_settings": charge_balance.get(
+                        "expected_castep_charge_spin_settings"
+                    ),
+                    "observed_castep_charge_spin_settings": charge_balance.get(
+                        "observed_castep_charge_spin_settings"
+                    ),
+                    "castep_charge_spin_field_matches": charge_balance.get(
+                        "castep_charge_spin_field_matches"
                     ),
                     "structure_hotload_remains_allowed": True,
                     "blocking_reasons": semiconductor_blocking_reasons,
@@ -27701,6 +28020,15 @@ def _visual_normality_summary(report: dict[str, Any]) -> dict[str, Any]:
             "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
                 "status"
             ),
+            "trusted_multiview_gui_evidence_required": normality_gate.get(
+                "trusted_multiview_gui_evidence_required"
+            ),
+            "trusted_multiview_gui_evidence_ok": normality_gate.get(
+                "trusted_multiview_gui_evidence_ok"
+            ),
+            "trusted_multiview_gui_evidence_status": normality_gate.get(
+                "trusted_multiview_gui_evidence_status"
+            ),
             "trusted_clean_view_names": trusted_clean_view_replay.get(
                 "trusted_clean_view_names"
             )
@@ -28234,6 +28562,9 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("trusted_clean_view_replay"), dict)
         else {}
     )
+    trusted_multiview_gui_evidence_ok = (
+        trusted_clean_view_replay.get("ok") is True
+    )
     replay_resolvable_visual_reasons = set(
         str(item)
         for item in trusted_clean_view_replay.get(
@@ -28269,6 +28600,55 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     gui_single_window_policy_ok = single_window.get("single_window_policy_ok")
     gui_single_window_violation_reasons = single_window.get("single_window_violation_reasons") or []
     requested_focuses = report.get("requested_diagnostic_focuses") if isinstance(report.get("requested_diagnostic_focuses"), list) else []
+    replay_view_names = _dedupe_strings(
+        [
+            str(item)
+            for item in view_review.get("supported_view_names")
+            or view_review.get("view_names")
+            or []
+            if item
+        ]
+    )
+    trusted_multiview_gui_evidence_action = None
+    if (
+        not trusted_multiview_gui_evidence_ok
+        and hot_loaded
+        and loaded_current_revision is not False
+        and report.get("project_id")
+        and isinstance(report.get("revision"), int)
+        and replay_view_names
+    ):
+        replay_payload = _drop_none_values(
+            {
+                "user_request": "continue the next GUI view replay",
+                "project_id": report.get("project_id"),
+                "execution_mode": ExecutionMode.PREVIEW.value,
+                "open_in_gui": False,
+                "take_snapshot": False,
+                "export_view_audit": False,
+                "views": replay_view_names,
+                "response_mode": McpResponseMode.FULL.value,
+            }
+        )
+        replay_payload = _workspace_bound_payload_hint(
+            "material_studio_live_modeling_request",
+            replay_payload,
+            report.get("working_dir"),
+        )
+        trusted_multiview_gui_evidence_action = {
+            "action_id": "continue_gui_view_replay",
+            "recommended_tool": "material_studio_live_modeling_request",
+            "recommended_action": (
+                "prepare_or_continue_current_revision_view_replay"
+            ),
+            "needs_user_confirmation": False,
+            "safe_to_call_without_confirmation": True,
+            "mutates_structure": False,
+            "creates_revision": False,
+            "issues_gui_input": False,
+            "payload_hint_is_directly_callable": True,
+            "payload_hint": replay_payload,
+        }
 
     model_must_not_claim = []
     model_must_not_claim.extend(blocking_reasons)
@@ -28276,6 +28656,14 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     model_must_not_claim.extend(model_calculation_blocking_reasons)
     gui_must_not_claim = []
     gui_must_not_claim.extend(unresolved_visual_review_reasons)
+    if (
+        not trusted_multiview_gui_evidence_ok
+        and hot_loaded
+        and loaded_current_revision is not False
+    ):
+        gui_must_not_claim.append(
+            "trusted_multiview_gui_evidence_missing"
+        )
     if execution_mode == ExecutionMode.PREVIEW.value and not hot_loaded:
         model_must_not_claim.append("preview_not_hot_loaded")
     elif not hot_loaded:
@@ -28329,6 +28717,7 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
     can_claim_live_gui_normal = (
         can_claim_model_normal
         and gui_visual_validation in {None, "passed"}
+        and trusted_multiview_gui_evidence_ok
         and not gui_must_not_claim
     )
 
@@ -28340,7 +28729,11 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         next_action = "safe_to_report_model_normal_for_available_checks"
     elif can_claim_model_normal:
         status = "model_claimable_with_visual_notes"
-        next_action = "report_model_normal_with_visual_notes_and_clean_view_candidates"
+        next_action = (
+            "continue_view_replay_before_claiming_live_gui_normal"
+            if not trusted_multiview_gui_evidence_ok
+            else "report_model_normal_with_visual_notes_and_clean_view_candidates"
+        )
     elif blocking_reasons or report.get("ok") is False or report.get("health_ok") is False:
         status = "blocked"
         next_action = "fix_blocking_reasons_then_reaudit"
@@ -28382,6 +28775,17 @@ def _normality_gate(report: dict[str, Any]) -> dict[str, Any]:
         "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
         "trusted_clean_view_replay_status": trusted_clean_view_replay.get(
             "status"
+        ),
+        "trusted_multiview_gui_evidence_required": True,
+        "trusted_multiview_gui_evidence_ok": (
+            trusted_multiview_gui_evidence_ok
+        ),
+        "trusted_multiview_gui_evidence_status": (
+            trusted_clean_view_replay.get("status")
+            or "not_available"
+        ),
+        "trusted_multiview_gui_evidence_action": (
+            trusted_multiview_gui_evidence_action
         ),
         "trusted_clean_view_names": trusted_clean_view_replay.get(
             "trusted_clean_view_names"
@@ -28491,6 +28895,10 @@ def _normality_decision(report: dict[str, Any]) -> dict[str, Any]:
         "all_must_not_claim_reasons",
         "review_reasons",
         "calculation_only_review_reasons",
+        "trusted_multiview_gui_evidence_required",
+        "trusted_multiview_gui_evidence_ok",
+        "trusted_multiview_gui_evidence_status",
+        "trusted_multiview_gui_evidence_action",
     )
     decision_values = {
         "status": gate.get("status"),
@@ -28512,6 +28920,18 @@ def _normality_decision(report: dict[str, Any]) -> dict[str, Any]:
         "review_reasons": list(gate.get("review_reasons") or []),
         "calculation_only_review_reasons": list(
             gate.get("calculation_only_review_reasons") or []
+        ),
+        "trusted_multiview_gui_evidence_required": gate.get(
+            "trusted_multiview_gui_evidence_required"
+        ),
+        "trusted_multiview_gui_evidence_ok": gate.get(
+            "trusted_multiview_gui_evidence_ok"
+        ),
+        "trusted_multiview_gui_evidence_status": gate.get(
+            "trusted_multiview_gui_evidence_status"
+        ),
+        "trusted_multiview_gui_evidence_action": gate.get(
+            "trusted_multiview_gui_evidence_action"
         ),
     }
     mirrors_normality_gate = bool(gate) and all(
@@ -32443,6 +32863,15 @@ def _live_summary_from_report(report: dict[str, Any]) -> dict[str, Any]:
                 "status"
             ),
             "trusted_clean_view_replay_ok": trusted_clean_view_replay.get("ok"),
+            "trusted_multiview_gui_evidence_required": normality_gate.get(
+                "trusted_multiview_gui_evidence_required"
+            ),
+            "trusted_multiview_gui_evidence_ok": normality_gate.get(
+                "trusted_multiview_gui_evidence_ok"
+            ),
+            "trusted_multiview_gui_evidence_status": normality_gate.get(
+                "trusted_multiview_gui_evidence_status"
+            ),
             "trusted_clean_view_names": trusted_clean_view_replay.get(
                 "trusted_clean_view_names"
             )
@@ -35271,6 +35700,13 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
                 "dipole_correction_enabled",
                 "dipole_correction_api_contract",
                 "dipole_correction_api_property",
+                "total_charge",
+                "spin_treatment",
+                "use_formal_spin",
+                "initial_spin",
+                "optimize_total_spin",
+                "charge_spin_settings_configured",
+                "charge_spin_api_contract",
                 "ready_for_requested_task_preflight",
                 "requires_prior_relaxed_structure",
                 "settings_review_required",
@@ -35328,6 +35764,9 @@ def _semiconductor_review_from_audit(audit: dict[str, Any] | None) -> dict[str, 
                 "backend_charge_binding_status",
                 "backend_spin_binding_status",
                 "charge_spin_backend_binding_ready",
+                "expected_castep_charge_spin_settings",
+                "observed_castep_charge_spin_settings",
+                "castep_charge_spin_field_matches",
                 "odd_electron_warning",
                 "spin_charge_review_required",
                 "spin_polarization_review_required",
@@ -38294,6 +38733,9 @@ def _compact_normality_decision(value: Any) -> dict[str, Any] | None:
             "must_not_claim_live_gui_normal_reasons",
             "review_reasons",
             "calculation_only_review_reasons",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "explanation",
             "explanation_primary_reason_differs",
             "explanation_next_action_differs",
@@ -38305,6 +38747,10 @@ def _compact_normality_decision(value: Any) -> dict[str, Any] | None:
             "must_not_claim_normal_reasons",
             "must_not_claim_live_gui_normal_reasons",
         ]
+    if value.get("trusted_multiview_gui_evidence_action"):
+        compact["trusted_multiview_gui_evidence_action_ref"] = (
+            "normality_gate.trusted_multiview_gui_evidence_action"
+        )
     return compact
 
 
@@ -38345,6 +38791,10 @@ def _compact_normality_gate(
                 "next_action",
                 "trusted_clean_view_replay_status",
                 "trusted_clean_view_replay_ok",
+                "trusted_multiview_gui_evidence_required",
+                "trusted_multiview_gui_evidence_ok",
+                "trusted_multiview_gui_evidence_status",
+                "trusted_multiview_gui_evidence_action",
             ),
         )
         compact["authoritative_decision_ref"] = "normality_decision"
@@ -42329,6 +42779,9 @@ def _compact_live_response(
             "trusted_clean_view_replay_status",
             "trusted_clean_view_replay_ok",
             "trusted_clean_view_names",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "resolved_visual_review_reasons",
             "unresolved_visual_review_reasons",
             "structure_artifact_validation_status",
@@ -42702,6 +43155,9 @@ def _compact_live_response(
             "trusted_clean_view_replay_status",
             "trusted_clean_view_replay_ok",
             "trusted_clean_view_names",
+            "trusted_multiview_gui_evidence_required",
+            "trusted_multiview_gui_evidence_ok",
+            "trusted_multiview_gui_evidence_status",
             "resolved_visual_review_reasons",
             "unresolved_visual_review_reasons",
             "requested_diagnostic_focus_ok",
@@ -43951,11 +44407,22 @@ def _execute_or_materialize_structure(
                             artifact = roundtrip_audit.get(key)
                             if artifact and str(artifact) not in created_files:
                                 created_files.append(str(artifact))
+                        visual_artifact = roundtrip_audit.get(
+                            "visual_bonded_artifact"
+                        )
+                        if isinstance(visual_artifact, dict):
+                            visual_path = visual_artifact.get("path")
+                            if (
+                                visual_path
+                                and Path(str(visual_path)).is_file()
+                                and str(visual_path) not in created_files
+                            ):
+                                created_files.append(str(visual_path))
                         result["created_files"] = created_files
                     elif isinstance(spec.model, CrystalSpec):
                         result["materials_studio_roundtrip_audit"] = {
-                            "schema_version": "material_studio_revision_roundtrip_audit_v1",
-                            "profile": "generic_crystal_cif_import_export_v1",
+                            "schema_version": ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+                            "profile": ROUNDTRIP_AUDIT_PROFILE,
                             "project_id": spec.project_id,
                             "revision": spec.revision,
                             "execution_mode": ExecutionMode.EXECUTE.value,
@@ -48701,6 +49168,11 @@ def _effective_castep_relaxation_spec(
     *,
     quality: str | None,
     functional: str | None,
+    total_charge: int | None,
+    spin_treatment: Any | None,
+    use_formal_spin: bool | None,
+    initial_spin: int | None,
+    optimize_total_spin: bool | None,
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None,
@@ -48736,6 +49208,14 @@ def _effective_castep_relaxation_spec(
         task=CastepTask.GEOMETRY_OPTIMIZATION,
         quality=selected("quality", quality, "Medium"),
         functional=selected("functional", functional, "PBE"),
+        total_charge=selected("total_charge", total_charge),
+        spin_treatment=selected("spin_treatment", spin_treatment),
+        use_formal_spin=selected("use_formal_spin", use_formal_spin),
+        initial_spin=selected("initial_spin", initial_spin),
+        optimize_total_spin=selected(
+            "optimize_total_spin",
+            optimize_total_spin,
+        ),
         cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
         kpoint_separation=selected_separation,
         kpoints=selected_kpoints,
@@ -48768,6 +49248,7 @@ def _effective_castep_relaxation_spec(
 
 def _castep_defect_charge_spin_preflight(
     spec: ModelSpec,
+    simulation: CastepEnergySpec | None = None,
 ) -> dict[str, Any]:
     """Return the fail-closed CASTEP gate for charged/spin defect models."""
 
@@ -48798,19 +49279,122 @@ def _castep_defect_charge_spin_preflight(
     backend_spin_status = str(
         request.get("backend_spin_binding_status") or ""
     )
+    effective_simulation = (
+        simulation
+        if simulation is not None
+        else spec.simulation
+        if isinstance(spec.simulation, CastepEnergySpec)
+        else None
+    )
+    binding = diamond_nv_castep_binding_receipt(
+        charge_state_label,
+        effective_simulation,
+    )
+    expected_settings = binding.get("expected_settings") or {}
+    expected_charge = expected_settings.get("total_charge")
+    expected_multiplicity = (
+        int(expected_settings["initial_spin"]) + 1
+        if expected_settings.get("initial_spin") is not None
+        else None
+    )
+    expected_spin_state = {
+        "NV0": "doublet",
+        "NV-": "triplet",
+    }.get(charge_state_label)
+    backend_statuses_match = bool(
+        backend_charge_status
+        and backend_charge_status == backend_spin_status
+    )
+    backend_status_reviewed = bool(
+        backend_statuses_match
+        and backend_charge_status in DIAMOND_NV_REVIEWED_BACKEND_STATUSES
+    )
+    metadata_bound = bool(
+        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+    )
     metadata_fail_closed = bool(
-        backend_charge_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
-        and backend_spin_status == DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS
+        backend_charge_status
+        in {
+            DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+            DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
+        }
+        and backend_spin_status == backend_charge_status
         and request.get("calculation_execution_ready") is False
         and request.get("state_result_computed") is False
     )
-    blockers = []
+    state_metadata_consistent = bool(
+        (
+            not charge_state_explicit
+            and expected_settings == {}
+            and request.get("requested_net_charge_e") is None
+            and request.get("reference_spin_multiplicity") is None
+            and request.get("reference_spin_state") is None
+        )
+        or (
+            charge_state_explicit
+            and expected_settings
+            and request.get("requested_net_charge_e") == expected_charge
+            and request.get("reference_spin_multiplicity")
+            == expected_multiplicity
+            and request.get("reference_spin_state") == expected_spin_state
+        )
+    )
+    complex_contract_fields = (
+        "charge_state_label",
+        "charge_state_explicit",
+        "requested_net_charge_e",
+        "reference_spin_multiplicity",
+        "reference_spin_state",
+        "backend",
+        "backend_charge_binding_status",
+        "backend_spin_binding_status",
+        "calculation_execution_ready",
+        "structure_hotload_allowed",
+        "state_result_computed",
+    )
+    complex_metadata_consistent = bool(
+        complexes
+        and all(
+            all(
+                item.get(field) == request.get(field)
+                for field in complex_contract_fields
+            )
+            for item in complexes
+        )
+    )
+    metadata_contract_valid = bool(
+        backend_status_reviewed
+        and state_metadata_consistent
+        and complex_metadata_consistent
+        and request.get("backend") == "Materials Studio 20.1 CASTEP"
+        and request.get("structure_hotload_allowed") is True
+        and request.get("state_result_computed") is False
+        and (
+            (
+                metadata_bound
+                and request.get("calculation_execution_ready") is True
+            )
+            or (
+                not metadata_bound
+                and request.get("calculation_execution_ready") is False
+            )
+        )
+    )
+    execution_ready = bool(
+        charge_state_explicit
+        and binding.get("exact_match") is True
+        and metadata_bound
+        and metadata_contract_valid
+    )
+    blockers: list[str] = []
     if not charge_state_explicit:
         blockers.append("defect_charge_state_unresolved")
-    blockers.append(
-        "defect_charge_spin_settings_not_supported_by_current_castep_schema"
-    )
-    if not metadata_fail_closed:
+    elif binding.get("exact_match") is not True:
+        blockers.append("defect_charge_spin_settings_missing_or_mismatched")
+    elif not metadata_bound:
+        blockers.append("defect_charge_spin_metadata_binding_not_committed")
+    if not metadata_contract_valid:
         blockers.append("defect_charge_spin_metadata_contract_invalid")
     return {
         "applicable": True,
@@ -48824,13 +49408,21 @@ def _castep_defect_charge_spin_preflight(
         ),
         "backend_charge_binding_status": backend_charge_status or None,
         "backend_spin_binding_status": backend_spin_status or None,
+        "backend_status_reviewed": backend_status_reviewed,
+        "metadata_bound": metadata_bound,
         "metadata_fail_closed": metadata_fail_closed,
-        "execution_ready": False,
+        "complex_metadata_consistent": complex_metadata_consistent,
+        "metadata_contract_valid": metadata_contract_valid,
+        "structured_castep_binding": binding,
+        "expected_castep_settings": binding.get("expected_settings"),
+        "observed_castep_settings": binding.get("observed_settings"),
+        "execution_ready": execution_ready,
         "blocking_reasons": blockers,
         "required_next_step": (
-            "Bind reviewed Materials Studio 20.1 CASTEP net-charge and "
-            "spin-polarization settings in the structured schema before "
-            "any CASTEP execution."
+            None
+            if execution_ready
+            else "Select NV0 or NV-, then bind the exact reviewed Materials "
+            "Studio 20.1 CASTEP charge and initial-spin settings before execution."
         ),
         "structure_materialization_allowed": True,
         "same_window_gui_hotload_allowed": True,
@@ -48889,7 +49481,7 @@ def _castep_relaxation_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
-    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec, simulation)
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
         "task_is_geometry_optimization": (
@@ -48967,6 +49559,11 @@ def _effective_castep_electronic_spec(
     task: Any | None,
     quality: str | None,
     functional: str | None,
+    total_charge: int | None,
+    spin_treatment: Any | None,
+    use_formal_spin: bool | None,
+    initial_spin: int | None,
+    optimize_total_spin: bool | None,
     cutoff_energy_ev: int | None,
     kpoint_separation: float | None,
     kpoints: tuple[int, int, int] | None,
@@ -49028,6 +49625,14 @@ def _effective_castep_electronic_spec(
         task=normalized_task,
         quality=selected("quality", quality, "Medium"),
         functional=selected("functional", functional, "PBE"),
+        total_charge=selected("total_charge", total_charge),
+        spin_treatment=selected("spin_treatment", spin_treatment),
+        use_formal_spin=selected("use_formal_spin", use_formal_spin),
+        initial_spin=selected("initial_spin", initial_spin),
+        optimize_total_spin=selected(
+            "optimize_total_spin",
+            optimize_total_spin,
+        ),
         cutoff_energy_ev=selected("cutoff_energy_ev", cutoff_energy_ev),
         kpoint_separation=selected_separation,
         kpoints=selected_kpoints,
@@ -49246,7 +49851,7 @@ def _castep_electronic_preflight(
         not asymmetric_slab
         or (vacuum_value is not None and vacuum_value >= 8.0)
     )
-    defect_charge_spin = _castep_defect_charge_spin_preflight(spec)
+    defect_charge_spin = _castep_defect_charge_spin_preflight(spec, simulation)
     expected_document = RESULT_DOCUMENT_BY_TASK[simulation.task]
     checks = {
         "current_model_is_crystal": isinstance(spec.model, CrystalSpec),
@@ -49514,6 +50119,26 @@ def material_studio_castep_run_current(
             max_length=100,
         ),
     ] = None,
+    total_charge: Annotated[
+        int | None,
+        Field(description="Optional unit-cell total-charge override.", ge=-9999, le=9999),
+    ] = None,
+    spin_treatment: Annotated[
+        CastepSpinTreatmentValue | None,
+        Field(description="Optional documented CASTEP spin-treatment override."),
+    ] = None,
+    use_formal_spin: Annotated[
+        bool | None,
+        Field(description="Optional UseFormalSpin override."),
+    ] = None,
+    initial_spin: Annotated[
+        int | None,
+        Field(description="Optional initial unpaired-electron count.", ge=-9999, le=9999),
+    ] = None,
+    optimize_total_spin: Annotated[
+        bool | None,
+        Field(description="Optional OptimizeTotalSpin override."),
+    ] = None,
     cutoff_energy_ev: Annotated[
         int | None,
         Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000),
@@ -49680,6 +50305,11 @@ def material_studio_castep_run_current(
             task=task,
             quality=quality,
             functional=functional,
+            total_charge=total_charge,
+            spin_treatment=spin_treatment,
+            use_formal_spin=use_formal_spin,
+            initial_spin=initial_spin,
+            optimize_total_spin=optimize_total_spin,
             cutoff_energy_ev=cutoff_energy_ev,
             kpoint_separation=kpoint_separation,
             kpoints=kpoints,
@@ -50481,6 +51111,11 @@ def material_studio_castep_relax_current(
     execution_mode: Annotated[ExecutionMode, Field(description="preview returns the exact script and gates; execute runs CASTEP and promotes only a converged result.")] = ExecutionMode.PREVIEW,
     quality: Annotated[str | None, Field(description="Optional CASTEP quality override.", min_length=1, max_length=100)] = None,
     functional: Annotated[str | None, Field(description="Optional exchange-correlation functional override.", min_length=1, max_length=100)] = None,
+    total_charge: Annotated[int | None, Field(description="Optional unit-cell total-charge override.", ge=-9999, le=9999)] = None,
+    spin_treatment: Annotated[CastepSpinTreatmentValue | None, Field(description="Optional documented CASTEP spin-treatment override.")] = None,
+    use_formal_spin: Annotated[bool | None, Field(description="Optional UseFormalSpin override.")] = None,
+    initial_spin: Annotated[int | None, Field(description="Optional initial unpaired-electron count.", ge=-9999, le=9999)] = None,
+    optimize_total_spin: Annotated[bool | None, Field(description="Optional OptimizeTotalSpin override.")] = None,
     cutoff_energy_ev: Annotated[int | None, Field(description="Optional plane-wave cutoff override in eV.", ge=1, le=100_000)] = None,
     kpoint_separation: Annotated[float | None, Field(description="Optional primary SCF k-point separation override.", gt=0, le=10)] = None,
     kpoints: Annotated[tuple[int, int, int] | None, Field(description="Optional primary SCF custom k-point grid override.")] = None,
@@ -50548,6 +51183,11 @@ def material_studio_castep_relax_current(
             base_spec,
             quality=quality,
             functional=functional,
+            total_charge=total_charge,
+            spin_treatment=spin_treatment,
+            use_formal_spin=use_formal_spin,
+            initial_spin=initial_spin,
+            optimize_total_spin=optimize_total_spin,
             cutoff_energy_ev=cutoff_energy_ev,
             kpoint_separation=kpoint_separation,
             kpoints=kpoints,
@@ -51548,6 +52188,13 @@ def material_studio_live_modeling_request(
                         task=electronic_payload.get("task"),
                         quality=electronic_payload.get("quality"),
                         functional=electronic_payload.get("functional"),
+                        total_charge=electronic_payload.get("total_charge"),
+                        spin_treatment=electronic_payload.get("spin_treatment"),
+                        use_formal_spin=electronic_payload.get("use_formal_spin"),
+                        initial_spin=electronic_payload.get("initial_spin"),
+                        optimize_total_spin=electronic_payload.get(
+                            "optimize_total_spin"
+                        ),
                         cutoff_energy_ev=electronic_payload.get("cutoff_energy_ev"),
                         kpoint_separation=electronic_payload.get("kpoint_separation"),
                         kpoints=electronic_payload.get("kpoints"),
@@ -51669,6 +52316,13 @@ def material_studio_live_modeling_request(
                         expected_revision=current_spec.revision,
                         quality=relaxation_payload.get("quality"),
                         functional=relaxation_payload.get("functional"),
+                        total_charge=relaxation_payload.get("total_charge"),
+                        spin_treatment=relaxation_payload.get("spin_treatment"),
+                        use_formal_spin=relaxation_payload.get("use_formal_spin"),
+                        initial_spin=relaxation_payload.get("initial_spin"),
+                        optimize_total_spin=relaxation_payload.get(
+                            "optimize_total_spin"
+                        ),
                         cutoff_energy_ev=relaxation_payload.get("cutoff_energy_ev"),
                         kpoint_separation=relaxation_payload.get("kpoint_separation"),
                         kpoints=relaxation_payload.get("kpoints"),
@@ -53858,6 +54512,50 @@ def _finalize_high_level_gui_hotload(
 ) -> dict[str, Any]:
     """Revalidate, hot-load, and publish one high-level response under the GUI lock."""
 
+    canonical_structure_path = structure_path
+    if isinstance(spec.model, CrystalSpec):
+        structure_path, structure_selection = (
+            _select_response_gui_hotload_structure(
+                response,
+                canonical_structure_path=canonical_structure_path,
+                project_id=spec.project_id,
+                revision=spec.revision,
+            )
+        )
+        response["gui_hotload_structure_selection"] = structure_selection
+        if structure_selection.get("hotload_allowed") is not True:
+            message = (
+                "Refusing GUI hot-load because the canonical crystal artifact "
+                "no longer matches its revision-bound round-trip evidence."
+            )
+            response = {
+                **response,
+                "ok": False,
+                "status": "gui_hotload_structure_identity_block",
+                "error": message,
+                "gui_open_warning": message,
+                "gui_input_started": False,
+                "structure_reopened": False,
+                "gui_hotload_structure_block": {
+                    "blocked": True,
+                    "reason": "canonical_structure_identity_failed",
+                    "project_id": spec.project_id,
+                    "revision": spec.revision,
+                    "selection": structure_selection,
+                    "required_next_step": (
+                        "Preserve the artifacts, inspect the canonical CIF "
+                        "identity mismatch, and explicitly rematerialize the "
+                        "current revision before retrying GUI hot-load."
+                    ),
+                },
+            }
+            return _attach_modeling_health(
+                response,
+                execution_mode=execution_mode,
+                store=store,
+                spec=spec,
+                gui_artifacts=audit_artifacts,
+            )
     artifact_open_retry_payload = _gui_open_structure_retry_payload(
         structure_path=structure_path,
         project_id=spec.project_id,
@@ -53912,6 +54610,71 @@ def _finalize_high_level_gui_hotload(
                     },
                 }
             else:
+                if isinstance(spec.model, CrystalSpec):
+                    structure_path, structure_selection = (
+                        _select_response_gui_hotload_structure(
+                            response,
+                            canonical_structure_path=canonical_structure_path,
+                            project_id=spec.project_id,
+                            revision=spec.revision,
+                        )
+                    )
+                    response["gui_hotload_structure_selection"] = (
+                        structure_selection
+                    )
+                    if structure_selection.get("hotload_allowed") is not True:
+                        message = (
+                            "Refusing GUI hot-load because the canonical "
+                            "crystal artifact changed before the GUI action."
+                        )
+                        response = {
+                            **response,
+                            "ok": False,
+                            "status": "gui_hotload_structure_identity_block",
+                            "error": message,
+                            "gui_open_warning": message,
+                            "gui_input_started": False,
+                            "structure_reopened": False,
+                            "gui_hotload_structure_block": {
+                                "blocked": True,
+                                "reason": (
+                                    "canonical_structure_identity_failed_"
+                                    "before_gui_action"
+                                ),
+                                "project_id": spec.project_id,
+                                "revision": spec.revision,
+                                "selection": structure_selection,
+                            },
+                            "gui_action_transaction": transaction,
+                        }
+                        _attach_gui_artifact_transaction(
+                            response,
+                            transaction,
+                        )
+                        return _attach_modeling_health(
+                            response,
+                            execution_mode=execution_mode,
+                            store=store,
+                            spec=spec,
+                            gui_artifacts=audit_artifacts,
+                        )
+                    artifact_open_retry_payload = (
+                        _gui_open_structure_retry_payload(
+                            structure_path=structure_path,
+                            project_id=spec.project_id,
+                            revision=spec.revision,
+                            take_snapshot=take_snapshot,
+                            export_view_audit=True,
+                            reuse_existing_window_only=True,
+                            views=views,
+                            working_dir=working_dir,
+                            fit_to_view_after_open=fit_to_view_after_open,
+                            prepare_view_replay_after_open=(
+                                prepare_view_replay_after_open
+                            ),
+                        )
+                    )
+                    retry_payload = artifact_open_retry_payload
                 try:
                     fresh_gui_status = gui.status(
                         project_id=spec.project_id,
@@ -54125,6 +54888,7 @@ def _persist_gui_open_structure_report(
     post_open_status: str | None = None,
     post_open_error: str | None = None,
     partial_success: bool = False,
+    gui_hotload_structure_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist revision diagnostics after directly reopening a structure in the GUI."""
 
@@ -54134,6 +54898,9 @@ def _persist_gui_open_structure_report(
     output_dir = store.outputs_dir(project_id, revision)
     report_payload, _ = _read_json_file(output_dir / "view_audit.json")
     report_json_payload, _ = _read_json_file(output_dir / "report.json")
+    result_metadata_payload, _ = _read_json_file(
+        output_dir / "result_metadata.json"
+    )
     view_audit, view_selection_resolution = _resolve_gui_reaudit_view_selection(
         spec,
         views=views,
@@ -54289,6 +55056,18 @@ def _persist_gui_open_structure_report(
         "partial_success": partial_success,
     }
     response["ok"] = post_open_ok
+    persisted_roundtrip_audit = _materials_studio_roundtrip_audit_from_response(
+        result_metadata_payload or {}
+    )
+    if isinstance(persisted_roundtrip_audit, dict):
+        response["materials_studio_roundtrip_audit_requested"] = True
+        response["materials_studio_roundtrip_audit"] = (
+            persisted_roundtrip_audit
+        )
+    if isinstance(gui_hotload_structure_selection, dict):
+        response["gui_hotload_structure_selection"] = dict(
+            gui_hotload_structure_selection
+        )
     response = _attach_modeling_health(
         response,
         execution_mode=ExecutionMode.EXECUTE,
@@ -54329,6 +55108,9 @@ def _persist_gui_open_structure_report(
         "result_metadata_path": response.get("result_metadata_path"),
         "result": response.get("result"),
         "gui_sync_result": response.get("gui_sync_result"),
+        "gui_hotload_structure_selection": response.get(
+            "gui_hotload_structure_selection"
+        ),
         "validation": response.get("validation"),
         "warnings": response.get("warnings"),
         "planned_outputs": response.get("planned_outputs"),
@@ -55386,21 +56168,180 @@ def _open_gui_structure_action(
     if isinstance(sync_context.get("project_resolution"), dict):
         response_base["project_resolution"] = sync_context["project_resolution"]
 
-    combined_postopen_requested = bool(
-        fit_to_view_after_open or prepare_view_replay_after_open
+    target_spec: ModelSpec | None = None
+    current_spec: ModelSpec | None = None
+    current_pointer: dict[str, Any] | None = None
+    expected_structure: str | None = None
+    trusted_visual_artifact = False
+    requested_structure = Path(structure_path).expanduser()
+    visual_like = (
+        requested_structure.suffix.casefold() == ".xsd"
+        and (
+            "_visual_bonded" in requested_structure.stem.casefold()
+            or "ms_roundtrip"
+            in {part.casefold() for part in requested_structure.parts}
+        )
     )
-    if combined_postopen_requested:
+    if visual_like and not sync_context.get("available"):
+        message = (
+            "Refusing to open a visual bonded XSD without an exact structured "
+            "project/revision context and receipt-bound identity."
+        )
+        return {
+            **response_base,
+            "ok": False,
+            "status": "untrusted_visual_bonded_artifact",
+            "error": message,
+            "gui_open_warning": message,
+            "gui_input_started": False,
+            "structure_reopened": False,
+            "requested_structure_path": str(requested_structure),
+            "required_next_step": (
+                "Provide the exact project_id/revision and regenerate the "
+                "visual bonded XSD through explicit revision execution."
+            ),
+        }
+    if sync_context.get("available"):
         store = _structured_store(working_dir)
         target_spec = store.get_revision(str(log_project_id), int(log_revision))
-        current_spec, current_pointer = store.resolve_current(target_spec.project_id)
         generated = _generate_structured_script(target_spec, store)
         expected_structure = (generated.get("planned_outputs") or {}).get(
             "structure"
         )
+        if (
+            expected_structure
+            and isinstance(target_spec.model, CrystalSpec)
+        ):
+            revision_output_dir = store.outputs_dir(
+                target_spec.project_id,
+                target_spec.revision,
+            )
+            result_metadata, _ = _read_json_file(
+                revision_output_dir / "result_metadata.json"
+            )
+            report_json_payload, _ = _read_json_file(
+                revision_output_dir / "report.json"
+            )
+            roundtrip_audit = _materials_studio_roundtrip_audit_from_response(
+                result_metadata or {}
+            )
+            if roundtrip_audit is None:
+                roundtrip_audit = (
+                    _materials_studio_roundtrip_audit_from_response(
+                        report_json_payload or {}
+                    )
+                )
+            persisted_modeling_report = (
+                report_json_payload.get("modeling_report")
+                if isinstance(report_json_payload, dict)
+                and isinstance(
+                    report_json_payload.get("modeling_report"),
+                    dict,
+                )
+                else {}
+            )
+            roundtrip_audit_required = bool(
+                (
+                    isinstance(result_metadata, dict)
+                    and result_metadata.get(
+                        "materials_studio_roundtrip_audit_requested"
+                    )
+                    is True
+                )
+                or (
+                    isinstance(report_json_payload, dict)
+                    and report_json_payload.get(
+                        "materials_studio_roundtrip_audit_requested"
+                    )
+                    is True
+                )
+                or persisted_modeling_report.get(
+                    "materials_studio_roundtrip_audit_requested"
+                )
+                is True
+                or (revision_output_dir / "ms_roundtrip").is_dir()
+            )
+            selection = _verified_visual_bonded_hotload_selection(
+                roundtrip_audit,
+                canonical_structure_path=Path(str(expected_structure)),
+                project_id=target_spec.project_id,
+                revision=target_spec.revision,
+                roundtrip_audit_required=bool(
+                    roundtrip_audit_required
+                    and not isinstance(roundtrip_audit, dict)
+                ),
+            )
+            response_base["gui_hotload_structure_selection"] = selection
+            canonical_requested = _same_path(
+                requested_structure,
+                expected_structure,
+            )
+            if (
+                (canonical_requested or visual_like)
+                and selection.get("hotload_allowed") is not True
+            ):
+                message = (
+                    "Refusing GUI open because the canonical crystal artifact "
+                    "no longer matches its revision-bound round-trip evidence."
+                )
+                return {
+                    **response_base,
+                    "ok": False,
+                    "status": "gui_hotload_structure_identity_block",
+                    "error": message,
+                    "gui_open_warning": message,
+                    "gui_input_started": False,
+                    "structure_reopened": False,
+                    "requested_structure_path": str(requested_structure),
+                    "expected_structure_path": expected_structure,
+                    "required_next_step": (
+                        "Preserve the artifacts, inspect the canonical CIF "
+                        "identity mismatch, and explicitly rematerialize the "
+                        "revision before retrying."
+                    ),
+                }
+            trusted_visual_artifact = bool(
+                selection.get("visual_bonded_verified") is True
+                and _same_path(
+                    selection.get("selected_structure_path"),
+                    requested_structure,
+                )
+            )
+            if visual_like and not trusted_visual_artifact:
+                message = (
+                    "Refusing to bind an unverified visual bonded XSD to the "
+                    "structured revision."
+                )
+                return {
+                    **response_base,
+                    "ok": False,
+                    "status": "untrusted_visual_bonded_artifact",
+                    "error": message,
+                    "gui_open_warning": message,
+                    "gui_input_started": False,
+                    "structure_reopened": False,
+                    "requested_structure_path": str(requested_structure),
+                    "expected_structure_path": expected_structure,
+                    "required_next_step": (
+                        "Retry the canonical CIF or regenerate the receipt-bound "
+                        "visual bonded XSD through explicit revision execution."
+                    ),
+                }
+
+    combined_postopen_requested = bool(
+        fit_to_view_after_open or prepare_view_replay_after_open
+    )
+    if combined_postopen_requested:
+        assert target_spec is not None
+        assert expected_structure is not None
+        current_spec, current_pointer = store.resolve_current(target_spec.project_id)
         hotload_block_reasons: list[str] = []
         if current_spec.revision != target_spec.revision:
             hotload_block_reasons.append("current_revision_advanced_before_artifact_retry")
-        if not expected_structure or not _same_path(expected_structure, structure_path):
+        if not (
+            _same_path(expected_structure, structure_path)
+            or trusted_visual_artifact
+        ):
             hotload_block_reasons.append(
                 "structure_path_not_exact_current_revision_artifact"
             )
@@ -55484,7 +56425,7 @@ def _open_gui_structure_action(
         take_snapshot=take_snapshot,
         reuse_existing_window_only=reuse_existing_window_only,
     )
-    response: dict[str, Any] = {**opened}
+    response: dict[str, Any] = {**response_base, **opened}
     response["gui_open"] = opened
     response["structured_sync_context"] = sync_context
     response["post_hotload_fit_to_view_requested"] = fit_to_view_after_open
@@ -55537,7 +56478,7 @@ def _open_gui_structure_action(
         response["gui_status"] = gui_status
     if isinstance(sync_context.get("project_resolution"), dict):
         response["project_resolution"] = sync_context["project_resolution"]
-    if sync_context.get("available"):
+    if export_view_audit and sync_context.get("available"):
         try:
             structured = _persist_gui_open_structure_report(
                 project_id=str(sync_context["project_id"]),
@@ -55560,6 +56501,9 @@ def _open_gui_structure_action(
                 post_open_status=response.get("status"),
                 post_open_error=response.get("error"),
                 partial_success=response.get("partial_success") is True,
+                gui_hotload_structure_selection=response_base.get(
+                    "gui_hotload_structure_selection"
+                ),
             )
             response.update(structured)
         except Exception as exc:
@@ -55593,7 +56537,14 @@ def material_studio_gui_open_structure(
     """在正在运行的 Materials Studio GUI 中打开现有的结构文件。"""
 
     try:
-        if export_view_audit:
+        structured_context_requested = bool(
+            export_view_audit
+            or project_id is not None
+            or revision is not None
+            or fit_to_view_after_open
+            or prepare_view_replay_after_open
+        )
+        if structured_context_requested:
             try:
                 sync_context = _resolve_gui_open_structure_sync_context(
                     structure_path=structure_path,
@@ -55608,12 +56559,17 @@ def material_studio_gui_open_structure(
                     "error": str(exc),
                 }
         else:
-            sync_context = {"available": False, "reason": "export_view_audit_disabled"}
+            sync_context = {
+                "available": False,
+                "reason": "structured_context_not_requested",
+            }
 
         combined_postopen_requested = bool(
             fit_to_view_after_open or prepare_view_replay_after_open
         )
-        if combined_postopen_requested and not sync_context.get("available"):
+        if combined_postopen_requested and (
+            not export_view_audit or not sync_context.get("available")
+        ):
             return {
                 "ok": False,
                 "status": "structured_context_required_for_postopen_pipeline",
@@ -55634,7 +56590,7 @@ def material_studio_gui_open_structure(
 
         gui = _gui_controller(working_dir)
         opened_response: dict[str, Any]
-        if sync_context.get("available"):
+        if export_view_audit and sync_context.get("available"):
             coverage = [
                 "target_window_revalidation",
                 "gui_open_structure",

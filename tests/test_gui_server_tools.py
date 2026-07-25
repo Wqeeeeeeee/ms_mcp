@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from material_studio_mcp_server import live_smoke, server
 from material_studio_mcp_server import gui as gui_module
+from material_studio_mcp_server import roundtrip as roundtrip_module
 from material_studio_mcp_server.diagnostic_contract import (
     DIAGNOSTIC_EXPORT_CONTRACT_VERSION,
     REQUIRED_DIAGNOSTIC_ARTIFACT_KEYS,
@@ -12780,7 +12781,7 @@ def test_live_project_status_recovers_gui_open_from_report_json_when_audit_artif
     assert status["mcp_current_model_structure_path"] == created["structure_path"]
 
 
-def test_live_project_status_recomputes_health_for_visual_structure_derivative(monkeypatch, tmp_path: Path) -> None:
+def test_live_project_status_rejects_unreceipted_visual_structure_derivative(monkeypatch, tmp_path: Path) -> None:
     backend = FakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
@@ -12857,13 +12858,18 @@ def test_live_project_status_recomputes_health_for_visual_structure_derivative(m
     assert status["ok"] is True
     assert status["modeling_health_source"] == "recomputed_status"
     assert status["result"]["success"] is True
-    assert status["modeling_health"]["checks"]["gui_loaded_current_revision"] is True
-    assert status["modeling_health"]["checks"]["gui_stale_reasons"] == []
-    assert status["modeling_health"]["checks"]["gui_open_identity_verification"] == "verified_project_wrapper"
-    assert status["modeling_report"]["gui"]["loaded_current_revision"] is True
-    assert status["modeling_report"]["gui"]["structure_path_matches_current"] is True
-    assert status["modeling_report"]["gui"]["stale_reasons"] == []
-    assert status["gui_current_revision"]["loaded_current_revision"] is True
+    assert status["modeling_health"]["checks"]["gui_loaded_current_revision"] is False
+    assert (
+        "opened_structure_does_not_match_planned_structure"
+        in status["modeling_health"]["checks"]["gui_stale_reasons"]
+    )
+    assert status["modeling_report"]["gui"]["loaded_current_revision"] is False
+    assert status["modeling_report"]["gui"]["structure_path_matches_current"] is False
+    assert (
+        "opened_structure_does_not_match_planned_structure"
+        in status["modeling_report"]["gui"]["stale_reasons"]
+    )
+    assert status["gui_current_revision"]["loaded_current_revision"] is False
 
 
 def test_live_project_status_uses_computed_audit_when_persisted_semiconductor_audit_is_stale(
@@ -14094,15 +14100,72 @@ def test_modeling_report_marks_stale_gui_open_for_previous_revision(tmp_path: Pa
     assert "opened_structure_does_not_match_planned_structure" in report["gui"]["stale_reasons"]
 
 
-def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_path: Path) -> None:
+def test_modeling_report_accepts_receipt_bound_visual_structure_derivative(tmp_path: Path) -> None:
     output_dir = tmp_path / "outputs" / "r000"
     output_dir.mkdir(parents=True)
     planned_structure = output_dir / "structure_r000.cif"
-    visual_structure = output_dir / "structure_r000_visual_bonded.xsd"
+    run_root = output_dir / "ms_roundtrip" / "attempt_001"
+    run_root.mkdir(parents=True)
+    visual_structure = run_root / "structure_r000_visual_bonded.xsd"
     untrusted_structure = output_dir / "structure_r000_unreviewed.xsd"
     planned_structure.write_text("data_visual_derivative\n", encoding="utf-8")
-    visual_structure.write_text("visual derivative", encoding="utf-8")
+    visual_structure.write_text(
+        '<?xml version="1.0"?><XSD Version="20.1"><Bond ID="1"/></XSD>',
+        encoding="utf-8",
+    )
     untrusted_structure.write_text("untrusted derivative", encoding="utf-8")
+    planned_sha256 = hashlib.sha256(planned_structure.read_bytes()).hexdigest()
+    visual_sha256 = hashlib.sha256(visual_structure.read_bytes()).hexdigest()
+    roundtrip_audit = {
+        "schema_version": server.ROUNDTRIP_AUDIT_SCHEMA_VERSION,
+        "profile": server.ROUNDTRIP_AUDIT_PROFILE,
+        "project_id": "visual_derivative_proj",
+        "revision": 0,
+        "status": "passed",
+        "ok": True,
+        "source_path": str(planned_structure.resolve()),
+        "source_sha256_planned": planned_sha256,
+        "source_sha256_before": planned_sha256,
+        "source_sha256_after": planned_sha256,
+        "source_unchanged": True,
+        "run_root": str(run_root.resolve()),
+        "comparison": {
+            "passed": True,
+            "input_sha256": planned_sha256,
+        },
+        "visual_bonded_artifact": {
+            "schema_version": (
+                roundtrip_module.VISUAL_BONDED_ARTIFACT_SCHEMA_VERSION
+            ),
+            "requested": True,
+            "required": False,
+            "status": "ready",
+            "ok": True,
+            "criteria": {
+                "min_bond_length": 0.6,
+                "max_bond_length": 1.15,
+            },
+            "source_path": str(planned_structure.resolve()),
+            "source_sha256": planned_sha256,
+            "path": str(visual_structure.resolve()),
+            "sha256": visual_sha256,
+            "confined": True,
+            "format_verified": True,
+            "root_tag": "XSD",
+            "tagged_summary_verified": True,
+            "atom_count": 2,
+            "calculated_bond_count": 1,
+            "bond_count": 1,
+            "xsd_bond_element_count": 1,
+            "atom_count_matches_source": True,
+            "bond_calculation_performed": True,
+            "visual_export_performed": True,
+            "structure_truth_authority": False,
+            "calculation_input_allowed": False,
+            "gui_hotload_candidate": True,
+            "failure_does_not_fail_roundtrip": True,
+        },
+    }
 
     response = {
         "ok": True,
@@ -14110,6 +14173,7 @@ def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_p
         "revision": 0,
         "execution_mode": "execute",
         "result": {"success": True, "execution_backend": "crystal_cif_materialize"},
+        "materials_studio_roundtrip_audit": roundtrip_audit,
         "validation": {"valid": True},
         "planned_outputs": {"structure": str(planned_structure)},
         "gui_status": {
@@ -14152,6 +14216,14 @@ def test_modeling_report_accepts_same_revision_visual_structure_derivative(tmp_p
             },
         },
     }
+    response["gui_hotload_structure_selection"] = (
+        server._verified_visual_bonded_hotload_selection(
+            roundtrip_audit,
+            canonical_structure_path=planned_structure,
+            project_id="visual_derivative_proj",
+            revision=0,
+        )
+    )
 
     assert server._structure_path_matches_current(response, visual_structure, planned_structure) is True
     assert server._structure_path_matches_current(response, untrusted_structure, planned_structure) is False
@@ -20172,7 +20244,7 @@ def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_windo
     )
 
     result = server.material_studio_live_modeling_request(
-        "Build a diamond NV- center in a 2x2x2 supercell and hot-load it in "
+        "Build a diamond NV- center in a 3x3x3 supercell and hot-load it in "
         "Materials Studio, then export defect, charge-state, finite-size, and "
         "view diagnostics.",
         working_dir=str(tmp_path),
@@ -20200,11 +20272,25 @@ def test_live_modeling_request_hotloads_diamond_nv_center_in_only_existing_windo
     assert defect["defect_complex_integrity_ok"] is True
     assert charge["defect_charge_state_label"] == "NV-"
     assert charge["charge_adjusted_electron_count_parity"] == "even"
-    assert charge["charge_spin_backend_binding_ready"] is False
+    assert charge["charge_spin_backend_binding_ready"] is True
+    finite_size = semiconductor["finite_size_summary"]
+    assert result["view_audit"]["model"]["atom_count"] == 215
+    assert finite_size["supercell_matrix"] == [3, 3, 3]
+    assert finite_size["supercell_contract_integrity_ok"] is True
+    assert finite_size["finite_size_warning"] is False
+    assert (
+        result["modeling_health"]["checks"][
+            "semiconductor_nv_supercell_cubic_repeat"
+        ]
+        == 3
+    )
     assert "nitrogen_vacancy_center" in result["semiconductor_intent"][
         "domain_tags"
     ]
-    assert "defect_charge_spin_backend_unbound" in result["modeling_report"][
+    assert "defect_charge_spin_backend_unbound" not in result["modeling_report"][
+        "semiconductor_review"
+    ]["risk_flags"]
+    assert "finite_size_or_dilution_warning" not in result["modeling_report"][
         "semiconductor_review"
     ]["risk_flags"]
 
@@ -20762,9 +20848,10 @@ def test_live_modeling_request_hotloads_chinese_multiplication_sign_supercell(
 
 
 def test_live_modeling_request_marks_surface_slab_polarity_diagnostic_focus(
-    isolated_fake_gui: FakeGuiBackend,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("MATERIAL_STUDIO_MCP_GUI_BACKEND", "null")
     result = server.material_studio_live_modeling_request(
         "Build silicon (100) slab and export surface diagnostics.",
         working_dir=str(tmp_path),
@@ -22785,7 +22872,19 @@ def test_view_parameter_summary_recommends_export_refresh_when_counts_are_stale(
 
     gate = server._normality_gate(report)
     assert gate["can_claim_model_normal"] is True
-    assert gate["can_claim_live_gui_normal"] is True
+    assert gate["can_claim_live_gui_normal"] is False
+    assert gate["trusted_multiview_gui_evidence_required"] is True
+    assert gate["trusted_multiview_gui_evidence_ok"] is False
+    assert (
+        "trusted_multiview_gui_evidence_missing"
+        in gate["must_not_claim_live_gui_normal_reasons"]
+    )
+    assert gate["trusted_multiview_gui_evidence_action"][
+        "recommended_tool"
+    ] == "material_studio_live_modeling_request"
+    assert gate["trusted_multiview_gui_evidence_action"][
+        "payload_hint"
+    ]["project_id"] == "stale_views"
     assert "view_parameter_export_not_current" not in gate["all_must_not_claim_reasons"]
 
 
@@ -34977,6 +35076,14 @@ def test_modeling_report_treats_calculation_only_warning_as_model_normal_with_ca
         },
     }
     response["modeling_health"] = build_modeling_health(response, execution_mode="execute")
+    baseline_report = server._build_modeling_report(dict(response))
+    response["gui_view_replay"] = _trusted_clean_view_replay_payload(
+        project_id=spec.project_id,
+        revision=0,
+        view_names=list(
+            baseline_report["view_review"]["supported_view_names"]
+        ),
+    )
     report = server._build_modeling_report(response)
 
     assert report["normality"] == "review_warnings"
@@ -35839,6 +35946,7 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
         "ok": True,
         "project_id": spec.project_id,
         "revision": 0,
+        "working_dir": str(tmp_path),
         "workflow": "gui_view_replay_confirmation",
         "execution_mode": "execute",
         "result": {"success": True, "execution_backend": "crystal_cif_materialize"},
@@ -35894,6 +36002,84 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
         execution_mode="execute",
     )
     baseline_report = server._build_modeling_report(dict(response))
+    baseline_gate = baseline_report["normality_gate"]
+    assert baseline_gate["can_claim_model_normal"] is True
+    assert baseline_gate["can_claim_live_gui_normal"] is False
+    assert baseline_gate["trusted_multiview_gui_evidence_required"] is True
+    assert baseline_gate["trusted_multiview_gui_evidence_ok"] is False
+    assert (
+        "trusted_multiview_gui_evidence_missing"
+        in baseline_gate["must_not_claim_live_gui_normal_reasons"]
+    )
+    assert baseline_gate["next_action"] == (
+        "continue_view_replay_before_claiming_live_gui_normal"
+    )
+    baseline_replay_action = baseline_gate[
+        "trusted_multiview_gui_evidence_action"
+    ]
+    assert baseline_replay_action["action_id"] == "continue_gui_view_replay"
+    assert baseline_replay_action["recommended_tool"] == (
+        "material_studio_live_modeling_request"
+    )
+    assert baseline_replay_action["needs_user_confirmation"] is False
+    assert baseline_replay_action["safe_to_call_without_confirmation"] is True
+    assert baseline_replay_action["mutates_structure"] is False
+    assert baseline_replay_action["creates_revision"] is False
+    assert baseline_replay_action["issues_gui_input"] is False
+    assert baseline_replay_action["payload_hint"] == {
+        "user_request": "continue the next GUI view replay",
+        "project_id": spec.project_id,
+        "execution_mode": "preview",
+        "open_in_gui": False,
+        "take_snapshot": False,
+        "export_view_audit": False,
+        "views": baseline_report["view_review"]["supported_view_names"],
+        "response_mode": "full",
+        "working_dir": str(tmp_path),
+    }
+    assert baseline_report["normality_decision"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_report["normality_decision"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_report["normality_decision"]["consistency"]["ok"] is True
+    assert baseline_report["semiconductor_calculation_readiness"][
+        "ready_for_calculation"
+    ] is False
+
+    baseline_response = dict(response)
+    baseline_response["modeling_report"] = baseline_report
+    server._refresh_response_summaries(baseline_response)
+    baseline_compact = server._compact_live_response(
+        baseline_response,
+        "compact",
+    )
+    assert baseline_compact["normality_gate"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["normality_gate"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_compact["normality_gate"][
+        "trusted_multiview_gui_evidence_action"
+    ]["payload_hint"]["project_id"] == spec.project_id
+    assert baseline_compact["normality_decision"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["normality_decision"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+    assert baseline_compact["normality_decision"][
+        "trusted_multiview_gui_evidence_action_ref"
+    ] == "normality_gate.trusted_multiview_gui_evidence_action"
+    assert baseline_compact["live_summary"][
+        "can_claim_live_gui_normal"
+    ] is False
+    assert baseline_compact["live_summary"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is False
+
     view_names = list(baseline_report["view_review"]["supported_view_names"])
     response["gui_view_replay"] = _trusted_clean_view_replay_payload(
         project_id=spec.project_id,
@@ -35917,6 +36103,9 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
     assert gate["status"] == "claimable_with_calculation_review"
     assert gate["can_claim_model_normal"] is True
     assert gate["can_claim_live_gui_normal"] is True
+    assert gate["trusted_multiview_gui_evidence_required"] is True
+    assert gate["trusted_multiview_gui_evidence_ok"] is True
+    assert gate["trusted_multiview_gui_evidence_action"] is None
     assert gate["must_not_claim_live_gui_normal_reasons"] == []
     assert gate["resolved_visual_review_reasons"] == [
         "view:projection_overlaps",
@@ -35984,6 +36173,9 @@ def test_trusted_clean_view_replay_promotes_only_live_visual_normality(
     assert compact["trusted_clean_view_replay"]["ok"] is True
     assert compact["trusted_clean_view_replay"]["view_selection_matches"] is True
     assert compact["normality_gate"]["can_claim_live_gui_normal"] is True
+    assert compact["normality_gate"][
+        "trusted_multiview_gui_evidence_ok"
+    ] is True
     assert compact["normality_gate"]["trusted_clean_view_replay_ref"] == (
         "trusted_clean_view_replay"
     )

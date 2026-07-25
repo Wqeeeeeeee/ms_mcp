@@ -41,6 +41,16 @@
       "title": "CastepOptimizationAlgorithm",
       "type": "string"
     },
+    "CastepSpinTreatment": {
+      "description": "Spin treatments documented by Materials Studio 20.1.",
+      "enum": [
+        "Non-polarized",
+        "Collinear",
+        "Non-collinear"
+      ],
+      "title": "CastepSpinTreatment",
+      "type": "string"
+    },
     "CastepTask": {
       "description": "CASTEP tasks supported by the Materials Studio 20.1 renderer.",
       "enum": [
@@ -299,6 +309,8 @@
         "total_charge": {
           "anyOf": [
             {
+              "maximum": 9999,
+              "minimum": -9999,
               "type": "integer"
             },
             {
@@ -405,6 +417,55 @@
           ],
           "default": null,
           "title": "Functional"
+        },
+        "spin_treatment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CastepSpinTreatment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "use_formal_spin": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Use Formal Spin"
+        },
+        "initial_spin": {
+          "anyOf": [
+            {
+              "maximum": 9999,
+              "minimum": -9999,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initial Spin"
+        },
+        "optimize_total_spin": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Optimize Total Spin"
         },
         "cutoff_energy_ev": {
           "anyOf": [

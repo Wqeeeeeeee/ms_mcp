@@ -113,6 +113,29 @@ refresh diagnostics. The fallback must not create a second Materials Studio
 window just to hot-load a revision.
 For crystal specs the generated structure file is a CIF artifact; molecule and
 imported-structure script executions can still produce `.xsd` outputs.
+
+When `verify_ms_roundtrip=true`, the Materials Studio 20.1 import/export check
+uses its immutable `ms_roundtrip/<attempt_id>` directory as the runner job
+directory. This avoids the legacy MatServer `MAX_PATH` failure caused by adding
+the generic `.material-studio-mcp/jobs/...` hierarchy. The receipt records a
+240-character path budget for the source CIF, output CIF, script, `.out`, and
+MatStudio HTML log and refuses to start the runner when that budget is
+exceeded. A zero process return code is insufficient: a real
+`RunMatScript.bat` run must also emit both `Completion status: (OK)` and
+`Exiting MatServer: status OK`. The receipt preserves the return code, both
+marker observations, and the actual saved-script byte SHA-256; any missing
+evidence prevents the subsequent GUI hot-load.
+After the canonical CIF export, the audit may create a visual-only bonded XSD
+inside the same immutable attempt directory. The GUI selects that XSD only
+when the round-trip receipt, source and artifact hashes, path confinement, XSD
+format, atom count, and positive bond evidence all pass a fresh pre-open
+check. Any failure uses the canonical CIF without failing an otherwise valid
+round-trip. A filename ending in `_visual_bonded.xsd` is not trust evidence,
+and direct GUI-open retries reject an unreceipted visual derivative. The XSD is
+never used as calculation input and never replaces the revision CIF as
+structural truth. This fallback applies only to the optional visual derivative:
+a canonical-CIF hash or source-binding failure, or a missing required
+round-trip receipt, blocks GUI open before any input is sent.
 Precise structure changes should remain spec/patch driven because they are
 reproducible, logged, and rollback-safe.
 
@@ -206,7 +229,15 @@ invalidate replay-derived visual confirmation. Read-only status reports but does
 not reconcile files automatically; a new real observation is the recovery path.
 
 Live project status and serialized GUI report rewrites convert a fully verified
-replay into the separate `trusted_clean_view_replay` receipt. This receipt is positive only when
+replay into the separate `trusted_clean_view_replay` receipt. A live-GUI
+normality claim requires this receipt to have `ok=true`; a single snapshot,
+matching wrapper title, static projection, or valid disk artifact can still
+support model normality but cannot establish what the live viewport showed.
+When replay evidence is missing or incomplete, `can_claim_model_normal` remains
+independent, `can_claim_live_gui_normal=false`, and
+`trusted_multiview_gui_evidence_action` provides the revision-bound
+`continue_view_replay` call without creating a revision or issuing GUI input.
+The receipt is positive only when
 the current project/revision binding is verified, replay and diagnostic view
 sets match exactly, all supported views are confirmed under current recipes,
 the recommended clean view and every manual-review view are confirmed, artifact
@@ -860,13 +891,19 @@ a relaxed geometry, charge state, or formation energy. Preview remains the
 default, while explicit execute/hot-load continues through the existing
 single-window GUI path.
 Diamond NV-center scaffolds follow the same single-window hot-load path. The
-deterministic 2x2x2 structure may be materialized and opened in the verified
-existing Materials Studio window, while the NV, NV0, or NV- state remains
-explicit metadata. The audit exports the bound N-vacancy pair and charge-state
-contract in `semiconductor_defect_complexes.csv` and
-`semiconductor_charge_balance.csv`. CASTEP execution remains fail-closed until
-net-charge and spin-polarization settings are available in the structured
-CASTEP schema; GUI hot-loading does not relax that calculation gate.
+deterministic scaffold defaults to 2x2x2 and accepts explicit cubic 2x2x2
+through 4x4x4 conventional-cell matrices. The selected structure may be
+materialized and opened in the verified existing Materials Studio window; this
+does not launch a second process. The 3x3x3 path provides a 215-atom
+post-vacancy model for the live smoke workflow and clears the compact 2x2x2
+small-cell heuristic. Explicit NV0 and NV- states bind exact structured CASTEP
+total-charge and initial-spin settings; unresolved and legacy-unbound states
+remain fail-closed. The audit exports the bound N-vacancy pair, supercell and
+charge-state contracts, expected settings, observed settings, and match status
+in `semiconductor_defect_complexes.csv`,
+`semiconductor_finite_size.csv`, and
+`semiconductor_charge_balance.csv`. GUI hot-loading does not execute CASTEP or
+prove that the requested electronic state was obtained.
 Explicitly distributed alloy or dopant-fraction requests use a deterministic
 periodic maximin site-selection receipt. The receipt binds the full candidate
 site geometry, 3x3 minimum-image distance mode, selected IDs, each farthest-point
@@ -1010,7 +1047,7 @@ runtime before reading it as current.
    Preview returns deferred receipts and never touches the GUI.
 7. Export `material_studio_model_export_view_audit` or `material_studio_model_export_view_bundle` diagnostics and capture a snapshot when possible. `project_id` may be omitted for the latest current project; the response includes `project_resolution`. The audit includes per-view camera vectors, camera position/distance, orthographic framing, projection bounding boxes, per-atom 2D/depth projections, likely overlap candidates, bond-length rows, bond-angle rows, dihedral rows, atom connectivity, crystal nearest-neighbor rows, crystal coordination rows, semiconductor health summaries, semiconductor calculation-preflight summaries, semiconductor layer profiles, slab vacuum diagnostics, common over-coordination errors, and non-bonded close-contact warnings to help detect malformed or visually ambiguous models. Live and audit responses automatically include a view-bundle manifest and CSV file map for external checks.
 8. Call `material_studio_live_project_status` to read the current revision, persisted report state, computed diagnostics, GUI status, and recommended next action. `project_id` may be omitted for ongoing sessions; the response includes `project_resolution` when it resolves the latest workspace project.
-9. For client display, read `modeling_report.normality` first; normality-check requests automatically set `diagnostic_export_requested=true` and write view-bundle diagnostics. Use `modeling_report.normality_gate` as the machine-readable decision gate: only report the model as normal when `can_claim_model_normal=true`, and only report the live GUI as normal/current when `can_claim_live_gui_normal=true`. Otherwise surface `normality_gate.status`, `must_not_claim_normal_reasons`, and `next_action`. Use `modeling_report.acceptance_review`, `modeling_health.verdict`, `modeling_health.errors`, `modeling_report.gui.visual_validation`, GUI snapshot readability/nonblank metrics, view-bundle row counts, and warnings before trusting a visual artifact as proof that the model loaded normally. For semiconductor models, use `modeling_report.change_receipt.semiconductor` plus `live_readiness.calculation_blocking_reasons` to explain why a model can remain editable/hot-loadable while still not ready for trusted CASTEP/DFT calculation. For crystal lattice or vacuum edits, also read `modeling_report.change_receipt.delta.crystal.cartesian_moved_atom_count` and `fractional_rescale_preserved_cartesian` so fractional coordinate rescaling is not mistaken for physical atom motion.
+9. For client display, read `modeling_report.normality` first; normality-check requests automatically set `diagnostic_export_requested=true` and write view-bundle diagnostics. Use `modeling_report.normality_gate` as the machine-readable decision gate: only report the model as normal when `can_claim_model_normal=true`, and only report the live GUI as normal/current when both `can_claim_live_gui_normal=true` and `trusted_multiview_gui_evidence_ok=true`. A single GUI snapshot never satisfies the live-GUI claim. When the model claim is valid but trusted multi-view evidence is absent, surface `trusted_multiview_gui_evidence_missing` and call the returned `trusted_multiview_gui_evidence_action` to prepare or continue replay; it does not create a revision or issue GUI input. Otherwise surface `normality_gate.status`, `must_not_claim_normal_reasons`, and `next_action`. Use `modeling_report.acceptance_review`, `modeling_health.verdict`, `modeling_health.errors`, `modeling_report.gui.visual_validation`, GUI snapshot readability/nonblank metrics, view-bundle row counts, and warnings before trusting a visual artifact as proof that the model loaded normally. For semiconductor models, use `modeling_report.change_receipt.semiconductor` plus `live_readiness.calculation_blocking_reasons` to explain why a model can remain editable/hot-loadable while still not ready for trusted CASTEP/DFT calculation. For crystal lattice or vacuum edits, also read `modeling_report.change_receipt.delta.crystal.cartesian_moved_atom_count` and `fractional_rescale_preserved_cartesian` so fractional coordinate rescaling is not mistaken for physical atom motion.
 10. Record any Copy Script snippets needed for API alignment.
 
 Any calculation, file-changing action, or GUI synchronization that executes a

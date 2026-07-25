@@ -284,12 +284,21 @@ In0.25Ga0.75N/GaN(0001) wurtzite heterostructure templates are available for
 interface starts; the III-V and group-IV heterostructures also support
 superlattice, quantum-well, and MQW starts.
 Diamond nitrogen-vacancy requests use the discoverable virtual template
-`diamond_nitrogen_vacancy_center`. The v1 route always builds the reviewed
-2x2x2 conventional diamond scaffold, substitutes `C1_000` with N, removes the
-nearest periodic `C2_000`, and exports defect, charge-balance, finite-size, and
-view diagnostics. Explicit NV0 and NV- labels are metadata contracts, not
-calculated electronic states. Unsupported charge labels or supercells are
-rejected rather than falling back to pristine diamond.
+`diamond_nitrogen_vacancy_center`. The route defaults to the reviewed 2x2x2
+conventional diamond scaffold and accepts explicit cubic 2x2x2 through 4x4x4
+matrices. Smaller, larger, and anisotropic requests fail closed. It substitutes
+`C1_000` with N, removes the nearest periodic `C2_000`, and records the selected
+matrix, host-site count, and post-defect atom count in a versioned supercell
+contract. The finite-size JSON and CSV diagnostics independently check that
+contract against the current structure. The 2x2x2 model remains a compact
+preview and carries the small-cell warning; an explicit 3x3x3 model has 215
+atoms after the vacancy and clears the current dilute-cell heuristic.
+Explicit NV0 and NV- labels bind reviewed structured CASTEP
+initial-state settings as well as metadata; they are not calculated electronic
+states. NV0 uses total charge 0 and initial spin 1, while NV- uses total charge
+-1 and initial spin 2. Both use collinear spin, disable formal-spin
+initialization, and keep total spin fixed. Unsupported charge labels or
+supercell matrices are rejected rather than falling back to pristine diamond.
 Current slab starting points include Si(100), GaAs(001), GaN(0001), AlN(0001),
 InN(0001), ZnO(0001), hydrogen-backed 3C-SiC `(001)` Si/C-face slabs,
 hydrogen-backed 4H-SiC Si/C-face slabs, and hydrogen-backed 6H-SiC Si/C-face slabs. Requests such as
@@ -997,14 +1006,17 @@ member bindings, threshold, and minimum-image status. The view bundle exports
 point, not a defect charge-state or formation-energy result; relaxation,
 finite-size, and charge-state review remain required before quantitative use.
 For a current diamond NV revision, requests such as `set the NV center to NV-`
-or `set net charge to 0` create a metadata-only `SemanticPatch` revision. The
-atom identities and coordinates remain unchanged. The view bundle binds the
-selected state and electron-count parity in
+or `set net charge to 0` create a non-structural `SemanticPatch` revision that
+updates simulation settings and metadata together. Atom identities, lattice,
+and coordinates remain unchanged. The view bundle binds the selected state,
+electron-count parity, exact expected settings, observed settings, and
+per-field match status in
 `semiconductor_defect_complexes.csv` and
-`semiconductor_charge_balance.csv`. CIF materialization and same-window GUI
-hot-loading remain available, but CASTEP energy, band, DOS/PDOS, and relaxation
-execution stay blocked until reviewed Materials Studio 20.1 net-charge and
-spin-polarization settings are represented by the structured CASTEP schema.
+`semiconductor_charge_balance.csv`. Explicit NV0/NV- settings may pass the
+charge/spin gate, but execution still requires explicit confirmation and all
+other cutoff, k-point, relaxation, finite-size, and structural preflights.
+Unresolved and legacy-unbound revisions remain fail-closed. CIF materialization
+and same-window GUI hot-loading remain available independently.
 When a vacancy or dopant request omits the exact crystal atom ID, the planner
 can choose the first deterministic matching semiconductor site and records that
 choice in `metadata.nl_auto_selected_sites`. If the user supplies a site-like

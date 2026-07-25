@@ -264,6 +264,18 @@ def test_static_structured_schemas_are_not_placeholders() -> None:
     assert castep_schema["properties"]["dipole_correction"]["anyOf"][0]["$ref"] == (
         "#/$defs/CastepDipoleCorrection"
     )
+    assert castep_schema["properties"]["spin_treatment"]["anyOf"][0]["$ref"] == (
+        "#/$defs/CastepSpinTreatment"
+    )
+    assert castep_schema["$defs"]["CastepSpinTreatment"]["enum"] == [
+        "Non-polarized",
+        "Collinear",
+        "Non-collinear",
+    ]
+    assert "total_charge" in castep_schema["properties"]
+    assert "use_formal_spin" in castep_schema["properties"]
+    assert "initial_spin" in castep_schema["properties"]
+    assert "optimize_total_spin" in castep_schema["properties"]
     assert castep_schema["$defs"]["CastepDipoleCorrection"]["enum"] == [
         "None",
         "Non self-consistent",

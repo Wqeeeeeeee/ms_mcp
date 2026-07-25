@@ -12,15 +12,20 @@ from typing import Any, Sequence
 
 from .semiconductor_contracts import (
     DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
-    DIAMOND_NV_CENTER_SUPERCELL,
+    DIAMOND_NV_CENTER_DEFAULT_SUPERCELL,
+    DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+    DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
     DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
-    DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS,
+    DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+    diamond_nv_expected_castep_settings,
+    normalize_diamond_nv_supercell,
 )
 from .semiconductor_site_selection import (
     PERIODIC_MAXIMIN_STRATEGY,
     select_periodic_maximin_sites,
 )
-from .specs.castep import CastepTask, normalize_castep_task
+from .specs.castep import CastepEnergySpec, CastepTask, normalize_castep_task
 from .specs.common import ELEMENTS
 from .specs.crystal import BasisAtomSpec, CrystalSpec, LatticeSpec
 from .specs.molecule import MoleculeSpec
@@ -2915,7 +2920,7 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
             "generated_by_tool": "material_studio_live_modeling_request",
             "response_template_id": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
             "example_request": (
-                "Build a diamond NV- center in a 2x2x2 supercell and export "
+                "Build a diamond NV- center in a 3x3x3 supercell and export "
                 "defect diagnostics."
             ),
             "terms": [
@@ -2927,11 +2932,19 @@ def supported_semiconductor_virtual_template_profiles() -> list[dict[str, Any]]:
                 "\u91d1\u521a\u77f3\u6c2e\u7a7a\u4f4d\u4e2d\u5fc3",
             ],
             "notes": (
-                "Deterministic 2x2x2 diamond conventional-cell scaffold with "
+                "Deterministic cubic diamond conventional-cell scaffold with "
                 "one substitutional N and one verified nearest-neighbor C vacancy. "
+                "The default is 2x2x2 and reviewed explicit repeats are 2 through 4. "
                 "NV0/NV- labels are request metadata only until the Materials Studio "
                 "20.1 CASTEP charge and spin settings are explicitly bound."
             ),
+            "default_supercell": list(DIAMOND_NV_CENTER_DEFAULT_SUPERCELL),
+            "supported_supercell_contract": {
+                "shape": "cubic",
+                "min_repeat": DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
+                "max_repeat": DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+                "base_cell": "diamond_conventional_8_atom",
+            },
             "model_type": "crystal",
             "model_name": DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
             "structure_family": "diamond nitrogen vacancy defect complex",
@@ -11170,7 +11183,7 @@ def _infer_diamond_nv_charge_state_patch(
     text: str,
     current_spec: ModelSpec,
 ) -> NaturalLanguagePlan | None:
-    """Update only the declared NV charge/spin contract on the current revision."""
+    """Update the declared NV state and its non-structural CASTEP settings."""
 
     metadata = dict(current_spec.metadata or {})
     complex_inputs = [
@@ -11224,18 +11237,23 @@ def _infer_diamond_nv_charge_state_patch(
                 "A current diamond NV charge-state update matched but could "
                 "not satisfy the reviewed metadata contract.",
                 str(exc),
-                "Select exactly NV0 or NV-; this changes metadata only and "
-                "does not claim a computed electronic state.",
+                "Select exactly NV0 or NV-; this changes only simulation "
+                "settings and metadata and does not claim a computed state.",
             ],
         )
 
+    expected_settings = diamond_nv_expected_castep_settings(
+        str(charge_state.get("charge_state_label") or "")
+    )
+    if expected_settings is None:
+        raise ValueError("Explicit NV charge state has no reviewed CASTEP binding.")
     complex_record = {
         **complex_inputs[0],
         **charge_state,
         "backend": "Materials Studio 20.1 CASTEP",
-        "backend_charge_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
-        "backend_spin_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
-        "calculation_execution_ready": False,
+        "backend_charge_binding_status": DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+        "backend_spin_binding_status": DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS,
+        "calculation_execution_ready": True,
         "structure_hotload_allowed": True,
         "state_result_computed": False,
     }
@@ -11257,8 +11275,22 @@ def _infer_diamond_nv_charge_state_patch(
         )
     }
     charge_label = str(charge_state["charge_state_label"])
+    current_simulation = (
+        current_spec.simulation
+        if isinstance(current_spec.simulation, CastepEnergySpec)
+        else CastepEnergySpec()
+    )
+    simulation_operation = current_simulation.model_dump(
+        mode="json",
+        exclude_none=True,
+    )
+    simulation_operation.pop("module", None)
+    simulation_operation.pop("output_file", None)
+    simulation_operation.update(expected_settings)
+    simulation_operation["type"] = "set_castep_energy"
     return _patch_plan(
         [
+            simulation_operation,
             {
                 "type": "set_metadata",
                 "metadata_updates": {
@@ -11269,6 +11301,7 @@ def _infer_diamond_nv_charge_state_patch(
                         "complex_id": complex_record.get("complex_id"),
                         "charge_state_label": charge_label,
                         "source": "natural_language_diamond_nv_charge_state",
+                        "structured_castep_settings": expected_settings,
                         "state_result_computed": False,
                     },
                 },
@@ -11276,8 +11309,8 @@ def _infer_diamond_nv_charge_state_patch(
         ],
         "diamond_nv_charge_state",
         (
-            f"Record {charge_label} as the requested NV charge-state metadata; "
-            "keep CASTEP charge/spin execution blocked until backend binding."
+            f"Bind {charge_label} to reviewed structured CASTEP charge/spin "
+            "settings without changing atomic coordinates or claiming a result."
         ),
     )
 
@@ -11295,19 +11328,12 @@ def _infer_diamond_nv_center_template(
     try:
         charge_state = _diamond_nv_charge_state_request(text)
         requested_supercell = _match_make_supercell(text)
-        if (
-            requested_supercell is not None
-            and requested_supercell != DIAMOND_NV_CENTER_SUPERCELL
-        ):
-            requested_label = "x".join(str(value) for value in requested_supercell)
-            raise ValueError(
-                "Diamond NV-center v1 supports only the reviewed 2x2x2 "
-                f"conventional-cell scaffold, not {requested_label}."
-            )
+        supercell_matrix = normalize_diamond_nv_supercell(requested_supercell)
         spec = _diamond_nv_center_spec(
             user_request=user_request,
             project_id=project_id,
             charge_state=charge_state,
+            supercell_matrix=supercell_matrix,
         )
     except ValueError as exc:
         return NaturalLanguagePlan(
@@ -11319,28 +11345,35 @@ def _infer_diamond_nv_center_template(
                 "A diamond nitrogen-vacancy request matched but could not be "
                 "constructed under the reviewed structural contract.",
                 str(exc),
-                "Use NV center, NV0, or NV- with the deterministic 2x2x2 "
-                "diamond scaffold.",
+                "Use NV center, NV0, or NV- with a cubic 2x2x2 through "
+                "4x4x4 diamond scaffold.",
             ],
         )
     charge_label = str(charge_state["charge_state_label"])
+    supercell_label = "x".join(str(value) for value in supercell_matrix)
     return NaturalLanguagePlan(
         kind="spec",
         payload=spec.model_dump(mode="json"),
         confidence=0.94,
         template_id=DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
         notes=[
-            "Generated a deterministic 2x2x2 diamond supercell with one "
+            f"Generated a deterministic {supercell_label} diamond supercell with one "
             "substitutional N and one verified nearest-neighbor C vacancy.",
             (
                 "Charge state remains unresolved and no electronic charge or "
                 "spin state was assumed."
                 if charge_label == "unspecified"
-                else f"Recorded {charge_label} as requested metadata; the "
-                "current CASTEP schema does not bind net charge or spin."
+                else f"Bound {charge_label} to the reviewed structured CASTEP "
+                "charge and initial-spin settings."
             ),
             "CIF materialization and same-window GUI hot-loading remain "
-            "available; CASTEP execution is blocked by charge/spin preflight.",
+            + (
+                "available; CASTEP execution remains blocked until an explicit "
+                "NV0 or NV- state is selected."
+                if charge_label == "unspecified"
+                else "available; calculation execution still requires explicit "
+                "confirmation and all other scientific preflight gates."
+            ),
         ],
     )
 
@@ -11350,7 +11383,10 @@ def _diamond_nv_center_spec(
     user_request: str,
     project_id: str | None,
     charge_state: dict[str, Any],
+    supercell_matrix: tuple[int, int, int] = DIAMOND_NV_CENTER_DEFAULT_SUPERCELL,
 ) -> ModelSpec:
+    supercell_matrix = normalize_diamond_nv_supercell(supercell_matrix)
+    supercell_label = "x".join(str(value) for value in supercell_matrix)
     payload = _load_example("diamond_cubic_spec.json")
     chosen_project_id = project_id or _project_id(
         DIAMOND_NV_CENTER_VIRTUAL_TEMPLATE_ID,
@@ -11383,7 +11419,7 @@ def _diamond_nv_center_spec(
             operations=[
                 {
                     "type": "make_supercell",
-                    "matrix": list(DIAMOND_NV_CENTER_SUPERCELL),
+                    "matrix": list(supercell_matrix),
                 }
             ],
         ),
@@ -11452,13 +11488,21 @@ def _diamond_nv_center_spec(
     ]
     rounded_distance = round(float(pair_distance), 6)
     rounded_threshold = round(float(neighbor_threshold), 6)
+    expected_castep_settings = diamond_nv_expected_castep_settings(
+        str(charge_state.get("charge_state_label") or "")
+    )
+    backend_binding_status = (
+        DIAMOND_NV_CHARGE_SPIN_BOUND_STATUS
+        if expected_castep_settings is not None
+        else DIAMOND_NV_CHARGE_SPIN_BINDING_REQUIRED_STATUS
+    )
     charge_spin_request = {
         **charge_state,
         "complex_id": complex_id,
         "backend": "Materials Studio 20.1 CASTEP",
-        "backend_charge_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
-        "backend_spin_binding_status": DIAMOND_NV_CHARGE_SPIN_BACKEND_STATUS,
-        "calculation_execution_ready": False,
+        "backend_charge_binding_status": backend_binding_status,
+        "backend_spin_binding_status": backend_binding_status,
+        "calculation_execution_ready": expected_castep_settings is not None,
         "structure_hotload_allowed": True,
         "state_result_computed": False,
     }
@@ -11511,6 +11555,19 @@ def _diamond_nv_center_spec(
         **charge_spin_request,
     }
     metadata_updates = {
+        "diamond_nv_supercell_contract": {
+            "schema_version": "diamond_nv_supercell_contract_v1",
+            "matrix": list(supercell_matrix),
+            "cubic_repeat": supercell_matrix[0],
+            "base_template_id": DIAMOND_NV_CENTER_BASE_TEMPLATE_ID,
+            "base_conventional_cell_atom_count": len(base.model.basis_atoms),
+            "host_site_count_before_defect": len(supercell.model.basis_atoms),
+            "atom_count_after_defect": len(supercell.model.basis_atoms) - 1,
+            "min_supported_cubic_repeat": DIAMOND_NV_CENTER_MIN_CUBIC_REPEAT,
+            "max_supported_cubic_repeat": DIAMOND_NV_CENTER_MAX_CUBIC_REPEAT,
+            "selection": "explicit_request_or_default",
+            "source": "natural_language_diamond_nv_center",
+        },
         "semiconductor_dopant_sites": [dopant_record],
         "last_semiconductor_dopant_site": dopant_record,
         "defects": [vacancy_record],
@@ -11542,7 +11599,7 @@ def _diamond_nv_center_spec(
             },
         ],
         "nl_composite_operations": [
-            "make_supercell 2x2x2",
+            f"make_supercell {supercell_label}",
             f"substitute_atom {nitrogen_site.id}->N",
             f"delete_atom {vacancy_site.id}",
             f"bind_defect_complex {complex_id}",
@@ -11578,16 +11635,27 @@ def _diamond_nv_center_spec(
                 *defect_spec.acceptance.notes,
                 (
                     "NV-center structure is an unrelaxed defect scaffold; "
-                    "CASTEP charge and spin execution remains blocked until "
-                    "backend settings are explicitly bound."
+                    "explicit calculation execution remains gated by reviewed "
+                    "charge/spin and scientific preflight settings."
                 ),
             ],
         }
     )
+    simulation = defect_spec.simulation
+    if expected_castep_settings is not None:
+        if not isinstance(simulation, CastepEnergySpec):
+            raise ValueError("Diamond NV-center requires a CASTEP simulation spec.")
+        simulation = CastepEnergySpec.model_validate(
+            {
+                **simulation.model_dump(mode="json"),
+                **expected_castep_settings,
+            }
+        )
     normalized = defect_spec.model_copy(
         update={
             "revision": 0,
             "model": model,
+            "simulation": simulation,
             "acceptance": acceptance,
         }
     )
@@ -16964,12 +17032,27 @@ def _match_castep_dipole_correction(text: str) -> str | None:
 def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any] | None:
     lowered = text.lower()
     dipole_correction = _match_castep_dipole_correction(text)
+    total_charge = _match_castep_total_charge(text)
+    spin_treatment = _match_castep_spin_treatment(text)
+    use_formal_spin = _match_castep_use_formal_spin(text)
+    initial_spin = _match_castep_initial_spin(text)
+    optimize_total_spin = _match_castep_optimize_total_spin(text)
     has_trigger = bool(
         re.search(
-            r"\b(?:castep|cutoff|k[- ]?point|kpoints?|band\s*structure|band[- ]?gap|electronic\s+bands?|density\s+of\s+states|projected\s+density\s+of\s+states|dos|pdos|optical|optics|phonons?|elastic(?:ity| constants?)?|geometry\s+optimi[sz]ation|geom\s*opt|relaxation|scf|self[- ]?consistent|dipole[- ]?corrections?)\b",
+            r"\b(?:castep|cutoff|k[- ]?point|kpoints?|band\s*structure|band[- ]?gap|electronic\s+bands?|density\s+of\s+states|projected\s+density\s+of\s+states|dos|pdos|optical|optics|phonons?|elastic(?:ity| constants?)?|geometry\s+optimi[sz]ation|geom\s*opt|relaxation|scf|self[- ]?consistent|dipole[- ]?corrections?|total\s+charge|net\s+charge|spin\s+treatment|initial\s+spin|formal\s+spin|total\s+spin)\b",
             lowered,
         )
-    ) or dipole_correction is not None or any(
+    ) or any(
+        value is not None
+        for value in (
+            dipole_correction,
+            total_charge,
+            spin_treatment,
+            use_formal_spin,
+            initial_spin,
+            optimize_total_spin,
+        )
+    ) or any(
         token in text
         for token in (
             "\u8ba1\u7b97\u5e26\u9699",
@@ -16993,6 +17076,12 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
             "\u81ea\u6d3d",
             "\u5076\u6781\u4fee\u6b63",
             "\u5076\u6781\u6821\u6b63",
+            "\u603b\u7535\u8377",
+            "\u51c0\u7535\u8377",
+            "\u81ea\u65cb\u5904\u7406",
+            "\u521d\u59cb\u81ea\u65cb",
+            "\u5f62\u5f0f\u81ea\u65cb",
+            "\u603b\u81ea\u65cb",
         )
     )
     if not has_trigger:
@@ -17011,6 +17100,11 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
         and kpoints is None
         and kpoint_separation is None
         and dipole_correction is None
+        and total_charge is None
+        and spin_treatment is None
+        and use_formal_spin is None
+        and initial_spin is None
+        and optimize_total_spin is None
         and max_iterations is None
         and cell_optimization is None
         and optimization_algorithm is None
@@ -17025,6 +17119,18 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
         "functional": str(getattr(simulation, "functional", None) or "PBE"),
         "quality": str(getattr(simulation, "quality", None) or "Medium"),
     }
+
+    for field_name, matched_value in (
+        ("total_charge", total_charge),
+        ("spin_treatment", spin_treatment),
+        ("use_formal_spin", use_formal_spin),
+        ("initial_spin", initial_spin),
+        ("optimize_total_spin", optimize_total_spin),
+    ):
+        existing_value = getattr(simulation, field_name, None)
+        selected_value = matched_value if matched_value is not None else existing_value
+        if selected_value is not None:
+            operation[field_name] = getattr(selected_value, "value", selected_value)
 
     cutoff_value = cutoff if cutoff is not None else getattr(simulation, "cutoff_energy_ev", None)
     if cutoff_value is not None:
@@ -17071,6 +17177,86 @@ def _match_castep_settings(text: str, current_spec: ModelSpec) -> dict[str, Any]
             operation[field_name] = float(existing_value)
 
     return operation
+
+
+def _match_castep_total_charge(text: str) -> int | None:
+    normalized = text.replace("\u2212", "-").replace("\u207b", "-")
+    match = re.search(
+        r"\b(?:total|net|unit[- ]?cell)\s+charge(?:\s*(?:=|is|of|to|:))?\s*([+-]?\d{1,4})\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        match = re.search(
+            r"(?:\u603b|\u51c0|\u5355\u80de)?\u7535\u8377(?:\u8bbe\u4e3a|\u4e3a|=|:)?\s*([+-]?\d{1,4})",
+            normalized,
+        )
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if -9999 <= value <= 9999 else None
+
+
+def _match_castep_spin_treatment(text: str) -> str | None:
+    lowered = text.lower()
+    if re.search(r"\bnon[- ]?collinear\b", lowered) or "\u975e\u5171\u7ebf" in text:
+        return "Non-collinear"
+    if re.search(
+        r"\b(?:non[- ]?polarized|unpolarized|non[- ]?spin[- ]?polarized)\b",
+        lowered,
+    ) or any(token in text for token in ("\u975e\u81ea\u65cb\u6781\u5316", "\u65e0\u81ea\u65cb\u6781\u5316")):
+        return "Non-polarized"
+    if re.search(r"\bcollinear\b", lowered) or "\u5171\u7ebf\u81ea\u65cb" in text:
+        return "Collinear"
+    return None
+
+
+def _match_castep_use_formal_spin(text: str) -> bool | None:
+    lowered = text.lower()
+    if re.search(
+        r"\b(?:do\s+not|don't|disable|without|no)\s+(?:use\s+)?formal\s+spins?\b",
+        lowered,
+    ) or any(token in text for token in ("\u4e0d\u4f7f\u7528\u5f62\u5f0f\u81ea\u65cb", "\u7981\u7528\u5f62\u5f0f\u81ea\u65cb")):
+        return False
+    if re.search(
+        r"\b(?:use|enable|with)\s+formal\s+spins?\b",
+        lowered,
+    ) or "\u4f7f\u7528\u5f62\u5f0f\u81ea\u65cb" in text:
+        return True
+    return None
+
+
+def _match_castep_initial_spin(text: str) -> int | None:
+    normalized = text.replace("\u2212", "-").replace("\u207b", "-")
+    match = re.search(
+        r"\binitial\s+(?:total\s+)?spin(?:\s*(?:=|is|of|to|:))?\s*([+-]?\d{1,4})\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        match = re.search(
+            r"\u521d\u59cb(?:\u603b)?\u81ea\u65cb(?:\u8bbe\u4e3a|\u4e3a|=|:)?\s*([+-]?\d{1,4})",
+            normalized,
+        )
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if -9999 <= value <= 9999 else None
+
+
+def _match_castep_optimize_total_spin(text: str) -> bool | None:
+    lowered = text.lower()
+    if re.search(
+        r"\b(?:fix|fixed|hold|do\s+not\s+optimi[sz]e)\s+(?:the\s+)?total\s+spin\b",
+        lowered,
+    ) or any(token in text for token in ("\u56fa\u5b9a\u603b\u81ea\u65cb", "\u4e0d\u4f18\u5316\u603b\u81ea\u65cb")):
+        return False
+    if re.search(
+        r"\b(?:optimi[sz]e|vary)\s+(?:the\s+)?total\s+spin\b",
+        lowered,
+    ) or any(token in text for token in ("\u4f18\u5316\u603b\u81ea\u65cb", "\u6539\u53d8\u603b\u81ea\u65cb")):
+        return True
+    return None
 
 
 def _match_castep_max_iterations(text: str) -> int | None:

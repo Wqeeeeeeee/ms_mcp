@@ -17,7 +17,7 @@ from .specs.common import ExecutionMode
 from .specs.project import ModelSpec
 
 
-LIVE_EDIT_ACCEPTANCE_SCHEMA = "material_studio_semiconductor_live_edit_acceptance_v1"
+LIVE_EDIT_ACCEPTANCE_SCHEMA = "material_studio_semiconductor_live_edit_acceptance_v2"
 
 
 SCENARIO_REQUESTS = {
@@ -5930,6 +5930,8 @@ def _live_edit_acceptance_summary(
     final_identity = _live_response_identity(live)
     status_identity = _live_response_identity(status)
     bundle_identity = _live_response_identity(bundle)
+    base_semantic = _live_response_semantic_evidence(base_live)
+    final_semantic = _live_response_semantic_evidence(live)
     base_project_id = base_identity.get("project_id")
     final_project_id = final_identity.get("project_id")
     base_revision = base_identity.get("revision")
@@ -5977,6 +5979,25 @@ def _live_edit_acceptance_summary(
         expected_revision=final_revision,
         observed=bundle_identity,
     )
+    require(
+        base_semantic.get("workflow") == "create"
+        and final_semantic.get("workflow") == "patch",
+        "natural_language_workflow_transition_mismatch",
+        base_workflow=base_semantic.get("workflow"),
+        final_workflow=final_semantic.get("workflow"),
+    )
+    require(
+        base_semantic.get("nl_plan_kind") in {"spec", "create"}
+        and bool(base_semantic.get("nl_plan_template_id")),
+        "base_natural_language_plan_unverified",
+        evidence=base_semantic,
+    )
+    require(
+        final_semantic.get("nl_plan_kind") == "patch"
+        and bool(final_semantic.get("nl_plan_template_id")),
+        "final_natural_language_patch_unverified",
+        evidence=final_semantic,
+    )
 
     base_structure = _live_response_structure_path(base_live)
     final_structure = _live_response_structure_path(live)
@@ -5999,6 +6020,15 @@ def _live_edit_acceptance_summary(
         final_spec.get("ok") is True,
         "final_immutable_spec_binding_failed",
         evidence=final_spec,
+    )
+    require(
+        base_spec.get("semiconductor_crystal") is True
+        and final_spec.get("semiconductor_crystal") is True,
+        "semiconductor_crystal_spec_required",
+        base_model_type=base_spec.get("model_type"),
+        base_domain=base_spec.get("metadata_domain"),
+        final_model_type=final_spec.get("model_type"),
+        final_domain=final_spec.get("metadata_domain"),
     )
     require(
         base_spec.get("project_dir") == final_spec.get("project_dir"),
@@ -6045,6 +6075,17 @@ def _live_edit_acceptance_summary(
         "history_transition_binding_failed",
         evidence=history_evidence,
     )
+    require(
+        final_semantic.get("change_verification_ok") is True
+        and final_semantic.get("change_verification_status") == "verified"
+        and final_semantic.get("change_project_id") == final_project_id
+        and final_semantic.get("change_base_revision") == base_revision
+        and final_semantic.get("change_revision") == final_revision
+        and "semiconductor"
+        in set(final_semantic.get("change_domain_tags") or []),
+        "semiconductor_change_verification_failed",
+        evidence=final_semantic,
+    )
     bundle_manifest = _live_edit_bundle_manifest_evidence(
         bundle,
         project_id=final_project_id,
@@ -6058,9 +6099,37 @@ def _live_edit_acceptance_summary(
         evidence=bundle_manifest,
     )
 
-    base_window = _live_response_window_evidence(base_live)
-    final_window = _live_response_window_evidence(live)
-    final_status_window = _live_status_window_evidence(status)
+    base_execution = _live_response_execution_evidence(
+        base_live,
+        project_id=base_project_id,
+        revision=base_revision,
+        structure_path=base_structure,
+        spec_sha256=base_spec.get("canonical_spec_sha256"),
+    )
+    final_execution = _live_response_execution_evidence(
+        live,
+        project_id=final_project_id,
+        revision=final_revision,
+        structure_path=final_structure,
+        spec_sha256=final_spec.get("canonical_spec_sha256"),
+    )
+    base_window = _live_response_window_evidence(
+        base_live,
+        project_id=base_project_id,
+        revision=base_revision,
+        structure_path=base_structure,
+    )
+    final_window = _live_response_window_evidence(
+        live,
+        project_id=final_project_id,
+        revision=final_revision,
+        structure_path=final_structure,
+    )
+    final_status_window = _live_status_window_evidence(
+        status,
+        project_id=final_project_id,
+        revision=final_revision,
+    )
     final_loaded = _live_status_current_revision_loaded(status)
     if hotload_required:
         require(
@@ -6076,6 +6145,13 @@ def _live_edit_acceptance_summary(
             "materialized_revision_structure_missing",
             base_structure_path=base_structure,
             final_structure_path=final_structure,
+        )
+        require(
+            base_execution.get("ok") is True
+            and final_execution.get("ok") is True,
+            "revision_execution_evidence_failed",
+            base_execution=base_execution,
+            final_execution=final_execution,
         )
         require(
             base_window.get("verified") is True
@@ -6123,6 +6199,15 @@ def _live_edit_acceptance_summary(
             final_spawned_process_ids=final_window.get("spawned_process_ids"),
         )
         require(
+            base_window.get("process_count_evidence_valid") is True
+            and final_window.get("process_count_evidence_valid") is True,
+            "matstudio_process_count_evidence_invalid",
+            base_process_count_before=base_window.get("process_count_before"),
+            base_process_count_after=base_window.get("process_count_after"),
+            final_process_count_before=final_window.get("process_count_before"),
+            final_process_count_after=final_window.get("process_count_after"),
+        )
+        require(
             final_status_window.get("probed") is True,
             "final_gui_status_not_freshly_probed",
             final_status_window=final_status_window,
@@ -6156,6 +6241,8 @@ def _live_edit_acceptance_summary(
         "final_identity": final_identity,
         "status_identity": status_identity,
         "bundle_identity": bundle_identity,
+        "base_semantic_evidence": base_semantic,
+        "final_semantic_evidence": final_semantic,
         "base_structure_path": base_structure,
         "final_structure_path": final_structure,
         "base_immutable_spec": base_spec,
@@ -6165,6 +6252,8 @@ def _live_edit_acceptance_summary(
         "base_window": base_window,
         "final_window": final_window,
         "final_status_window": final_status_window,
+        "base_execution_evidence": base_execution,
+        "final_execution_evidence": final_execution,
         "same_window_reused": bool(
             base_window.get("verified") is True
             and final_window.get("verified") is True
@@ -6172,6 +6261,12 @@ def _live_edit_acceptance_summary(
             and base_window.get("pid") == final_window.get("pid")
             and base_window.get("same_window_open_used") is True
             and final_window.get("same_window_open_used") is True
+            and base_window.get("spawn_evidence_valid") is True
+            and final_window.get("spawn_evidence_valid") is True
+            and base_window.get("process_count_evidence_valid") is True
+            and final_window.get("process_count_evidence_valid") is True
+            and not base_window.get("spawned_process_ids")
+            and not final_window.get("spawned_process_ids")
         ),
         "final_revision_loaded_in_gui": final_loaded,
         "failure_count": len(failures),
@@ -6207,6 +6302,41 @@ def _live_response_identity(response: dict[str, Any] | None) -> dict[str, Any]:
             payload.get("execution_mode"),
             report.get("execution_mode"),
         ),
+    }
+
+
+def _live_response_semantic_evidence(
+    response: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = _dict(response)
+    report = _dict(payload.get("modeling_report"))
+    plan = _dict(payload.get("nl_plan")) or _dict(report.get("nl_plan"))
+    change = _dict(payload.get("change_verification")) or _dict(
+        report.get("change_verification")
+    )
+    return {
+        "workflow": _first_not_none(
+            payload.get("workflow"),
+            report.get("workflow"),
+        ),
+        "nl_plan_kind": plan.get("kind"),
+        "nl_plan_template_id": plan.get("template_id"),
+        "change_verification_available": change.get("available"),
+        "change_verification_ok": change.get("ok"),
+        "change_verification_status": change.get("status"),
+        "change_project_id": change.get("project_id"),
+        "change_base_revision": _revision_identity(
+            change.get("base_revision")
+        ),
+        "change_revision": _revision_identity(change.get("revision")),
+        "change_kind": change.get("change_kind"),
+        "change_domain_tags": [
+            str(item)
+            for item in change.get("domain_tags") or []
+            if isinstance(item, str) and item
+        ],
+        "change_failed_checks": change.get("change_validation_failed_checks")
+        or [],
     }
 
 
@@ -6254,6 +6384,8 @@ def _immutable_spec_evidence(
             "project_dir": str(project_dir),
             "expected_structure_path": str(expected_structure),
             "spec_path": str(spec_path),
+            "structure_exists": structure.is_file(),
+            "structure_sha256": _sha256_path(structure),
             "structure_path_matches_revision": (
                 structure_identity == _path_identity(expected_structure)
             ),
@@ -6284,13 +6416,23 @@ def _immutable_spec_evidence(
         return evidence
     payload_project_id = validated_spec.project_id
     payload_revision = validated_spec.revision
+    model_type = validated_spec.model_type.value
+    metadata_domain = str(validated_spec.metadata.get("domain") or "").lower()
     evidence.update(
         {
             "sha256": hashlib.sha256(raw).hexdigest(),
+            "canonical_spec_sha256": _model_spec_canonical_sha256(
+                validated_spec
+            ),
             "content_sha256": _model_spec_content_sha256(validated_spec),
             "spec_fingerprint": _model_spec_fingerprint(validated_spec),
             "payload_project_id": payload_project_id,
             "payload_revision": payload_revision,
+            "model_type": model_type,
+            "metadata_domain": metadata_domain,
+            "semiconductor_crystal": bool(
+                model_type == "crystal" and metadata_domain == "semiconductor"
+            ),
             "payload_identity_matches": (
                 payload_project_id == project_id and payload_revision == revision
             ),
@@ -6433,6 +6575,18 @@ def _model_spec_fingerprint(spec: ModelSpec | dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()[:16]
 
 
+def _model_spec_canonical_sha256(spec: ModelSpec | dict[str, Any]) -> str:
+    validated = spec if isinstance(spec, ModelSpec) else ModelSpec.model_validate(spec)
+    payload = validated.model_dump(mode="json")
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _model_spec_content_sha256(spec: ModelSpec | dict[str, Any]) -> str:
     validated = spec if isinstance(spec, ModelSpec) else ModelSpec.model_validate(spec)
     payload = validated.model_dump(mode="json", exclude_none=True)
@@ -6446,8 +6600,114 @@ def _model_spec_content_sha256(spec: ModelSpec | dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _live_response_execution_evidence(
+    response: dict[str, Any] | None,
+    *,
+    project_id: Any,
+    revision: int | None,
+    structure_path: Any,
+    spec_sha256: Any,
+) -> dict[str, Any]:
+    payload = _dict(response)
+    report = _dict(payload.get("modeling_report"))
+    result = _dict(payload.get("result")) or _dict(
+        payload.get("execution_result")
+    )
+    transaction = _dict(payload.get("execution_transaction")) or _dict(
+        result.get("execution_transaction")
+    ) or _dict(report.get("execution_transaction"))
+    attempt = _dict(payload.get("execution_attempt")) or _dict(
+        result.get("execution_attempt")
+    ) or _dict(report.get("execution_attempt"))
+    metadata_path = _first_not_none(
+        payload.get("result_metadata_path"),
+        result.get("result_metadata_path"),
+        attempt.get("result_metadata_path"),
+    )
+    metadata: dict[str, Any] = {}
+    metadata_error: str | None = None
+    try:
+        parsed = json.loads(Path(str(metadata_path)).read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            metadata = parsed
+    except Exception as exc:
+        metadata_error = str(exc)
+    metadata_attempt = _dict(metadata.get("execution_attempt"))
+    metadata_transaction = _dict(metadata.get("execution_transaction"))
+    structure_identity = _path_identity(structure_path)
+    attempt_structure_identity = _path_identity(
+        attempt.get("planned_structure_path")
+    )
+    artifact = _dict(payload.get("structure_artifact_validation")) or _dict(
+        report.get("structure_artifact_validation")
+    )
+    artifact_structure_identity = _path_identity(artifact.get("structure_path"))
+    structure_sha256 = _sha256_path(structure_path)
+    checks = {
+        "result_success": _execution_result_succeeded(payload),
+        "transaction_identity": bool(
+            transaction.get("project_id") == project_id
+            and _revision_identity(transaction.get("revision")) == revision
+        ),
+        "transaction_completed": bool(
+            transaction.get("execution_started") is True
+            and transaction.get("execution_completed") is True
+            and transaction.get("current_revision_still_current") is True
+        ),
+        "attempt_identity": bool(
+            attempt.get("project_id") == project_id
+            and _revision_identity(attempt.get("revision")) == revision
+            and attempt.get("spec_sha256") == spec_sha256
+            and attempt_structure_identity == structure_identity
+        ),
+        "attempt_completed": bool(
+            attempt.get("status") == "completed"
+            and attempt.get("result_success") is True
+            and attempt.get("current_revision_still_current") is True
+        ),
+        "result_metadata_bound": bool(
+            metadata_path
+            and _path_exists(metadata_path)
+            and metadata_error is None
+            and metadata.get("success") is True
+            and metadata_attempt.get("attempt_id") == attempt.get("attempt_id")
+            and metadata_attempt.get("status") == "completed"
+            and metadata_transaction.get("project_id") == project_id
+            and _revision_identity(metadata_transaction.get("revision"))
+            == revision
+        ),
+        "structure_artifact_bound": bool(
+            artifact.get("ok") is True
+            and artifact.get("status") == "matched"
+            and artifact_structure_identity == structure_identity
+            and structure_sha256
+            and artifact.get("sha256") == structure_sha256
+        ),
+    }
+    failures = [key for key, value in checks.items() if value is not True]
+    return {
+        "ok": not failures,
+        "status": "verified" if not failures else "failed",
+        "project_id": project_id,
+        "revision": revision,
+        "structure_path": str(structure_path) if structure_path else None,
+        "structure_sha256": structure_sha256,
+        "result_metadata_path": str(metadata_path) if metadata_path else None,
+        "result_metadata_error": metadata_error,
+        "execution_backend": result.get("execution_backend"),
+        "attempt_id": attempt.get("attempt_id"),
+        "attempt_status": attempt.get("status"),
+        "checks": checks,
+        "failures": failures,
+    }
+
+
 def _live_response_window_evidence(
     response: dict[str, Any] | None,
+    *,
+    project_id: Any,
+    revision: int | None,
+    structure_path: Any,
 ) -> dict[str, Any]:
     payload = _dict(response)
     gui_open = _dict(payload.get("gui_open"))
@@ -6472,6 +6732,13 @@ def _live_response_window_evidence(
         gui.get("window_title"),
     )
     open_result = _dict(gui_open.get("open_result"))
+    pre_resolution = _dict(gui_open.get("pre_open_hotload_target_resolution"))
+    post_resolution = _dict(gui_open.get("post_open_target_window_resolution"))
+    pre_management = _dict(gui_open.get("window_management"))
+    post_management = _dict(gui_open.get("post_open_window_management"))
+    post_metadata = _dict(
+        post_resolution.get("target_project_wrapper_metadata")
+    )
     raw_spawned = _first_not_none(
         open_result.get("spawned_process_ids"),
         gui_open.get("spawned_process_ids"),
@@ -6484,10 +6751,37 @@ def _live_response_window_evidence(
         )
     )
     spawned = list(raw_spawned) if spawn_evidence_valid else []
+    process_count_before = open_result.get("process_count_before")
+    process_count_after = open_result.get("process_count_after")
+    process_count_evidence_valid = bool(
+        isinstance(process_count_before, int)
+        and not isinstance(process_count_before, bool)
+        and process_count_before > 0
+        and isinstance(process_count_after, int)
+        and not isinstance(process_count_after, bool)
+        and process_count_after == process_count_before
+        and open_result.get("same_window_open_requested") is True
+    )
     post_open_ok = _first_not_none(
         gui_open.get("post_open_single_window_policy_ok"),
         gui_open.get("single_window_policy_ok"),
         gui.get("single_window_policy_ok"),
+    )
+    expected_structure_identity = _path_identity(structure_path)
+    opened_structure_identity = _path_identity(gui_open.get("structure_path"))
+    binding_verified = bool(
+        gui_open.get("project_id") == project_id
+        and _revision_identity(gui_open.get("revision")) == revision
+        and opened_structure_identity == expected_structure_identity
+        and pre_resolution.get("target_handle") == handle
+        and post_resolution.get("target_handle") == handle
+        and pre_management.get("target_process_id") == pid
+        and post_management.get("target_process_id") == pid
+        and post_resolution.get("matched_project_window") is True
+        and post_metadata.get("project_id") == project_id
+        and _revision_identity(post_metadata.get("revision")) == revision
+        and post_metadata.get("wrapper_target_identity_verified") is True
+        and post_metadata.get("wrapper_workspace_matches_controller") is True
     )
     verified = bool(
         isinstance(handle, int)
@@ -6499,6 +6793,7 @@ def _live_response_window_evidence(
         and isinstance(title, str)
         and bool(title)
         and post_open_ok is True
+        and binding_verified
     )
     return {
         "verified": verified,
@@ -6507,21 +6802,38 @@ def _live_response_window_evidence(
         "title": title,
         "post_open_single_window_policy_ok": post_open_ok,
         "same_window_open_used": gui_open.get("same_window_open_used"),
+        "binding_verified": binding_verified,
+        "bound_project_id": gui_open.get("project_id"),
+        "bound_revision": _revision_identity(gui_open.get("revision")),
+        "bound_structure_path": gui_open.get("structure_path"),
+        "pre_open_handle": pre_resolution.get("target_handle"),
+        "post_open_handle": post_resolution.get("target_handle"),
+        "pre_open_pid": pre_management.get("target_process_id"),
+        "post_open_pid": post_management.get("target_process_id"),
+        "post_open_wrapper_project_id": post_metadata.get("project_id"),
+        "post_open_wrapper_revision": _revision_identity(
+            post_metadata.get("revision")
+        ),
         "spawn_evidence_valid": spawn_evidence_valid,
         "spawned_process_ids": spawned,
+        "process_count_evidence_valid": process_count_evidence_valid,
+        "process_count_before": process_count_before,
+        "process_count_after": process_count_after,
+        "same_window_open_requested": open_result.get(
+            "same_window_open_requested"
+        ),
     }
 
 
 def _live_status_window_evidence(
     status: dict[str, Any] | None,
+    *,
+    project_id: Any,
+    revision: int | None,
 ) -> dict[str, Any]:
     payload = _dict(status)
-    report = _dict(payload.get("modeling_report"))
-    report_gui = _dict(report.get("gui"))
     gui_status = _dict(payload.get("gui_status"))
-    gui_current = _dict(payload.get("gui_current_revision")) or _dict(
-        report.get("gui_current_revision")
-    )
+    gui_current = _dict(payload.get("gui_current_revision"))
     window_management = _dict(gui_status.get("window_management"))
     target_window = _dict(gui_status.get("target_window"))
     target_resolution = _dict(gui_status.get("target_window_resolution"))
@@ -6529,38 +6841,33 @@ def _live_status_window_evidence(
         target_window.get("handle"),
         target_resolution.get("target_handle"),
         window_management.get("target_window_handle"),
-        gui_current.get("target_window_handle"),
-        report_gui.get("target_window_handle"),
     )
     pid = _first_not_none(
         target_window.get("pid"),
         window_management.get("target_process_id"),
-        gui_current.get("target_process_id"),
-        report_gui.get("target_process_id"),
     )
     title = _first_not_none(
         target_window.get("title"),
         window_management.get("target_window_title"),
-        gui_current.get("target_window_title"),
-        report_gui.get("target_window_title"),
     )
-    identity_verification = _first_not_none(
-        gui_current.get("window_identity_verification"),
-        target_resolution.get("window_identity_verification"),
-        report_gui.get("window_identity_verification"),
+    identity_verification = gui_current.get("window_identity_verification")
+    single_window_policy_ok = window_management.get("single_window_policy_ok")
+    target_metadata = _dict(
+        target_resolution.get("target_project_wrapper_metadata")
     )
-    single_window_policy_ok = _first_not_none(
-        gui_current.get("single_window_policy_ok"),
-        window_management.get("single_window_policy_ok"),
-        gui_status.get("single_window_policy_ok"),
-        report_gui.get("single_window_policy_ok"),
-    )
-    probed = bool(
-        report_gui.get("status_was_probed") is True
-        or "window_found" in gui_status
-        or "supported" in gui_status
-    )
+    supported = gui_status.get("supported") is True
+    window_found = gui_status.get("window_found") is True
+    probed = bool(supported and window_found)
     loaded = _live_status_current_revision_loaded(status)
+    binding_verified = bool(
+        target_resolution.get("matched_project_window") is True
+        and target_resolution.get("fallback_used") is False
+        and target_metadata.get("project_id") == project_id
+        and _revision_identity(target_metadata.get("revision")) == revision
+        and target_metadata.get("wrapper_target_identity_verified") is True
+        and target_metadata.get("wrapper_workspace_matches_controller") is True
+        and gui_current.get("target_window_handle") == handle
+    )
     verified = bool(
         probed
         and isinstance(handle, int)
@@ -6572,9 +6879,12 @@ def _live_status_window_evidence(
         and identity_verification == "verified"
         and single_window_policy_ok is True
         and loaded is True
+        and binding_verified
     )
     return {
         "probed": probed,
+        "supported": supported,
+        "window_found": window_found,
         "verified": verified,
         "handle": handle,
         "pid": pid,
@@ -6582,6 +6892,9 @@ def _live_status_window_evidence(
         "identity_verification": identity_verification,
         "single_window_policy_ok": single_window_policy_ok,
         "loaded_current_revision": loaded,
+        "binding_verified": binding_verified,
+        "bound_project_id": target_metadata.get("project_id"),
+        "bound_revision": _revision_identity(target_metadata.get("revision")),
     }
 
 

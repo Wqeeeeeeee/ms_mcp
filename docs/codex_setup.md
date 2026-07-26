@@ -737,6 +737,44 @@ successful revision-changing request may atomically repair it.
 For a local command-line acceptance pass, run
 `ms-mcp-live-smoke --scenario sic_mos --working-dir workspace/live_smoke`.
 
+To require a complete two-revision semiconductor edit receipt without touching
+Materials Studio, run:
+
+```powershell
+ms-mcp-live-smoke `
+  --scenario silicon `
+  --follow-up-preset p_dopant `
+  --execution-mode preview `
+  --require-live-edit-acceptance `
+  --no-include-gui-status `
+  --no-take-snapshot `
+  --views front top isometric `
+  --working-dir workspace/live_smoke_silicon_edit
+```
+
+`--require-live-edit-acceptance` requires a follow-up request or preset and
+bundle export; it cannot be combined with `--no-export-bundle`. It accepts the
+workflow only when the same workspace/project advances exactly one revision,
+both `revisions/rNNN_model_spec.json` files validate, and their canonical
+content hashes still differ after removing the revision number. The append-only
+history must be strictly increasing and end with the base/final transition, and
+the final view-bundle manifest must reside under the final revision output and
+match its project, revision, and spec fingerprint. Bundle acceptance also
+requires existing, nonempty
+`view_summary.csv`, `view_quality.csv`, and `view_projections.csv` evidence.
+
+For a real execute test, keep GUI status enabled; the CLI rejects explicit
+execute acceptance with `--no-include-gui-status`. Use explicit
+`--execution-mode execute`. In addition to the immutable checks, acceptance
+requires materialized structures, positive and unchanged Materials Studio
+HWND/PID values across the base and follow-up opens, changed revision wrapper
+titles, explicit empty `spawned_process_ids` receipts, and a fresh final GUI
+status probe that binds the loaded current revision to that same HWND/PID. A
+missing probe, missing process-spawn evidence, new process, changed window, or
+stale final revision makes the command fail. The smoke runner never retries an
+execution from this acceptance result; deferred execution or hot-load recovery
+still requires the separate explicit continuation flags described below.
+
 For preview-only 3C-SiC polar-surface, Schottky-contact, oxide-interface, and
 MOS-capacitor acceptance without touching the GUI, use `sic_3c_slab`,
 `sic_3c_c_face_slab`, `sic_3c_contact`, `sic_3c_c_face_contact`,

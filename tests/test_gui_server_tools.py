@@ -590,6 +590,43 @@ class ProjectWindowFakeGuiBackend(WindowsGuiBackend):
         return []
 
 
+class SameWindowProjectWindowFakeGuiBackend(ProjectWindowFakeGuiBackend):
+    file_open_may_launch_new_instance = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.same_window_opened: list[tuple[int, Path]] = []
+
+    def open_file_in_existing_window(
+        self,
+        window: WindowInfo,
+        path: Path,
+    ) -> dict:
+        self.same_window_opened.append((window.handle, path))
+        self.opened.append(path)
+        if path.suffix.lower() == ".stp":
+            self.window = WindowInfo(
+                handle=window.handle,
+                title=f"{path.stem} - Materials Studio",
+                pid=window.pid,
+                rect=window.rect,
+                class_name=window.class_name,
+                is_visible=True,
+                is_minimized=False,
+                is_foreground=True,
+            )
+        return {
+            "method": "fake_same_window_open",
+            "path": str(path),
+            "pid": window.pid,
+            "window": window.to_dict(),
+            "process_count_before": 1,
+            "process_count_after": 1,
+            "spawned_process_ids": [],
+            "same_window_open_requested": True,
+        }
+
+
 class ProjectScopedMultiProcessGuiBackend(WindowsGuiBackend):
     supported = True
     unavailable_reason = None
@@ -21229,7 +21266,7 @@ def test_live_modeling_request_hotloads_semiconductor_vacancy_followup_current_r
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    backend = ProjectWindowFakeGuiBackend()
+    backend = SameWindowProjectWindowFakeGuiBackend()
     monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: MaterialsStudioGuiController(working_dir, backend=backend))
 
     created = server.material_studio_live_modeling_request(
@@ -21305,6 +21342,33 @@ def test_live_modeling_request_hotloads_semiconductor_vacancy_followup_current_r
     assert status["live_summary"]["gui_current_revision_loaded"] is True
     assert status["change_verification"]["status"] == "verified"
     assert status["live_summary"]["change_verification_ok"] is True
+
+    bundle = server.material_studio_model_export_view_bundle(
+        project_id=created["project_id"],
+        include_gui_snapshot=False,
+        working_dir=str(tmp_path),
+    )
+    history = server.material_studio_project_history(
+        project_id=created["project_id"],
+        working_dir=str(tmp_path),
+    )
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=created,
+        live=vacancy,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+    assert acceptance["ok"] is True, acceptance["failures"]
+    assert acceptance["schema"] == (
+        "material_studio_semiconductor_live_edit_acceptance_v2"
+    )
+    assert acceptance["base_execution_evidence"]["status"] == "verified"
+    assert acceptance["final_execution_evidence"]["status"] == "verified"
+    assert acceptance["same_window_reused"] is True
+    assert acceptance["final_status_window"]["binding_verified"] is True
 
 
 def test_live_modeling_request_hotloads_chinese_current_model_atom_vacancy(

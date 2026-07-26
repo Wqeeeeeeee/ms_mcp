@@ -9,11 +9,20 @@ from material_studio_mcp_server import live_smoke
 from material_studio_mcp_server.natural_language import infer_modeling_plan
 from material_studio_mcp_server.server import _explicit_live_gui_open_requested, _explicit_live_hotload_requested
 from material_studio_mcp_server.specs.common import ExecutionMode
+from material_studio_mcp_server.specs.project import ModelSpec
+from material_studio_mcp_server.translators import write_crystal_cif
+
+
+CORE_VIEW_BUNDLE_FILE_KEYS = {
+    "view_summary_csv",
+    "view_quality_csv",
+    "view_projections_csv",
+}
 
 
 def _fake_bundle_files(tmp_path: Path, keys: list[str]) -> dict[str, str]:
     files: dict[str, str] = {}
-    for key in keys:
+    for key in sorted(set(keys) | CORE_VIEW_BUNDLE_FILE_KEYS):
         path = tmp_path / f"{key}.csv"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("ok\n", encoding="utf-8")
@@ -870,8 +879,16 @@ def test_run_live_smoke_summarizes_semiconductor_workflow(monkeypatch, tmp_path:
         return {
             "ok": True,
             "manifest_path": str(manifest),
-            "files": {"modeling_report_summary_csv": str(tmp_path / "summary.csv")},
-            "row_counts": {"modeling_report_summary": 1},
+            "files": _fake_bundle_files(
+                tmp_path,
+                ["modeling_report_summary_csv"],
+            ),
+            "row_counts": {
+                "modeling_report_summary": 1,
+                "view_summary": 2,
+                "view_quality": 2,
+                "view_projections": 2,
+            },
         }
 
     monkeypatch.setattr(live_smoke.server, "material_studio_live_session_preflight", fake_preflight)
@@ -916,7 +933,12 @@ def test_run_live_smoke_summarizes_semiconductor_workflow(monkeypatch, tmp_path:
     assert summary["gui_hotload_gate_recommended_tool"] == "material_studio_gui_status"
     assert summary["gui_hotload_gate_blocking_reasons"] == []
     assert summary["view_bundle_manifest_exists"] is True
-    assert summary["view_bundle_row_counts"] == {"modeling_report_summary": 1}
+    assert summary["view_bundle_row_counts"] == {
+        "modeling_report_summary": 1,
+        "view_summary": 2,
+        "view_quality": 2,
+        "view_projections": 2,
+    }
     assert summary["scenario_expected_diagnostics"]["available"] is False
     assert summary["scenario_expected_diagnostics"]["reason"] == "no_scenario"
     assert summary["next_action_tool"] == "material_studio_gui_status"
@@ -2391,6 +2413,8 @@ def test_live_smoke_summary_exposes_diagnostic_acceptance_for_mcp(tmp_path: Path
     view_summary.write_text("view,row\nfront,1\n", encoding="utf-8")
     expected_files = {
         "view_summary_csv": view_summary,
+        "view_quality_csv": tmp_path / "view_quality.csv",
+        "view_projections_csv": tmp_path / "view_projections.csv",
         "semiconductor_lattice_csv": tmp_path / "semiconductor_lattice.csv",
         "semiconductor_composition_csv": tmp_path / "semiconductor_composition.csv",
         "semiconductor_local_environment_csv": tmp_path / "semiconductor_local_environment.csv",
@@ -2816,6 +2840,924 @@ def _successful_bundle_export(
             ],
         },
     }
+
+
+def _strict_live_edit_fixture(
+    tmp_path: Path,
+    *,
+    execute: bool,
+    base_handle: int = 4100,
+    final_handle: int = 4100,
+    base_pid: int = 5100,
+    final_pid: int = 5100,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    project_id = "strict_live_edit"
+    project_dir = tmp_path / project_id
+    revisions_dir = project_dir / "revisions"
+    revisions_dir.mkdir(parents=True, exist_ok=True)
+    structures: list[Path] = []
+    specs: list[ModelSpec] = []
+    for revision, marker in ((0, "intrinsic"), (1, "p_dopant")):
+        spec = ModelSpec.model_validate(
+            {
+                "project_id": project_id,
+                "revision": revision,
+                "model_type": "crystal",
+                "model": {
+                    "name": "silicon_diamond",
+                    "lattice": {
+                        "a": 5.431,
+                        "b": 5.431,
+                        "c": 5.431,
+                        "alpha": 90.0,
+                        "beta": 90.0,
+                        "gamma": 90.0,
+                    },
+                    "basis_atoms": [
+                        {
+                            "id": "Si1",
+                            "element": "Si" if revision == 0 else "P",
+                            "fractional": [0.0, 0.0, 0.0],
+                        },
+                        {
+                            "id": "Si2",
+                            "element": "Si",
+                            "fractional": [0.25, 0.25, 0.25],
+                        },
+                    ],
+                },
+                "metadata": {
+                    "domain": "semiconductor",
+                    "structure_family": "diamond cubic",
+                    "nl_template": "silicon_diamond",
+                    "marker": marker,
+                },
+            }
+        )
+        specs.append(spec)
+        spec_path = revisions_dir / f"r{revision:03d}_model_spec.json"
+        spec_path.write_text(
+            json.dumps(spec.model_dump(mode="json"), sort_keys=True),
+            encoding="utf-8",
+        )
+        structure = (
+            project_dir
+            / "outputs"
+            / f"r{revision:03d}"
+            / f"structure_r{revision:03d}.cif"
+        )
+        structure.parent.mkdir(parents=True, exist_ok=True)
+        if execute:
+            write_crystal_cif(spec.model, structure)
+        structures.append(structure.resolve())
+
+    def live_response(
+        *,
+        revision: int,
+        structure: Path,
+        handle: int,
+        pid: int,
+    ) -> dict[str, object]:
+        response: dict[str, object] = {
+            "ok": True,
+            "workflow": "create" if revision == 0 else "patch",
+            "project_id": project_id,
+            "revision": revision,
+            "new_revision": revision,
+            "execution_mode": "execute" if execute else "preview",
+            "planned_outputs": {"structure": str(structure)},
+            "nl_plan": {
+                "kind": "spec" if revision == 0 else "patch",
+                "template_id": (
+                    "silicon_diamond"
+                    if revision == 0
+                    else "crystal_sublattice_dopant"
+                ),
+            },
+        }
+        if revision == 1:
+            response["change_verification"] = {
+                "available": True,
+                "ok": True,
+                "status": "verified",
+                "change_kind": "revision_patch",
+                "project_id": project_id,
+                "base_revision": 0,
+                "revision": 1,
+                "domain_tags": ["revision_delta", "substitution", "semiconductor"],
+                "change_validation_failed_checks": [],
+            }
+        if execute:
+            spec = specs[revision]
+            metadata_path = structure.parent / "result_metadata.json"
+            transaction = {
+                "project_id": project_id,
+                "revision": revision,
+                "execution_started": True,
+                "execution_completed": True,
+                "current_revision_still_current": True,
+            }
+            attempt = {
+                "attempt_id": f"attempt-{revision}",
+                "project_id": project_id,
+                "revision": revision,
+                "status": "completed",
+                "result_success": True,
+                "current_revision_still_current": True,
+                "spec_sha256": live_smoke._model_spec_canonical_sha256(spec),
+                "planned_structure_path": str(structure),
+                "result_metadata_path": str(metadata_path),
+            }
+            result = {
+                "success": True,
+                "execution_backend": "crystal_cif_materialize",
+                "execution_transaction": transaction,
+                "execution_attempt": attempt,
+            }
+            metadata_path.write_text(json.dumps(result), encoding="utf-8")
+            response.update(
+                {
+                    "result": result,
+                    "execution_transaction": transaction,
+                    "execution_attempt": attempt,
+                    "result_metadata_path": str(metadata_path),
+                    "structure_artifact_validation": {
+                        "required": True,
+                        "ok": True,
+                        "status": "matched",
+                        "structure_path": str(structure),
+                        "sha256": live_smoke._sha256_path(structure),
+                    },
+                }
+            )
+            response["gui_open"] = {
+                "project_id": project_id,
+                "revision": revision,
+                "structure_path": str(structure),
+                "window": {
+                    "handle": handle,
+                    "pid": pid,
+                    "title": f"msmcp_{project_id}_r{revision:03d} - Materials Studio",
+                },
+                "same_window_open_used": True,
+                "post_open_single_window_policy_ok": True,
+                "open_result": {
+                    "process_count_before": 1,
+                    "process_count_after": 1,
+                    "spawned_process_ids": [],
+                    "same_window_open_requested": True,
+                },
+                "window_management": {
+                    "target_process_id": pid,
+                    "single_window_policy_ok": True,
+                },
+                "pre_open_hotload_target_resolution": {
+                    "target_handle": handle,
+                },
+                "post_open_target_window_resolution": {
+                    "target_handle": handle,
+                    "matched_project_window": True,
+                    "target_project_wrapper_metadata": {
+                        "project_id": project_id,
+                        "revision": revision,
+                        "wrapper_target_identity_verified": True,
+                        "wrapper_workspace_matches_controller": True,
+                    },
+                },
+                "post_open_window_management": {
+                    "target_process_id": pid,
+                    "single_window_policy_ok": True,
+                },
+            }
+        return response
+
+    base_live = live_response(
+        revision=0,
+        structure=structures[0],
+        handle=base_handle,
+        pid=base_pid,
+    )
+    final_live = live_response(
+        revision=1,
+        structure=structures[1],
+        handle=final_handle,
+        pid=final_pid,
+    )
+    status: dict[str, object] = {
+        "ok": True,
+        "project_id": project_id,
+        "revision": 1,
+        "live_summary": {
+            "current_revision_loaded_in_gui": True if execute else False,
+        },
+    }
+    if execute:
+        status.update(
+            {
+                "gui_status": {
+                    "supported": True,
+                    "window_found": True,
+                    "target_window": {
+                        "handle": final_handle,
+                        "pid": final_pid,
+                        "title": (
+                            f"msmcp_{project_id}_r001 - Materials Studio"
+                        ),
+                    },
+                    "window_management": {
+                        "single_window_policy_ok": True,
+                        "target_process_id": final_pid,
+                    },
+                    "target_window_resolution": {
+                        "matched_project_window": True,
+                        "fallback_used": False,
+                        "target_handle": final_handle,
+                        "target_project_wrapper_metadata": {
+                            "project_id": project_id,
+                            "revision": 1,
+                            "wrapper_target_identity_verified": True,
+                            "wrapper_workspace_matches_controller": True,
+                        },
+                    },
+                },
+                "gui_current_revision": {
+                    "loaded_current_revision": True,
+                    "window_identity_verification": "verified",
+                    "single_window_policy_ok": True,
+                    "target_window_handle": final_handle,
+                },
+            }
+        )
+    bundle = _successful_bundle_export(
+        tmp_path,
+        project_id=project_id,
+        revision=1,
+        views=["front", "top", "isometric"],
+    )
+    manifest_path = Path(str(bundle["manifest_path"]))
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    final_spec_payload = json.loads(
+        (revisions_dir / "r001_model_spec.json").read_text(encoding="utf-8")
+    )
+    manifest_payload["spec_fingerprint"] = live_smoke._model_spec_fingerprint(
+        final_spec_payload
+    )
+    manifest_path.write_text(
+        json.dumps(manifest_payload) + "\n",
+        encoding="utf-8",
+    )
+    history: dict[str, object] = {
+        "ok": True,
+        "project_id": project_id,
+        "history": [
+            {
+                "project_id": project_id,
+                "revision": 0,
+                "action": "create",
+            },
+            {
+                "project_id": project_id,
+                "revision": 1,
+                "action": "live_patch",
+            },
+        ],
+    }
+    return base_live, final_live, status, bundle, history
+
+
+def test_live_edit_acceptance_passes_for_bound_preview_transition(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["status"] == "passed"
+    assert acceptance["base_identity"]["revision"] == 0
+    assert acceptance["final_identity"]["revision"] == 1
+    assert acceptance["base_immutable_spec"]["ok"] is True
+    assert acceptance["final_immutable_spec"]["ok"] is True
+    assert acceptance["history_evidence"]["observed_tail_revisions"] == [0, 1]
+    assert acceptance["bundle_manifest_evidence"]["manifest_revision"] == 1
+    assert acceptance["bundle_manifest_evidence"]["spec_fingerprint_matches"] is True
+
+
+def test_run_live_smoke_strict_semiconductor_transition_uses_production_preview(
+    tmp_path: Path,
+) -> None:
+    result = live_smoke.run_live_smoke(
+        scenario="silicon",
+        follow_up_preset="p_dopant",
+        execution_mode="preview",
+        working_dir=str(tmp_path),
+        require_live_edit_acceptance=True,
+        include_gui_status=False,
+        take_snapshot=False,
+        views=["front", "top", "isometric"],
+    )
+
+    acceptance = result["summary"]["live_edit_acceptance"]
+    assert result["ok"] is True
+    assert acceptance["schema"] == (
+        "material_studio_semiconductor_live_edit_acceptance_v2"
+    )
+    assert acceptance["status"] == "passed"
+    assert acceptance["base_identity"]["revision"] == 0
+    assert acceptance["final_identity"]["revision"] == 1
+    assert acceptance["base_immutable_spec"]["semiconductor_crystal"] is True
+    assert acceptance["final_immutable_spec"]["semiconductor_crystal"] is True
+    assert acceptance["base_semantic_evidence"]["nl_plan_kind"] == "spec"
+    assert acceptance["final_semantic_evidence"]["nl_plan_kind"] == "patch"
+    assert acceptance["final_semantic_evidence"][
+        "change_verification_status"
+    ] == "verified"
+
+
+def test_live_edit_acceptance_rejects_non_semiconductor_specs(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    revisions_dir = tmp_path / "strict_live_edit" / "revisions"
+    for revision in (0, 1):
+        spec_path = revisions_dir / f"r{revision:03d}_model_spec.json"
+        payload = json.loads(spec_path.read_text(encoding="utf-8"))
+        payload["metadata"]["domain"] = "chemistry"
+        spec_path.write_text(json.dumps(payload), encoding="utf-8")
+    manifest_path = Path(str(bundle["manifest_path"]))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    final_payload = json.loads(
+        (revisions_dir / "r001_model_spec.json").read_text(encoding="utf-8")
+    )
+    manifest["spec_fingerprint"] = live_smoke._model_spec_fingerprint(
+        final_payload
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "semiconductor_crystal_spec_required" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_missing_natural_language_plan(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    final_live.pop("nl_plan")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "final_natural_language_patch_unverified" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_failed_change_verification(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    final_live["change_verification"]["ok"] = False
+    final_live["change_verification"]["status"] = "failed"
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "semiconductor_change_verification_failed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_history_transition_mismatch(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    history["history"][-1]["revision"] = 2
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "history_transition_binding_failed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_duplicate_history_revision(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    history["history"].insert(
+        1,
+        {
+            "project_id": "strict_live_edit",
+            "revision": 0,
+            "action": "duplicate",
+        },
+    )
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["history_evidence"][
+        "revisions_are_strictly_increasing"
+    ] is False
+
+
+def test_live_edit_acceptance_rejects_revision_only_spec_change(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    base_spec_path = (
+        tmp_path
+        / "strict_live_edit"
+        / "revisions"
+        / "r000_model_spec.json"
+    )
+    final_spec_path = base_spec_path.with_name("r001_model_spec.json")
+    final_payload = json.loads(base_spec_path.read_text(encoding="utf-8"))
+    final_payload["revision"] = 1
+    final_spec_path.write_text(json.dumps(final_payload), encoding="utf-8")
+    manifest_path = Path(str(bundle["manifest_path"]))
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["spec_fingerprint"] = live_smoke._model_spec_fingerprint(
+        final_payload
+    )
+    manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "model_spec_content_did_not_change" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_final_bundle_revision_mismatch(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    manifest_path = Path(str(bundle["manifest_path"]))
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["revision"] = 0
+    manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert "final_bundle_manifest_binding_failed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_final_bundle_spec_mismatch(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    manifest_path = Path(str(bundle["manifest_path"]))
+    manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["spec_fingerprint"] = "stale-spec"
+    manifest_path.write_text(json.dumps(manifest_payload), encoding="utf-8")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    evidence = acceptance["bundle_manifest_evidence"]
+    assert evidence["spec_fingerprint_matches"] is False
+    assert "final_bundle_manifest_binding_failed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_manifest_outside_revision_output(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=False)
+    )
+    original_manifest = Path(str(bundle["manifest_path"]))
+    outside_manifest = tmp_path / "outside_manifest.json"
+    outside_manifest.write_text(
+        original_manifest.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    bundle["manifest_path"] = str(outside_manifest)
+    bundle["view_bundle_manifest_path"] = str(outside_manifest)
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=False,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["bundle_manifest_evidence"][
+        "manifest_within_revision_output"
+    ] is False
+
+
+def test_live_edit_acceptance_execute_reuses_same_window(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is True
+    assert acceptance["same_window_reused"] is True
+    assert acceptance["base_window"]["handle"] == 4100
+    assert acceptance["final_window"]["handle"] == 4100
+    assert acceptance["final_status_window"]["verified"] is True
+    assert acceptance["final_revision_loaded_in_gui"] is True
+
+
+def test_live_edit_acceptance_rejects_failed_revision_execution(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    final_live["result"]["success"] = False
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["final_execution_evidence"]["checks"][
+        "result_success"
+    ] is False
+    assert "revision_execution_evidence_failed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_mismatched_structure_artifact(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    final_live["structure_artifact_validation"]["sha256"] = "0" * 64
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["final_execution_evidence"]["checks"][
+        "structure_artifact_bound"
+    ] is False
+
+
+def test_live_edit_acceptance_rejects_gui_open_revision_binding_mismatch(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    final_live["gui_open"]["revision"] = 0
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["final_window"]["binding_verified"] is False
+    assert "gui_window_evidence_unverified" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_failed_final_gui_probe(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    status["gui_status"]["supported"] = False
+    status["gui_status"]["window_found"] = False
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["final_status_window"]["probed"] is False
+    assert "final_gui_status_not_freshly_probed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("final_handle", "final_pid"),
+    [(4101, 5100), (4100, 5101)],
+)
+def test_live_edit_acceptance_rejects_different_window_or_process(
+    tmp_path: Path,
+    final_handle: int,
+    final_pid: int,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(
+            tmp_path,
+            execute=True,
+            final_handle=final_handle,
+            final_pid=final_pid,
+        )
+    )
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert "live_edit_did_not_reuse_same_window" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_missing_process_spawn_evidence(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    final_live["gui_open"]["open_result"].pop("spawned_process_ids")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert "matstudio_process_spawn_evidence_invalid" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("process_count_before", None),
+        ("process_count_after", 2),
+        ("same_window_open_requested", False),
+    ],
+)
+def test_live_edit_acceptance_rejects_invalid_process_count_evidence(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    if value is None:
+        final_live["gui_open"]["open_result"].pop(field)
+    else:
+        final_live["gui_open"]["open_result"][field] = value
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert acceptance["final_window"]["process_count_evidence_valid"] is False
+    assert "matstudio_process_count_evidence_invalid" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_edit_acceptance_rejects_unprobed_final_gui_status(
+    tmp_path: Path,
+) -> None:
+    base_live, final_live, status, bundle, history = (
+        _strict_live_edit_fixture(tmp_path, execute=True)
+    )
+    status.pop("gui_status")
+
+    acceptance = live_smoke._live_edit_acceptance_summary(
+        required=True,
+        base_live=base_live,
+        live=final_live,
+        status=status,
+        bundle=bundle,
+        history=history,
+        hotload_required=True,
+    )
+
+    assert acceptance["ok"] is False
+    assert "final_gui_status_not_freshly_probed" in {
+        failure["type"] for failure in acceptance["failures"]
+    }
+
+
+def test_live_smoke_cli_requires_follow_up_for_live_edit_acceptance() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        live_smoke.main(["--require-live-edit-acceptance"])
+
+    assert exc_info.value.code == 2
+
+
+def test_live_smoke_requires_bundle_for_live_edit_acceptance(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires export_bundle=True"):
+        live_smoke.run_live_smoke(
+            scenario="silicon",
+            follow_up_preset="p_dopant",
+            execution_mode="preview",
+            working_dir=str(tmp_path),
+            require_live_edit_acceptance=True,
+            export_bundle=False,
+        )
+
+
+def test_execute_live_edit_acceptance_requires_gui_status(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires include_gui_status=True"):
+        live_smoke.run_live_smoke(
+            scenario="silicon",
+            follow_up_preset="p_dopant",
+            execution_mode="execute",
+            working_dir=str(tmp_path),
+            require_live_edit_acceptance=True,
+            include_gui_status=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        {"diagnostic_acceptance": {"required": True, "ok": False}},
+        {"live_edit_acceptance": {"required": True, "ok": False}},
+    ],
+)
+def test_overall_ok_rejects_failed_required_acceptance(
+    summary: dict[str, object],
+) -> None:
+    assert live_smoke._overall_ok(
+        preflight={"ok": True},
+        base_live={"ok": True},
+        live={"ok": True},
+        status={"ok": True},
+        bundle={"ok": True},
+        summary=summary,
+    ) is False
 
 
 def _deferred_postexecution_live(

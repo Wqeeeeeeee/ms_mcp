@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,6 +52,20 @@ def test_python_runtime_probe_uses_requested_interpreter() -> None:
     assert python_runtime_contract_summary(result["contract"])[
         "python_executable"
     ] == str(Path(sys.executable).resolve())
+
+
+def test_python_runtime_probe_disconnects_child_stdin(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def capture_run(*args, **kwargs):
+        observed.update(kwargs)
+        raise RuntimeError("stop after capturing subprocess arguments")
+
+    monkeypatch.setattr(subprocess, "run", capture_run)
+
+    probe_python_runtime_contract(sys.executable, Path(__file__).parents[1])
+
+    assert observed.get("stdin") is subprocess.DEVNULL
 
 
 def test_python_runtime_contract_tamper_is_rejected() -> None:

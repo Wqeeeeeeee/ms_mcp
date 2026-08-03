@@ -143,6 +143,7 @@ def probe_python_runtime_contract(
             cwd=_safe_process_cwd(root),
             env=env,
             check=False,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",

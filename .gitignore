@@ -6,7 +6,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .material-studio-mcp/
-dist/
+dist/*
+!dist/materials_studio_mcp-*-py3-none-any.whl
+!dist/materials-studio-mcp-plugin-*-windows.zip
+!dist/SHA256SUMS.txt
+!dist/release-manifest.json
 build/
 *.egg-info/
 workspace/*

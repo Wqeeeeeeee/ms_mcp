@@ -1,0 +1,41 @@
+{
+  "name": "materials-studio-mcp",
+  "version": "0.4.0",
+  "description": "Local Materials Studio MCP server and safety-first modeling workflow for Windows.",
+  "author": {
+    "name": "Xu kaidong",
+    "url": "https://github.com/Wqeeeeeeee"
+  },
+  "homepage": "https://github.com/Wqeeeeeeee/ms_mcp#readme",
+  "repository": "https://github.com/Wqeeeeeeee/ms_mcp",
+  "license": "MIT",
+  "keywords": [
+    "materials-studio",
+    "mcp",
+    "windows",
+    "materials-modeling"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Materials Studio MCP",
+    "shortDescription": "Safe local Materials Studio",
+    "longDescription": "Runs the versioned local Python Materials Studio MCP runtime and guides preview-first, revision-bound modeling, diagnostics, verified-window GUI synchronization, and guarded calculation preparation on Windows.",
+    "developerName": "Xu kaidong",
+    "category": "Education & Research",
+    "capabilities": [
+      "Inspect local MCP, runner, project, and GUI status",
+      "Preview revisioned Materials Studio model changes",
+      "Operate only a verified Materials Studio window",
+      "Export structure and multi-view diagnostics",
+      "Preview guarded CASTEP, Forcite, and DMol3 workflows"
+    ],
+    "websiteURL": "https://github.com/Wqeeeeeeee/ms_mcp",
+    "defaultPrompt": [
+      "Check the local Materials Studio MCP server and runner status; report blockers without changing anything.",
+      "Preview creating a semiconductor structure; inspect the current model and export multi-view diagnostics; do not execute.",
+      "Preview a patch to the current model and a CASTEP Energy workflow; execute neither."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

@@ -6,6 +6,7 @@ import base64
 import csv
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
@@ -1135,6 +1136,10 @@ class GuiViewReplayConfirmationInput(BaseModel):
 
 
 DIRECT_RUNTIME_GUARD_SCHEMA = "material_studio_mcp_direct_runtime_guard_v1"
+PLUGIN_MODE_ENV = "MATERIAL_STUDIO_MCP_PLUGIN_MODE"
+PLUGIN_CUSTOM_SCRIPT_GUARD_SCHEMA = (
+    "material_studio_mcp_plugin_custom_script_guard_v1"
+)
 
 RUNTIME_SOURCE_GUARDED_TOOL_NAMES = (
     "material_studio_run_script",
@@ -1353,6 +1358,51 @@ def _require_current_runtime_source(method: Any) -> Any:
 
     setattr(guarded, "__runtime_source_guarded__", True)
     return guarded
+
+
+def _plugin_mode_enabled() -> bool:
+    """Return whether this process was started by the packaged plugin."""
+
+    return os.environ.get(PLUGIN_MODE_ENV, "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _plugin_custom_script_disabled_payload() -> dict[str, Any]:
+    """Fail closed for arbitrary MaterialsScript in the packaged plugin."""
+
+    return {
+        "ok": False,
+        "status": "plugin_custom_script_disabled",
+        "state": "plugin_custom_script_disabled",
+        "error": (
+            "material_studio_run_script is disabled in packaged plugin mode. "
+            "Use the structured Materials Studio modeling tools instead."
+        ),
+        "blocked_tool": "material_studio_run_script",
+        "plugin_mode": True,
+        "custom_script_execution_enabled": False,
+        "guard": {
+            "schema": PLUGIN_CUSTOM_SCRIPT_GUARD_SCHEMA,
+            "blocked": True,
+            "evaluated_before_input_validation": True,
+        },
+        "tool_body_started": True,
+        "validation_started": False,
+        "side_effects_started": False,
+        "execution_started": False,
+        "runner_invoked": False,
+        "gui_input_started": False,
+        "gui_process_launched": False,
+        "revision_created": False,
+        "artifact_write_started": False,
+        "recommended_tool": "material_studio_live_modeling_request",
+        "recommended_action": "use_structured_preview_first_workflow",
+        "requires_manual_mcp_fallback": True,
+    }
 
 
 def _ok(result: dict[str, Any]) -> dict[str, Any]:
@@ -12894,6 +12944,9 @@ def material_studio_run_script(
     Returns:
         dict[str, Any]: run metadata, stdout/stderr, and tagged JSON if present.
     """
+
+    if _plugin_mode_enabled():
+        return _plugin_custom_script_disabled_payload()
 
     params = RunScriptInput(
         script=script,

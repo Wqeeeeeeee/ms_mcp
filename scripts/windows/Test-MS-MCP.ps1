@@ -44,6 +44,7 @@ try {
     if (-not (Test-Path -LiteralPath $PluginRoot -PathType Container)) { throw "Plugin root not found: $PluginRoot" }
     $pluginManifestPath = Join-Path $PluginRoot ".codex-plugin\plugin.json"
     $mcpManifestPath = Join-Path $PluginRoot ".mcp.json"
+    $batchLauncherPath = Join-Path $PluginRoot "Run-MS-MCP.bat"
     $launcherPath = Join-Path $PluginRoot "scripts\Run-MS-MCP.ps1"
     $pluginManifest = Read-MSJson -Path $pluginManifestPath
     $mcpManifest = Read-MSJson -Path $mcpManifestPath
@@ -51,6 +52,12 @@ try {
     if ([string]$pluginManifest.version -ne $version) { throw "Plugin/package version mismatch." }
     if ([string]$pluginManifest.mcpServers -ne "./.mcp.json") { throw "Plugin mcpServers path must be ./.mcp.json." }
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw "Plugin launcher implementation is missing." }
+    if (-not (Test-Path -LiteralPath $batchLauncherPath -PathType Leaf)) { throw "Plugin batch launcher is missing." }
+    $batchLauncherText = Get-Content -LiteralPath $batchLauncherPath -Raw -Encoding UTF8
+    if ($batchLauncherText -notmatch '%LOCALAPPDATA%\\MaterialsStudioMCP') { throw "Plugin batch launcher must leave the versioned Codex cache before starting the server." }
+    $externalCwdIndex = $batchLauncherText.IndexOf('cd /d "%MS_MCP_EXTERNAL_CWD%"', [StringComparison]::OrdinalIgnoreCase)
+    $powershellIndex = $batchLauncherText.IndexOf('powershell.exe', [StringComparison]::OrdinalIgnoreCase)
+    if ($externalCwdIndex -lt 0 -or $powershellIndex -lt 0 -or $externalCwdIndex -gt $powershellIndex) { throw "Plugin batch launcher changes working directory too late." }
     $launcherText = Get-Content -LiteralPath $launcherPath -Raw -Encoding UTF8
     if ($launcherText -notmatch 'MATERIAL_STUDIO_WORKSPACE' -or $launcherText -notmatch 'MATERIAL_STUDIO_MCP_WORKSPACE') { throw "Plugin launcher must bind both workspace environment variables." }
     foreach ($guiLoopVariable in @('MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT', 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS', 'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS')) {
@@ -59,8 +66,12 @@ try {
     $server = $mcpManifest.'materials-studio'
     if ($null -eq $server -and $null -ne $mcpManifest.mcpServers) { $server = $mcpManifest.mcpServers.'materials-studio' }
     if ($null -eq $server) { throw ".mcp.json does not define materials-studio." }
-    if ([string]$server.command -ne "cmd.exe") { throw ".mcp.json must use cmd.exe for the bundled Windows launcher." }
-    if (-not (@($server.args) -contains "Run-MS-MCP.bat")) { throw ".mcp.json does not launch Run-MS-MCP.bat." }
+    if ([string]$server.command -ne "powershell.exe") { throw ".mcp.json must use direct PowerShell for the bundled Windows launcher." }
+    $expectedServerArgs = @("-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "scripts\Run-MS-MCP.ps1")
+    if (@($server.args).Count -ne $expectedServerArgs.Count) { throw ".mcp.json PowerShell launcher arguments drifted." }
+    for ($index = 0; $index -lt $expectedServerArgs.Count; $index++) {
+        if ([string]$server.args[$index] -cne $expectedServerArgs[$index]) { throw ".mcp.json PowerShell launcher arguments drifted." }
+    }
     if ([string]$server.cwd -ne ".") { throw ".mcp.json cwd must be cache-relative '.'." }
     if ([string]$server.env.MATERIAL_STUDIO_MCP_PLUGIN_MODE -ne "1") { throw ".mcp.json must enable fail-closed plugin mode." }
     if ([string]$server.default_tools_approval_mode -ne "prompt") { throw ".mcp.json must require prompt approval by default for every bundled MCP tool." }

@@ -140,10 +140,23 @@ function Remove-LauncherComtypesCache {
 }
 
 try {
+    # Capture every cache-local value before releasing the versioned plugin
+    # directory. Codex may atomically replace that directory while this STDIO
+    # server remains alive.
+    $pluginRoot = Reject-ReparsePath (Join-Path $PSScriptRoot "..")
+    $pluginManifestPath = Join-Path $pluginRoot ".codex-plugin\plugin.json"
+    $pluginManifest = Read-LauncherJson $pluginManifestPath
+    if ([string]$pluginManifest.name -ne "materials-studio-mcp") { throw "the cache-local plugin manifest has an unexpected name" }
+
     $base = $LocalAppDataRoot
     if ([string]::IsNullOrWhiteSpace($base)) { $base = $env:LOCALAPPDATA }
     if ([string]::IsNullOrWhiteSpace($base)) { throw "LOCALAPPDATA is not set; run Configure-MS-MCP.bat" }
-    $productRoot = Reject-ReparsePath (Join-Path (Full-LauncherPath $base) "MaterialsStudioMCP")
+    $launcherCwd = Reject-ReparsePath (Full-LauncherPath $base)
+    if (-not (Test-Path -LiteralPath $launcherCwd -PathType Container)) { throw "launcher working directory is unavailable; rerun Configure-MS-MCP.bat" }
+    Set-Location -LiteralPath $launcherCwd
+    [Environment]::CurrentDirectory = $launcherCwd
+
+    $productRoot = Reject-ReparsePath (Join-Path $launcherCwd "MaterialsStudioMCP")
     $settingsPath = Join-Path $productRoot "config\settings.json"
     $activePath = Join-Path $productRoot "config\active-runtime.json"
     $settings = Read-LauncherJson $settingsPath
@@ -152,10 +165,6 @@ try {
     if ([string]$active.schema -ne "materials_studio_mcp_active_runtime_v1") { throw "active runtime pointer is stale; rerun Install-MS-MCP.bat" }
     $version = [string]$settings.package_version
     if ([string]::IsNullOrWhiteSpace($version) -or [string]$active.version -ne $version) { throw "configuration and active runtime versions differ; rerun Configure and Install" }
-    $pluginRoot = Reject-ReparsePath (Join-Path $PSScriptRoot "..")
-    $pluginManifestPath = Join-Path $pluginRoot ".codex-plugin\plugin.json"
-    $pluginManifest = Read-LauncherJson $pluginManifestPath
-    if ([string]$pluginManifest.name -ne "materials-studio-mcp") { throw "the cache-local plugin manifest has an unexpected name" }
     if ([string]$pluginManifest.version -ne $version) { throw "cache-local plugin version does not match the configured runtime; rerun Install-MS-MCP.bat" }
 
     $runtimesRoot = Join-Path $productRoot "runtimes"

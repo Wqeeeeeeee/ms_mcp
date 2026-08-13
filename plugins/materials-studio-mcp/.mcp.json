@@ -1,10 +1,14 @@
 {
   "materials-studio": {
-    "command": "cmd.exe",
+    "command": "powershell.exe",
     "args": [
-      "/d",
-      "/c",
-      "Run-MS-MCP.bat"
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "scripts\\Run-MS-MCP.ps1"
     ],
     "cwd": ".",
     "env": {

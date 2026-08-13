@@ -53,8 +53,16 @@ COPYRIGHT_LINE = "Copyright (c) 2026 Xu kaidong"
 OPTIONAL_NOTICE_FILES = ("THIRD_PARTY_NOTICES.md",)
 
 MCP_SERVER_DEFINITION_BASE = {
-    "command": "cmd.exe",
-    "args": ["/d", "/c", "Run-MS-MCP.bat"],
+    "command": "powershell.exe",
+    "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts\\Run-MS-MCP.ps1",
+    ],
     "cwd": ".",
     "env": {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"},
     "startup_timeout_sec": 120,
@@ -515,10 +523,46 @@ def _validate_plugin(source_root: Path, version: str, repository_license: bytes)
     }
     if server != expected_server:
         raise ReleaseBuildError(
-            ".mcp.json materials-studio definition must exactly preserve the cache-relative "
-            "cmd /d /c launcher, plugin-mode environment, 120-second startup budget, "
+            ".mcp.json materials-studio definition must exactly preserve the direct "
+            "PowerShell launcher, plugin-mode environment, 120-second startup budget, "
             "prompt-by-default approval policy, safe enabled-tool allowlist, and "
             "arbitrary-script denylist"
+        )
+
+    powershell_launcher_path = _assert_safe_source_path(
+        plugin_root / "scripts" / "Run-MS-MCP.ps1", source_root
+    )
+    powershell_launcher = powershell_launcher_path.read_text(encoding="utf-8").casefold()
+    set_location = "set-location -literalpath $launchercwd"
+    process_cwd = "[environment]::currentdirectory = $launchercwd"
+    plugin_manifest_read = "read-launcherjson $pluginmanifestpath"
+    if (
+        set_location not in powershell_launcher
+        or process_cwd not in powershell_launcher
+        or plugin_manifest_read not in powershell_launcher
+        or powershell_launcher.index(plugin_manifest_read) > powershell_launcher.index(set_location)
+        or powershell_launcher.index(set_location) > powershell_launcher.index(process_cwd)
+    ):
+        raise ReleaseBuildError(
+            "Run-MS-MCP.ps1 must capture its cache-local manifest before releasing both "
+            "PowerShell and Win32 working directories"
+        )
+
+    batch_launcher_path = _assert_safe_source_path(
+        plugin_root / "Run-MS-MCP.bat", source_root
+    )
+    batch_launcher = batch_launcher_path.read_text(encoding="utf-8").casefold()
+    external_cwd = 'cd /d "%ms_mcp_external_cwd%"'
+    powershell_start = "powershell.exe"
+    if (
+        "%localappdata%\\materialsstudiomcp" not in batch_launcher
+        or external_cwd not in batch_launcher
+        or powershell_start not in batch_launcher
+        or batch_launcher.index(external_cwd) > batch_launcher.index(powershell_start)
+    ):
+        raise ReleaseBuildError(
+            "Run-MS-MCP.bat must leave the versioned Codex plugin cache before "
+            "starting the long-lived PowerShell STDIO server"
         )
 
     marketplace_path = _assert_safe_source_path(source_root / MARKETPLACE_FILE, source_root)

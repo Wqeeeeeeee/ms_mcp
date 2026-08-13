@@ -22,12 +22,12 @@ from scripts.build_plugin_release import (
 )
 
 
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 BASE_SHA = "a" * 40
 REFERENCE_SHA = "b" * 40
 LICENSE_TEXT = "MIT License\n\nCopyright (c) 2026 Xu kaidong\n"
 PACKAGE_MEMBERS = {
-    "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.3'\n",
+    "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.4'\n",
     "material_studio_mcp_server/codex_config.py": (
         b"SAFE_ENABLED_TOOLS = ('material_studio_get_status',)\n"
         b"DISABLED_TOOLS = ('material_studio_run_script',)\n"
@@ -183,7 +183,7 @@ def _make_source(root: Path) -> Path:
         "pyproject.toml",
         "[project]\n"
         "name = \"materials-studio-mcp\"\n"
-        "version = \"0.5.3\"\n"
+        "version = \"0.5.4\"\n"
         "authors = [{ name = \"Xu kaidong\" }]\n"
         "license = \"MIT\"\n"
         "license-files = [\"LICENSE\"]\n\n"
@@ -225,8 +225,16 @@ def _make_source(root: Path) -> Path:
         json.dumps(
             {
                 "materials-studio": {
-                    "command": "cmd.exe",
-                    "args": ["/d", "/c", "Run-MS-MCP.bat"],
+                    "command": "powershell.exe",
+                    "args": [
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        "scripts\\Run-MS-MCP.ps1",
+                    ],
                     "cwd": ".",
                     "env": {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"},
                     "startup_timeout_sec": 120,
@@ -242,11 +250,22 @@ def _make_source(root: Path) -> Path:
         path = root / "src" / Path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
-    _write(root, "plugins/materials-studio-mcp/Run-MS-MCP.bat", "@echo off\nexit /b 0\n")
+    _write(
+        root,
+        "plugins/materials-studio-mcp/Run-MS-MCP.bat",
+        "@echo off\n"
+        "set \"MS_MCP_EXTERNAL_CWD=%LOCALAPPDATA%\\MaterialsStudioMCP\"\n"
+        "cd /d \"%MS_MCP_EXTERNAL_CWD%\" || exit /b 2\n"
+        "powershell.exe -NoProfile -File launcher.ps1\n",
+    )
     _write(
         root,
         "plugins/materials-studio-mcp/scripts/Run-MS-MCP.ps1",
-        "Set-StrictMode -Version Latest\n",
+        "$pluginManifestPath = 'plugin.json'\n"
+        "$pluginManifest = Read-LauncherJson $pluginManifestPath\n"
+        "$launcherCwd = $env:LOCALAPPDATA\n"
+        "Set-Location -LiteralPath $launcherCwd\n"
+        "[Environment]::CurrentDirectory = $launcherCwd\n",
     )
     _write(
         root,
@@ -653,7 +672,7 @@ def test_rejects_wheel_member_path_traversal(tmp_path: Path) -> None:
         _zip_write(
             archive,
             f"materials_studio_mcp-{VERSION}.dist-info/METADATA",
-            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.3\n\n",
+            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.4\n\n",
         )
     with pytest.raises(ReleaseBuildError, match="unsafe archive path"):
         build_release(
@@ -694,6 +713,8 @@ def test_rejects_casefold_duplicate_or_archived_symlink_in_wheel(tmp_path: Path)
             base_sha=BASE_SHA,
             reference_sha=REFERENCE_SHA,
         )
+
+
 def test_rejects_mcp_launcher_allowlist_or_denylist_drift(tmp_path: Path) -> None:
     source = _make_source(tmp_path / "source")
     wheel = _make_wheel(tmp_path / "wheel")
@@ -732,6 +753,26 @@ def test_rejects_mcp_launcher_allowlist_or_denylist_drift(tmp_path: Path) -> Non
                 base_sha=BASE_SHA,
                 reference_sha=REFERENCE_SHA,
             )
+
+
+def test_rejects_batch_launcher_that_keeps_versioned_cache_cwd(tmp_path: Path) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel")
+    launcher = source / "plugins/materials-studio-mcp/Run-MS-MCP.bat"
+    launcher.write_text(
+        "@echo off\n"
+        "powershell.exe -NoProfile -File scripts\\Run-MS-MCP.ps1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseBuildError, match="leave the versioned Codex plugin cache"):
+        build_release(
+            source_root=source,
+            wheel_path=wheel,
+            output_dir=tmp_path / "out",
+            base_sha=BASE_SHA,
+            reference_sha=REFERENCE_SHA,
+        )
 
 
 def test_rejects_marketplace_source_policy_or_category_drift(tmp_path: Path) -> None:

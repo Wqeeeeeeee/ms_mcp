@@ -22,12 +22,12 @@ from scripts.build_plugin_release import (
 )
 
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 BASE_SHA = "a" * 40
 REFERENCE_SHA = "b" * 40
 LICENSE_TEXT = "MIT License\n\nCopyright (c) 2026 Xu kaidong\n"
 PACKAGE_MEMBERS = {
-    "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.2'\n",
+    "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.3'\n",
     "material_studio_mcp_server/codex_config.py": (
         b"SAFE_ENABLED_TOOLS = ('material_studio_get_status',)\n"
         b"DISABLED_TOOLS = ('material_studio_run_script',)\n"
@@ -183,7 +183,7 @@ def _make_source(root: Path) -> Path:
         "pyproject.toml",
         "[project]\n"
         "name = \"materials-studio-mcp\"\n"
-        "version = \"0.5.2\"\n"
+        "version = \"0.5.3\"\n"
         "authors = [{ name = \"Xu kaidong\" }]\n"
         "license = \"MIT\"\n"
         "license-files = [\"LICENSE\"]\n\n"
@@ -229,6 +229,7 @@ def _make_source(root: Path) -> Path:
                     "args": ["/d", "/c", "Run-MS-MCP.bat"],
                     "cwd": ".",
                     "env": {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"},
+                    "startup_timeout_sec": 120,
                     "default_tools_approval_mode": "prompt",
                     "enabled_tools": ["material_studio_get_status"],
                     "disabled_tools": ["material_studio_run_script"],
@@ -652,7 +653,7 @@ def test_rejects_wheel_member_path_traversal(tmp_path: Path) -> None:
         _zip_write(
             archive,
             f"materials_studio_mcp-{VERSION}.dist-info/METADATA",
-            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.2\n\n",
+            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.3\n\n",
         )
     with pytest.raises(ReleaseBuildError, match="unsafe archive path"):
         build_release(

@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_SCRIPTS = ROOT / "scripts" / "windows"
 POWERSHELL = shutil.which("powershell.exe")
 CMD = shutil.which("cmd.exe")
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 
 
 def _run_ps(script: str, *arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:

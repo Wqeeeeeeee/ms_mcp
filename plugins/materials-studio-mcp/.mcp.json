@@ -10,6 +10,7 @@
     "env": {
       "MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"
     },
+    "startup_timeout_sec": 120,
     "default_tools_approval_mode": "prompt",
     "enabled_tools": [
       "material_studio_get_status",

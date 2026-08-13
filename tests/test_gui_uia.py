@@ -656,7 +656,7 @@ def _native_fit_probe_payload(
             "module_sha256": runtime["helper_sha256"],
             "dependency_module_path": str(runtime["dependency_module_path"]),
             "dependency_module_sha256": runtime["dependency_module_sha256"],
-            "package_version": "0.5.2",
+            "package_version": "0.5.3",
             "python_executable": str(runtime["base_executable"]),
             "isolated_mode": True,
             "no_site_mode": True,

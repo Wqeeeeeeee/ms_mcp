@@ -57,6 +57,7 @@ MCP_SERVER_DEFINITION_BASE = {
     "args": ["/d", "/c", "Run-MS-MCP.bat"],
     "cwd": ".",
     "env": {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"},
+    "startup_timeout_sec": 120,
     "default_tools_approval_mode": "prompt",
 }
 EXPECTED_CONSOLE_SCRIPTS = {
@@ -515,8 +516,9 @@ def _validate_plugin(source_root: Path, version: str, repository_license: bytes)
     if server != expected_server:
         raise ReleaseBuildError(
             ".mcp.json materials-studio definition must exactly preserve the cache-relative "
-            "cmd /d /c launcher, plugin-mode environment, prompt-by-default approval policy, "
-            "safe enabled-tool allowlist, and arbitrary-script denylist"
+            "cmd /d /c launcher, plugin-mode environment, 120-second startup budget, "
+            "prompt-by-default approval policy, safe enabled-tool allowlist, and "
+            "arbitrary-script denylist"
         )
 
     marketplace_path = _assert_safe_source_path(source_root / MARKETPLACE_FILE, source_root)

@@ -61,7 +61,7 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
     interface = manifest["interface"]
 
     assert manifest["name"] == PLUGIN_ROOT.name == "materials-studio-mcp"
-    assert manifest["version"] == _project_version() == PACKAGE_VERSION == "0.5.2"
+    assert manifest["version"] == _project_version() == PACKAGE_VERSION == "0.5.3"
     assert manifest["author"] == {
         "name": "Xu kaidong",
         "url": "https://github.com/Wqeeeeeeee",
@@ -145,6 +145,7 @@ def test_bundled_mcp_uses_current_direct_stdio_map() -> None:
         "args",
         "cwd",
         "env",
+        "startup_timeout_sec",
         "default_tools_approval_mode",
         "enabled_tools",
         "disabled_tools",
@@ -153,6 +154,7 @@ def test_bundled_mcp_uses_current_direct_stdio_map() -> None:
     assert server["args"] == ["/d", "/c", "Run-MS-MCP.bat"]
     assert server["cwd"] == "."
     assert server["env"] == {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"}
+    assert server["startup_timeout_sec"] == 120
     assert server["default_tools_approval_mode"] == "prompt"
     assert tuple(server["enabled_tools"]) == SAFE_ENABLED_TOOLS
     assert tuple(server["disabled_tools"]) == DISABLED_TOOLS

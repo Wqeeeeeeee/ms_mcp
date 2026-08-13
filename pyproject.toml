@@ -1,6 +1,6 @@
 [project]
 name = "materials-studio-mcp"
-version = "0.5.2"
+version = "0.5.3"
 description = "FastMCP tools for reproducible Materials Studio modeling, live GUI synchronization, and semiconductor diagnostics."
 readme = "README.md"
 authors = [

@@ -1,5 +1,51 @@
 # Codex plugin packaging audit
 
+## Authoritative v0.5.4 addendum
+
+Goal ID: `CODEX-MS-PLUGIN-CACHE-REFRESH-V0.5.4`
+
+Audit date: 2026-08-13 (Asia/Shanghai)
+
+This addendum is the authoritative packaging decision for `0.5.4`. It
+supersedes only the release decision in the historical `0.5.3` section below;
+all modeling, revision, same-window, GUI-input, and calculation safety gates
+remain unchanged.
+
+The exact audited baselines are:
+
+- Wqeeeeeeee/ms_mcp base SHA:
+  `bafcb260883fbac43740360456fea5e9ca08ec1c` (`v0.5.3`);
+- new package, plugin, managed-runtime, and release version: `0.5.4`;
+- repository license: SPDX `MIT`.
+
+The `0.5.3` startup budget allowed the server to initialize, but its long-lived
+`cmd.exe`/PowerShell/Python chain inherited the versioned Codex plugin cache as
+the process working directory. On Windows, that directory binding can prevent
+Codex from atomically backing up the same cache during a concurrent marketplace
+refresh, producing `Access is denied` before the fresh session publishes the
+plugin's tool registry.
+
+`0.5.4` starts the cache-relative PowerShell launcher directly, without a
+long-lived `cmd.exe` parent. Before releasing the cache directory, the script
+captures and verifies its cache-local plugin manifest. It then changes both the
+PowerShell provider location and the Win32 process current directory to the
+validated `%LOCALAPPDATA%` root before any long-running validation or child
+process starts. The script continues to verify the immutable versioned runtime,
+hashes, runner, workspace, and plugin-mode policy. A missing managed root remains
+a fail-closed error.
+
+The Windows cache-lock smoke starts the packaged launcher from a copied version
+directory, atomically renames the containing plugin cache root while validation
+is still running, and requires that same launcher to finish successfully after
+the rename. The release-grade smoke then exercises the real packaged STDIO
+server. Neither test starts Materials Studio, sends GUI input, modifies a
+structure, or runs a calculation.
+
+Packaging may proceed only after the final source and audit changes are
+committed, a fresh `0.5.4` wheel is built from that exact tree, the deterministic
+Windows plugin ZIP/release manifest/checksums are regenerated, and the release
+tests pass.
+
 ## Authoritative v0.5.3 addendum
 
 Goal ID: `CODEX-MS-PLUGIN-STARTUP-BUDGET-V0.5.3`

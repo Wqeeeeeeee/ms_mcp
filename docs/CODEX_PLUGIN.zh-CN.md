@@ -25,7 +25,10 @@ plugins/materials-studio-mcp/
 - `plugin.json` 提供稳定插件身份、界面信息、Skill 和 MCP 入口。
 - `.mcp.json` 使用相对于插件 cache 副本的 STDIO server 配置；不包含开发机绝对
   Python 或仓库路径。
-- `Run-MS-MCP.bat`/PowerShell launcher 只读取固定用户配置，验证 runtime
+- `.mcp.json` 直接启动 PowerShell launcher，不保留长驻 `cmd.exe` 父进程；launcher
+  先读取 cache 内 manifest，再把 PowerShell 与 Win32 两种工作目录都切换到已验证的
+  `%LOCALAPPDATA%`，避免长驻 STDIO 进程锁住 Codex 的版本化 plugin cache；随后仍只
+  读取固定用户配置并验证 runtime
   manifest、Python、package version、runtime SHA-256、runner 和 workspace，随后
   启动 `material_studio_mcp_server.server:main`。
 - Skill 指导 Codex 先 status/preflight、默认 preview、明确确认副作用，并区分

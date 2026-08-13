@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -185,6 +186,54 @@ def test_detached_cache_launches_only_the_versioned_managed_runtime(
         )
         assert result.stdout == "", "ValidateOnly must not pollute MCP JSON-RPC stdout"
         assert result.stderr == ""
+
+    server = json.loads((cache_root / ".mcp.json").read_text(encoding="utf-8"))[
+        "materials-studio"
+    ]
+    server_env = env.copy()
+    server_env.update(server["env"])
+    server_env["MS_MCP_TEST_HOLD_SERVER_SECONDS"] = "3"
+    plugin_base = cache_root.parent
+    refreshed_plugin_base = plugin_base.with_name(f"{plugin_base.name}.refresh-backup")
+    process = subprocess.Popen(
+        [
+            server["command"],
+            *server["args"],
+            "-LocalAppDataRoot",
+            str(local_app_data),
+        ],
+        cwd=cache_root,
+        env=server_env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    renamed_while_launcher_was_live = False
+    try:
+        comtypes_cache_root = local_app_data / "MaterialsStudioMCP" / "logs" / "comtypes-cache"
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and process.poll() is None:
+            if any(comtypes_cache_root.glob("run-*")):
+                plugin_base.rename(refreshed_plugin_base)
+                renamed_while_launcher_was_live = process.poll() is None
+                break
+            time.sleep(0.02)
+        stdout, stderr = process.communicate(timeout=180)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+
+    assert renamed_while_launcher_was_live, (
+        "the direct launcher never released the refreshable plugin cache while live"
+    )
+    assert process.returncode == 0, f"launcher stdout:\n{stdout}\nlauncher stderr:\n{stderr}"
+    assert stdout == ""
+    assert "ms-mcp staging import probe" in stderr
+    assert refreshed_plugin_base.is_dir()
 
     assert codex_config.read_bytes() == codex_config_before
     assert list(workspace.iterdir()) == []

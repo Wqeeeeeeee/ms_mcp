@@ -61,7 +61,7 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
     interface = manifest["interface"]
 
     assert manifest["name"] == PLUGIN_ROOT.name == "materials-studio-mcp"
-    assert manifest["version"] == _project_version() == PACKAGE_VERSION == "0.5.3"
+    assert manifest["version"] == _project_version() == PACKAGE_VERSION == "0.5.4"
     assert manifest["author"] == {
         "name": "Xu kaidong",
         "url": "https://github.com/Wqeeeeeeee",
@@ -150,8 +150,16 @@ def test_bundled_mcp_uses_current_direct_stdio_map() -> None:
         "enabled_tools",
         "disabled_tools",
     }
-    assert server["command"] == "cmd.exe"
-    assert server["args"] == ["/d", "/c", "Run-MS-MCP.bat"]
+    assert server["command"] == "powershell.exe"
+    assert server["args"] == [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts\\Run-MS-MCP.ps1",
+    ]
     assert server["cwd"] == "."
     assert server["env"] == {"MATERIAL_STUDIO_MCP_PLUGIN_MODE": "1"}
     assert server["startup_timeout_sec"] == 120
@@ -231,6 +239,9 @@ def test_batch_launcher_is_cache_relative_and_uses_formal_runtime_launcher() -> 
     text = (PLUGIN_ROOT / "Run-MS-MCP.bat").read_text(encoding="utf-8")
     lowered = text.lower()
     assert "%~dp0scripts\\run-ms-mcp.ps1" in lowered
+    assert "%localappdata%\\materialsstudiomcp" in lowered
+    assert 'cd /d "%ms_mcp_external_cwd%"' in lowered
+    assert lowered.index('cd /d "%ms_mcp_external_cwd%"') < lowered.index("powershell.exe")
     assert "powershell.exe" in lowered
     assert "-noprofile" in lowered and "-noninteractive" in lowered
     assert "ms_mcp.server" not in lowered
@@ -241,6 +252,12 @@ def test_batch_launcher_is_cache_relative_and_uses_formal_runtime_launcher() -> 
     assert not re.search(r"(?i)(?:^|[\s\"'])[a-z]:\\", text)
     runtime_launcher = (PLUGIN_ROOT / "scripts" / "Run-MS-MCP.ps1").read_text(
         encoding="utf-8"
+    )
+    lowered_runtime_launcher = runtime_launcher.lower()
+    assert "set-location -literalpath $launchercwd" in lowered_runtime_launcher
+    assert "[environment]::currentdirectory = $launchercwd" in lowered_runtime_launcher
+    assert lowered_runtime_launcher.index("read-launcherjson $pluginmanifestpath") < (
+        lowered_runtime_launcher.index("set-location -literalpath $launchercwd")
     )
     assert 'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"' in runtime_launcher
     assert 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"' in runtime_launcher

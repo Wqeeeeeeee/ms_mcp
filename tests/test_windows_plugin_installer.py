@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_SCRIPTS = ROOT / "scripts" / "windows"
 POWERSHELL = shutil.which("powershell.exe")
 CMD = shutil.which("cmd.exe")
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 
 
 def _run_ps(script: str, *arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -207,9 +207,14 @@ def _build_minimal_installer_wheel(destination: Path) -> Path:
     files: dict[str, bytes] = {
         "material_studio_mcp_server/__init__.py": b"\n",
         "material_studio_mcp_server/server.py": (
+            b"import os\n"
+            b"import time\n"
             b"import warnings\n"
             b"warnings.warn('ms-mcp staging import probe', RuntimeWarning)\n"
-            b"def main():\n    return 0\n"
+            b"def main():\n"
+            b"    hold = os.environ.get('MS_MCP_TEST_HOLD_SERVER_SECONDS')\n"
+            b"    if hold:\n        time.sleep(float(hold))\n"
+            b"    return 0\n"
         ),
         "material_studio_mcp_server/codex_config.py": b"def main():\n    return 0\n",
         "material_studio_mcp_server/codex_registration.py": b"def main():\n    return 0\n",

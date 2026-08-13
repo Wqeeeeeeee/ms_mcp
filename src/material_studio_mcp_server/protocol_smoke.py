@@ -52,6 +52,9 @@ REQUIRED_PROTOCOL_TOOLS: tuple[str, ...] = (
     "material_studio_gui_status",
     "material_studio_gui_activate",
     "material_studio_gui_snapshot",
+    "material_studio_gui_loop_status",
+    "material_studio_gui_loop_prepare",
+    "material_studio_gui_loop_stop",
     "material_studio_gui_open_structure",
     "material_studio_gui_apply_current_revision",
     "material_studio_gui_fit_to_view",
@@ -71,7 +74,7 @@ EXPECTED_LIVE_WATCHDOG_MAX_BYTES = 12_000
 EXPECTED_SESSION_PREFLIGHT_COMPACT_SCHEMA = (
     "material_studio_live_session_preflight_compact_v1"
 )
-EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 32
+EXPECTED_RUNTIME_GUARDED_TOOL_COUNT = 35
 EXPECTED_RUNTIME_DEPLOYMENT_SCHEMA = (
     "material_studio_mcp_runtime_deployment_binding_v1"
 )
@@ -95,6 +98,9 @@ _ANNOTATION_EXPECTATIONS: dict[str, dict[str, bool]] = {
     "material_studio_live_project_status": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_live_watchdog_status": {"readOnlyHint": True, "destructiveHint": False},
     "material_studio_gui_status": {"readOnlyHint": True, "destructiveHint": False},
+    "material_studio_gui_loop_status": {"readOnlyHint": True, "destructiveHint": False},
+    "material_studio_gui_loop_prepare": {"readOnlyHint": False, "destructiveHint": False},
+    "material_studio_gui_loop_stop": {"readOnlyHint": False, "destructiveHint": False},
     "material_studio_live_modeling_request": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_live_update_with_patch": {"readOnlyHint": False, "destructiveHint": True},
     "material_studio_castep_relax_current": {

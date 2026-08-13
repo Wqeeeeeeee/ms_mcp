@@ -36,6 +36,26 @@ unstructured shortcut.
 7. After execution, validate the returned revision and artifacts. Report which
    claims are supported, which remain pending, and any exact next action.
 
+## Same-window GUI loop
+
+- For repeated live visualization, inspect `material_studio_gui_loop_status`
+  for the exact project/revision and verified PID/HWND. If no healthy loop is
+  bound, call `material_studio_gui_loop_prepare`, then have the user start the
+  returned fixed Materials Studio User Menu script in that already-open
+  window. Preparation alone does not run GUI code.
+- Leave `MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT=auto` unless the user explicitly
+  requests `loop` or `dialog`. Auto uses the signed loop only while its fresh
+  heartbeat, active document, current revision, window identity, and workspace
+  binding all match; it may fall back to the verified File/Open transaction
+  only before a loop job is enqueued.
+- Once a job is enqueued, never fall back or retry an import automatically. A
+  timeout or failure may already have changed the GUI; preserve its `job_id`,
+  `side_effect_may_have_occurred`, and revision receipt, then poll only
+  `material_studio_gui_loop_status` for that job.
+- Do not call `material_studio_gui_loop_stop` as routine cleanup. It is an
+  explicit same-session shutdown action, and a stopped PID/HWND/project binding
+  must be reviewed before preparing another loop.
+
 ## Tool boundaries
 
 - Do not call `material_studio_run_script` unless the user explicitly requests

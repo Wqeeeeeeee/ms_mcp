@@ -64,6 +64,11 @@ VERSION_NAMES = (
     "Materials Studio 2020 Client",
 )
 
+GUI_HOTLOAD_TRANSPORTS = ("auto", "loop", "dialog")
+DEFAULT_GUI_HOTLOAD_TRANSPORT = "auto"
+DEFAULT_GUI_LOOP_TIMEOUT_SECONDS = 45
+DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS = 10
+
 
 @dataclass(frozen=True)
 class MaterialStudioConfig:
@@ -84,6 +89,9 @@ class MaterialStudioConfig:
     install_home: Path | None
     runner_source: str
     extra_runner_args: tuple[str, ...]
+    gui_hotload_transport: str = DEFAULT_GUI_HOTLOAD_TRANSPORT
+    gui_loop_timeout_seconds: int = DEFAULT_GUI_LOOP_TIMEOUT_SECONDS
+    gui_loop_heartbeat_ttl_seconds: int = DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS
 
 
 def resolve_config(cwd: Path | None = None) -> MaterialStudioConfig:
@@ -96,8 +104,24 @@ def resolve_config(cwd: Path | None = None) -> MaterialStudioConfig:
         MaterialStudioConfig 实例
     """
     cwd = (cwd or Path.cwd()).resolve()
-    workspace_root = Path(os.environ.get("MATERIAL_STUDIO_WORKSPACE", str(cwd))).resolve()
+    workspace_value = (
+        os.environ.get("MATERIAL_STUDIO_WORKSPACE")
+        or os.environ.get("MATERIAL_STUDIO_MCP_WORKSPACE")
+        or str(cwd)
+    )
+    workspace_root = Path(workspace_value).expanduser().resolve()
     timeout = _parse_timeout(os.environ.get("MATERIAL_STUDIO_SCRIPT_TIMEOUT"))
+    gui_hotload_transport = _parse_gui_hotload_transport(
+        os.environ.get("MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT")
+    )
+    gui_loop_timeout_seconds = _parse_positive_int(
+        os.environ.get("MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS"),
+        default=DEFAULT_GUI_LOOP_TIMEOUT_SECONDS,
+    )
+    gui_loop_heartbeat_ttl_seconds = _parse_positive_int(
+        os.environ.get("MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS"),
+        default=DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS,
+    )
     install_home = _resolve_install_home()
     runner, source = _resolve_runner(install_home)
     extra_runner_args = tuple(_split_windows_args(os.environ.get("MATERIAL_STUDIO_RUNNER_ARGS", "")))
@@ -108,6 +132,9 @@ def resolve_config(cwd: Path | None = None) -> MaterialStudioConfig:
         install_home=install_home,
         runner_source=source,
         extra_runner_args=extra_runner_args,
+        gui_hotload_transport=gui_hotload_transport,
+        gui_loop_timeout_seconds=gui_loop_timeout_seconds,
+        gui_loop_heartbeat_ttl_seconds=gui_loop_heartbeat_ttl_seconds,
     )
 
 
@@ -258,6 +285,25 @@ def _parse_timeout(raw: str | None) -> int:
     except ValueError:
         return 3600
     return max(1, min(value, 7 * 24 * 3600))
+
+
+def _parse_gui_hotload_transport(raw: str | None) -> str:
+    if raw is None:
+        return DEFAULT_GUI_HOTLOAD_TRANSPORT
+    value = raw.strip().lower()
+    if value in GUI_HOTLOAD_TRANSPORTS:
+        return value
+    return DEFAULT_GUI_HOTLOAD_TRANSPORT
+
+
+def _parse_positive_int(raw: str | None, *, default: int) -> int:
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def _split_windows_args(raw: str) -> list[str]:

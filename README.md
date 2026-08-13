@@ -62,6 +62,34 @@ or a public universal marketplace.
 - Real Materials Studio: **NOT_RUN**
 - Real CASTEP: **NOT_RUN**
 
+## Optional GUI-loop hot-load
+
+The same-window GUI path supports a fixed, signed hot-load loop through:
+
+- `material_studio_gui_loop_prepare`
+- `material_studio_gui_loop_status`
+- `material_studio_gui_loop_stop`
+- `material_studio_gui_open_structure(hotload_transport="auto|loop|dialog")`
+
+`auto` uses the loop only when its signed heartbeat, PID, window handle,
+project, current revision, and active document all match. If the loop is not
+ready, fallback to the existing File/Open path is permitted only before a job
+is enqueued. A queued job is never retried through the dialog because the GUI
+import may already have occurred.
+
+Preparation writes a fixed `import_structure` MaterialsScript loop; it does
+not start it or send GUI input. Run the returned script once from Script
+Library/User Menu in the exact verified Materials Studio window, then wait for
+`loop_ready=true`. The queue accepts signed data envelopes only, never arbitrary
+Perl. See [the GUI-loop guide](docs/gui_loop.md) and
+[the GUI-control contract](docs/gui_control.md).
+
+```text
+MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT=auto
+MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS=45
+MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS=10
+```
+
 For source-development registration compatibility, see
 [the Codex setup guide](https://github.com/Wqeeeeeeee/ms_mcp/blob/main/docs/codex_setup.md),
 `register_codex.py`, `ms-mcp-config-register`, and

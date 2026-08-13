@@ -318,7 +318,13 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["full_detail_hint"]["arguments"] == {"response_mode": "full"}
     assert compact["schemas"]["model_spec"] == "model_spec.schema.json"
     assert compact["schemas"]["semantic_patch"] == "patch_spec.schema.json"
+    assert compact["schemas"] == {
+        schema_id: schema["filename"]
+        for schema_id, schema in full["schemas"].items()
+    }
     assert all(isinstance(filename, str) for filename in compact["schemas"].values())
+    assert compact["response_compaction"]["hard_budget_applied"] is True
+    assert "schemas" not in compact["response_compaction"]["omitted_fields"]
     assert compact["recommended_kpoint_remediation_action_id"] == (
         "apply_recommended_semiconductor_kpoint_grid"
     )
@@ -428,6 +434,9 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
     assert compact["gui"]["open_structure_policy"][
         "auto_launch_before_open_when_window_missing"
     ] is False
+    assert compact["gui"]["loop_status_tool"] == "material_studio_gui_loop_status"
+    assert compact["gui"]["loop_prepare_tool"] == "material_studio_gui_loop_prepare"
+    assert compact["gui"]["loop_stop_tool"] == "material_studio_gui_loop_stop"
     assert "material_studio_live_modeling_request" == compact["live_entry_tool"]
     assert compact["visual_confirmation_entry"]["evidence_reaudit_receipt_field"] == (
         "gui_evidence_reaudit"

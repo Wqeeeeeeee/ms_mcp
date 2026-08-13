@@ -45,12 +45,39 @@ def test_generated_config_snippet_is_parseable_and_matches_safe_example(tmp_path
     assert server["command"] == str(python.resolve())
     assert server["args"] == [str((root / "run_server.py").resolve())]
     assert server["cwd"] == str(root.resolve())
+    expected_workspace = str((root / "workspace").resolve())
+    assert server["env"]["MATERIAL_STUDIO_MCP_WORKSPACE"] == expected_workspace
+    assert server["env"]["MATERIAL_STUDIO_WORKSPACE"] == expected_workspace
+    assert server["env"]["MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT"] == "auto"
+    assert server["env"]["MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS"] == "45"
+    assert server["env"]["MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS"] == "10"
     assert tuple(server["enabled_tools"]) == SAFE_ENABLED_TOOLS
+    assert len(SAFE_ENABLED_TOOLS) == len(set(SAFE_ENABLED_TOOLS))
     assert tuple(server["disabled_tools"]) == DISABLED_TOOLS
     assert set(example_server["enabled_tools"]) == set(SAFE_ENABLED_TOOLS)
     assert set(example_server["disabled_tools"]) == set(DISABLED_TOOLS)
     assert server["tools"]["material_studio_live_modeling_request"]["approval_mode"] == "prompt"
+    assert server["tools"]["material_studio_gui_loop_prepare"]["approval_mode"] == "prompt"
+    assert server["tools"]["material_studio_gui_loop_stop"]["approval_mode"] == "prompt"
     assert server["tools"]["material_studio_run_script"]["approval_mode"] == "prompt"
+
+
+def test_generated_config_persists_custom_workspace_and_runner(tmp_path: Path) -> None:
+    root, python = _repo_fixture(tmp_path)
+    workspace = tmp_path / "custom-workspace"
+    runner = tmp_path / "RunMatScript.bat"
+
+    snippet = build_codex_config_snippet(
+        root,
+        python_command=python,
+        workspace=workspace,
+        runner=runner,
+    )
+    server = tomllib.loads(snippet)["mcp_servers"]["materials_studio"]
+
+    assert server["env"]["MATERIAL_STUDIO_MCP_WORKSPACE"] == str(workspace.resolve())
+    assert server["env"]["MATERIAL_STUDIO_WORKSPACE"] == str(workspace.resolve())
+    assert server["env"]["MATERIAL_STUDIO_RUNNER"] == str(runner.resolve())
 
 
 def test_doctor_reports_missing_registration_without_modifying_active_config(tmp_path: Path) -> None:
@@ -75,6 +102,7 @@ def test_doctor_reports_missing_registration_without_modifying_active_config(tmp
     assert result["config_sha256_after"] == before
     assert result["recommended_entrypoint"]["python_exists"] is True
     assert result["recommended_entrypoint"]["run_server_exists"] is True
+    assert result["recommended_entrypoint"]["workspace"] == str((root / "workspace").resolve())
     assert "[mcp_servers.materials_studio]" in result["recommended_snippet"]
     assert result["next_actions"][0].startswith(
         "Preview a guarded append with ms-mcp-config-register"
@@ -140,6 +168,144 @@ def test_doctor_requires_the_complete_recommended_safe_allowlist(tmp_path: Path)
     assert result["config_ready"] is False
     assert result["missing_required_tools"] == []
     assert result["missing_recommended_tools"] == ["material_studio_model_validate"]
+
+
+def test_doctor_rejects_missing_workspace_environment(tmp_path: Path) -> None:
+    root, python = _repo_fixture(tmp_path)
+    config = tmp_path / "config.toml"
+    snippet = build_codex_config_snippet(root, python_command=python)
+    env_start = snippet.index("[mcp_servers.materials_studio.env]")
+    tools_start = snippet.index("[mcp_servers.materials_studio.tools.", env_start)
+    config.write_text(snippet[:env_start] + snippet[tools_start:], encoding="utf-8")
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=root,
+        python_command=python,
+    )
+
+    assert result["status"] == "workspace_env_drift"
+    assert result["config_ready"] is False
+    assert result["workspace_matches"] is False
+
+
+def test_doctor_rejects_missing_prompt_policy(tmp_path: Path) -> None:
+    root, python = _repo_fixture(tmp_path)
+    config = tmp_path / "config.toml"
+    snippet = build_codex_config_snippet(root, python_command=python)
+    header = "[mcp_servers.materials_studio.tools.material_studio_live_modeling_request]"
+    snippet = snippet.replace(f'\n{header}\napproval_mode = "prompt"\n', "\n", 1)
+    config.write_text(snippet, encoding="utf-8")
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=root,
+        python_command=python,
+    )
+
+    assert result["status"] == "approval_policy_drift"
+    assert result["config_ready"] is False
+    assert result["prompt_tool_policy_matches"] is False
+    assert "material_studio_live_modeling_request" in result["prompt_policy_drift_tools"]
+
+
+def test_doctor_rejects_timeout_drift(tmp_path: Path) -> None:
+    root, python = _repo_fixture(tmp_path)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        build_codex_config_snippet(root, python_command=python).replace(
+            "tool_timeout_sec = 1800", "tool_timeout_sec = 30", 1
+        ),
+        encoding="utf-8",
+    )
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=root,
+        python_command=python,
+    )
+
+    assert result["status"] == "timeout_drift"
+    assert result["config_ready"] is False
+    assert result["tool_timeout_matches"] is False
+
+
+@pytest.mark.parametrize(
+    ("variable", "old_value", "invalid_value", "validity_field"),
+    (
+        (
+            "MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT",
+            "auto",
+            "unsafe",
+            "gui_hotload_transport_valid",
+        ),
+        (
+            "MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS",
+            "45",
+            "0",
+            "gui_loop_timeout_valid",
+        ),
+        (
+            "MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS",
+            "10",
+            "not-an-int",
+            "gui_loop_heartbeat_ttl_valid",
+        ),
+    ),
+)
+def test_doctor_rejects_invalid_gui_loop_environment(
+    tmp_path: Path,
+    variable: str,
+    old_value: str,
+    invalid_value: str,
+    validity_field: str,
+) -> None:
+    root, python = _repo_fixture(tmp_path)
+    config = tmp_path / "config.toml"
+    snippet = build_codex_config_snippet(root, python_command=python).replace(
+        f'{variable} = "{old_value}"',
+        f'{variable} = "{invalid_value}"',
+        1,
+    )
+    config.write_text(snippet, encoding="utf-8")
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=root,
+        python_command=python,
+    )
+
+    assert result["status"] == "gui_loop_env_drift"
+    assert result["config_ready"] is False
+    assert result["gui_loop_env_valid"] is False
+    assert result[validity_field] is False
+
+
+def test_doctor_accepts_valid_custom_gui_loop_environment(tmp_path: Path) -> None:
+    root, python = _repo_fixture(tmp_path)
+    config = tmp_path / "config.toml"
+    snippet = build_codex_config_snippet(root, python_command=python)
+    snippet = snippet.replace(
+        'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"',
+        'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "loop"',
+    ).replace(
+        'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"',
+        'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "120"',
+    ).replace(
+        'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "10"',
+        'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "20"',
+    )
+    config.write_text(snippet, encoding="utf-8")
+
+    result = diagnose_codex_config(
+        config_path=config,
+        repo_root=root,
+        python_command=python,
+    )
+
+    assert result["status"] == "ready"
+    assert result["config_ready"] is True
+    assert result["gui_loop_env_valid"] is True
 
 
 def test_doctor_detects_legacy_ms_mcp_registration(tmp_path: Path) -> None:

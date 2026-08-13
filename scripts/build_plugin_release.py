@@ -83,6 +83,8 @@ INSTALLER_FILES = (
 )
 
 DOCUMENTATION_FILES = (
+    "docs/gui_loop.md",
+    "docs/gui_control.md",
     "docs/INSTALLATION.zh-CN.md",
     "docs/INSTALLATION.en.md",
     "docs/CODEX_PLUGIN.zh-CN.md",

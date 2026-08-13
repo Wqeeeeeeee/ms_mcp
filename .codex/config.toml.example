@@ -26,6 +26,9 @@ enabled_tools = [
   "material_studio_project_rollback",
   "material_studio_project_reconcile_dopant_metadata",
   "material_studio_gui_status",
+  "material_studio_gui_loop_status",
+  "material_studio_gui_loop_prepare",
+  "material_studio_gui_loop_stop",
   "material_studio_gui_launch",
   "material_studio_gui_activate",
   "material_studio_gui_snapshot",
@@ -58,6 +61,13 @@ disabled_tools = [
   "material_studio_run_script"
 ]
 
+[mcp_servers.materials_studio.env]
+MATERIAL_STUDIO_MCP_WORKSPACE = "D:\\path\\to\\Materials-Studio-mcp\\workspace"
+MATERIAL_STUDIO_WORKSPACE = "D:\\path\\to\\Materials-Studio-mcp\\workspace"
+MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"
+MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"
+MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "10"
+
 [mcp_servers.materials_studio.tools.material_studio_model_create_from_spec]
 approval_mode = "prompt"
 
@@ -74,6 +84,12 @@ approval_mode = "prompt"
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_launch]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_loop_prepare]
+approval_mode = "prompt"
+
+[mcp_servers.materials_studio.tools.material_studio_gui_loop_stop]
 approval_mode = "prompt"
 
 [mcp_servers.materials_studio.tools.material_studio_gui_apply_current_revision]

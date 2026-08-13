@@ -1,5 +1,51 @@
 # Codex plugin packaging audit
 
+## Authoritative v0.5.3 addendum
+
+Goal ID: `CODEX-MS-PLUGIN-STARTUP-BUDGET-V0.5.3`
+
+Audit date: 2026-08-13 (Asia/Shanghai)
+
+This addendum is the authoritative packaging decision for `0.5.3`. It
+supersedes only the release decision in the historical `0.5.2` section below;
+all modeling, revision, same-window, GUI-input, and calculation safety gates
+remain unchanged.
+
+The exact audited baselines are:
+
+- Wqeeeeeeee/ms_mcp base SHA:
+  `21ae0273eeaf21a5d0a9102078e3dc3a3c134702` (`v0.5.2`);
+- DrYe1109/MS-MCP read-only reference SHA:
+  `991a1b3ab2ad985529fb645dc82f47528a2a1297`;
+- new package, plugin, managed-runtime, and release version: `0.5.3`;
+- repository license: SPDX `MIT`.
+
+Codex loaded the `0.5.2` plugin metadata and attempted to start its bundled
+MCP server, but the cache-relative Windows launcher needed about 10.4 seconds
+to complete its immutable-runtime checks, Python dependency probes, MCP
+initialize response, and tool discovery. Codex documents a 10-second default
+MCP startup timeout, so a clean runtime could miss the deadline even though
+the same launcher subsequently exposed all 52 reviewed tools successfully.
+
+`0.5.3` makes that startup contract explicit by setting
+`startup_timeout_sec=120` in the bundled direct server map. The release builder
+and packaging tests bind that exact value alongside the existing cache-relative
+launcher, plugin-mode environment, prompt-by-default approval policy, safe
+tool allowlist, and arbitrary-script denylist. The timeout changes only how
+long Codex waits for initialization; it grants no additional tool, GUI, model,
+or calculation authority.
+
+Runtime verification for this hotfix must use the packaged
+`Run-MS-MCP.bat` stdio path. Direct imports from the version-addressed managed
+Python runtime are not an accepted verification path because they bypass the
+launcher-owned external comtypes cache. This packaging audit did not issue GUI
+input, modify a Materials Studio structure, or start CASTEP, DMol3, or Forcite.
+
+Packaging may proceed only after the final source and audit changes are
+committed, a fresh `0.5.3` wheel is built from that exact tree, the
+deterministic Windows plugin ZIP/release manifest/checksums are regenerated,
+and the release tests pass.
+
 ## Authoritative v0.5.2 addendum
 
 Goal ID: `CODEX-MS-PLUGIN-BOUNDED-NATIVE-FIT-V0.5.2`

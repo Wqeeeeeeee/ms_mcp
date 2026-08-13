@@ -628,6 +628,34 @@ def _validate_wheel(
             raise ReleaseBuildError(
                 "wheel METADATA MCP runtime dependency must be exactly mcp[cli]>=1.12.4,<2"
             )
+        expected_windows_uia_dependencies = {
+            "comtypes": "1.4.16",
+            "pywinauto": "0.6.9",
+        }
+        for dependency_name, expected_version in expected_windows_uia_dependencies.items():
+            matches = [
+                requirement
+                for requirement in parsed_requirements
+                if canonicalize_name(requirement.name) == dependency_name
+            ]
+            if len(matches) != 1:
+                raise ReleaseBuildError(
+                    f"wheel METADATA must contain exactly one {dependency_name} Windows UI dependency"
+                )
+            requirement = matches[0]
+            observed_specifiers = {
+                (specifier.operator, specifier.version)
+                for specifier in requirement.specifier
+            }
+            if (
+                requirement.extras
+                or str(requirement.marker) != 'sys_platform == "win32"'
+                or observed_specifiers != {("==", expected_version)}
+            ):
+                raise ReleaseBuildError(
+                    "wheel METADATA Windows UI dependencies must be exactly "
+                    "comtypes==1.4.16 and pywinauto==0.6.9 with the win32 marker"
+                )
 
         wheel_metadata = BytesParser().parsebytes(wheel_metadata_candidates[0][1])
         if wheel_metadata.get("Root-Is-Purelib", "").casefold() != "true":

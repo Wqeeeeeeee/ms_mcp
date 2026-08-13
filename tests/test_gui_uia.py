@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import importlib
+import os
 import struct
+import subprocess
+import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,12 +16,107 @@ from material_studio_mcp_server.gui import (
     VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS,
 )
 from material_studio_mcp_server.gui_uia import (
+    COMTYPES_CACHE_ENV,
     PywinautoViewReplayBackend,
     UiaReplayError,
+    _external_comtypes_gen_cache,
     analyze_miller_plane_bmp_diff,
     compare_bmp_region,
     local_uia_view_replay_implementation_contract,
 )
+
+
+def test_external_comtypes_cache_binds_generated_package_outside_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "comtypes-generated"
+    fake_comtypes = types.ModuleType("comtypes")
+    fake_comtypes.__path__ = []
+    cache.mkdir()
+    monkeypatch.setitem(sys.modules, "comtypes", fake_comtypes)
+    monkeypatch.delitem(sys.modules, "comtypes.client", raising=False)
+    monkeypatch.delitem(sys.modules, "comtypes.gen", raising=False)
+    monkeypatch.setenv(COMTYPES_CACHE_ENV, str(cache))
+
+    meta_path_before = list(sys.meta_path)
+    with _external_comtypes_gen_cache() as observed:
+        assert observed == cache.resolve()
+        assert cache.is_dir()
+        assert len(sys.meta_path) == len(meta_path_before) + 1
+        assert getattr(sys.meta_path[0], "cache_dir", None) == cache.resolve()
+        generated = importlib.import_module("comtypes.gen")
+        assert generated.__path__ == [str(cache.resolve())]
+        assert list(generated.__spec__.submodule_search_locations) == [
+            str(cache.resolve())
+        ]
+        assert "comtypes.client" not in sys.modules
+    assert sys.meta_path == meta_path_before
+
+
+def test_external_comtypes_cache_rejects_late_client_rebinding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "expected-cache"
+    fake_comtypes = types.ModuleType("comtypes")
+    fake_client = types.ModuleType("comtypes.client")
+    fake_client.gen_dir = str(tmp_path / "wrong-cache")
+    monkeypatch.setitem(sys.modules, "comtypes", fake_comtypes)
+    monkeypatch.setitem(sys.modules, "comtypes.client", fake_client)
+    monkeypatch.delitem(sys.modules, "comtypes.gen", raising=False)
+    monkeypatch.setenv(COMTYPES_CACHE_ENV, str(cache))
+    cache.mkdir()
+
+    with pytest.raises(RuntimeError, match="imported before"):
+        with _external_comtypes_gen_cache():
+            pass
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="pywinauto UIA is Windows-only")
+def test_external_comtypes_cache_preserves_pywinauto_mta_and_runtime(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "real-comtypes-generated"
+    cache.mkdir()
+    code = r'''
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.environ["MS_MCP_TEST_SRC"])
+
+from material_studio_mcp_server.gui_uia import (
+    COMTYPES_CACHE_ENV,
+    PywinautoViewReplayBackend,
+)
+
+cache = Path(os.environ[COMTYPES_CACHE_ENV]).resolve()
+backend = PywinautoViewReplayBackend()
+assert backend.supported is True, backend.unavailable_reason
+import comtypes.client
+assert sys.coinit_flags == 0, sys.coinit_flags
+assert Path(comtypes.client.gen_dir).resolve() == cache
+assert [Path(item).resolve() for item in comtypes.gen.__path__] == [cache]
+generated = sorted(path.name for path in cache.glob("*.py"))
+assert "UIAutomationClient.py" in generated, generated
+assert "stdole.py" in generated, generated
+assert not list(cache.rglob("*.pyc"))
+'''
+    env = os.environ.copy()
+    env[COMTYPES_CACHE_ENV] = str(cache)
+    env["MS_MCP_TEST_SRC"] = str(Path(__file__).resolve().parents[1] / "src")
+    completed = subprocess.run(
+        [sys.executable, "-B", "-X", "utf8", "-I", "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
 
 
 def _write_rgb_bmp(

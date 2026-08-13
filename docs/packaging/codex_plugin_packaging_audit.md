@@ -1,51 +1,56 @@
 # Codex plugin packaging audit
 
-Goal ID: `CODEX-MS-PLUGIN-GUI-LOOP-V1`
+Goal ID: `CODEX-MS-PLUGIN-GUI-LOOP-V1-RUNTIME-HOTFIX`
 
 Audit date: 2026-08-13 (Asia/Shanghai)
 
-This is the authoritative incremental audit for the `0.5.0` signed GUI-loop
-release after the `0.4.0` Codex plugin packaging work merged as PR #157. It
-supersedes the packaging-only safety decision wherever that older decision
-rejected every persistent GUI loop. The source and release review itself was
-completed without changing active Codex configuration, starting a calculation,
-or weakening any existing modeling, revision, window, or evidence gate.
+This is the authoritative incremental audit for the `0.5.1` runtime-integrity
+hotfix after the HMAC-signed GUI-loop release merged as PR #158. The `0.5.0`
+capability and safety analysis remains the feature baseline below; this hotfix
+supersedes its runtime-launch and artifact-publication decision. The source and
+release review itself did not start a calculation or weaken any modeling,
+revision, window, or evidence gate.
 
 ## Decision
 
 Packaging may proceed from the exact current `origin/main` baseline:
 
-- base SHA: `3b2502a479f39b52aa7358ab20ef34985911eed3`;
-- base package version: `0.4.0`;
+- base SHA: `28a71eac7ddc10ff3e1d3cf49af2a3971ac3ef9b`;
+- base package version: `0.5.0`;
 - repository license: SPDX `MIT`;
 - copyright: `Copyright (c) 2026 Xu kaidong`;
-- PR #157 Codex plugin packaging: merged and verified;
+- PR #158 HMAC-signed GUI-loop release: merged and verified;
 - DrYe reference: read-only only, with no commit-history import and no detected
   copied source or documentation requiring a third-party notice;
 - Real Materials Studio: `NOT_RUN`;
 - Real CASTEP: `NOT_RUN`.
 
-The increment uses new package/plugin/runtime version `0.5.0` because it adds a
-new same-window GUI hot-load capability and because each managed runtime is
-addressed immutably by package version. Reusing `0.4.0` for a different wheel
-would make an installed runtime correctly fail its integrity gate rather than
-upgrade. This increment does not add a material template or authorize CASTEP,
-Forcite, DMol3, or any other calculation.
+The hotfix uses new package/plugin/runtime version `0.5.1`. The published
+`0.5.0` runtime reproduced a first-use defect: importing the UI Automation
+backend caused comtypes 1.4.16 to generate wrappers and Python bytecode inside
+the version-addressed runtime. The next launcher invocation correctly rejected
+that changed tree. Reusing `0.5.0` would violate immutable-version semantics.
+Version `0.5.1` disables bytecode writes for every supported Codex launcher and
+acceptance-script Python invocation, routes comtypes wrappers to a unique
+launcher-owned external cache, preserves pywinauto's MTA initialization order,
+and verifies the runtime tree again after a real `material_studio_gui_status`
+MCP call. It changes no MCP tool/schema,
+modeling template, GUI-loop envelope, or calculation authority.
 
 ## Git and source baseline
 
 Read-only commands and observations:
 
 1. `git fetch origin --prune` resolved `origin/main` to
-   `3b2502a479f39b52aa7358ab20ef34985911eed3`.
-2. `3b2502a4` is `feat: package Materials Studio MCP as a Codex plugin (#157)`
-   and its tree is the reviewed `0.4.0` package/plugin/runtime baseline.
-3. The GUI-loop increment is isolated on `codex/gui-loop-hotload-v1`; its final
-   change must be based on `3b2502a4` so PR review does not replay the already
-   merged packaging commit under a different SHA.
+   `28a71eac7ddc10ff3e1d3cf49af2a3971ac3ef9b`.
+2. `28a71eac` is `feat: add signed Materials Studio GUI hot-load loop (#158)`
+   and its tree is the published `0.5.0` baseline.
+3. The runtime-integrity hotfix is isolated on
+   `codex/runtime-cache-hotfix-v0.5.1`; its final change is based on
+   `28a71eac` so PR review contains only the hotfix.
 4. The original development worktree and unrelated user changes remain outside
    this dedicated sibling worktree.
-5. The `0.5.0` wheel, ZIP, checksums, and release manifest must be rebuilt only
+5. The `0.5.1` wheel, ZIP, checksums, and release manifest must be rebuilt only
    after the final source and audit commit; artifacts built from an intermediate
    dirty tree are not release candidates.
 
@@ -100,12 +105,13 @@ the plugin launcher must never use it.
 
 ## Public MCP tool baseline
 
-The exact `0.4.0` base exposed 49 public tools. The `0.5.0` increment adds only
+The exact `0.4.0` base exposed 49 public tools. The `0.5.0` increment added only
 `material_studio_gui_loop_status`, `material_studio_gui_loop_prepare`, and
 `material_studio_gui_loop_stop`. The current server was imported as
 `material_studio_mcp_server.server.mcp`, `mcp.list_tools()` was awaited, and an
 independent AST scan of top-level `@mcp.tool(...)` registrations produced the
-same 52-tool set. Tests compare the source checkout and clean wheel dynamically.
+same 52-tool set. Version `0.5.1` keeps this exact 52-tool/47-safe-tool
+contract. Tests compare the source checkout and clean wheel dynamically.
 
 - registry-order newline-list SHA-256:
   `4cae241538584e08838556f5235330da9ffe7becc87f218eec77737fbb403f30`
@@ -348,11 +354,23 @@ The merged `0.4.0` artifacts were inspected before replacement:
 | `release-manifest.json` | `974ecd486a42e52cc5134cba8aee0f1fcbb7e17192fc1ae5003580e60368f39d` |
 | `SHA256SUMS.txt` | `931bfe0be6bc27ad796e1ab091e7da5b5eb2172de88ceba204b28d63a2dd8e7f` |
 
+The published `0.5.0` artifacts were also recorded before this hotfix:
+
+| File | SHA-256 |
+|---|---|
+| `materials_studio_mcp-0.5.0-py3-none-any.whl` | `82200ae9f1c47ffbd7f46bef8ff6d4777224ed44f41d3fbb7effddfb2167cd25` |
+| `materials-studio-mcp-plugin-0.5.0-windows.zip` | `7e62304e8da1c0e62b277a6485520e4e31559b71fcae17ba2aa4b96f5e5e02af` |
+| `release-manifest.json` | `3635c95e44197cfb69359653626e75d5e932318a10f684f410d945d49e39bc46` |
+| `SHA256SUMS.txt` | `4b88968d8a0d02ce01027088744e4e227713c1d8c55aa99a8cb86ad76e04d925` |
+
 Those files bind the immutable `0.4.0` runtime and do not contain the signed
 GUI-loop implementation. They must not be renamed or reused as `0.5.0`.
-Intermediate `0.5.0` artifacts built while source was still changing are also
-not release candidates. Final artifacts must be rebuilt from the clean final
-commit and their source/wheel/protocol parity rechecked before publication.
+Likewise, the published `0.5.0` wheel and ZIP must remain historical artifacts;
+they must not be renamed or reused as `0.5.1` because they contain the
+first-UIA-use runtime mutation defect. Intermediate `0.5.1` artifacts built
+while source is still changing are not release candidates. Final artifacts must
+be rebuilt from the clean final commit and their source/wheel/protocol parity
+rechecked before publication.
 
 ## Non-negotiable safety boundaries
 
@@ -377,9 +395,10 @@ commit and their source/wheel/protocol parity rechecked before publication.
 
 ## Phase 0 outcome
 
-Proceed with the isolated `0.5.0` GUI-loop increment. After the final source and
-audit commit, rebuild every artifact from that clean tree, run the complete
-source/wheel/protocol/installer/cache acceptance matrix, verify active Codex
+Proceed with the isolated `0.5.1` runtime-integrity hotfix. After the final
+source and audit commit, rebuild every artifact from that clean tree, run the
+complete source/wheel/protocol/installer/cache acceptance matrix including a
+real GUI-status call followed by immutable-tree validation, verify active Codex
 config and workspace preservation, perform an independent review, and report
 real Materials Studio and real CASTEP evidence exactly as observed rather than
 inferring it from protocol or unit tests.

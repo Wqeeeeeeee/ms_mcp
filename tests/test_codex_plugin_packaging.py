@@ -59,7 +59,7 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
     interface = manifest["interface"]
 
     assert manifest["name"] == PLUGIN_ROOT.name == "materials-studio-mcp"
-    assert manifest["version"] == _project_version() == "0.5.0"
+    assert manifest["version"] == _project_version() == "0.5.1"
     assert manifest["author"] == {
         "name": "Xu kaidong",
         "url": "https://github.com/Wqeeeeeeee",
@@ -232,6 +232,10 @@ def test_batch_launcher_is_cache_relative_and_uses_formal_runtime_launcher() -> 
     assert 'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"' in runtime_launcher
     assert 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"' in runtime_launcher
     assert 'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "10"' in runtime_launcher
+    assert "MATERIAL_STUDIO_MCP_COMTYPES_CACHE" in runtime_launcher
+    assert '"run-" + [Guid]::NewGuid().ToString("N")' in runtime_launcher
+    assert "& $python -B -X utf8 -I" in runtime_launcher
+    assert "Remove-LauncherComtypesCache" in runtime_launcher
 
 
 def test_marketplace_entry_matches_plugin_and_policy() -> None:

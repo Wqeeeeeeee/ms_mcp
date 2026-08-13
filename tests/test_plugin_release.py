@@ -19,7 +19,7 @@ from scripts.build_plugin_release import (
 )
 
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 BASE_SHA = "a" * 40
 REFERENCE_SHA = "b" * 40
 LICENSE_TEXT = "MIT License\n\nCopyright (c) 2026 Xu kaidong\n"
@@ -53,6 +53,8 @@ def _make_wheel(
     license_file_headers: tuple[str, ...] = ("LICENSE",),
     license_member: bytes | None = LICENSE_TEXT.encode("utf-8"),
     mcp_requirement: str | None = "mcp[cli]>=1.12.4,<2",
+    comtypes_requirement: str | None = "comtypes==1.4.16; sys_platform == 'win32'",
+    pywinauto_requirement: str | None = "pywinauto==0.6.9; sys_platform == 'win32'",
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     wheel = directory / f"materials_studio_mcp-{VERSION}-py3-none-any.whl"
@@ -61,16 +63,24 @@ def _make_wheel(
         f"License-Expression: {license_expression}\n" if license_expression is not None else ""
     )
     license_file_lines = "".join(f"License-File: {name}\n" for name in license_file_headers)
-    requirement_line = f"Requires-Dist: {mcp_requirement}\n" if mcp_requirement else ""
+    requirement_lines = "".join(
+        f"Requires-Dist: {requirement}\n"
+        for requirement in (
+            mcp_requirement,
+            comtypes_requirement,
+            pywinauto_requirement,
+        )
+        if requirement
+    )
     entries = {
-        "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.0'\n",
+        "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.1'\n",
         f"{dist_info}/METADATA": (
             f"Metadata-Version: {core_metadata_version}\n"
             "Name: materials-studio-mcp\n"
             f"Version: {metadata_version}\n"
             f"{license_expression_line}"
             f"{license_file_lines}"
-            f"{requirement_line}"
+            f"{requirement_lines}"
             "Summary: Test wheel\n\n"
         ).encode("utf-8"),
         f"{dist_info}/WHEEL": (
@@ -128,7 +138,7 @@ def _make_source(root: Path) -> Path:
         "pyproject.toml",
         "[project]\n"
         "name = \"materials-studio-mcp\"\n"
-        "version = \"0.5.0\"\n"
+        "version = \"0.5.1\"\n"
         "authors = [{ name = \"Xu kaidong\" }]\n"
         "license = \"MIT\"\n"
         "license-files = [\"LICENSE\"]\n\n"
@@ -364,6 +374,33 @@ def test_rejects_wheel_without_exact_bounded_mcp_runtime_dependency(
 
 
 @pytest.mark.parametrize(
+    "wheel_kwargs",
+    [
+        {"comtypes_requirement": None},
+        {"comtypes_requirement": "comtypes>=1.4.16; sys_platform == 'win32'"},
+        {"comtypes_requirement": "comtypes==1.4.16"},
+        {"pywinauto_requirement": None},
+        {"pywinauto_requirement": "pywinauto>=0.6.9; sys_platform == 'win32'"},
+        {"pywinauto_requirement": "pywinauto==0.6.9"},
+    ],
+)
+def test_rejects_wheel_without_exact_windows_uia_dependencies(
+    tmp_path: Path,
+    wheel_kwargs: dict[str, str | None],
+) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel", **wheel_kwargs)
+    with pytest.raises(ReleaseBuildError, match="Windows UI dependenc"):
+        build_release(
+            source_root=source,
+            wheel_path=wheel,
+            output_dir=tmp_path / "out",
+            base_sha=BASE_SHA,
+            reference_sha=REFERENCE_SHA,
+        )
+
+
+@pytest.mark.parametrize(
     ("wheel_kwargs", "message"),
     [
         ({"core_metadata_version": "2.3"}, "Core Metadata 2.4 or newer"),
@@ -436,7 +473,7 @@ def test_rejects_wheel_member_path_traversal(tmp_path: Path) -> None:
         _zip_write(
             archive,
             f"materials_studio_mcp-{VERSION}.dist-info/METADATA",
-            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.0\n\n",
+            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.1\n\n",
         )
     with pytest.raises(ReleaseBuildError, match="unsafe archive path"):
         build_release(

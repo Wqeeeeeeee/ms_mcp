@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_SCRIPTS = ROOT / "scripts" / "windows"
 POWERSHELL = shutil.which("powershell.exe")
 CMD = shutil.which("cmd.exe")
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 
 def _run_ps(script: str, *arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -105,6 +105,46 @@ def _wheel_record_digest(content: bytes) -> str:
     return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=").decode("ascii")
 
 
+def _build_minimal_dependency_wheel(
+    destination: Path,
+    *,
+    distribution: str,
+    version: str,
+) -> Path:
+    normalized = distribution.replace("-", "_")
+    dist_info = f"{normalized}-{version}.dist-info"
+    files: dict[str, bytes] = {
+        f"{normalized}/__init__.py": b"\n",
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n\n"
+        ).encode(),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: ms-mcp-installer-test\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ).encode(),
+    }
+    record_path = f"{dist_info}/RECORD"
+    rows = [
+        [name, _wheel_record_digest(content), str(len(content))]
+        for name, content in sorted(files.items())
+    ]
+    rows.append([record_path, "", ""])
+    from io import StringIO
+
+    buffer = StringIO(newline="")
+    csv.writer(buffer, lineterminator="\n").writerows(rows)
+    files[record_path] = buffer.getvalue().encode()
+    wheel = destination / f"{normalized}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return wheel
+
+
 def _build_minimal_installer_wheel(destination: Path) -> Path:
     wheel = destination / f"materials_studio_mcp-{VERSION}-py3-none-any.whl"
     wheel.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +181,16 @@ def _build_minimal_installer_wheel(destination: Path) -> Path:
     with zipfile.ZipFile(mcp_wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, content in mcp_files.items():
             archive.writestr(name, content)
+    _build_minimal_dependency_wheel(
+        destination,
+        distribution="comtypes",
+        version="1.4.16",
+    )
+    _build_minimal_dependency_wheel(
+        destination,
+        distribution="pywinauto",
+        version="0.6.9",
+    )
 
     dist_info = f"materials_studio_mcp-{VERSION}.dist-info"
     data_root = f"materials_studio_mcp-{VERSION}.data"
@@ -180,7 +230,9 @@ def _build_minimal_installer_wheel(destination: Path) -> Path:
             "Name: materials-studio-mcp\n"
             f"Version: {VERSION}\n"
             "Summary: installer integration fixture\n"
-            "Requires-Dist: mcp[cli]>=1.12.4,<2\n\n"
+            "Requires-Dist: mcp[cli]>=1.12.4,<2\n"
+            "Requires-Dist: comtypes==1.4.16; sys_platform == 'win32'\n"
+            "Requires-Dist: pywinauto==0.6.9; sys_platform == 'win32'\n\n"
         ).encode(),
         f"{dist_info}/WHEEL": (
             "Wheel-Version: 1.0\n"
@@ -752,6 +804,8 @@ def test_install_reuses_verified_runtime_and_cache_launcher_binds_version(tmp_pa
     assert manifest["package_relative_path"] == ".venv/Lib/site-packages/material_studio_mcp_server"
     assert manifest["entrypoint"] == "material_studio_mcp_server.server:main"
     assert int(manifest["dependency_versions"]["mcp"].split(".")[0]) < 2
+    assert manifest["dependency_versions"]["comtypes"] == "1.4.16"
+    assert manifest["dependency_versions"]["pywinauto"] == "0.6.9"
     assert manifest["distribution"]["public_distribution_ready"] is True
     assert manifest["runtime_tree_excludes"] == ["runtime-manifest.json"]
     assert "configured_runner" not in manifest
@@ -831,6 +885,43 @@ def test_install_reuses_verified_runtime_and_cache_launcher_binds_version(tmp_pa
     assert "manifest MCP SDK version" in stale_launch.stderr
     runtime_manifest_path.write_bytes(original_runtime_manifest)
     active_runtime_path.write_bytes(original_active_runtime)
+    for dependency_name in ("comtypes", "pywinauto"):
+        stale_uia_manifest = json.loads(original_runtime_manifest)
+        stale_uia_manifest["dependency_versions"][dependency_name] = "9.9.9"
+        runtime_manifest_path.write_text(
+            json.dumps(stale_uia_manifest), encoding="utf-8"
+        )
+        stale_uia_active = json.loads(original_active_runtime)
+        stale_uia_active["runtime_manifest_sha256"] = hashlib.sha256(
+            runtime_manifest_path.read_bytes()
+        ).hexdigest()
+        active_runtime_path.write_text(
+            json.dumps(stale_uia_active), encoding="utf-8"
+        )
+        stale_uia_reuse = _install(base, wheel)
+        assert stale_uia_reuse.returncode != 0
+        assert "manifest Windows UI dependency versions" in stale_uia_reuse.stderr
+        stale_uia_launch = subprocess.run(
+            [
+                CMD,
+                "/d",
+                "/c",
+                "Run-MS-MCP.bat",
+                "-LocalAppDataRoot",
+                str(base),
+                "-ValidateOnly",
+            ],
+            cwd=cache,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        assert stale_uia_launch.returncode != 0
+        assert "manifest Windows UI dependency versions" in stale_uia_launch.stderr
+        runtime_manifest_path.write_bytes(original_runtime_manifest)
+        active_runtime_path.write_bytes(original_active_runtime)
     launched = subprocess.run(
         [
             CMD,
@@ -1240,6 +1331,8 @@ def test_built_wheel_metadata_pins_mcp_below_2() -> None:
     assert len(mcp_requirements) == 1
     assert ">=1.12.4" in mcp_requirements[0]
     assert "<2" in mcp_requirements[0]
+    assert "Requires-Dist: comtypes==1.4.16; sys_platform == \"win32\"" in metadata
+    assert "Requires-Dist: pywinauto==0.6.9; sys_platform == \"win32\"" in metadata
 
 
 def test_real_wheel_guided_install_and_safe_cache_protocol_smoke(
@@ -1286,3 +1379,4 @@ def test_real_wheel_guided_install_and_safe_cache_protocol_smoke(
     assert "Real Materials Studio: NOT_RUN" in tested.stdout
     assert "Real CASTEP: NOT_RUN" in tested.stdout
     assert "material_studio_run_script is disabled" in tested.stdout
+    assert "PASS: GUI status preserved the immutable runtime tree" in tested.stdout

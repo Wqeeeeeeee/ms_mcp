@@ -156,6 +156,60 @@ function Get-MSTreeSha256 {
     }
 }
 
+function New-MSComtypesCache {
+    param([Parameter(Mandatory = $true)][string]$Root)
+
+    $resolvedRoot = Resolve-MSFullPath -Path $Root
+    New-Item -ItemType Directory -Path $resolvedRoot -Force | Out-Null
+    Assert-MSNoReparsePath -Path $resolvedRoot | Out-Null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $leaf = "run-" + [Guid]::NewGuid().ToString("N")
+        $candidate = Resolve-MSFullPath -Path (Join-Path $resolvedRoot $leaf)
+        if (-not [System.IO.Path]::GetDirectoryName($candidate).Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Comtypes cache allocation escaped its managed root."
+        }
+        try {
+            New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null
+            return $candidate
+        }
+        catch {
+            if (Test-Path -LiteralPath $candidate) { continue }
+            throw
+        }
+    }
+    throw "Could not allocate a unique comtypes cache directory."
+}
+
+function Remove-MSComtypesCache {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    $resolved = Resolve-MSFullPath -Path $Path
+    $resolvedRoot = Resolve-MSFullPath -Path $Root
+    $leaf = [System.IO.Path]::GetFileName($resolved)
+    if (-not [System.IO.Path]::GetDirectoryName($resolved).Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $leaf -notmatch '^run-[0-9a-f]{32}$') {
+        throw "Refusing to remove a comtypes cache outside the exact managed run directory."
+    }
+    if (-not (Test-Path -LiteralPath $resolved)) { return }
+    Assert-MSNoReparsePath -Path $resolved | Out-Null
+    foreach ($item in (Get-ChildItem -LiteralPath $resolved -Force)) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove a comtypes cache containing a reparse point."
+        }
+        if ($item.PSIsContainer) {
+            throw "Refusing to remove a comtypes cache containing a child directory."
+        }
+        if (-not [System.IO.Path]::GetDirectoryName($item.FullName).Equals($resolved, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove a comtypes cache file outside its exact run directory."
+        }
+        Remove-Item -LiteralPath $item.FullName -Force
+    }
+    Remove-Item -LiteralPath $resolved -Force
+}
+
 function Read-MSJson {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -458,7 +512,7 @@ function Get-MSInstalledMcpVersion {
     $savedPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $observedText = (& $PythonExecutable -X utf8 -I -c $code 2>&1 | Out-String).Trim()
+        $observedText = (& $PythonExecutable -B -X utf8 -I -c $code 2>&1 | Out-String).Trim()
         $observedExit = $LASTEXITCODE
     }
     finally {
@@ -475,6 +529,35 @@ function Get-MSInstalledMcpVersion {
         throw "Installed MCP SDK version is outside the reviewed >=1.12.4,<2 range: $observed"
     }
     return $observed
+}
+
+function Get-MSInstalledWindowsUiaVersions {
+    param([Parameter(Mandatory = $true)][string]$PythonExecutable)
+
+    $code = "import json; from importlib.metadata import version; print(json.dumps(dict(comtypes=version('comtypes'), pywinauto=version('pywinauto')), sort_keys=True))"
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $observedText = (& $PythonExecutable -B -X utf8 -I -c $code 2>&1 | Out-String).Trim()
+        $observedExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $savedPreference
+    }
+    if ($observedExit -ne 0) {
+        $detail = ($observedText -replace '\s+', ' ')
+        if ($detail.Length -gt 800) { $detail = $detail.Substring($detail.Length - 800) }
+        throw "Installed Windows UI dependency versions could not be read: $detail"
+    }
+    try { $observed = $observedText | ConvertFrom-Json }
+    catch { throw "Installed Windows UI dependency versions are invalid: $observedText" }
+    if ([string]$observed.comtypes -ne "1.4.16" -or [string]$observed.pywinauto -ne "0.6.9") {
+        throw "Installed Windows UI dependencies must be comtypes 1.4.16 and pywinauto 0.6.9."
+    }
+    return [ordered]@{
+        comtypes = [string]$observed.comtypes
+        pywinauto = [string]$observed.pywinauto
+    }
 }
 
 function Test-MSRuntime {
@@ -504,7 +587,7 @@ function Test-MSRuntime {
     $packageRoot = Resolve-MSFullPath -Path (Join-Path $root ([string]$manifest.package_relative_path))
     if (-not (Test-MSPathWithin -Path $packageRoot -Root $root) -or -not (Test-Path -LiteralPath $packageRoot -PathType Container)) { throw "Runtime package path is missing or escaped the runtime root." }
     $versionCode = "from importlib.metadata import version; print(version('materials-studio-mcp'))"
-    $observedVersion = (& $python -I -c $versionCode 2>&1 | Out-String).Trim()
+    $observedVersion = (& $python -B -I -c $versionCode 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $observedVersion -ne $Version) { throw "Installed package version mismatch: $observedVersion" }
     try { $declaredMcpVersion = [Version]([string]$manifest.dependency_versions.mcp) }
     catch { throw "Runtime manifest MCP SDK version is missing or invalid." }
@@ -515,5 +598,14 @@ function Test-MSRuntime {
     if ($observedMcpVersion -ne $declaredMcpVersion) {
         throw "Runtime manifest/installed MCP SDK version mismatch: declared $declaredMcpVersion, observed $observedMcpVersion"
     }
-    return [ordered]@{ root = $root; manifest_path = $manifestPath; manifest_sha256 = $manifestHash; python = $python; package_root = $packageRoot; mcp_version = $observedMcpVersion.ToString(); manifest = $manifest }
+    if ([string]$manifest.dependency_versions.comtypes -ne "1.4.16" -or
+        [string]$manifest.dependency_versions.pywinauto -ne "0.6.9") {
+        throw "Runtime manifest Windows UI dependency versions are missing or unsupported."
+    }
+    $observedWindowsUiaVersions = Get-MSInstalledWindowsUiaVersions -PythonExecutable $python
+    if ([string]$observedWindowsUiaVersions.comtypes -ne [string]$manifest.dependency_versions.comtypes -or
+        [string]$observedWindowsUiaVersions.pywinauto -ne [string]$manifest.dependency_versions.pywinauto) {
+        throw "Runtime manifest/installed Windows UI dependency version mismatch."
+    }
+    return [ordered]@{ root = $root; manifest_path = $manifestPath; manifest_sha256 = $manifestHash; python = $python; package_root = $packageRoot; mcp_version = $observedMcpVersion.ToString(); windows_uia_versions = $observedWindowsUiaVersions; manifest = $manifest }
 }

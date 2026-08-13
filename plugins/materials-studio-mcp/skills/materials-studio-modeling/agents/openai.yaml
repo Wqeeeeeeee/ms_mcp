@@ -1,0 +1,4 @@
+interface:
+  display_name: "Materials Studio Modeling"
+  short_description: "Safely orchestrate Materials Studio modeling"
+  default_prompt: "Use $materials-studio-modeling to check status and preview a Materials Studio modeling request safely."

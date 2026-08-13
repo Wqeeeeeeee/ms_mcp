@@ -1,0 +1,20 @@
+{
+  "name": "wqeeeeeeee-ms-mcp",
+  "interface": {
+    "displayName": "Materials Studio MCP"
+  },
+  "plugins": [
+    {
+      "name": "materials-studio-mcp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/materials-studio-mcp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Education & Research"
+    }
+  ]
+}

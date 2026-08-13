@@ -119,7 +119,7 @@ function Get-MSInstalledMcpVersion {
     # Override the common helper in this installer so warnings emitted while MCP
     # imports are kept on stderr instead of being merged into the version value.
     $code = "from importlib.metadata import version; import mcp.server.fastmcp; print(version('mcp'))"
-    $captured = Invoke-MSCapturedNative -Executable $PythonExecutable -Arguments @("-X", "utf8", "-I", "-c", $code)
+    $captured = Invoke-MSCapturedNative -Executable $PythonExecutable -Arguments @("-B", "-X", "utf8", "-I", "-c", $code)
     $observedText = ([string]$captured.stdout).Trim()
     if ($captured.exit_code -ne 0) {
         $detail = (([string]$captured.stderr + " " + [string]$captured.stdout).Trim() -replace '\s+', ' ')
@@ -318,7 +318,7 @@ print(json.dumps({"mcp_version": mcp_version, "fastmcp_import": True}))
 '@
         $mcpProbeBase64 = [Convert]::ToBase64String((New-Object System.Text.UTF8Encoding($false)).GetBytes($mcpProbeCode))
         $mcpProbeBootstrap = "import base64;exec(base64.b64decode('$mcpProbeBase64'))"
-        $mcpProbeCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $mcpProbeBootstrap)
+        $mcpProbeCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $mcpProbeBootstrap)
         $mcpProbeText = ([string]$mcpProbeCapture.stdout).Trim()
         if ($mcpProbeCapture.exit_code -ne 0) {
             $mcpProbeDetail = (([string]$mcpProbeCapture.stderr + " " + [string]$mcpProbeCapture.stdout).Trim() -replace '\s+', ' ')
@@ -328,6 +328,7 @@ print(json.dumps({"mcp_version": mcp_version, "fastmcp_import": True}))
         try { $mcpProbe = $mcpProbeText | ConvertFrom-Json; $mcpVersion = [Version]([string]$mcpProbe.mcp_version) }
         catch { throw "Installed MCP SDK version could not be verified: $mcpProbeText" }
         if ($mcpVersion.Major -ge 2 -or $mcpVersion -lt [Version]"1.12.4") { throw "Installed MCP SDK version is outside the reviewed >=1.12.4,<2 range: $mcpVersion" }
+        $windowsUiaVersions = Get-MSInstalledWindowsUiaVersions -PythonExecutable $runtimePython
 
         $expectedEntrypoints = [ordered]@{
             "ms-mcp" = "material_studio_mcp_server.server:main"
@@ -355,7 +356,7 @@ print(json.dumps({ep.name: ep.value for ep in dist.entry_points if ep.group == "
 '@
         $entrypointProbeBase64 = [Convert]::ToBase64String((New-Object System.Text.UTF8Encoding($false)).GetBytes($entrypointProbeCode))
         $entrypointProbeBootstrap = "import base64;exec(base64.b64decode('$entrypointProbeBase64'))"
-        $entrypointMetadataCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $entrypointProbeBootstrap)
+        $entrypointMetadataCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $entrypointProbeBootstrap)
         $entrypointMetadataText = ([string]$entrypointMetadataCapture.stdout).Trim()
         if ($entrypointMetadataCapture.exit_code -ne 0) {
             $entrypointMetadataDetail = (([string]$entrypointMetadataCapture.stderr + " " + [string]$entrypointMetadataCapture.stdout).Trim())
@@ -370,7 +371,7 @@ print(json.dumps({ep.name: ep.value for ep in dist.entry_points if ep.group == "
             Test-MSConsoleEntrypointHelp -Executable $candidate -Name $name
         }
         $versionCode = "from importlib.metadata import version; print(version('materials-studio-mcp'))"
-        $installedVersionCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $versionCode)
+        $installedVersionCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $versionCode)
         $installedVersion = ([string]$installedVersionCapture.stdout).Trim()
         if ($installedVersionCapture.exit_code -ne 0 -or $installedVersion -ne $version) {
             throw "Installed package version $installedVersion does not match plugin version $version."
@@ -379,7 +380,7 @@ print(json.dumps({ep.name: ep.value for ep in dist.entry_points if ep.group == "
         # still names the private staging directory used before publication. Keep
         # successful probe stderr private; surface it only when the import fails.
         $packageImportCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @(
-            "-X", "utf8", "-I", "-c", "import material_studio_mcp_server.server"
+            "-B", "-X", "utf8", "-I", "-c", "import material_studio_mcp_server.server"
         )
         if ($packageImportCapture.exit_code -ne 0) {
             $packageImportDetail = (([string]$packageImportCapture.stderr + " " + [string]$packageImportCapture.stdout).Trim() -replace '\s+', ' ')
@@ -475,7 +476,7 @@ print(json.dumps({"created": created, "removed": removed}, sort_keys=True))
 '@.Replace("__PAYLOAD__", $launcherPayloadBase64)
         $launcherRebindBase64 = [Convert]::ToBase64String($utf8NoBom.GetBytes($launcherRebindCode))
         $launcherRebindBootstrap = "import base64;exec(base64.b64decode('$launcherRebindBase64'))"
-        $launcherRebindCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $launcherRebindBootstrap)
+        $launcherRebindCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $launcherRebindBootstrap)
         $launcherRebindText = ([string]$launcherRebindCapture.stdout).Trim()
         if ($launcherRebindCapture.exit_code -ne 0) {
             $launcherRebindDetail = (([string]$launcherRebindCapture.stderr + " " + [string]$launcherRebindCapture.stdout).Trim())
@@ -498,13 +499,13 @@ print(json.dumps({"created": created, "removed": removed}, sort_keys=True))
         $stagedSitePackages = Join-Path $venv "Lib\site-packages"
         $publishedSitePackages = Join-Path $target ".venv\Lib\site-packages"
         Invoke-CheckedNative -Executable $runtimePython -Arguments @(
-            "-I", "-m", "compileall", "-f", "-q", "--invalidation-mode", "checked-hash",
+            "-B", "-I", "-m", "compileall", "-f", "-q", "--invalidation-mode", "checked-hash",
             "-s", $stagedSitePackages, "-p", $publishedSitePackages, $stagedSitePackages
         ) -Label "runtime bytecode compilation"
         $stagedScripts = Join-Path $venv "Scripts"
         $publishedScripts = Join-Path $target ".venv\Scripts"
         Invoke-CheckedNative -Executable $runtimePython -Arguments @(
-            "-I", "-m", "compileall", "-f", "-q", "--invalidation-mode", "checked-hash",
+            "-B", "-I", "-m", "compileall", "-f", "-q", "--invalidation-mode", "checked-hash",
             "-s", $stagedScripts, "-p", $publishedScripts, $stagedScripts
         ) -Label "runtime Scripts bytecode compilation"
 
@@ -582,7 +583,7 @@ print(json.dumps({"records": record_count, "verified_entries": verified_entry_co
 '@.Replace("__PAYLOAD__", $recordPayloadBase64)
         $recordRepairBase64 = [Convert]::ToBase64String($utf8NoBom.GetBytes($recordRepairCode))
         $recordRepairBootstrap = "import base64;exec(base64.b64decode('$recordRepairBase64'))"
-        $recordRepairCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $recordRepairBootstrap)
+        $recordRepairCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $recordRepairBootstrap)
         $recordRepairText = ([string]$recordRepairCapture.stdout).Trim()
         if ($recordRepairCapture.exit_code -ne 0) {
             $recordRepairDetail = (([string]$recordRepairCapture.stderr + " " + [string]$recordRepairCapture.stdout).Trim())
@@ -616,6 +617,8 @@ print(json.dumps({"records": record_count, "verified_entries": verified_entry_co
             console_entrypoints = $entrypoints
             dependency_versions = [ordered]@{
                 mcp = $mcpVersion.ToString()
+                comtypes = [string]$windowsUiaVersions.comtypes
+                pywinauto = [string]$windowsUiaVersions.pywinauto
             }
             runtime_tree_sha256 = $treeHash
             runtime_tree_excludes = @("runtime-manifest.json")
@@ -647,7 +650,7 @@ print(json.dumps({"records": record_count, "verified_entries": verified_entry_co
         if ((Get-MSTreeSha256 -Root $stagingRuntime) -ne [string]$stagedManifest.runtime_tree_sha256) {
             throw "Staged runtime tree SHA-256 mismatch."
         }
-        $stagedVersionCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $versionCode)
+        $stagedVersionCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $versionCode)
         $stagedVersion = ([string]$stagedVersionCapture.stdout).Trim()
         if ($stagedVersionCapture.exit_code -ne 0 -or $stagedVersion -ne $version) { throw "Staged package version verification failed: $stagedVersion" }
         $stagedMcpVersion = Get-MSInstalledMcpVersion -PythonExecutable $runtimePython
@@ -696,7 +699,7 @@ print(json.dumps({"files_scanned": files_scanned}))
 '@.Replace("__PAYLOAD__", $stagingScanPayloadBase64)
         $stagingScanBase64 = [Convert]::ToBase64String($utf8NoBom.GetBytes($stagingScanCode))
         $stagingScanBootstrap = "import base64;exec(base64.b64decode('$stagingScanBase64'))"
-        $stagingScanCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-X", "utf8", "-I", "-c", $stagingScanBootstrap)
+        $stagingScanCapture = Invoke-MSCapturedNative -Executable $runtimePython -Arguments @("-B", "-X", "utf8", "-I", "-c", $stagingScanBootstrap)
         $stagingScanText = ([string]$stagingScanCapture.stdout).Trim()
         if ($stagingScanCapture.exit_code -ne 0) {
             $stagingScanDetail = (([string]$stagingScanCapture.stderr + " " + [string]$stagingScanCapture.stdout).Trim())

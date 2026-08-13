@@ -12,6 +12,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "WindowsInstaller.Common.ps1")
 
 $oldGuiBackend = $env:MATERIAL_STUDIO_MCP_GUI_BACKEND
+$oldComtypesCache = $env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE
 $oldPythonUtf8 = $env:PYTHONUTF8
 $oldPythonIoEncoding = $env:PYTHONIOENCODING
 $oldOutputEncoding = [Console]::OutputEncoding
@@ -73,7 +74,7 @@ print(json.dumps({"enabled_tools": SAFE_ENABLED_TOOLS, "disabled_tools": DISABLE
     $toolPolicyBootstrap = "import base64;exec(base64.b64decode('$toolPolicyBase64'))"
     $savedPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    try { $toolPolicyText = (& $python -I -W ignore -c $toolPolicyBootstrap 2>&1 | Out-String).Trim(); $toolPolicyExit = $LASTEXITCODE }
+    try { $toolPolicyText = (& $python -B -I -W ignore -c $toolPolicyBootstrap 2>&1 | Out-String).Trim(); $toolPolicyExit = $LASTEXITCODE }
     finally { $ErrorActionPreference = $savedPreference }
     if ($toolPolicyExit -ne 0) { throw "Could not load installed Codex tool policy: $toolPolicyText" }
     $toolPolicy = $toolPolicyText | ConvertFrom-Json
@@ -104,7 +105,7 @@ print(json.dumps({"enabled_tools": SAFE_ENABLED_TOOLS, "disabled_tools": DISABLE
     $smokeOutputPath = Join-Path $isolatedWorkspace "protocol-smoke.json"
 
     $stage = "installed package import"
-    & $python -I -W ignore -c "import material_studio_mcp_server.server"
+    & $python -B -I -W ignore -c "import material_studio_mcp_server.server"
     if ($LASTEXITCODE -ne 0) { throw "Installed package import failed." }
     $packageRoot = [string]$runtime.package_root
     if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) { throw "Could not locate the installed package." }
@@ -136,7 +137,7 @@ print(json.dumps({"ok": True, "status": result["status"]}))
     $stage = "plugin-mode custom-script guard"
     $savedPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    try { $guardOutput = (& $python -I -W ignore -c $guardBootstrap 2>&1 | Out-String).Trim(); $guardExit = $LASTEXITCODE }
+    try { $guardOutput = (& $python -B -I -W ignore -c $guardBootstrap 2>&1 | Out-String).Trim(); $guardExit = $LASTEXITCODE }
     finally { $ErrorActionPreference = $savedPreference }
     if ($guardExit -ne 0 -or $guardOutput -notmatch 'plugin_custom_script_disabled') { throw "material_studio_run_script plugin-mode guard failed: $guardOutput" }
 
@@ -145,7 +146,7 @@ print(json.dumps({"ok": True, "status": result["status"]}))
         "-TestWorkspace", $isolatedWorkspace
     )
     $smokeArgs = @(
-        "-X", "utf8", "-I", "-m", "material_studio_mcp_server.protocol_smoke",
+        "-B", "-X", "utf8", "-I", "-m", "material_studio_mcp_server.protocol_smoke",
         "--command", ([string]$server.command)
     )
     foreach ($argument in $launcherArgs) { $smokeArgs += "--server-arg=$argument" }
@@ -175,9 +176,104 @@ print(json.dumps({"ok": True, "status": result["status"]}))
     $codexConfigHashAfter = if ($null -ne $codexConfigPath -and (Test-Path -LiteralPath $codexConfigPath -PathType Leaf)) { Get-MSFileSha256 -Path $codexConfigPath } else { $null }
     if ($codexConfigHashBefore -ne $codexConfigHashAfter) { throw "Test modified the active Codex configuration." }
 
-    $stage = "launcher validate-only"
-    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcherPath -LocalAppDataRoot $paths.local_app_data_root -ValidateOnly
-    if ($LASTEXITCODE -ne 0) { throw "Plugin launcher validation failed." }
+    $runtimeTreeBeforeGuiStatus = Get-MSTreeSha256 -Root ([string]$runtime.root)
+    if ($runtimeTreeBeforeGuiStatus -ne [string]$runtime.manifest.runtime_tree_sha256) {
+        throw "Runtime tree drifted before the GUI status immutable-runtime smoke."
+    }
+    $guiStatusProbeConfig = [ordered]@{
+        command = [string]$server.command
+        args = @($launcherArgs)
+        cwd = $PluginRoot
+        workspace = $isolatedWorkspace
+    } | ConvertTo-Json -Depth 8 -Compress
+    $guiStatusProbeConfigBase64 = [Convert]::ToBase64String(
+        (New-Object System.Text.UTF8Encoding($false)).GetBytes($guiStatusProbeConfig)
+    )
+    $guiStatusProbeCode = @'
+import asyncio
+import base64
+import json
+from datetime import timedelta
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+config = json.loads(base64.b64decode("__CONFIG_BASE64__"))
+
+async def main():
+    server = StdioServerParameters(
+        command=config["command"],
+        args=config["args"],
+        cwd=config["cwd"],
+        encoding="utf-8",
+        encoding_error_handler="replace",
+    )
+    timeout = timedelta(seconds=90)
+    async with stdio_client(server) as (read_stream, write_stream):
+        async with ClientSession(
+            read_stream,
+            write_stream,
+            read_timeout_seconds=timeout,
+        ) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "material_studio_gui_status",
+                arguments={"working_dir": config["workspace"]},
+                read_timeout_seconds=timeout,
+            )
+            if result.isError:
+                raise RuntimeError("material_studio_gui_status returned an MCP error")
+            structured = result.structuredContent
+            payload = None
+            if isinstance(structured, dict):
+                payload = structured.get("result") if set(structured) == {"result"} else structured
+            if not isinstance(payload, dict):
+                for item in result.content:
+                    text = getattr(item, "text", None)
+                    if not isinstance(text, str):
+                        continue
+                    try:
+                        candidate = json.loads(text)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(candidate, dict):
+                        payload = candidate
+                        break
+            if not isinstance(payload, dict):
+                raise RuntimeError("material_studio_gui_status returned no JSON object payload")
+            if payload.get("ok") is not True:
+                raise RuntimeError(
+                    "material_studio_gui_status payload was not successful: "
+                    + json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                )
+    print(json.dumps(
+        {"gui_status_payload_ok": True, "tool": "material_studio_gui_status"},
+        separators=(",", ":"),
+    ))
+
+asyncio.run(main())
+'@.Replace("__CONFIG_BASE64__", $guiStatusProbeConfigBase64)
+    $guiStatusProbeBase64 = [Convert]::ToBase64String(
+        (New-Object System.Text.UTF8Encoding($false)).GetBytes($guiStatusProbeCode)
+    )
+    $guiStatusProbeBootstrap = "import base64;exec(base64.b64decode('$guiStatusProbeBase64'))"
+    $stage = "GUI status immutable-runtime smoke"
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Remove-Item Env:MATERIAL_STUDIO_MCP_GUI_BACKEND -ErrorAction SilentlyContinue
+    try { $guiStatusProbeOutput = (& $python -B -I -W ignore -c $guiStatusProbeBootstrap 2>&1 | Out-String).Trim(); $guiStatusProbeExit = $LASTEXITCODE }
+    finally {
+        $env:MATERIAL_STUDIO_MCP_GUI_BACKEND = "null"
+        $ErrorActionPreference = $savedPreference
+    }
+    if ($guiStatusProbeExit -ne 0 -or $guiStatusProbeOutput -notmatch '"gui_status_payload_ok":true') {
+        throw "GUI status immutable-runtime smoke failed: $guiStatusProbeOutput"
+    }
+    $runtimeTreeAfterGuiStatus = Get-MSTreeSha256 -Root ([string]$runtime.root)
+    if ($runtimeTreeAfterGuiStatus -ne $runtimeTreeBeforeGuiStatus -or
+        $runtimeTreeAfterGuiStatus -ne [string]$runtime.manifest.runtime_tree_sha256) {
+        throw "GUI status changed the immutable runtime tree."
+    }
 
     $realStatus = "NOT_RUN"
     if ($RealMS) {
@@ -186,16 +282,35 @@ print(json.dumps({"ok": True, "status": result["status"]}))
             $confirmation = Read-Host "Type REAL-MS-READ-ONLY to run a real read-only/preview Materials Studio preflight"
             if ($confirmation -cne "REAL-MS-READ-ONLY") { throw "Real Materials Studio preflight was not confirmed." }
         }
-        $liveRelative = [string]$runtime.manifest.console_entrypoints.'ms-mcp-live-smoke'
-        $liveSmoke = Join-Path $runtime.root $liveRelative
-        if (-not (Test-Path -LiteralPath $liveSmoke -PathType Leaf)) { throw "ms-mcp-live-smoke entrypoint is missing." }
         $realOutput = Join-Path $paths.logs_root ("real-ms-read-only-{0}.json" -f [DateTime]::UtcNow.ToString("yyyyMMdd-HHmmss"))
-        $env:MATERIAL_STUDIO_MCP_GUI_BACKEND = $oldGuiBackend
+        $comtypesCacheRoot = Join-Path $paths.logs_root "comtypes-cache"
+        $realMsComtypesCache = New-MSComtypesCache -Root $comtypesCacheRoot
+        Remove-Item Env:MATERIAL_STUDIO_MCP_GUI_BACKEND -ErrorAction SilentlyContinue
+        $env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE = $realMsComtypesCache
         $stage = "explicit real Materials Studio read-only preflight"
-        & $liveSmoke --request "Check the local Materials Studio MCP and runner status without changing the model." --execution-mode preview --include-gui-status --working-dir $binding.workspace --output $realOutput
-        if ($LASTEXITCODE -ne 0) { throw "Real Materials Studio read-only/preview preflight failed. See $realOutput" }
+        try {
+            & $python -B -X utf8 -I -m material_studio_mcp_server.live_smoke --request "Check the local Materials Studio MCP and runner status without changing the model." --execution-mode preview --include-gui-status --working-dir $binding.workspace --output $realOutput
+            $realMsExit = $LASTEXITCODE
+        }
+        finally {
+            $env:MATERIAL_STUDIO_MCP_GUI_BACKEND = "null"
+            if ($null -eq $oldComtypesCache) { Remove-Item Env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE -ErrorAction SilentlyContinue }
+            else { $env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE = $oldComtypesCache }
+            Remove-MSComtypesCache -Path $realMsComtypesCache -Root $comtypesCacheRoot
+        }
+        if ($realMsExit -ne 0) { throw "Real Materials Studio read-only/preview preflight failed. See $realOutput" }
         $realStatus = "READ_ONLY_PREFLIGHT_ONLY"
     }
+
+    $stage = "final launcher validate-only"
+    $runtimeTreeAfterAllProbes = Get-MSTreeSha256 -Root ([string]$runtime.root)
+    if ($runtimeTreeAfterAllProbes -ne $runtimeTreeBeforeGuiStatus -or
+        $runtimeTreeAfterAllProbes -ne [string]$runtime.manifest.runtime_tree_sha256) {
+        throw "A GUI or real-MS status probe changed the immutable runtime tree."
+    }
+    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $launcherPath -LocalAppDataRoot $paths.local_app_data_root -ValidateOnly
+    if ($LASTEXITCODE -ne 0) { throw "Plugin launcher validation failed." }
+    Write-Host "PASS: GUI status preserved the immutable runtime tree and launcher validation"
 
     Write-Host "PASS: configuration, runner, package import, compileall, runtime integrity, and manifests"
     Write-Host "PASS: plugin cache-compatible launcher completed stdio discovery with $($smoke.tool_count) tools"
@@ -212,6 +327,8 @@ catch {
 finally {
     if ($null -eq $oldGuiBackend) { Remove-Item Env:MATERIAL_STUDIO_MCP_GUI_BACKEND -ErrorAction SilentlyContinue }
     else { $env:MATERIAL_STUDIO_MCP_GUI_BACKEND = $oldGuiBackend }
+    if ($null -eq $oldComtypesCache) { Remove-Item Env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE -ErrorAction SilentlyContinue }
+    else { $env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE = $oldComtypesCache }
     if ($null -eq $oldPythonUtf8) { Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue }
     else { $env:PYTHONUTF8 = $oldPythonUtf8 }
     if ($null -eq $oldPythonIoEncoding) { Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue }

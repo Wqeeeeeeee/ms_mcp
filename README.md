@@ -84,6 +84,12 @@ Library/User Menu in the exact verified Materials Studio window, then wait for
 Perl. See [the GUI-loop guide](docs/gui_loop.md) and
 [the GUI-control contract](docs/gui_control.md).
 
+The managed launcher keeps every versioned runtime byte-for-byte immutable:
+Python bytecode writes are disabled, and pywinauto/comtypes UI Automation
+wrappers are generated in a unique per-server cache under the product log root,
+outside the runtime. Normal shutdown removes that cache; an interrupted process
+may leave only its isolated cache behind and never modifies the runtime.
+
 ```text
 MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT=auto
 MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS=45

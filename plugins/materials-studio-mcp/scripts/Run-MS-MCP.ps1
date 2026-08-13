@@ -87,6 +87,58 @@ function Launcher-TreeHash {
     finally { $sha.Dispose() }
 }
 
+function New-LauncherComtypesCache {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $resolvedRoot = Full-LauncherPath $Root
+    New-Item -ItemType Directory -Path $resolvedRoot -Force | Out-Null
+    Reject-ReparsePath $resolvedRoot | Out-Null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $leaf = "run-" + [Guid]::NewGuid().ToString("N")
+        $candidate = Full-LauncherPath (Join-Path $resolvedRoot $leaf)
+        if (-not [System.IO.Path]::GetDirectoryName($candidate).Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "comtypes cache allocation escaped its managed root"
+        }
+        try {
+            New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null
+            return $candidate
+        }
+        catch {
+            if (Test-Path -LiteralPath $candidate) { continue }
+            throw
+        }
+    }
+    throw "could not allocate a unique comtypes cache directory"
+}
+
+function Remove-LauncherComtypesCache {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+    $resolved = Full-LauncherPath $Path
+    $resolvedRoot = Full-LauncherPath $Root
+    $leaf = [System.IO.Path]::GetFileName($resolved)
+    if (-not [System.IO.Path]::GetDirectoryName($resolved).Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $leaf -notmatch '^run-[0-9a-f]{32}$') {
+        throw "refusing to remove a comtypes cache outside the exact managed run directory"
+    }
+    if (-not (Test-Path -LiteralPath $resolved)) { return }
+    Reject-ReparsePath $resolved | Out-Null
+    foreach ($item in (Get-ChildItem -LiteralPath $resolved -Force)) {
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "refusing to remove a comtypes cache containing a reparse point"
+        }
+        if ($item.PSIsContainer) {
+            throw "refusing to remove a comtypes cache containing a child directory"
+        }
+        if (-not [System.IO.Path]::GetDirectoryName($item.FullName).Equals($resolved, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "refusing to remove a comtypes cache file outside its exact run directory"
+        }
+        Remove-Item -LiteralPath $item.FullName -Force
+    }
+    Remove-Item -LiteralPath $resolved -Force
+}
+
 try {
     $base = $LocalAppDataRoot
     if ([string]::IsNullOrWhiteSpace($base)) { $base = $env:LOCALAPPDATA }
@@ -132,7 +184,7 @@ try {
     if (-not (Path-IsWithin -Path $packageRoot -Root $runtimeRoot) -or -not (Test-Path -LiteralPath $packageRoot -PathType Container)) { throw "runtime package path is missing or escaped" }
     Reject-ReparsePath $packageRoot | Out-Null
     $versionCode = "from importlib.metadata import version; print(version('materials-studio-mcp'))"
-    $packageVersion = (& $python -I -c $versionCode 2>&1 | Out-String).Trim()
+    $packageVersion = (& $python -B -I -c $versionCode 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $packageVersion -ne $version) { throw "installed package version does not match plugin version" }
     try { $declaredMcpVersion = [Version]([string]$manifest.dependency_versions.mcp) }
     catch { throw "runtime manifest MCP SDK version is missing or invalid; reinstall this version" }
@@ -140,13 +192,29 @@ try {
     $mcpCode = "from importlib.metadata import version; import mcp.server.fastmcp; print(version('mcp'))"
     $savedPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    try { $observedMcpText = (& $python -X utf8 -I -c $mcpCode 2>&1 | Out-String).Trim(); $observedMcpExit = $LASTEXITCODE }
+    try { $observedMcpText = (& $python -B -X utf8 -I -c $mcpCode 2>&1 | Out-String).Trim(); $observedMcpExit = $LASTEXITCODE }
     finally { $ErrorActionPreference = $savedPreference }
     if ($observedMcpExit -ne 0) { throw "installed MCP SDK cannot import mcp.server.fastmcp; reinstall this version" }
     try { $observedMcpVersion = [Version]$observedMcpText }
     catch { throw "installed MCP SDK version is invalid; reinstall this version" }
     if ($observedMcpVersion -lt [Version]"1.12.4" -or $observedMcpVersion.Major -ge 2) { throw "installed MCP SDK version is outside the reviewed >=1.12.4,<2 range; reinstall this version" }
     if ($observedMcpVersion -ne $declaredMcpVersion) { throw "runtime manifest/installed MCP SDK version mismatch; reinstall this version" }
+    if ([string]$manifest.dependency_versions.comtypes -ne "1.4.16" -or
+        [string]$manifest.dependency_versions.pywinauto -ne "0.6.9") {
+        throw "runtime manifest Windows UI dependency versions are missing or unsupported; reinstall this version"
+    }
+    $uiaVersionCode = "import json; from importlib.metadata import version; print(json.dumps({'comtypes': version('comtypes'), 'pywinauto': version('pywinauto')}, sort_keys=True))"
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { $observedUiaText = (& $python -B -X utf8 -I -c $uiaVersionCode 2>&1 | Out-String).Trim(); $observedUiaExit = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $savedPreference }
+    if ($observedUiaExit -ne 0) { throw "installed Windows UI dependency versions could not be read; reinstall this version" }
+    try { $observedUia = $observedUiaText | ConvertFrom-Json }
+    catch { throw "installed Windows UI dependency versions are invalid; reinstall this version" }
+    if ([string]$observedUia.comtypes -ne [string]$manifest.dependency_versions.comtypes -or
+        [string]$observedUia.pywinauto -ne [string]$manifest.dependency_versions.pywinauto) {
+        throw "runtime manifest/installed Windows UI dependency version mismatch; reinstall this version"
+    }
 
     $runner = Reject-ReparsePath ([string]$settings.materials_studio.runner)
     if (-not (Test-Path -LiteralPath $runner -PathType Leaf) -or -not [System.IO.Path]::GetFileName($runner).Equals("RunMatScript.bat", [System.StringComparison]::OrdinalIgnoreCase)) { throw "configured RunMatScript.bat is unavailable; rerun Configure-MS-MCP.bat" }
@@ -179,8 +247,17 @@ try {
     [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
     if ($ValidateOnly) { exit 0 }
 
-    & $python -X utf8 -I -c "from material_studio_mcp_server.server import main; main()"
-    exit $LASTEXITCODE
+    $comtypesCacheRoot = Full-LauncherPath (Join-Path $productRoot "logs\comtypes-cache")
+    $comtypesCache = New-LauncherComtypesCache -Root $comtypesCacheRoot
+    $env:MATERIAL_STUDIO_MCP_COMTYPES_CACHE = $comtypesCache
+    try {
+        & $python -B -X utf8 -I -c "from material_studio_mcp_server.server import main; main()"
+        $serverExitCode = $LASTEXITCODE
+    }
+    finally {
+        Remove-LauncherComtypesCache -Path $comtypesCache -Root $comtypesCacheRoot
+    }
+    exit $serverExitCode
 }
 catch {
     Fail-Launcher "$($_.Exception.Message). Run Configure-MS-MCP.bat, Install-MS-MCP.bat, then Test-MS-MCP.bat."

@@ -472,9 +472,10 @@ wheels = [
 
 [[package]]
 name = "materials-studio-mcp"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
+    { name = "comtypes", marker = "sys_platform == 'win32'" },
     { name = "jinja2" },
     { name = "mcp", extra = ["cli"] },
     { name = "packaging" },
@@ -492,12 +493,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
+    { name = "comtypes", marker = "sys_platform == 'win32'", specifier = "==1.4.16" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.12.4,<2" },
     { name = "packaging", specifier = ">=24" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pywinauto", marker = "sys_platform == 'win32'", specifier = ">=0.6.9" },
+    { name = "pywinauto", marker = "sys_platform == 'win32'", specifier = "==0.6.9" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
 ]
 provides-extras = ["dev"]

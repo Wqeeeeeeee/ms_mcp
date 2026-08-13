@@ -10,12 +10,121 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import importlib.abc
+import importlib.machinery
 import os
 import struct
+import sys
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
+
+
+COMTYPES_CACHE_ENV = "MATERIAL_STUDIO_MCP_COMTYPES_CACHE"
+_COMTYPES_IMPORT_LOCK = threading.RLock()
+
+
+class _ExternalComtypesGenLoader(importlib.abc.Loader):
+    """Create the generated-code package without importing ``comtypes`` early."""
+
+    def __init__(self, cache_dir: Path) -> None:
+        self.cache_dir = cache_dir
+
+    def exec_module(self, module: Any) -> None:
+        module.__package__ = "comtypes.gen"
+        module.__path__ = [str(self.cache_dir)]
+
+
+class _ExternalComtypesGenFinder(importlib.abc.MetaPathFinder):
+    """Intercept only the first ``comtypes.gen`` package import."""
+
+    def __init__(self, cache_dir: Path) -> None:
+        self.cache_dir = cache_dir
+        self.loader = _ExternalComtypesGenLoader(cache_dir)
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: Any = None,
+        target: Any = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        del path, target
+        if fullname != "comtypes.gen":
+            return None
+        spec = importlib.machinery.ModuleSpec(fullname, self.loader, is_package=True)
+        spec.submodule_search_locations = [str(self.cache_dir)]
+        return spec
+
+
+def _validate_external_comtypes_gen_cache(cache_dir: Path) -> None:
+    client_module = sys.modules.get("comtypes.client")
+    if client_module is not None:
+        raw_gen_dir = getattr(client_module, "gen_dir", None)
+        if raw_gen_dir is None or not str(raw_gen_dir).strip():
+            raise RuntimeError("comtypes.client has no filesystem generated-code cache")
+        if Path(str(raw_gen_dir)).resolve() != cache_dir:
+            raise RuntimeError(
+                "comtypes.client was imported before the external generated-code "
+                "cache was bound"
+            )
+
+    gen_module = sys.modules.get("comtypes.gen")
+    if gen_module is not None:
+        raw_paths = list(getattr(gen_module, "__path__", []) or [])
+        observed_paths = [Path(str(item)).resolve() for item in raw_paths]
+        if observed_paths != [cache_dir]:
+            raise RuntimeError(
+                "comtypes.gen is not bound exclusively to the external generated-code "
+                "cache"
+            )
+
+
+@contextmanager
+def _external_comtypes_gen_cache() -> Any:
+    """Bind ``comtypes.gen`` while preserving pywinauto's COM initialization.
+
+    ``comtypes`` generates Python wrappers the first time pywinauto's UIA
+    backend is imported.  A version-addressed runtime must remain byte-for-byte
+    immutable, so the Windows launcher supplies a fresh external directory for
+    those generated modules.  The temporary import finder is installed before
+    pywinauto imports ``comtypes``, allowing pywinauto to select its normal MTA
+    threading model first. Source checkouts without the setting retain normal
+    comtypes behavior.
+    """
+
+    configured = os.environ.get(COMTYPES_CACHE_ENV, "").strip()
+    if not configured:
+        yield None
+        return
+    configured_path = Path(configured).expanduser()
+    if not configured_path.is_absolute():
+        raise RuntimeError(f"{COMTYPES_CACHE_ENV} must be an absolute path")
+    cache_dir = configured_path.resolve()
+    runtime_prefix = Path(sys.prefix).resolve()
+    if cache_dir == runtime_prefix or runtime_prefix in cache_dir.parents:
+        raise RuntimeError(
+            f"{COMTYPES_CACHE_ENV} must be outside the active Python runtime"
+        )
+    if not cache_dir.is_dir():
+        raise RuntimeError(
+            f"Launcher-owned comtypes cache is not an existing directory: {cache_dir}"
+        )
+
+    with _COMTYPES_IMPORT_LOCK:
+        _validate_external_comtypes_gen_cache(cache_dir)
+        finder: _ExternalComtypesGenFinder | None = None
+        if "comtypes.gen" not in sys.modules:
+            finder = _ExternalComtypesGenFinder(cache_dir)
+            sys.meta_path.insert(0, finder)
+        try:
+            yield cache_dir
+        finally:
+            if finder is not None and finder in sys.meta_path:
+                sys.meta_path.remove(finder)
+        _validate_external_comtypes_gen_cache(cache_dir)
 
 
 SAFE_STANDARD_VIEW_KEY_SEQUENCES: dict[str, list[str]] = {
@@ -558,7 +667,8 @@ def _default_native_command_sender(window_handle: int, command_id: int) -> None:
 
 
 def _default_pointer_clicker(x: int, y: int) -> None:
-    from pywinauto import mouse
+    with _external_comtypes_gen_cache():
+        from pywinauto import mouse
 
     mouse.click(button="left", coords=(int(x), int(y)))
 
@@ -637,7 +747,8 @@ def _default_native_menu_entries(window_handle: int) -> list[dict[str, Any]]:
 
 
 def _default_toolbar_button_reader(toolbar_handle: int) -> list[dict[str, Any]]:
-    from pywinauto.controls.common_controls import ToolbarWrapper
+    with _external_comtypes_gen_cache():
+        from pywinauto.controls.common_controls import ToolbarWrapper
 
     toolbar = ToolbarWrapper(int(toolbar_handle))
     rows: list[dict[str, Any]] = []
@@ -705,8 +816,9 @@ class PywinautoViewReplayBackend:
         if self._desktop_factory is not None and self._keyboard_sender is not None:
             return
         try:
-            from pywinauto import Desktop
-            from pywinauto.keyboard import send_keys
+            with _external_comtypes_gen_cache():
+                from pywinauto import Desktop
+                from pywinauto.keyboard import send_keys
         except Exception as exc:
             self.supported = False
             self.miller_plane_transaction_supported = False

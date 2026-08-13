@@ -12,15 +12,20 @@ import ctypes
 import hashlib
 import importlib.abc
 import importlib.machinery
+import json
 import os
 import struct
+import subprocess
 import sys
+import sysconfig
 import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
+
+from . import __version__
 
 
 COMTYPES_CACHE_ENV = "MATERIAL_STUDIO_MCP_COMTYPES_CACHE"
@@ -202,6 +207,22 @@ VIEWER_SELECTION_COMMAND_ID = 33288
 VIEWER_RECENTER_COMMAND_ID = 33296
 VIEWER_VIEW_ONTO_COMMAND_ID = 33297
 VIEWER_FIT_COMMAND_ID = 33299
+VIEWER_TOOLBAR_NATIVE_COMMAND_IDS = (
+    VIEWER_SELECTION_COMMAND_ID,
+    33290,
+    33291,
+    33289,
+    0,
+    33295,
+    VIEWER_RECENTER_COMMAND_ID,
+    VIEWER_FIT_COMMAND_ID,
+    33274,
+)
+VIEWER_TOOLBAR_NATIVE_STYLES = (2, 2, 2, 2, 1, 2, 10, 2, 2)
+FIT_TO_VIEW_PROBE_TIMEOUT_SECONDS = 30.0
+NATIVE_COMMAND_TIMEOUT_MILLISECONDS = 5000
+FIT_PROBE_SCHEMA_VERSION = 1
+FIT_PROBE_KIND = "materials_studio_native_fit_target_probe"
 PROPERTIES_EXPLORER_COMMAND_ID = 33439
 UNDO_COMMAND_ID = 33052
 MILLER_PLANE_SELECTION_METHOD = (
@@ -233,6 +254,22 @@ def local_uia_view_replay_implementation_contract() -> dict[str, Any]:
             "single_window": "gui_status.single_window_policy_ok",
         },
         "recipe_classes": {
+            "fit_to_view": {
+                "implemented": True,
+                "execute_tool": "material_studio_gui_fit_to_view",
+                "requires_bounded_native_probe": True,
+                "probe_process_timeout_seconds": FIT_TO_VIEW_PROBE_TIMEOUT_SECONDS,
+                "requires_exact_window_pid_document_and_viewport": True,
+                "requires_full_live_toolbar_mapping": True,
+                "numeric_command_id": VIEWER_FIT_COMMAND_ID,
+                "native_command_timeout_milliseconds": (
+                    NATIVE_COMMAND_TIMEOUT_MILLISECONDS
+                ),
+                "requires_immediate_pre_dispatch_native_window_identity": True,
+                "requires_single_native_materials_studio_process_and_window": True,
+                "registry_sha256_verified_after_final_proof_gate": True,
+                "uses_uia_descendant_tree": False,
+            },
             "cartesian_standard": {
                 "implemented": True,
                 "view_names": sorted(SAFE_STANDARD_VIEW_KEY_SEQUENCES),
@@ -285,6 +322,18 @@ class UiaReplayError(RuntimeError):
     """Raised when an exact UIA binding or action gate cannot be satisfied."""
 
 
+class FitProbeTimeoutError(UiaReplayError):
+    """Raised when the isolated, read-only Fit target probe exceeds its deadline."""
+
+
+class FitProbeCleanupError(UiaReplayError):
+    """Raised when the bounded helper process tree cannot be proven stopped."""
+
+
+class FitProbeIsolationError(UiaReplayError):
+    """Raised when the helper cannot be started inside its trusted boundary."""
+
+
 class ViewReplayAutomationBackend(Protocol):
     """Protocol used by the GUI controller and deterministic test doubles."""
 
@@ -303,6 +352,20 @@ class ViewReplayAutomationBackend(Protocol):
         """Read the exact window's UIA tree without invoking any control."""
         ...
 
+    def probe_fit_to_view(
+        self,
+        *,
+        window_handle: int,
+        expected_window_title: str,
+        expected_revision: int,
+        toolbar_contracts: dict[str, dict[str, Any]],
+        command_labels: dict[str, str],
+        expected_window_pid: int | None = None,
+        expected_document_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Read one exact Fit target through a bounded native helper."""
+        ...
+
     def execute_fit_to_view(
         self,
         *,
@@ -311,6 +374,15 @@ class ViewReplayAutomationBackend(Protocol):
         toolbar_contracts: dict[str, dict[str, Any]],
         command_labels: dict[str, str],
         registry_sha256: str | None = None,
+        registry_path: str | Path | None = None,
+        expected_revision: int | None = None,
+        expected_window_pid: int | None = None,
+        expected_document_name: str | None = None,
+        expected_project_id: str | None = None,
+        expected_structure_binding: dict[str, Any] | None = None,
+        expected_structure_proof: dict[str, Any] | None = None,
+        pre_input_gate: Callable[[], dict[str, Any]] | None = None,
+        final_pre_dispatch_gate: Callable[[], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Invoke the server-verified Fit-to-View control once."""
         ...
@@ -657,6 +729,210 @@ def _default_window_rect(window_handle: int) -> tuple[int, int, int, int]:
     return int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
 
 
+def _default_native_window_identity(window_handle: int) -> dict[str, Any]:
+    """Read one HWND and the native Materials Studio session cardinality."""
+
+    if os.name != "nt":
+        raise UiaReplayError("Native window identity is available only on Windows.")
+    import ctypes.wintypes as wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    is_window = user32.IsWindow
+    is_window.argtypes = (wintypes.HWND,)
+    is_window.restype = wintypes.BOOL
+    get_window_thread_process_id = user32.GetWindowThreadProcessId
+    get_window_thread_process_id.argtypes = (
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    get_window_thread_process_id.restype = wintypes.DWORD
+    get_window_text_length = user32.GetWindowTextLengthW
+    get_window_text_length.argtypes = (wintypes.HWND,)
+    get_window_text_length.restype = ctypes.c_int
+    get_window_text = user32.GetWindowTextW
+    get_window_text.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    get_window_text.restype = ctypes.c_int
+    get_foreground_window = user32.GetForegroundWindow
+    get_foreground_window.argtypes = ()
+    get_foreground_window.restype = wintypes.HWND
+    is_window_visible = user32.IsWindowVisible
+    is_window_visible.argtypes = (wintypes.HWND,)
+    is_window_visible.restype = wintypes.BOOL
+    is_window_enabled = user32.IsWindowEnabled
+    is_window_enabled.argtypes = (wintypes.HWND,)
+    is_window_enabled.restype = wintypes.BOOL
+    is_iconic = user32.IsIconic
+    is_iconic.argtypes = (wintypes.HWND,)
+    is_iconic.restype = wintypes.BOOL
+    enum_window_callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HWND,
+        wintypes.LPARAM,
+    )
+    enum_windows = user32.EnumWindows
+    enum_windows.argtypes = (enum_window_callback_type, wintypes.LPARAM)
+    enum_windows.restype = wintypes.BOOL
+    handle = int(window_handle)
+    hwnd = wintypes.HWND(handle)
+    if not bool(is_window(hwnd)):
+        return {
+            "is_window": False,
+            "handle": handle,
+            "pid": None,
+            "title": None,
+            "is_foreground": False,
+            "is_visible": False,
+            "is_enabled": False,
+            "is_minimized": None,
+            "session_enumeration_succeeded": False,
+            "process_count": None,
+            "window_count": None,
+            "materials_studio_process_ids": None,
+            "materials_studio_window_handles": None,
+            "target_pid_is_materials_studio": None,
+            "target_window_is_materials_studio": None,
+        }
+    process_id = wintypes.DWORD()
+    get_window_thread_process_id(hwnd, ctypes.byref(process_id))
+    title_length = max(0, int(get_window_text_length(hwnd)))
+    title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+    get_window_text(hwnd, title_buffer, len(title_buffer))
+    identity = {
+        "is_window": True,
+        "handle": handle,
+        "pid": int(process_id.value),
+        "title": title_buffer.value,
+        "is_foreground": int(get_foreground_window() or 0) == handle,
+        "is_visible": bool(is_window_visible(hwnd)),
+        "is_enabled": bool(is_window_enabled(hwnd)),
+        "is_minimized": bool(is_iconic(hwnd)),
+        "session_enumeration_succeeded": False,
+        "process_count": None,
+        "window_count": None,
+        "materials_studio_process_ids": None,
+        "materials_studio_window_handles": None,
+        "target_pid_is_materials_studio": None,
+        "target_window_is_materials_studio": None,
+    }
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class _ProcessEntry32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        create_snapshot = kernel32.CreateToolhelp32Snapshot
+        create_snapshot.argtypes = (wintypes.DWORD, wintypes.DWORD)
+        create_snapshot.restype = wintypes.HANDLE
+        process_first = kernel32.Process32FirstW
+        process_first.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(_ProcessEntry32W),
+        )
+        process_first.restype = wintypes.BOOL
+        process_next = kernel32.Process32NextW
+        process_next.argtypes = (
+            wintypes.HANDLE,
+            ctypes.POINTER(_ProcessEntry32W),
+        )
+        process_next.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+
+        ctypes.set_last_error(0)
+        snapshot = create_snapshot(0x00000002, 0)
+        snapshot_value = int(getattr(snapshot, "value", snapshot) or 0)
+        if snapshot_value in {0, int(ctypes.c_void_p(-1).value or 0)}:
+            raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot failed")
+        process_ids: set[int] = set()
+        close_succeeded = False
+        try:
+            entry = _ProcessEntry32W()
+            entry.dwSize = ctypes.sizeof(_ProcessEntry32W)
+            ctypes.set_last_error(0)
+            has_entry = bool(process_first(snapshot, ctypes.byref(entry)))
+            if not has_entry and ctypes.get_last_error() != 18:
+                raise OSError(ctypes.get_last_error(), "Process32FirstW failed")
+            while has_entry:
+                if str(entry.szExeFile).casefold() == "matstudio.exe":
+                    process_ids.add(int(entry.th32ProcessID))
+                ctypes.set_last_error(0)
+                has_entry = bool(process_next(snapshot, ctypes.byref(entry)))
+                if not has_entry and ctypes.get_last_error() not in {0, 18}:
+                    raise OSError(ctypes.get_last_error(), "Process32NextW failed")
+        finally:
+            close_succeeded = bool(close_handle(snapshot))
+        if not close_succeeded:
+            raise OSError(ctypes.get_last_error(), "CloseHandle failed")
+
+        material_window_handles: set[int] = set()
+        enum_callback_failed = False
+
+        @enum_window_callback_type
+        def collect_materials_studio_windows(
+            candidate_hwnd: wintypes.HWND,
+            _lparam: wintypes.LPARAM,
+        ) -> wintypes.BOOL:
+            nonlocal enum_callback_failed
+            try:
+                if not bool(is_window_visible(candidate_hwnd)):
+                    return True
+                candidate_pid = wintypes.DWORD()
+                if not get_window_thread_process_id(
+                    candidate_hwnd, ctypes.byref(candidate_pid)
+                ):
+                    enum_callback_failed = True
+                    return False
+                if int(candidate_pid.value) in process_ids:
+                    candidate_handle = int(
+                        getattr(candidate_hwnd, "value", candidate_hwnd) or 0
+                    )
+                    material_window_handles.add(candidate_handle)
+                return True
+            except Exception:
+                enum_callback_failed = True
+                return False
+
+        ctypes.set_last_error(0)
+        enum_succeeded = bool(enum_windows(collect_materials_studio_windows, 0))
+        if not enum_succeeded or enum_callback_failed:
+            raise OSError(ctypes.get_last_error(), "EnumWindows failed")
+        sorted_process_ids = sorted(process_ids)
+        sorted_window_handles = sorted(material_window_handles)
+        identity.update(
+            {
+                "session_enumeration_succeeded": True,
+                "process_count": len(sorted_process_ids),
+                "window_count": len(sorted_window_handles),
+                "materials_studio_process_ids": sorted_process_ids,
+                "materials_studio_window_handles": sorted_window_handles,
+                "target_pid_is_materials_studio": (
+                    int(process_id.value) in process_ids
+                ),
+                "target_window_is_materials_studio": (
+                    handle in material_window_handles
+                ),
+            }
+        )
+    except Exception:
+        # A partial Toolhelp/EnumWindows observation is not permission to send
+        # WM_COMMAND.  Preserve the exact HWND fields and leave cardinalities
+        # unknown so the strict backend gate fails closed.
+        pass
+    return identity
+
+
 def _default_native_command_sender(window_handle: int, command_id: int) -> None:
     if os.name != "nt":
         raise UiaReplayError("Native commands are available only on Windows.")
@@ -664,6 +940,500 @@ def _default_native_command_sender(window_handle: int, command_id: int) -> None:
         ctypes.c_void_p(window_handle), 0x0111, int(command_id), 0
     )
     del result
+
+
+def _default_fit_command_sender(window_handle: int, command_id: int) -> None:
+    """Send only the Fit command with a bounded native call.
+
+    Other replay transactions deliberately keep their existing synchronous
+    sender because their cleanup state machines reconcile native commands in a
+    different way.  A timeout here is conservatively treated as a possible
+    side effect by :meth:`execute_fit_to_view`.
+    """
+
+    if os.name != "nt":
+        raise UiaReplayError("Native commands are available only on Windows.")
+    result_value = ctypes.c_size_t()
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    send_message_timeout = user32.SendMessageTimeoutW
+    send_message_timeout.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+        ctypes.c_uint,
+        ctypes.c_uint,
+        ctypes.POINTER(ctypes.c_size_t),
+    )
+    send_message_timeout.restype = ctypes.c_ssize_t
+    ctypes.set_last_error(0)
+    delivered = send_message_timeout(
+        ctypes.c_void_p(window_handle),
+        0x0111,
+        int(command_id),
+        0,
+        0x0001 | 0x0002,
+        NATIVE_COMMAND_TIMEOUT_MILLISECONDS,
+        ctypes.byref(result_value),
+    )
+    if not delivered:
+        error_code = int(ctypes.get_last_error())
+        raise UiaReplayError(
+            "The bounded native Materials Studio command timed out or failed "
+            f"(command_id={command_id}, error_code={error_code})."
+        )
+
+
+def _fit_probe_runtime_paths() -> dict[str, Any]:
+    helper_path = Path(__file__).resolve().with_name("gui_fit_probe.py")
+    dependency_module_path = Path(__file__).resolve()
+    base_executable = Path(
+        str(getattr(sys, "_base_executable", None) or sys.executable)
+    ).resolve()
+    trusted_import_root = Path(__file__).resolve().parent.parent
+    dependency_root = Path(sysconfig.get_paths()["purelib"]).resolve()
+    dependency_roots = [
+        dependency_root,
+        *(dependency_root / relative for relative in ("win32", "win32/lib", "pythonwin")),
+    ]
+    dependency_roots = [path.resolve() for path in dependency_roots if path.is_dir()]
+    dependency_dll_roots = [
+        path.resolve()
+        for path in (dependency_root / "pywin32_system32",)
+        if path.is_dir()
+    ]
+    if not helper_path.is_file():
+        raise FitProbeIsolationError(
+            f"The trusted Fit probe module is unavailable: {helper_path}"
+        )
+    if not base_executable.is_file():
+        raise FitProbeIsolationError(
+            f"The direct Python interpreter is unavailable: {base_executable}"
+        )
+    if not trusted_import_root.is_dir() or dependency_root not in dependency_roots:
+        raise FitProbeIsolationError(
+            "The trusted package or dependency import root is unavailable."
+        )
+    return {
+        "helper_path": helper_path,
+        "helper_sha256": hashlib.sha256(helper_path.read_bytes()).hexdigest(),
+        "dependency_module_path": dependency_module_path,
+        "dependency_module_sha256": hashlib.sha256(
+            dependency_module_path.read_bytes()
+        ).hexdigest(),
+        "base_executable": base_executable,
+        "trusted_import_root": trusted_import_root,
+        "dependency_roots": dependency_roots,
+        "dependency_dll_roots": dependency_dll_roots,
+    }
+
+
+class _WindowsKillOnCloseJob:
+    """Own one suspended helper process and every descendant it may create."""
+
+    _KILL_ON_JOB_CLOSE = 0x00002000
+    _EXTENDED_LIMIT_INFORMATION = 9
+    _BASIC_ACCOUNTING_INFORMATION = 1
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise FitProbeIsolationError(
+                "The bounded Fit probe process boundary is available only on Windows."
+            )
+        import ctypes.wintypes as wintypes
+
+        class _BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class _ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BasicLimitInformation),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        class _BasicAccountingInformation(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_longlong),
+                ("TotalKernelTime", ctypes.c_longlong),
+                ("ThisPeriodTotalUserTime", ctypes.c_longlong),
+                ("ThisPeriodTotalKernelTime", ctypes.c_longlong),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = (
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+        )
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise FitProbeIsolationError(
+                f"CreateJobObjectW failed (error_code={ctypes.get_last_error()})."
+            )
+        self._kernel32 = kernel32
+        self._handle = handle
+        self._accounting_type = _BasicAccountingInformation
+        self._closed = False
+        limits = _ExtendedLimitInformation()
+        limits.BasicLimitInformation.LimitFlags = self._KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle,
+            self._EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        ):
+            error_code = int(ctypes.get_last_error())
+            self.close()
+            raise FitProbeIsolationError(
+                "Could not enable JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE "
+                f"(error_code={error_code})."
+            )
+
+    def assign_and_resume(self, process: subprocess.Popen[str]) -> None:
+        import ctypes.wintypes as wintypes
+
+        raw_process_handle = getattr(process, "_handle", None)
+        if raw_process_handle is None:
+            raise FitProbeIsolationError(
+                "The suspended Fit helper has no assignable process handle."
+            )
+        process_handle = wintypes.HANDLE(int(raw_process_handle))
+        if not self._kernel32.AssignProcessToJobObject(
+            self._handle, process_handle
+        ):
+            raise FitProbeIsolationError(
+                "AssignProcessToJobObject failed "
+                f"(error_code={ctypes.get_last_error()})."
+            )
+        ntdll = ctypes.WinDLL("ntdll", use_last_error=True)
+        ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+        ntdll.NtResumeProcess.restype = ctypes.c_long
+        status = int(ntdll.NtResumeProcess(process_handle))
+        if status < 0:
+            raise FitProbeIsolationError(
+                f"NtResumeProcess failed (ntstatus={status})."
+            )
+
+    def active_process_count(self) -> int:
+        import ctypes.wintypes as wintypes
+
+        accounting = self._accounting_type()
+        returned = wintypes.DWORD()
+        if not self._kernel32.QueryInformationJobObject(
+            self._handle,
+            self._BASIC_ACCOUNTING_INFORMATION,
+            ctypes.byref(accounting),
+            ctypes.sizeof(accounting),
+            ctypes.byref(returned),
+        ):
+            raise FitProbeCleanupError(
+                "QueryInformationJobObject failed "
+                f"(error_code={ctypes.get_last_error()})."
+            )
+        return int(accounting.ActiveProcesses)
+
+    def verify_empty(self, *, timeout_seconds: float) -> bool:
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        while True:
+            if self.active_process_count() == 0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+
+    def terminate_and_verify(
+        self,
+        process: subprocess.Popen[str],
+        *,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        if not self._kernel32.TerminateJobObject(self._handle, 1):
+            raise FitProbeCleanupError(
+                "TerminateJobObject failed "
+                f"(error_code={ctypes.get_last_error()})."
+            )
+        try:
+            process.wait(timeout=float(timeout_seconds))
+        except Exception as exc:
+            raise FitProbeCleanupError(
+                "The terminated Fit helper root process did not exit."
+            ) from exc
+        if not self.verify_empty(timeout_seconds=timeout_seconds):
+            raise FitProbeCleanupError(
+                "The terminated Fit helper job still has active descendants."
+            )
+
+    def close(self) -> None:
+        if not self._closed:
+            if not self._kernel32.CloseHandle(self._handle):
+                raise FitProbeCleanupError(
+                    "CloseHandle failed for the Fit helper Job Object "
+                    f"(error_code={ctypes.get_last_error()})."
+                )
+            self._closed = True
+
+
+def _launch_fit_probe_process(
+    command: list[str],
+    *,
+    environment: dict[str, str],
+    cwd: Path,
+) -> tuple[subprocess.Popen[str], _WindowsKillOnCloseJob]:
+    job = _WindowsKillOnCloseJob()
+    creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(
+        getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
+    )
+    process: subprocess.Popen[str] | None = None
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=environment,
+            cwd=str(cwd),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        job.assign_and_resume(process)
+        return process, job
+    except Exception as exc:
+        cleanup_error: Exception | None = None
+        if process is not None:
+            try:
+                job.terminate_and_verify(process)
+            except Exception as job_exc:
+                cleanup_error = job_exc
+                if process.poll() is None:
+                    try:
+                        # The process was created suspended.  If assignment to the
+                        # Job Object itself failed, it cannot yet have descendants.
+                        process.kill()
+                        process.wait(timeout=5.0)
+                    except Exception as root_exc:
+                        cleanup_error = root_exc
+        job.close()
+        if process is not None and process.poll() is None:
+            raise FitProbeCleanupError(
+                "The failed isolated Fit helper launch left its suspended root alive."
+            ) from (cleanup_error or exc)
+        raise
+
+
+def _default_bounded_fit_probe_runner(
+    *,
+    window_handle: int,
+    expected_window_title: str,
+    expected_window_pid: int | None = None,
+    expected_document_name: str | None = None,
+    timeout_seconds: float = FIT_TO_VIEW_PROBE_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run the read-only native Fit probe outside the long-lived MCP process.
+
+    Materials Studio 20.1 can indefinitely block a UI Automation provider call.
+    A process boundary is therefore required: a Python thread timeout would leave
+    the COM call alive and could not prove that the read-only preflight stopped.
+    """
+
+    runtime = _fit_probe_runtime_paths()
+    bootstrap = (
+        "import json,os,runpy,sys;"
+        "trusted=sys.argv.pop(1);config=json.loads(sys.argv.pop(1));"
+        "sys.path[:0]=[trusted,*config['import_roots']];"
+        "_msmcp_dll_handles=[os.add_dll_directory(path) "
+        "for path in config['dll_roots']];"
+        "runpy.run_module('material_studio_mcp_server.gui_fit_probe',"
+        "run_name='__main__',alter_sys=True)"
+    )
+    command = [
+        str(runtime["base_executable"]),
+        "-I",
+        "-S",
+        "-B",
+        "-X",
+        "utf8",
+        "-c",
+        bootstrap,
+        str(runtime["trusted_import_root"]),
+        json.dumps(
+            {
+                "import_roots": [
+                    str(path) for path in runtime["dependency_roots"]
+                ],
+                "dll_roots": [
+                    str(path) for path in runtime["dependency_dll_roots"]
+                ],
+            }
+        ),
+        "--window-handle",
+        str(int(window_handle)),
+        "--expected-window-title",
+        str(expected_window_title),
+    ]
+    if expected_window_pid is not None:
+        command.extend(["--expected-window-pid", str(int(expected_window_pid))])
+    if expected_document_name is not None:
+        command.extend(["--expected-document-name", str(expected_document_name)])
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper()
+        not in {
+            "PYTHONBREAKPOINT",
+            "PYTHONHOME",
+            "PYTHONINSPECT",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "PYTHONUSERBASE",
+        }
+    }
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONNOUSERSITE"] = "1"
+    process, job = _launch_fit_probe_process(
+        command,
+        environment=environment,
+        cwd=runtime["trusted_import_root"],
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=float(timeout_seconds))
+    except subprocess.TimeoutExpired as exc:
+        try:
+            job.terminate_and_verify(process, timeout_seconds=5.0)
+        except Exception as cleanup_exc:
+            raise FitProbeCleanupError(
+                "The isolated Fit probe timed out, but its process tree could not "
+                "be proven terminated."
+            ) from cleanup_exc
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+            job.close()
+        raise FitProbeTimeoutError(
+            "The isolated read-only Fit-to-View target probe exceeded "
+            f"{float(timeout_seconds):g} seconds; its complete Job Object process "
+            "tree was terminated and verified empty."
+        ) from exc
+    except Exception:
+        try:
+            job.terminate_and_verify(process, timeout_seconds=5.0)
+        finally:
+            job.close()
+        raise
+    try:
+        job_empty = job.verify_empty(timeout_seconds=2.0)
+    except Exception as exc:
+        try:
+            job.terminate_and_verify(process, timeout_seconds=5.0)
+        except Exception as cleanup_exc:
+            raise FitProbeCleanupError(
+                "The Fit probe root exited, but descendant cleanup could not be "
+                "proven after the Job Object query failed."
+            ) from cleanup_exc
+        finally:
+            job.close()
+        raise FitProbeCleanupError(
+            "The Fit probe Job Object could not prove that all descendants exited."
+        ) from exc
+    if not job_empty:
+        try:
+            job.terminate_and_verify(process, timeout_seconds=5.0)
+        finally:
+            job.close()
+        raise FitProbeCleanupError(
+            "The Fit probe root exited while an unexpected descendant remained."
+        )
+    job.close()
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise UiaReplayError(
+            "The isolated Fit-to-View target probe returned invalid JSON "
+            f"(exit_code={process.returncode}, stderr={stderr[-1000:]!r})."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise UiaReplayError(
+            "The isolated Fit-to-View target probe did not return a JSON object."
+        )
+    payload["helper_exit_code"] = process.returncode
+    if process.returncode != 0 and not payload.get("block_reasons"):
+        payload["block_reasons"] = ["native_fit_probe_helper_failed"]
+    if stderr.strip():
+        payload["helper_stderr_tail"] = stderr[-1000:]
+    return payload
+
+
+def _verify_file_sha256(path: str | Path | None, expected_sha256: str | None) -> str:
+    if path is None:
+        raise UiaReplayError("The installed view registry path is missing.")
+    expected = str(expected_sha256 or "").strip().lower()
+    if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+        raise UiaReplayError("The installed view registry SHA-256 is invalid.")
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise UiaReplayError(f"The installed view registry is unavailable: {resolved}")
+    observed = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if observed != expected:
+        raise UiaReplayError(
+            "The installed view registry changed after Fit-to-View preflight."
+        )
+    return observed
 
 
 def _default_pointer_clicker(x: int, y: int) -> None:
@@ -776,12 +1546,16 @@ class PywinautoViewReplayBackend:
         desktop_factory: Callable[..., Any] | None = None,
         keyboard_sender: Callable[[str], None] | None = None,
         foreground_handle_getter: Callable[[], int | None] | None = None,
+        native_window_identity_getter: Callable[[int], dict[str, Any]] | None = None,
         window_capture_fn: Callable[[int, Path], None] | None = None,
         window_rect_getter: Callable[[int], tuple[int, int, int, int]] | None = None,
         pointer_clicker: Callable[[int, int], None] | None = None,
         native_command_sender: Callable[[int, int], None] | None = None,
+        fit_command_sender: Callable[[int, int], None] | None = None,
         native_menu_reader: Callable[[int], list[dict[str, Any]]] | None = None,
         toolbar_button_reader: Callable[[int], list[dict[str, Any]]] | None = None,
+        fit_probe_runner: Callable[..., dict[str, Any]] | None = None,
+        fit_probe_timeout_seconds: float = FIT_TO_VIEW_PROBE_TIMEOUT_SECONDS,
         sleep_fn: Callable[[float], None] = time.sleep,
         platform_supported: bool | None = None,
     ) -> None:
@@ -790,16 +1564,26 @@ class PywinautoViewReplayBackend:
         self._foreground_handle_getter = (
             foreground_handle_getter or _default_foreground_handle
         )
+        self._native_window_identity_getter = (
+            native_window_identity_getter or _default_native_window_identity
+        )
         self._window_capture = window_capture_fn
         self._window_rect_getter = window_rect_getter or _default_window_rect
         self._pointer_clicker = pointer_clicker or _default_pointer_clicker
         self._native_command_sender = (
             native_command_sender or _default_native_command_sender
         )
+        self._fit_command_sender = fit_command_sender or _default_fit_command_sender
         self._native_menu_reader = native_menu_reader or _default_native_menu_entries
         self._toolbar_button_reader = (
             toolbar_button_reader or _default_toolbar_button_reader
         )
+        self._fit_probe_runner = (
+            fit_probe_runner or _default_bounded_fit_probe_runner
+        )
+        self._fit_probe_timeout_seconds = float(fit_probe_timeout_seconds)
+        if self._fit_probe_timeout_seconds <= 0:
+            raise ValueError("fit_probe_timeout_seconds must be positive")
         self._sleep = sleep_fn
         windows_supported = os.name == "nt" if platform_supported is None else bool(
             platform_supported
@@ -997,6 +1781,392 @@ class PywinautoViewReplayBackend:
             "block_reasons": block_reasons,
         }
 
+    def probe_fit_to_view(
+        self,
+        *,
+        window_handle: int,
+        expected_window_title: str,
+        expected_revision: int,
+        toolbar_contracts: dict[str, dict[str, Any]],
+        command_labels: dict[str, str],
+        expected_window_pid: int | None = None,
+        expected_document_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a bounded, read-only native Fit-to-View target receipt.
+
+        This deliberately does not call :meth:`_inspect_window`: the MS 20.1 UIA
+        provider can hang forever while materializing the full descendant tree.
+        The helper process reads only the exact native wrapper and toolbar, and
+        the parent verifies the complete reviewed live button mapping.
+        """
+
+        base: dict[str, Any] = {
+            "supported": bool(self.supported),
+            "probe_kind": "bounded_native_fit_target",
+            "observed_at": _utc_now(),
+            "expected_revision": expected_revision,
+            "expected_window_handle": window_handle,
+            "expected_window_title": expected_window_title,
+            "fit_command_ready": False,
+            "resolved_command_ids": [],
+            "gui_input_performed": False,
+            "structure_modified": False,
+            "coordinate_input_used": False,
+            "pointer_input_used": False,
+            "accessibility_tree_enumerated": False,
+            "probe_process_timeout_seconds": self._fit_probe_timeout_seconds,
+        }
+        if not self.supported:
+            return {
+                **base,
+                "unavailable_reason": self.unavailable_reason,
+                "block_reasons": ["local_uia_backend_unavailable"],
+            }
+
+        reasons: list[str] = []
+        contract = toolbar_contracts.get(FIT_TO_VIEW_TOOLBAR_NAME)
+        entries = list(contract.get("entries") or []) if isinstance(contract, dict) else []
+        if len(entries) != len(VIEWER_TOOLBAR_NATIVE_COMMAND_IDS):
+            reasons.append("fit_to_view_toolbar_contract_count_mismatch")
+        elif entries[FIT_TO_VIEW_TOOLBAR_CHILD_INDEX] != (
+            "tool",
+            FIT_TO_VIEW_COMMAND_ID,
+        ):
+            reasons.append("fit_to_view_toolbar_contract_position_mismatch")
+        if command_labels.get(FIT_TO_VIEW_COMMAND_ID) != FIT_TO_VIEW_CONTROL_NAME:
+            reasons.append("fit_to_view_command_label_mismatch")
+        if window_handle <= 0:
+            reasons.append("fit_to_view_window_handle_invalid")
+        if expected_window_pid is None or int(expected_window_pid) <= 0:
+            reasons.append("fit_to_view_expected_window_pid_missing")
+        if not str(expected_document_name or "").strip():
+            reasons.append("fit_to_view_expected_document_name_missing")
+        if reasons:
+            return {**base, "block_reasons": reasons}
+
+        try:
+            raw = self._fit_probe_runner(
+                window_handle=window_handle,
+                expected_window_title=expected_window_title,
+                expected_window_pid=expected_window_pid,
+                expected_document_name=expected_document_name,
+                timeout_seconds=self._fit_probe_timeout_seconds,
+            )
+        except FitProbeTimeoutError as exc:
+            return {
+                **base,
+                "probe_timed_out": True,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "block_reasons": ["native_fit_probe_timed_out"],
+            }
+        except Exception as exc:
+            return {
+                **base,
+                "probe_timed_out": False,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "block_reasons": ["native_fit_probe_failed"],
+            }
+
+        if not isinstance(raw, dict):
+            return {
+                **base,
+                "error": "Native Fit probe did not return an object.",
+                "block_reasons": ["native_fit_probe_invalid_receipt"],
+            }
+        try:
+            runtime_expectations = _fit_probe_runtime_paths()
+        except Exception as exc:
+            return {
+                **base,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "block_reasons": ["native_fit_probe_runtime_identity_unavailable"],
+            }
+        reasons.extend(str(item) for item in raw.get("block_reasons") or [])
+        window = raw.get("window") if isinstance(raw.get("window"), dict) else {}
+        mdi_client = (
+            raw.get("mdi_client")
+            if isinstance(raw.get("mdi_client"), dict)
+            else {}
+        )
+        toolbar = raw.get("toolbar") if isinstance(raw.get("toolbar"), dict) else {}
+        probe_runtime = (
+            raw.get("probe_runtime")
+            if isinstance(raw.get("probe_runtime"), dict)
+            else {}
+        )
+        rows = raw.get("toolbar_buttons")
+        if not isinstance(rows, list):
+            rows = []
+
+        def positive_native_handle(value: Any) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+        if raw.get("schema_version") != FIT_PROBE_SCHEMA_VERSION:
+            reasons.append("native_fit_probe_schema_mismatch")
+        if raw.get("kind") != FIT_PROBE_KIND:
+            reasons.append("native_fit_probe_kind_mismatch")
+        if raw.get("helper_exit_code") != 0:
+            reasons.append("native_fit_probe_helper_exit_failed")
+        if raw.get("supported") is not True:
+            reasons.append("native_fit_probe_not_supported")
+        if raw.get("read_only") is not True:
+            reasons.append("native_fit_probe_not_read_only")
+        if raw.get("gui_input_performed") is not False:
+            reasons.append("native_fit_probe_reported_gui_input")
+        if raw.get("ok") is not True:
+            reasons.append("native_fit_probe_not_ok")
+        if raw.get("safe_for_fit_to_view_invoke") is not True:
+            reasons.append("native_fit_probe_not_safe")
+        if raw.get("window_handle") != int(window_handle):
+            reasons.append("native_fit_probe_requested_handle_mismatch")
+        if raw.get("expected_window_title") != expected_window_title:
+            reasons.append("native_fit_probe_expected_title_mismatch")
+        if raw.get("expected_window_pid") != int(expected_window_pid):
+            reasons.append("native_fit_probe_expected_pid_mismatch")
+        if raw.get("expected_document_name") != expected_document_name:
+            reasons.append("native_fit_probe_expected_document_mismatch")
+
+        expected_helper_path = Path(runtime_expectations["helper_path"]).resolve()
+        expected_executable = Path(runtime_expectations["base_executable"]).resolve()
+        try:
+            observed_helper_path = Path(str(probe_runtime["module_path"])).resolve()
+            observed_executable = Path(
+                str(probe_runtime["python_executable"])
+            ).resolve()
+        except (KeyError, OSError, TypeError, ValueError):
+            observed_helper_path = Path(".")
+            observed_executable = Path(".")
+            reasons.append("native_fit_probe_runtime_identity_invalid")
+        if os.path.normcase(str(observed_helper_path)) != os.path.normcase(
+            str(expected_helper_path)
+        ):
+            reasons.append("native_fit_probe_module_path_mismatch")
+        if probe_runtime.get("module_sha256") != runtime_expectations["helper_sha256"]:
+            reasons.append("native_fit_probe_module_sha256_mismatch")
+        try:
+            observed_dependency_path = Path(
+                str(probe_runtime["dependency_module_path"])
+            ).resolve()
+        except (KeyError, OSError, TypeError, ValueError):
+            observed_dependency_path = Path(".")
+            reasons.append("native_fit_probe_dependency_identity_invalid")
+        if os.path.normcase(str(observed_dependency_path)) != os.path.normcase(
+            str(runtime_expectations["dependency_module_path"])
+        ):
+            reasons.append("native_fit_probe_dependency_path_mismatch")
+        if (
+            probe_runtime.get("dependency_module_sha256")
+            != runtime_expectations["dependency_module_sha256"]
+        ):
+            reasons.append("native_fit_probe_dependency_sha256_mismatch")
+        if probe_runtime.get("package_version") != __version__:
+            reasons.append("native_fit_probe_package_version_mismatch")
+        if os.path.normcase(str(observed_executable)) != os.path.normcase(
+            str(expected_executable)
+        ):
+            reasons.append("native_fit_probe_python_executable_mismatch")
+        if probe_runtime.get("isolated_mode") is not True:
+            reasons.append("native_fit_probe_isolated_mode_missing")
+        if probe_runtime.get("no_site_mode") is not True:
+            reasons.append("native_fit_probe_no_site_mode_missing")
+
+        if window.get("handle") != window_handle:
+            reasons.append("native_fit_probe_window_handle_mismatch")
+        if window.get("title") != expected_window_title:
+            reasons.append("native_fit_probe_window_title_mismatch")
+        if (
+            expected_window_pid is not None
+            and window.get("process_id") != int(expected_window_pid)
+        ):
+            reasons.append("native_fit_probe_window_pid_mismatch")
+        if window.get("is_foreground") is not True:
+            reasons.append("native_fit_probe_window_not_foreground")
+        if window.get("visible") is not True:
+            reasons.append("native_fit_probe_window_not_visible")
+        if window.get("enabled") is not True:
+            reasons.append("native_fit_probe_window_disabled")
+        if window.get("minimized") is True:
+            reasons.append("native_fit_probe_window_minimized")
+        if not str(window.get("class_name") or "").strip():
+            reasons.append("native_fit_probe_window_class_missing")
+        if not positive_native_handle(mdi_client.get("handle")):
+            reasons.append("native_fit_probe_mdi_client_missing")
+        if mdi_client.get("class_name") != "MDIClient":
+            reasons.append("native_fit_probe_mdi_client_class_mismatch")
+        if mdi_client.get("process_id") != int(expected_window_pid):
+            reasons.append("native_fit_probe_mdi_client_pid_mismatch")
+        if mdi_client.get("visible") is not True:
+            reasons.append("native_fit_probe_mdi_client_not_visible")
+        if mdi_client.get("enabled") is not True:
+            reasons.append("native_fit_probe_mdi_client_disabled")
+        if toolbar.get("control_id") != 12122:
+            reasons.append("native_fit_probe_toolbar_control_id_mismatch")
+        if not positive_native_handle(toolbar.get("handle")):
+            reasons.append("native_fit_probe_toolbar_handle_invalid")
+        if toolbar.get("class_name") != "ToolbarWindow32":
+            reasons.append("native_fit_probe_toolbar_class_mismatch")
+        if toolbar.get("title") != FIT_TO_VIEW_TOOLBAR_NAME:
+            reasons.append("native_fit_probe_toolbar_title_mismatch")
+        if toolbar.get("visible") is not True:
+            reasons.append("native_fit_probe_toolbar_not_visible")
+        if toolbar.get("enabled") is not True:
+            reasons.append("native_fit_probe_toolbar_disabled")
+        if toolbar.get("process_id") != int(expected_window_pid):
+            reasons.append("native_fit_probe_toolbar_pid_mismatch")
+        active_document = (
+            raw.get("active_document")
+            if isinstance(raw.get("active_document"), dict)
+            else {}
+        )
+        active_viewport = (
+            raw.get("active_viewport")
+            if isinstance(raw.get("active_viewport"), dict)
+            else {}
+        )
+        if expected_document_name is not None:
+            allowed_document_titles = {
+                str(expected_document_name),
+                f"{expected_document_name}*",
+                f"{expected_document_name} *",
+            }
+            if active_document.get("title") not in allowed_document_titles:
+                reasons.append("native_fit_probe_active_document_mismatch")
+        if not positive_native_handle(active_document.get("handle")):
+            reasons.append("native_fit_probe_active_document_missing")
+        if active_document.get("process_id") != int(expected_window_pid):
+            reasons.append("native_fit_probe_active_document_pid_mismatch")
+        if active_document.get("visible") is not True:
+            reasons.append("native_fit_probe_active_document_not_visible")
+        if active_document.get("enabled") is not True:
+            reasons.append("native_fit_probe_active_document_disabled")
+        if active_viewport.get("class_name") != VIEWPORT_CLASS_NAME:
+            reasons.append("native_fit_probe_active_viewport_missing")
+        if not positive_native_handle(active_viewport.get("handle")):
+            reasons.append("native_fit_probe_active_viewport_handle_missing")
+        if active_viewport.get("process_id") != int(expected_window_pid):
+            reasons.append("native_fit_probe_active_viewport_pid_mismatch")
+        if active_viewport.get("visible") is not True:
+            reasons.append("native_fit_probe_active_viewport_not_visible")
+        if active_viewport.get("enabled") is not True:
+            reasons.append("native_fit_probe_active_viewport_disabled")
+
+        viewport_candidates = raw.get("viewport_candidates")
+        if not isinstance(viewport_candidates, list):
+            viewport_candidates = []
+        if (
+            len(viewport_candidates) != 1
+            or not isinstance(viewport_candidates[0], dict)
+            or not positive_native_handle(viewport_candidates[0].get("handle"))
+            or viewport_candidates[0].get("handle") != active_viewport.get("handle")
+            or viewport_candidates[0].get("process_id") != int(expected_window_pid)
+        ):
+            reasons.append("native_fit_probe_viewport_candidates_mismatch")
+        toolbar_candidates = raw.get("toolbar_candidates")
+        if not isinstance(toolbar_candidates, list):
+            toolbar_candidates = []
+        if (
+            len(toolbar_candidates) != 1
+            or not isinstance(toolbar_candidates[0], dict)
+            or not positive_native_handle(toolbar_candidates[0].get("handle"))
+            or toolbar_candidates[0].get("handle") != toolbar.get("handle")
+            or toolbar_candidates[0].get("process_id") != int(expected_window_pid)
+        ):
+            reasons.append("native_fit_probe_toolbar_candidates_mismatch")
+
+        normalized_rows: list[dict[str, Any]] = []
+        if len(rows) != len(VIEWER_TOOLBAR_NATIVE_COMMAND_IDS):
+            reasons.append("native_fit_probe_toolbar_button_count_mismatch")
+        else:
+            try:
+                normalized_rows = [
+                    {
+                        "index": int(row["index"]),
+                        "command_id": int(row["command_id"]),
+                        "style": int(row["style"]),
+                        "state": int(row["state"]),
+                    }
+                    for row in rows
+                    if isinstance(row, dict)
+                ]
+            except (KeyError, TypeError, ValueError):
+                reasons.append("native_fit_probe_toolbar_button_rows_invalid")
+            if len(normalized_rows) != len(rows):
+                reasons.append("native_fit_probe_toolbar_button_rows_invalid")
+
+        if normalized_rows:
+            indexes = tuple(row["index"] for row in normalized_rows)
+            commands = tuple(row["command_id"] for row in normalized_rows)
+            styles = tuple(row["style"] for row in normalized_rows)
+            if indexes != tuple(range(len(VIEWER_TOOLBAR_NATIVE_COMMAND_IDS))):
+                reasons.append("native_fit_probe_toolbar_button_index_mismatch")
+            if commands != VIEWER_TOOLBAR_NATIVE_COMMAND_IDS:
+                reasons.append("native_fit_probe_toolbar_command_sequence_mismatch")
+            if styles != VIEWER_TOOLBAR_NATIVE_STYLES:
+                reasons.append("native_fit_probe_toolbar_style_sequence_mismatch")
+            for index, row in enumerate(normalized_rows):
+                if index == 4:
+                    if row["state"] != 0:
+                        reasons.append(
+                            "native_fit_probe_toolbar_separator_state_mismatch"
+                        )
+                    continue
+                if row["state"] not in {4, 5}:
+                    reasons.append(
+                        f"native_fit_probe_toolbar_button_{index}_state_unreviewed"
+                    )
+            if normalized_rows[FIT_TO_VIEW_TOOLBAR_CHILD_INDEX]["state"] != 4:
+                reasons.append("native_fit_probe_fit_button_state_mismatch")
+
+        reasons = list(dict.fromkeys(reasons))
+        ready = not reasons
+        fit_row = (
+            normalized_rows[FIT_TO_VIEW_TOOLBAR_CHILD_INDEX]
+            if len(normalized_rows) > FIT_TO_VIEW_TOOLBAR_CHILD_INDEX
+            else None
+        )
+        return {
+            **base,
+            "supported": True,
+            "unavailable_reason": None,
+            "probe_timed_out": False,
+            "window": window or None,
+            "mdi_client": mdi_client or None,
+            "toolbar": toolbar or None,
+            "toolbar_candidates": toolbar_candidates,
+            "toolbar_buttons": normalized_rows,
+            "probe_runtime": probe_runtime or None,
+            "active_document": active_document or None,
+            "active_viewport": active_viewport or None,
+            "viewport_candidates": viewport_candidates,
+            "helper_exit_code": raw.get("helper_exit_code"),
+            "live_toolbar_mapping_verified": ready,
+            "fit_command_ready": ready,
+            "fit_command": (
+                {
+                    "command_id": FIT_TO_VIEW_COMMAND_ID,
+                    "numeric_command_id": VIEWER_FIT_COMMAND_ID,
+                    "target_kind": "verified_native_toolbar_command",
+                    "invocation_method": (
+                        "bounded_wm_command_after_live_toolbar_mapping_verification"
+                    ),
+                    "toolbar_name": FIT_TO_VIEW_TOOLBAR_NAME,
+                    "toolbar_control_id": 12122,
+                    "toolbar_handle": toolbar.get("handle"),
+                    "zero_based_child_index": FIT_TO_VIEW_TOOLBAR_CHILD_INDEX,
+                    "native_button": fit_row,
+                    "full_button_mapping_verified": ready,
+                    "accessibility_tree_required": False,
+                }
+                if ready
+                else None
+            ),
+            "resolved_command_ids": [FIT_TO_VIEW_COMMAND_ID] if ready else [],
+            "block_reasons": reasons,
+        }
+
     def execute_standard_recipe(
         self,
         *,
@@ -1163,8 +2333,17 @@ class PywinautoViewReplayBackend:
         toolbar_contracts: dict[str, dict[str, Any]],
         command_labels: dict[str, str],
         registry_sha256: str | None = None,
+        registry_path: str | Path | None = None,
+        expected_revision: int | None = None,
+        expected_window_pid: int | None = None,
+        expected_document_name: str | None = None,
+        expected_project_id: str | None = None,
+        expected_structure_binding: dict[str, Any] | None = None,
+        expected_structure_proof: dict[str, Any] | None = None,
+        pre_input_gate: Callable[[], dict[str, Any]] | None = None,
+        final_pre_dispatch_gate: Callable[[], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Invoke Fit-to-View after a fresh, exact-window UIA preflight."""
+        """Invoke Fit-to-View after a fresh, bounded native preflight."""
 
         started_at = _utc_now()
         receipt: dict[str, Any] = {
@@ -1173,8 +2352,13 @@ class PywinautoViewReplayBackend:
             "started_at": started_at,
             "window_handle": window_handle,
             "expected_window_title": expected_window_title,
+            "expected_project_id": expected_project_id,
+            "expected_revision": expected_revision,
+            "expected_structure_binding": expected_structure_binding,
+            "expected_structure_proof": expected_structure_proof,
             "command_id": FIT_TO_VIEW_COMMAND_ID,
             "registry_sha256": registry_sha256,
+            "registry_path": str(registry_path) if registry_path is not None else None,
             "execution_succeeded": False,
             "failure_phase": "preflight",
             "gui_input_performed": False,
@@ -1183,6 +2367,9 @@ class PywinautoViewReplayBackend:
             "coordinate_input_used": False,
             "pointer_input_used": False,
             "modifier_keys": [],
+            "gui_input_attempted": False,
+            "side_effect_may_have_occurred": False,
+            "automatic_retry_allowed": True,
         }
         try:
             if not self.supported:
@@ -1198,51 +2385,264 @@ class PywinautoViewReplayBackend:
             }
             fit_labels = {FIT_TO_VIEW_COMMAND_ID: command_labels[FIT_TO_VIEW_COMMAND_ID]}
             self._require_foreground(window_handle)
-            snapshot = self._inspect_window(
+            preflight = self.probe_fit_to_view(
                 window_handle=window_handle,
                 expected_window_title=expected_window_title,
+                expected_revision=(
+                    int(expected_revision) if expected_revision is not None else -1
+                ),
                 toolbar_contracts=viewer_contracts,
                 command_labels=fit_labels,
+                expected_window_pid=expected_window_pid,
+                expected_document_name=expected_document_name,
             )
-            if snapshot["block_reasons"]:
+            receipt["preflight_probe"] = preflight
+            if preflight.get("fit_command_ready") is not True:
                 raise UiaReplayError(
-                    "Fresh UIA tree failed the Fit-to-View contract: "
-                    + ", ".join(snapshot["block_reasons"])
+                    "Fresh bounded native probe failed the Fit-to-View contract: "
+                    + ", ".join(preflight.get("block_reasons") or [])
                 )
-            fit_wrapper, fit_receipt = self._resolve_toolbar_command_target(
-                snapshot=snapshot,
-                toolbar_contracts=viewer_contracts,
-                command_labels=fit_labels,
-                toolbar_name=FIT_TO_VIEW_TOOLBAR_NAME,
-                command_id=FIT_TO_VIEW_COMMAND_ID,
-                expected_child_index=FIT_TO_VIEW_TOOLBAR_CHILD_INDEX,
+            receipt["fit_command"] = preflight.get("fit_command")
+            if pre_input_gate is not None:
+                gate_receipt = pre_input_gate()
+                receipt["immediate_pre_input_gate"] = gate_receipt
+                if not isinstance(gate_receipt, dict):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate returned no receipt."
+                    )
+                gate_window = (
+                    gate_receipt.get("target_window")
+                    if isinstance(gate_receipt.get("target_window"), dict)
+                    else {}
+                )
+                if gate_receipt.get("execution_ready") is not True:
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate is blocked: "
+                        + ", ".join(gate_receipt.get("block_reasons") or [])
+                    )
+                if (
+                    expected_project_id is not None
+                    and gate_receipt.get("project_id") != expected_project_id
+                ):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate changed project identity."
+                    )
+                if (
+                    expected_revision is not None
+                    and gate_receipt.get("revision") != int(expected_revision)
+                ):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate changed revision identity."
+                    )
+                if gate_receipt.get("single_window_policy_ok") is not True:
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate lost single-window safety."
+                    )
+                if (
+                    gate_receipt.get("process_count") != 1
+                    or gate_receipt.get("window_count") != 1
+                ):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate no longer has exactly one "
+                        "Materials Studio process and window."
+                    )
+                if gate_receipt.get("native_probe_performed") is not False:
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate must not rerun the bounded "
+                        "native helper."
+                    )
+                if (
+                    gate_window.get("handle") != int(window_handle)
+                    or gate_window.get("title") != expected_window_title
+                    or gate_window.get("pid") != int(expected_window_pid or -1)
+                    or gate_window.get("is_foreground") is not True
+                ):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate changed the target window."
+                    )
+                gate_metadata = (
+                    gate_receipt.get("target_wrapper_metadata")
+                    if isinstance(
+                        gate_receipt.get("target_wrapper_metadata"), dict
+                    )
+                    else {}
+                )
+                if (
+                    gate_metadata.get("wrapper_provenance_status")
+                    != "verified_revision_wrapper"
+                    or gate_metadata.get("wrapper_workspace_matches_controller")
+                    is not True
+                    or gate_metadata.get("source_inside_wrapper_workspace") is not True
+                    or gate_metadata.get("project_id") != expected_project_id
+                    or gate_metadata.get("revision") != expected_revision
+                    or gate_metadata.get("document_name") != expected_document_name
+                ):
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate changed wrapper provenance "
+                        "or source identity."
+                    )
+                gate_binding = (
+                    gate_receipt.get("structure_binding")
+                    if isinstance(gate_receipt.get("structure_binding"), dict)
+                    else {}
+                )
+                if gate_binding.get("verified") is not True:
+                    raise UiaReplayError(
+                        "The immediate controller Fit gate lost the canonical "
+                        "structure-artifact binding."
+                    )
+                gate_binding_identity = gate_binding.get("identity")
+                if (
+                    not isinstance(expected_structure_binding, dict)
+                    or not expected_structure_binding
+                    or not isinstance(gate_binding_identity, dict)
+                    or gate_binding_identity != expected_structure_binding
+                ):
+                    raise UiaReplayError(
+                        "The canonical Fit structure binding changed after the "
+                        "bounded native probe."
+                    )
+            if final_pre_dispatch_gate is not None:
+                final_gate_receipt = final_pre_dispatch_gate()
+                receipt["final_pre_dispatch_gate"] = final_gate_receipt
+                if not isinstance(final_gate_receipt, dict):
+                    raise UiaReplayError(
+                        "The final Fit proof gate returned no receipt."
+                    )
+                final_gate_window = (
+                    final_gate_receipt.get("target_window")
+                    if isinstance(final_gate_receipt.get("target_window"), dict)
+                    else {}
+                )
+                final_lock = (
+                    final_gate_receipt.get("execution_lock")
+                    if isinstance(final_gate_receipt.get("execution_lock"), dict)
+                    else {}
+                )
+                if final_gate_receipt.get("execution_ready") is not True:
+                    raise UiaReplayError(
+                        "The final Fit proof gate is blocked: "
+                        + ", ".join(final_gate_receipt.get("block_reasons") or [])
+                    )
+                if (
+                    final_gate_receipt.get("project_id") != expected_project_id
+                    or final_gate_receipt.get("revision") != expected_revision
+                    or final_gate_receipt.get("current_revision")
+                    != expected_revision
+                    or final_gate_receipt.get("process_count") != 1
+                    or final_gate_receipt.get("window_count") != 1
+                    or final_gate_receipt.get("single_window_policy_ok") is not True
+                ):
+                    raise UiaReplayError(
+                        "The final Fit proof gate changed session identity."
+                    )
+                if (
+                    final_gate_window.get("handle") != int(window_handle)
+                    or final_gate_window.get("pid") != int(expected_window_pid or -1)
+                    or final_gate_window.get("title") != expected_window_title
+                    or final_gate_window.get("is_foreground") is not True
+                ):
+                    raise UiaReplayError(
+                        "The final Fit proof gate changed the target window."
+                    )
+                if final_lock.get("active") is not False:
+                    raise UiaReplayError(
+                        "The final Fit proof gate observed an active execution lock."
+                    )
+                if (
+                    not isinstance(expected_structure_proof, dict)
+                    or not expected_structure_proof
+                    or final_gate_receipt.get("proof_identity")
+                    != expected_structure_proof
+                ):
+                    raise UiaReplayError(
+                        "The final Fit proof fingerprint changed before input."
+                    )
+            elif expected_project_id is not None:
+                raise UiaReplayError(
+                    "The final Fit proof gate is required for a project-bound action."
+                )
+
+            registry_verified = _verify_file_sha256(
+                registry_path,
+                registry_sha256,
             )
-            receipt["fit_command"] = fit_receipt
+            receipt["registry_sha256_verified_before_input"] = registry_verified
+            native_identity = self._native_window_identity_getter(window_handle)
+            receipt["pre_dispatch_native_window_identity"] = native_identity
+            if not isinstance(native_identity, dict):
+                raise UiaReplayError(
+                    "The immediate native Fit window identity returned no receipt."
+                )
+            native_process_ids = native_identity.get(
+                "materials_studio_process_ids"
+            )
+            native_window_handles = native_identity.get(
+                "materials_studio_window_handles"
+            )
+            if (
+                native_identity.get("is_window") is not True
+                or native_identity.get("handle") != int(window_handle)
+                or native_identity.get("pid") != int(expected_window_pid or -1)
+                or native_identity.get("title") != expected_window_title
+                or native_identity.get("is_foreground") is not True
+                or native_identity.get("is_visible") is not True
+                or native_identity.get("is_enabled") is not True
+                or native_identity.get("is_minimized") is not False
+                or native_identity.get("session_enumeration_succeeded") is not True
+                or native_identity.get("process_count") != 1
+                or native_identity.get("window_count") != 1
+                or not isinstance(native_process_ids, list)
+                or native_process_ids != [int(expected_window_pid or -1)]
+                or native_identity.get("target_pid_is_materials_studio") is not True
+                or not isinstance(native_window_handles, list)
+                or native_window_handles != [int(window_handle)]
+                or native_identity.get("target_window_is_materials_studio") is not True
+            ):
+                raise UiaReplayError(
+                    "The immediate native Fit window or single-session identity "
+                    "changed before input."
+                )
             receipt["failure_phase"] = "fit_to_view_invoke"
-            fit_wrapper.invoke()
+            receipt["gui_input_attempted"] = True
+            receipt["automatic_retry_allowed"] = False
+            self._fit_command_sender(window_handle, VIEWER_FIT_COMMAND_ID)
             receipt["gui_input_performed"] = True
             receipt["gui_modified"] = True
+            receipt["side_effect_may_have_occurred"] = True
             self._sleep(0.2)
             self._require_foreground(window_handle)
-            final_snapshot = self._inspect_window(
+            receipt["registry_sha256_verified_after_input"] = _verify_file_sha256(
+                registry_path,
+                registry_sha256,
+            )
+            final_probe = self.probe_fit_to_view(
                 window_handle=window_handle,
                 expected_window_title=expected_window_title,
+                expected_revision=(
+                    int(expected_revision) if expected_revision is not None else -1
+                ),
                 toolbar_contracts=viewer_contracts,
                 command_labels=fit_labels,
+                expected_window_pid=expected_window_pid,
+                expected_document_name=expected_document_name,
             )
-            if final_snapshot["block_reasons"]:
+            receipt["post_action_probe"] = final_probe
+            if final_probe.get("fit_command_ready") is not True:
                 raise UiaReplayError(
-                    "The post-action UIA tree no longer matches the Fit-to-View contract: "
-                    + ", ".join(final_snapshot["block_reasons"])
+                    "The post-action bounded native probe no longer matches the "
+                    "Fit-to-View contract: "
+                    + ", ".join(final_probe.get("block_reasons") or [])
                 )
             receipt.update(
                 {
                     "execution_succeeded": True,
                     "failure_phase": None,
                     "finished_at": _utc_now(),
-                    "post_action_window_title": final_snapshot["window"]["title"],
-                    "post_action_viewport_observed": final_snapshot.get("viewport")
-                    is not None,
+                    "post_action_window_title": (
+                        (final_probe.get("window") or {}).get("title")
+                    ),
+                    "post_action_live_toolbar_mapping_verified": True,
                     "post_action_observation_required": True,
                 }
             )
@@ -1254,6 +2654,12 @@ class PywinautoViewReplayBackend:
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                     "post_action_observation_required": True,
+                    "side_effect_may_have_occurred": bool(
+                        receipt.get("gui_input_attempted") is True
+                    ),
+                    "automatic_retry_allowed": bool(
+                        receipt.get("gui_input_attempted") is not True
+                    ),
                 }
             )
             return receipt

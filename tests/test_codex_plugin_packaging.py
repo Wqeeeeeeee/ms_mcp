@@ -10,7 +10,9 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
+from material_studio_mcp_server import __version__ as PACKAGE_VERSION
 from material_studio_mcp_server.codex_config import DISABLED_TOOLS, SAFE_ENABLED_TOOLS
+from scripts.build_plugin_release import REQUIRED_WHEEL_RUNTIME_MEMBERS
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +61,7 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
     interface = manifest["interface"]
 
     assert manifest["name"] == PLUGIN_ROOT.name == "materials-studio-mcp"
-    assert manifest["version"] == _project_version() == "0.5.1"
+    assert manifest["version"] == _project_version() == PACKAGE_VERSION == "0.5.2"
     assert manifest["author"] == {
         "name": "Xu kaidong",
         "url": "https://github.com/Wqeeeeeeee",
@@ -93,6 +95,15 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
 
     forbidden_brand_fields = {"composerIcon", "logo", "logoDark", "screenshots"}
     assert forbidden_brand_fields.isdisjoint(interface)
+
+
+def test_native_fit_probe_is_covered_by_the_release_wheel_contract() -> None:
+    member = "material_studio_mcp_server/gui_fit_probe.py"
+    assert REQUIRED_WHEEL_RUNTIME_MEMBERS == frozenset({member})
+    assert (REPO_ROOT / "src" / member).is_file()
+    with (REPO_ROOT / "pyproject.toml").open("rb") as stream:
+        build_config = tomllib.load(stream)["tool"]["hatch"]["build"]
+    assert "src/material_studio_mcp_server/**/*.py" in build_config["include"]
 
 
 def test_manifest_component_paths_are_relative_and_confined() -> None:

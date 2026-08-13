@@ -55,6 +55,15 @@ unstructured shortcut.
 - Do not call `material_studio_gui_loop_stop` as routine cleanup. It is an
   explicit same-session shutdown action, and a stopped PID/HWND/project binding
   must be reviewed before preparing another loop.
+- Treat `material_studio_gui_fit_to_view` as its own preview-first camera
+  transaction. Preview must return a fresh bounded native probe for the exact
+  PID/HWND, active document/viewport, installed registry hash, and complete live
+  3D Viewer toolbar mapping. Execute only the returned confirmation payload.
+  A probe timeout or mismatch performs no GUI input; only that proven
+  pre-dispatch failure may return a Fit retry. A failure after command dispatch
+  must not be retried automatically, and a successful Fit followed by a failed
+  screenshot retries only `material_studio_gui_snapshot`. Fit-to-View never
+  creates or rematerializes a structural revision.
 
 ## Tool boundaries
 

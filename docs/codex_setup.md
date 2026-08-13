@@ -153,8 +153,9 @@ record tool can accept the view.
 
 The example allowlist also includes `material_studio_gui_fit_to_view` with
 `approval_mode="prompt"`. Its default `execution_mode="preview"` verifies the
-exact current wrapper, the installed Fit-to-View toolbar mapping, and a fresh
-UIA tree without sending input. Explicit execute invokes only
+exact current wrapper and installed Fit-to-View toolbar mapping, then runs a
+bounded read-only native Win32 probe in an isolated short-lived helper without
+scanning the full UIA descendant tree or sending input. Explicit execute invokes only
 `cmdViewer3DFitToView` in the existing window, captures before/after screenshots
 by default, and requires the bound structure SHA-256 to remain unchanged. It
 never launches another Materials Studio process or uses blind coordinates.

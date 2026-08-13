@@ -67,7 +67,7 @@ The natural-language route stays in `execution_mode=preview` unless the caller
 passes `execution_mode=execute`. A normality phrase additionally returns the
 read-only `normality_check` and `project_status` receipts. Fit-to-View reuses
 the existing single Materials Studio window and preserves the direct tool's
-UIA and structure-integrity gates.
+bounded native-target, current-wrapper, and structure-integrity gates.
 
 Fit-to-View can also be the final stage of a structural request. For example,
 `Make a 2x1x1 silicon supercell, hot-load it in Materials Studio, and fit the
@@ -78,9 +78,12 @@ verified window, the server invokes Fit-to-View and captures the final viewport
 under the same GUI artifact transaction. The response and persisted report
 carry `post_hotload_fit_to_view`; accept that stage only when `completed=true`
 and `structure_unchanged=true`. With explicit preview, the same request returns
-`status=deferred_until_execute` and performs no GUI input. A blocked framing
-stage reports partial success and an exact retry payload without rebuilding or
-reopening another Materials Studio process. Callers can explicitly set
+`status=deferred_until_execute` and performs no GUI input. A framing stage
+blocked before command dispatch reports partial success and may return an exact
+Fit retry payload without rebuilding or reopening another Materials Studio
+process. After a dispatch attempt or uncertain side effect, automatic Fit retry
+is forbidden and the caller must inspect status/manual-review evidence; if Fit
+succeeded and only the final snapshot failed, retry only that snapshot. Callers can explicitly set
 `fit_to_view_after_open=false` to suppress inferred framing.
 
 The same post-hot-load stage applies to revision-session commands. `Reload the

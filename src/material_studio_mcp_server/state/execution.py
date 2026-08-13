@@ -834,6 +834,13 @@ def inspect_execution_runtime(
         and result_attempt.status != journal_attempt.status
     ):
         issue_codes.append("execution_attempt_result_journal_status_mismatch")
+    if (
+        result_attempt is not None
+        and journal_attempt is not None
+        and result_attempt.attempt_id == journal_attempt.attempt_id
+        and result_attempt != journal_attempt
+    ):
+        issue_codes.append("execution_attempt_result_journal_record_mismatch")
     if result_attempt is not None and not events:
         issue_codes.append("result_execution_attempt_journal_missing")
     if (
@@ -926,6 +933,7 @@ def inspect_execution_runtime(
         "execution_attempt_journal_missing",
         "result_execution_attempt_journal_missing",
         "execution_attempt_result_journal_status_mismatch",
+        "execution_attempt_result_journal_record_mismatch",
         "result_execution_attempt_invalid",
     }
     history_invalid = bool(history_issue_codes.intersection(issue_codes)) or bool(

@@ -1,3 +1,3 @@
-27a3dddc807c95bd8965e009648575215e348c80666ec73e0148c1f830004353  materials-studio-mcp-plugin-0.5.1-windows.zip
-c32984c0abdf01655d6ffe469df37d64e00999ac117e94ca68ac0b0225b92870  materials_studio_mcp-0.5.1-py3-none-any.whl
-5e0d9f7fe3bde0052aba54923f89c51d3af56a753b658dbc12a72f1a2531e03f  release-manifest.json
+f2ddfa0c479c49ee0df96ba5fe12568884bcd0461adef49fa919f3891afb9d2e  materials-studio-mcp-plugin-0.5.2-windows.zip
+7edfc1ba94b5fd54191bb2b58e2ece7b24edbd3dc7303760fd8ea39adffaa7a6  materials_studio_mcp-0.5.2-py3-none-any.whl
+b0d1ba05c19e4fd050f8cd78dc02a601f6b179d8ae459790e21b454b11e576f5  release-manifest.json

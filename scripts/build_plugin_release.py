@@ -69,6 +69,15 @@ EXPECTED_CONSOLE_SCRIPTS = {
     "ms-mcp-protocol-smoke": "material_studio_mcp_server.protocol_smoke:main",
     "ms-mcp-runtime-deploy": "material_studio_mcp_server.runtime_deployment:main",
 }
+REQUIRED_WHEEL_RUNTIME_MEMBERS = frozenset(
+    {
+        "material_studio_mcp_server/gui_fit_probe.py",
+    }
+)
+WHEEL_SOURCE_PACKAGE_DIRECTORIES = (
+    "material_studio_mcp_server",
+    "ms_mcp",
+)
 
 INSTALLER_FILES = (
     "Configure-MS-MCP.bat",
@@ -280,6 +289,53 @@ def _scan_payload_text(archive_path: str, data: bytes, source_tokens: Iterable[s
     for pattern in SECRET_PATTERNS:
         if pattern.search(text):
             raise ReleaseBuildError(f"possible secret material found in {archive_path}")
+
+
+def _load_expected_wheel_package_members(source_root: Path) -> dict[str, bytes]:
+    """Bind every shipped package file to the exact current source-tree bytes."""
+
+    source_directory = _assert_safe_source_path(
+        source_root / "src",
+        source_root,
+        expect_directory=True,
+    )
+    expected: dict[str, bytes] = {}
+    collision_keys: set[str] = set()
+    for package_name in WHEEL_SOURCE_PACKAGE_DIRECTORIES:
+        package_root = _assert_safe_source_path(
+            source_directory / package_name,
+            source_root,
+            expect_directory=True,
+        )
+        for current, dirnames, filenames in os.walk(package_root, followlinks=False):
+            current_path = Path(current)
+            for dirname in list(dirnames):
+                directory = current_path / dirname
+                if dirname.casefold() == "__pycache__":
+                    dirnames.remove(dirname)
+                    continue
+                if _is_link_or_reparse(directory):
+                    raise ReleaseBuildError(
+                        f"links and reparse points are forbidden in wheel source: {directory}"
+                    )
+            for filename in filenames:
+                path = current_path / filename
+                if path.suffix.casefold() in {".pyc", ".pyo"}:
+                    continue
+                resolved = _assert_safe_source_path(path, source_root)
+                archive_path = _validate_archive_path(
+                    resolved.relative_to(source_directory).as_posix()
+                )
+                collision_key = archive_path.casefold()
+                if collision_key in collision_keys:
+                    raise ReleaseBuildError(
+                        f"wheel source contains a case-folded duplicate path: {archive_path}"
+                    )
+                collision_keys.add(collision_key)
+                expected[archive_path] = resolved.read_bytes()
+    if not expected:
+        raise ReleaseBuildError("wheel source packages contain no regular files")
+    return expected
 
 
 def _load_project_metadata(source_root: Path) -> tuple[str, str]:
@@ -501,6 +557,7 @@ def _validate_plugin(source_root: Path, version: str, repository_license: bytes)
 def _validate_wheel(
     wheel_path: Path,
     version: str,
+    source_root: Path,
     source_tokens: Iterable[str],
     repository_license: bytes,
 ) -> bytes:
@@ -566,6 +623,14 @@ def _validate_wheel(
                 entrypoint_candidates.append((normalized, data))
             elif normalized.endswith(".dist-info/RECORD"):
                 record_candidates.append((normalized, data))
+        missing_runtime_members = sorted(
+            REQUIRED_WHEEL_RUNTIME_MEMBERS.difference(member_data)
+        )
+        if missing_runtime_members:
+            raise ReleaseBuildError(
+                "wheel is missing required runtime member(s): "
+                + ", ".join(missing_runtime_members)
+            )
         if len(metadata_candidates) != 1:
             raise ReleaseBuildError("wheel must contain exactly one .dist-info/METADATA file")
         if len(wheel_metadata_candidates) != 1:
@@ -714,6 +779,45 @@ def _validate_wheel(
         for path in (metadata_path, wheel_metadata_candidates[0][0], entrypoint_candidates[0][0], record_path):
             if not path.startswith(expected_dist_info):
                 raise ReleaseBuildError("wheel dist-info directory does not match package version")
+
+        expected_package_members = _load_expected_wheel_package_members(source_root)
+        package_names_casefold = {
+            package_name.casefold()
+            for package_name in WHEEL_SOURCE_PACKAGE_DIRECTORIES
+        }
+        observed_package_members = {
+            path: data
+            for path, data in member_data.items()
+            if PurePosixPath(path).parts
+            and PurePosixPath(path).parts[0].casefold() in package_names_casefold
+        }
+        missing_package_members = sorted(
+            set(expected_package_members).difference(observed_package_members)
+        )
+        extra_package_members = sorted(
+            set(observed_package_members).difference(expected_package_members)
+        )
+        if missing_package_members or extra_package_members:
+            details: list[str] = []
+            if missing_package_members:
+                details.append("missing: " + ", ".join(missing_package_members))
+            if extra_package_members:
+                details.append("extra: " + ", ".join(extra_package_members))
+            raise ReleaseBuildError(
+                "wheel package member set does not match the current source tree ("
+                + "; ".join(details)
+                + ")"
+            )
+        mismatched_package_members = sorted(
+            path
+            for path, expected_data in expected_package_members.items()
+            if observed_package_members[path] != expected_data
+        )
+        if mismatched_package_members:
+            raise ReleaseBuildError(
+                "wheel package bytes do not match the current source tree: "
+                + ", ".join(mismatched_package_members)
+            )
     return wheel_bytes
 
 
@@ -828,6 +932,7 @@ def _release_manifest(
         "version": version,
         "wheel": {
             "path": wheel_payload.archive_path,
+            "required_runtime_members": sorted(REQUIRED_WHEEL_RUNTIME_MEMBERS),
             "sha256": wheel_payload.sha256,
             "size": len(wheel_payload.data),
         },
@@ -902,7 +1007,13 @@ def build_release(
 
     source_tokens = _source_path_tokens(source_root)
     wheel_path = wheel_path.resolve(strict=True)
-    wheel_bytes = _validate_wheel(wheel_path, version, source_tokens, repository_license)
+    wheel_bytes = _validate_wheel(
+        wheel_path,
+        version,
+        source_root,
+        source_tokens,
+        repository_license,
+    )
     payload = _collect_payload(source_root, wheel_bytes, wheel_path.name, source_tokens)
 
     bundle_root = f"materials-studio-mcp-plugin-{version}-windows"

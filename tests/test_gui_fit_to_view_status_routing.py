@@ -323,3 +323,36 @@ def test_live_capabilities_publish_fit_preview_routing_fields() -> None:
     live_summary_fields = diagnostics["live_summary_fields"]
     assert "gui_current_revision_fit_to_view_preview_recommended" in live_summary_fields
     assert "gui_current_revision_payload_hint" in live_summary_fields
+
+
+def test_live_capabilities_publish_bounded_native_fit_contract() -> None:
+    capabilities = server.material_studio_live_capabilities()
+
+    fit_policy = capabilities["gui"]["fit_to_view_policy"]
+    fit_recipe = capabilities["view_replay_automation_policy"][
+        "local_uia_implementation_contract"
+    ]["recipe_classes"]["fit_to_view"]
+
+    assert fit_policy["requires_bounded_native_probe"] is True
+    assert fit_policy["requires_fresh_local_uia_tree_before_invoke"] is False
+    assert fit_policy["uses_invoke_pattern_only"] is False
+    assert fit_policy["uses_uia_descendant_tree"] is False
+    assert fit_policy["native_command_message"] == "WM_COMMAND"
+    assert fit_policy["numeric_command_id"] == 33299
+    assert fit_policy["native_command_timeout_milliseconds"] == 5000
+    for key in (
+        "requires_bounded_native_probe",
+        "probe_process_timeout_seconds",
+        "requires_exact_window_pid_document_and_viewport",
+        "requires_full_live_toolbar_mapping",
+        "uses_uia_descendant_tree",
+        "native_command_message",
+        "numeric_command_id",
+        "native_command_timeout_milliseconds",
+    ):
+        assert fit_policy[key] == fit_recipe[key]
+    assert capabilities["view_replay_automation_policy"][
+        "local_uia_implementation_contract"
+    ]["runtime_support_fields"]["fit_to_view"] == (
+        "gui_status.local_uia_fit_to_view_supported"
+    )

@@ -164,6 +164,48 @@ def test_execution_attempt_lifecycle_is_hash_chained_and_observable(
     ]
 
 
+def test_result_attempt_planned_structure_drift_from_journal_is_history_invalid(
+    tmp_path: Path,
+) -> None:
+    output_dir, started = _begin_attempt(tmp_path)
+    result_path = output_dir / "result_metadata.json"
+    completed = finish_execution_attempt(
+        started["attempt"],
+        current_revision_after_execution=0,
+        current_revision_still_current=True,
+        result_success=True,
+        result_metadata_path=result_path,
+    )
+    publish_terminal_execution_attempt(
+        output_dir,
+        completed.model_dump(mode="json"),
+    )
+    tampered_attempt = completed.model_copy(
+        update={
+            "planned_structure_path": str(output_dir / "alternate_structure.xsd")
+        }
+    )
+    result_metadata = {
+        "success": True,
+        "execution_attempt": tampered_attempt.model_dump(mode="json"),
+    }
+
+    observed = inspect_execution_runtime(
+        output_dir,
+        project_id="execution_state",
+        revision=0,
+        result_metadata=result_metadata,
+        lock_probe=_constant_lock_probe(False),
+    )
+
+    assert observed["status"] == "history_invalid"
+    assert observed["attempt_record_source"] == "journal"
+    assert observed["consistency"]["ok"] is False
+    assert "execution_attempt_result_journal_record_mismatch" in observed[
+        "consistency"
+    ]["issue_codes"]
+
+
 def test_running_attempt_without_active_lock_is_interrupted(tmp_path: Path) -> None:
     output_dir, started = _begin_attempt(tmp_path)
 

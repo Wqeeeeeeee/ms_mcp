@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import csv
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -4589,7 +4590,18 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
     semiconductor_use_cases = _semiconductor_use_case_capabilities()
     semiconductor_carrier_type = _semiconductor_carrier_type_capabilities()
     local_uia_implementation = local_uia_view_replay_implementation_contract()
+    local_uia_runtime_support_fields = dict(
+        local_uia_implementation.get("runtime_support_fields") or {}
+    )
+    local_uia_runtime_support_fields["fit_to_view"] = (
+        "gui_status.local_uia_fit_to_view_supported"
+    )
+    local_uia_implementation["runtime_support_fields"] = (
+        local_uia_runtime_support_fields
+    )
     local_uia_recipe_classes = local_uia_implementation["recipe_classes"]
+    local_uia_fit_to_view = local_uia_recipe_classes["fit_to_view"]
+    local_uia_fit_to_view["native_command_message"] = "WM_COMMAND"
     local_uia_miller = local_uia_recipe_classes["transactional_miller_plane"]
     local_uia_collinear_direction = local_uia_recipe_classes[
         "exact_collinear_crystal_direction"
@@ -8655,8 +8667,34 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "requires_exact_current_revision_wrapper": True,
                 "requires_single_matstudio_process": True,
                 "requires_installed_toolbar_registry_match": True,
-                "requires_fresh_local_uia_tree_before_invoke": True,
-                "uses_invoke_pattern_only": True,
+                "requires_bounded_native_probe": local_uia_fit_to_view.get(
+                    "requires_bounded_native_probe"
+                ),
+                "probe_process_timeout_seconds": local_uia_fit_to_view.get(
+                    "probe_process_timeout_seconds"
+                ),
+                "requires_exact_window_pid_document_and_viewport": (
+                    local_uia_fit_to_view.get(
+                        "requires_exact_window_pid_document_and_viewport"
+                    )
+                ),
+                "requires_full_live_toolbar_mapping": local_uia_fit_to_view.get(
+                    "requires_full_live_toolbar_mapping"
+                ),
+                "requires_fresh_local_uia_tree_before_invoke": False,
+                "uses_invoke_pattern_only": False,
+                "uses_uia_descendant_tree": local_uia_fit_to_view.get(
+                    "uses_uia_descendant_tree"
+                ),
+                "native_command_message": local_uia_fit_to_view.get(
+                    "native_command_message"
+                ),
+                "numeric_command_id": local_uia_fit_to_view.get(
+                    "numeric_command_id"
+                ),
+                "native_command_timeout_milliseconds": local_uia_fit_to_view.get(
+                    "native_command_timeout_milliseconds"
+                ),
                 "blind_coordinates_allowed": False,
                 "keyboard_input_used": False,
                 "structure_mutation_allowed": False,
@@ -9048,7 +9086,8 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             runtime_deployment
         )
         try:
-            gui_status = _gui_controller(None).status()
+            gui = _gui_controller(None)
+            gui_status = _gui_status(gui)
         except Exception as exc:
             gui_status = {"ok": False, "error": str(exc)}
         response["gui_status"] = gui_status
@@ -9221,7 +9260,9 @@ def _live_session_preflight_payload(
     gui_status: dict[str, Any] | None = None
     if include_gui_status:
         try:
-            gui_status = _gui_controller(working_dir).status(
+            gui = _gui_controller(working_dir)
+            gui_status = _gui_status(
+                gui,
                 project_id=latest_project_target.get("project_id"),
                 revision=latest_project_target.get("revision"),
             )
@@ -13668,7 +13709,9 @@ def _implicit_visible_workspace_guard(
     """Block an implicit follow-up when the visible wrapper belongs to another workspace."""
 
     try:
-        gui_status = _gui_controller(str(store.workspace_root)).status(
+        gui = _gui_controller(str(store.workspace_root))
+        gui_status = _gui_status(
+            gui,
             project_id=current_spec.project_id,
             revision=current_spec.revision,
         )
@@ -38222,6 +38265,140 @@ def _gui_controller(working_dir: str | None = None) -> MaterialsStudioGuiControl
     return MaterialsStudioGuiController(working_dir)
 
 
+_FIT_TO_VIEW_PROBE_CAPABILITY_KEYWORDS = (
+    "window_handle",
+    "expected_window_title",
+    "expected_revision",
+    "toolbar_contracts",
+    "command_labels",
+    "expected_window_pid",
+    "expected_document_name",
+)
+
+_FIT_TO_VIEW_EXECUTE_CAPABILITY_KEYWORDS = (
+    "window_handle",
+    "expected_window_title",
+    "toolbar_contracts",
+    "command_labels",
+    "registry_sha256",
+    "registry_path",
+    "expected_revision",
+    "expected_window_pid",
+    "expected_document_name",
+    "expected_project_id",
+    "expected_structure_binding",
+    "expected_structure_proof",
+    "pre_input_gate",
+    "final_pre_dispatch_gate",
+)
+
+
+def _callable_accepts_keyword_contract(
+    candidate: Any,
+    keyword_names: tuple[str, ...],
+) -> bool:
+    """Fail closed when a backend cannot accept the controller's Fit call shape."""
+
+    if not callable(candidate):
+        return False
+    try:
+        inspect.signature(candidate).bind(
+            **{keyword_name: None for keyword_name in keyword_names}
+        )
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _gui_fit_to_view_backend_capability(gui: Any) -> dict[str, Any]:
+    """Report Fit support independently from the generic replay backend flag."""
+
+    backend = getattr(gui, "view_replay_backend", None)
+    backend_supported = bool(getattr(backend, "supported", False))
+    probe = getattr(backend, "probe_fit_to_view", None)
+    execute = getattr(backend, "execute_fit_to_view", None)
+    probe_callable = callable(probe)
+    execute_callable = callable(execute)
+    probe_signature_compatible = _callable_accepts_keyword_contract(
+        probe,
+        _FIT_TO_VIEW_PROBE_CAPABILITY_KEYWORDS,
+    )
+    execute_signature_compatible = _callable_accepts_keyword_contract(
+        execute,
+        _FIT_TO_VIEW_EXECUTE_CAPABILITY_KEYWORDS,
+    )
+    reasons: list[str] = []
+    if not backend_supported:
+        reasons.append("local_uia_backend_unavailable")
+    if not probe_callable:
+        reasons.append("bounded_native_fit_probe_unavailable")
+    elif not probe_signature_compatible:
+        reasons.append("bounded_native_fit_probe_signature_incompatible")
+    if not execute_callable:
+        reasons.append("bounded_native_fit_execute_unavailable")
+    elif not execute_signature_compatible:
+        reasons.append("bounded_native_fit_execute_signature_incompatible")
+    supported = not reasons
+    backend_reason = getattr(backend, "unavailable_reason", None)
+    return {
+        "supported": supported,
+        "backend_supported": backend_supported,
+        "probe_callable": probe_callable,
+        "probe_signature_compatible": probe_signature_compatible,
+        "execute_callable": execute_callable,
+        "execute_signature_compatible": execute_signature_compatible,
+        "block_reasons": reasons,
+        "unavailable_reason": (
+            None
+            if supported
+            else str(backend_reason)
+            if backend_reason
+            else ", ".join(reasons)
+        ),
+    }
+
+
+def _normalize_gui_fit_to_view_status(
+    gui: Any,
+    status: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace generic Fit claims with the dedicated backend contract result."""
+
+    normalized = dict(status)
+    capability = _gui_fit_to_view_backend_capability(gui)
+    fit_supported = capability["supported"] is True
+    normalized["local_uia_fit_to_view_supported"] = fit_supported
+    normalized["local_uia_fit_to_view_unavailable_reason"] = capability.get(
+        "unavailable_reason"
+    )
+    normalized["local_uia_fit_to_view_backend_contract"] = capability
+    advertised = [str(item) for item in normalized.get("capabilities") or []]
+    fit_capability = "execute_fit_to_view_with_local_uia"
+    advertised = [item for item in advertised if item != fit_capability]
+    if fit_supported:
+        advertised.append(fit_capability)
+    normalized["capabilities"] = advertised
+    return normalized
+
+
+def _gui_status(
+    gui: Any,
+    *,
+    project_id: str | None = None,
+    revision: int | None = None,
+) -> dict[str, Any]:
+    """Read GUI status and apply the server's dedicated Fit capability gate."""
+
+    status = (
+        gui.status()
+        if project_id is None and revision is None
+        else gui.status(project_id=project_id, revision=revision)
+    )
+    if not isinstance(status, dict):
+        raise TypeError("Materials Studio GUI status must be a mapping.")
+    return _normalize_gui_fit_to_view_status(gui, status)
+
+
 def _execution_mode(value: ExecutionMode | str) -> ExecutionMode:
     """将值转换为执行模式枚举。"""
     return value if isinstance(value, ExecutionMode) else ExecutionMode(value)
@@ -43275,8 +43452,12 @@ def _compact_live_response(
                 "take_snapshot",
                 "automatic_after_hotload",
                 "execution_ready",
+                "gui_input_attempted",
                 "gui_input_performed",
                 "gui_modified",
+                "side_effect_may_have_occurred",
+                "automatic_retry_allowed",
+                "manual_review_required",
                 "structure_unchanged",
                 "structure_modified",
                 "pre_action_snapshot_path",
@@ -43857,6 +44038,10 @@ def _compact_capabilities_gui_status(value: Any) -> dict[str, Any]:
             "local_uia_view_replay_supported",
             "local_uia_view_replay_unavailable_reason",
             "local_uia_view_replay_view_names",
+            "local_uia_fit_to_view_supported",
+            "local_uia_fit_to_view_unavailable_reason",
+            "local_uia_fit_to_view_command_id",
+            "local_uia_fit_to_view_backend_contract",
             "local_uia_miller_plane_transaction_supported",
             "local_uia_exact_collinear_direction_transaction_supported",
             "local_uia_non_collinear_direction_transaction_supported",
@@ -43960,11 +44145,20 @@ def _compact_capabilities_response(
                         recipe,
                         (
                             "implemented",
+                            "execute_tool",
                             "view_names",
                             "view_name_pattern",
                             "recipe_kind",
                             "eligibility_status",
                             "runtime_gate",
+                            "requires_bounded_native_probe",
+                            "probe_process_timeout_seconds",
+                            "requires_exact_window_pid_document_and_viewport",
+                            "requires_full_live_toolbar_mapping",
+                            "numeric_command_id",
+                            "native_command_timeout_milliseconds",
+                            "uses_uia_descendant_tree",
+                            "native_command_message",
                             "staged_keyboard_recipe",
                             "requires_automation_ready_recipe",
                             "requires_exact_viewport_restoration",
@@ -45714,7 +45908,12 @@ def material_studio_live_project_status(
             response["gui_open"] = latest_gui_open
         if include_gui_status:
             try:
-                response["gui_status"] = _gui_controller(working_dir).status(project_id=project_id, revision=revision)
+                gui = _gui_controller(working_dir)
+                response["gui_status"] = _gui_status(
+                    gui,
+                    project_id=project_id,
+                    revision=revision,
+                )
             except Exception as exc:
                 response["gui_status"] = {"ok": False, "error": str(exc)}
         _attach_castep_convergence_audit(response, store=store, spec=spec)
@@ -47807,7 +48006,8 @@ def material_studio_model_export_view_audit(
             )
             generated = _generate_structured_script(model_spec, store)
             gui = _gui_controller(working_dir)
-            gui_status = gui.status(
+            gui_status = _gui_status(
+                gui,
                 project_id=model_spec.project_id,
                 revision=model_spec.revision,
             )
@@ -47944,7 +48144,8 @@ def material_studio_model_export_view_bundle(
             )
             generated = _generate_structured_script(model_spec, store)
             gui = _gui_controller(working_dir)
-            gui_status = gui.status(
+            gui_status = _gui_status(
+                gui,
                 project_id=model_spec.project_id,
                 revision=model_spec.revision,
             )
@@ -49150,7 +49351,11 @@ def material_studio_live_update_with_patch(
             else {}
         )
         gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=project_id, revision=info.revision)
+        gui_status = _gui_status(
+            gui,
+            project_id=project_id,
+            revision=info.revision,
+        )
         response: dict[str, Any] = {
             "ok": True,
             "workflow": patch_workflow,
@@ -50726,7 +50931,8 @@ def material_studio_castep_run_current(
         gui = _gui_controller(working_dir)
         gui_status: dict[str, Any] | None = None
         if open_in_gui:
-            gui_status = gui.status(
+            gui_status = _gui_status(
+                gui,
                 project_id=base_spec.project_id,
                 revision=base_spec.revision,
             )
@@ -51579,7 +51785,8 @@ def material_studio_castep_relax_current(
         gui = _gui_controller(working_dir)
         gui_status: dict[str, Any] | None = None
         if open_in_gui:
-            gui_status = gui.status(
+            gui_status = _gui_status(
+                gui,
                 project_id=base_spec.project_id,
                 revision=base_spec.revision,
             )
@@ -53570,7 +53777,11 @@ def material_studio_live_modeling_request(
             diff=["create_project"],
         )
         gui = _gui_controller(working_dir)
-        gui_status = gui.status(project_id=model_spec.project_id, revision=info.revision)
+        gui_status = _gui_status(
+            gui,
+            project_id=model_spec.project_id,
+            revision=info.revision,
+        )
         response: dict[str, Any] = {
             "ok": True,
             "workflow": "create",
@@ -54606,6 +54817,111 @@ def _execute_post_hotload_fit_to_view(
         },
         working_dir,
     )
+    snapshot_retry_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_snapshot",
+        {
+            "label": "post_hotload_fit_to_view",
+            "project_id": project_id,
+            "revision": revision,
+        },
+        working_dir,
+    )
+    status_review_payload = _workspace_bound_payload_hint(
+        "material_studio_gui_status",
+        {
+            "project_id": project_id,
+            "revision": revision,
+        },
+        working_dir,
+    )
+
+    def promote_retry_safety(
+        fit_result: dict[str, Any],
+        *,
+        action_completed: bool,
+    ) -> None:
+        """Promote backend dispatch evidence and conservatively gate Fit retries."""
+
+        action_receipt = fit_result.get("action_receipt")
+        if not isinstance(action_receipt, dict):
+            action_receipt = {}
+
+        attempted_values = (
+            action_receipt.get("gui_input_attempted"),
+            fit_result.get("gui_input_attempted"),
+        )
+        if (
+            any(value is True for value in attempted_values)
+            or fit_result.get("gui_input_performed") is True
+            or action_completed
+        ):
+            gui_input_attempted: bool | None = True
+        elif any(value is False for value in attempted_values):
+            gui_input_attempted = False
+        else:
+            gui_input_attempted = None
+
+        side_effect_values = (
+            action_receipt.get("side_effect_may_have_occurred"),
+            fit_result.get("side_effect_may_have_occurred"),
+        )
+        if (
+            any(value is True for value in side_effect_values)
+            or gui_input_attempted is True
+        ):
+            side_effect_may_have_occurred: bool | None = True
+        elif any(value is False for value in side_effect_values):
+            side_effect_may_have_occurred = False
+        else:
+            side_effect_may_have_occurred = None
+
+        automatic_values = (
+            action_receipt.get("automatic_retry_allowed"),
+            fit_result.get("automatic_retry_allowed"),
+        )
+        if any(value is False for value in automatic_values):
+            explicitly_automatic_retry_allowed: bool | None = False
+        elif any(value is True for value in automatic_values):
+            explicitly_automatic_retry_allowed = True
+        else:
+            explicitly_automatic_retry_allowed = None
+
+        legacy_pre_dispatch_block = bool(
+            fit_result.get("status") == "blocked"
+            and fit_result.get("execution_ready") is False
+            and fit_result.get("gui_input_performed") is False
+            and gui_input_attempted is not True
+            and side_effect_may_have_occurred is not True
+        )
+        explicit_pre_dispatch_failure = bool(
+            gui_input_attempted is False
+            and side_effect_may_have_occurred is False
+            and explicitly_automatic_retry_allowed is True
+        )
+        pre_dispatch_failure = bool(
+            not action_completed
+            and (legacy_pre_dispatch_block or explicit_pre_dispatch_failure)
+        )
+        if pre_dispatch_failure:
+            gui_input_attempted = False
+            side_effect_may_have_occurred = False
+        elif side_effect_may_have_occurred is None:
+            # A non-blocking execution failure without dispatch evidence is unsafe:
+            # the native command may already have changed the viewport.
+            side_effect_may_have_occurred = True
+
+        fit_result.update(
+            {
+                "gui_input_attempted": gui_input_attempted,
+                "side_effect_may_have_occurred": (
+                    side_effect_may_have_occurred
+                ),
+                "automatic_retry_allowed": bool(pre_dispatch_failure),
+            }
+        )
+
+    response.pop("post_hotload_fit_to_view_retry_tool", None)
+    response.pop("post_hotload_fit_to_view_retry_payload", None)
     try:
         fit_result = gui.fit_to_view(
             project_id=project_id,
@@ -54618,6 +54934,10 @@ def _execute_post_hotload_fit_to_view(
             and fit_result.get("structure_unchanged") is True
             and fit_result.get("structure_modified") is not True
             and fit_result.get("gui_input_performed") is True
+        )
+        promote_retry_safety(
+            fit_result,
+            action_completed=fit_action_completed,
         )
         fit_result.update(
             {
@@ -54667,27 +54987,74 @@ def _execute_post_hotload_fit_to_view(
         response["post_hotload_fit_to_view"] = fit_result
         audit_artifacts.append({"type": "gui_fit_to_view", "result": fit_result})
         if not fit_completed:
-            fit_result.update(
-                {
-                    "retry_tool": "material_studio_gui_fit_to_view",
-                    "retry_payload": fit_retry_payload,
-                }
-            )
             if fit_action_completed:
+                fit_result.update(
+                    {
+                        "retry_tool": "material_studio_gui_snapshot",
+                        "retry_payload": snapshot_retry_payload,
+                        "recommended_tool": "material_studio_gui_snapshot",
+                        "recommended_action": (
+                            "capture_missing_post_fit_to_view_snapshot"
+                        ),
+                        "required_next_step": (
+                            "Capture only the missing final snapshot for this exact "
+                            "project/revision; do not execute Fit-to-View again."
+                        ),
+                    }
+                )
                 message = (
                     "The structure was hot-loaded and Fit-to-View executed without "
-                    "changing the structure, but the final snapshot evidence was not bound."
+                    "changing the structure, but the final snapshot evidence was not "
+                    "bound. Retry only the snapshot; do not execute Fit-to-View again."
                 )
                 response_status = (
                     "hotload_completed_fit_to_view_evidence_incomplete"
                 )
-            else:
+                retry_tool: str | None = "material_studio_gui_snapshot"
+                retry_payload: dict[str, Any] | None = snapshot_retry_payload
+            elif fit_result.get("automatic_retry_allowed") is True:
+                fit_result.update(
+                    {
+                        "retry_tool": "material_studio_gui_fit_to_view",
+                        "retry_payload": fit_retry_payload,
+                    }
+                )
                 message = (
                     "The structure was hot-loaded, but the explicitly requested "
-                    "Fit-to-View action did not complete "
+                    "Fit-to-View action was blocked before native command dispatch "
                     f"({fit_result.get('status')})."
                 )
                 response_status = "hotload_completed_fit_to_view_incomplete"
+                retry_tool = "material_studio_gui_fit_to_view"
+                retry_payload = fit_retry_payload
+            else:
+                fit_result.pop("retry_tool", None)
+                fit_result.pop("retry_payload", None)
+                fit_result.update(
+                    {
+                        "manual_review_required": True,
+                        "recommended_tool": "material_studio_gui_status",
+                        "recommended_action": (
+                            "inspect_current_viewport_before_any_further_gui_input"
+                        ),
+                        "followup_tool": "material_studio_gui_status",
+                        "followup_payload": status_review_payload,
+                        "required_next_step": (
+                            "Refresh the exact current Materials Studio window status "
+                            "and visually inspect the viewport. Native command dispatch "
+                            "may have occurred, so do not retry Fit-to-View automatically."
+                        ),
+                    }
+                )
+                message = (
+                    "The structure was hot-loaded, but the explicitly requested "
+                    "Fit-to-View result is uncertain after possible native command "
+                    "dispatch. Do not retry Fit-to-View automatically; refresh status "
+                    "and review the viewport."
+                )
+                response_status = "hotload_completed_fit_to_view_state_uncertain"
+                retry_tool = None
+                retry_payload = None
             response.update(
                 {
                     "ok": False,
@@ -54695,18 +55062,24 @@ def _execute_post_hotload_fit_to_view(
                     "status": response_status,
                     "error": message,
                     "post_hotload_fit_to_view_warning": message,
-                    "post_hotload_fit_to_view_retry_tool": (
-                        "material_studio_gui_fit_to_view"
-                    ),
-                    "post_hotload_fit_to_view_retry_payload": fit_retry_payload,
                 }
             )
+            if retry_tool is not None and retry_payload is not None:
+                response.update(
+                    {
+                        "post_hotload_fit_to_view_retry_tool": retry_tool,
+                        "post_hotload_fit_to_view_retry_payload": retry_payload,
+                    }
+                )
     except Exception as fit_exc:
         message = (
             "The structure was hot-loaded, but the explicitly requested "
-            f"Fit-to-View action failed: {fit_exc}"
+            "Fit-to-View action raised an exception after dispatch state became "
+            f"uncertain: {fit_exc}. Do not retry Fit-to-View automatically."
         )
         fit_receipt = dict(response.get("post_hotload_fit_to_view") or {})
+        fit_receipt.pop("retry_tool", None)
+        fit_receipt.pop("retry_payload", None)
         fit_receipt.update(
             {
                 "requested": True,
@@ -54715,8 +55088,20 @@ def _execute_post_hotload_fit_to_view(
                 "completed": False,
                 "automatic_after_hotload": True,
                 "error": str(fit_exc),
-                "retry_tool": "material_studio_gui_fit_to_view",
-                "retry_payload": fit_retry_payload,
+                "side_effect_may_have_occurred": True,
+                "automatic_retry_allowed": False,
+                "manual_review_required": True,
+                "recommended_tool": "material_studio_gui_status",
+                "recommended_action": (
+                    "inspect_current_viewport_before_any_further_gui_input"
+                ),
+                "followup_tool": "material_studio_gui_status",
+                "followup_payload": status_review_payload,
+                "required_next_step": (
+                    "Refresh the exact current Materials Studio window status and "
+                    "visually inspect the viewport. The exception does not prove that "
+                    "native Fit-to-View dispatch was side-effect free."
+                ),
             }
         )
         response.update(
@@ -54727,10 +55112,6 @@ def _execute_post_hotload_fit_to_view(
                 "error": message,
                 "post_hotload_fit_to_view": fit_receipt,
                 "post_hotload_fit_to_view_warning": message,
-                "post_hotload_fit_to_view_retry_tool": (
-                    "material_studio_gui_fit_to_view"
-                ),
-                "post_hotload_fit_to_view_retry_payload": fit_retry_payload,
             }
         )
         audit_artifacts.append({"type": "gui_fit_to_view", "result": fit_receipt})
@@ -54922,7 +55303,8 @@ def _finalize_high_level_gui_hotload(
                     )
                     retry_payload = artifact_open_retry_payload
                 try:
-                    fresh_gui_status = gui.status(
+                    fresh_gui_status = _gui_status(
+                        gui,
                         project_id=spec.project_id,
                         revision=spec.revision,
                     )
@@ -54977,7 +55359,8 @@ def _finalize_high_level_gui_hotload(
                                 working_dir=working_dir,
                             )
                         try:
-                            response["gui_status"] = gui.status(
+                            response["gui_status"] = _gui_status(
+                                gui,
                                 project_id=spec.project_id,
                                 revision=spec.revision,
                             )
@@ -55054,7 +55437,8 @@ def _finalize_high_level_gui_hotload(
                             }
                         )
                         try:
-                            response["gui_status"] = gui.status(
+                            response["gui_status"] = _gui_status(
+                                gui,
                                 project_id=spec.project_id,
                                 revision=spec.revision,
                             )
@@ -55063,7 +55447,8 @@ def _finalize_high_level_gui_hotload(
                     except Exception as exc:
                         response["gui_open_warning"] = str(exc)
                         try:
-                            response["gui_status"] = gui.status(
+                            response["gui_status"] = _gui_status(
+                                gui,
                                 project_id=spec.project_id,
                                 revision=spec.revision,
                             )
@@ -55329,7 +55714,11 @@ def _persist_gui_open_structure_report(
         "planned_outputs": generated["planned_outputs"],
         "result": prior_result if has_prior_execution and prior_result else gui_sync_result,
         "gui_sync_result": gui_sync_result,
-        "gui_status": gui.status(project_id=project_id, revision=revision),
+        "gui_status": _gui_status(
+            gui,
+            project_id=project_id,
+            revision=revision,
+        ),
         "gui_open": gui_open,
         "gui_artifacts": audit_artifacts,
         "view_audit": view_audit,
@@ -55525,7 +55914,11 @@ def _persist_gui_snapshot_report(
             "created_files": [snapshot.get("screenshot_path")] if snapshot.get("screenshot_path") else [],
             "snapshot_path": snapshot.get("screenshot_path"),
         },
-        "gui_status": gui.status(project_id=project_id, revision=revision),
+        "gui_status": _gui_status(
+            gui,
+            project_id=project_id,
+            revision=revision,
+        ),
         "gui_artifacts": audit_artifacts,
         "view_audit": view_audit,
         "view_selection_resolution": view_selection_resolution,
@@ -56028,7 +56421,12 @@ def material_studio_gui_status(
 
     try:
         context = _resolve_gui_action_context(project_id=project_id, revision=revision, working_dir=working_dir)
-        status = _gui_controller(working_dir).status(project_id=context["project_id"], revision=context["revision"])
+        gui = _gui_controller(working_dir)
+        status = _gui_status(
+            gui,
+            project_id=context["project_id"],
+            revision=context["revision"],
+        )
         status["gui_action_context"] = context
         if isinstance(context.get("project_resolution"), dict):
             status["project_resolution"] = context["project_resolution"]
@@ -56393,7 +56791,11 @@ def _record_gui_visual_confirmation_action(
     resolved_project_id = str(sync_context["project_id"])
     resolved_revision = int(sync_context["revision"])
     try:
-        gui_status = gui.status(project_id=resolved_project_id, revision=resolved_revision)
+        gui_status = _gui_status(
+            gui,
+            project_id=resolved_project_id,
+            revision=resolved_revision,
+        )
     except Exception as exc:
         gui_status = {"ok": False, "error": str(exc)}
     window_management = (
@@ -56806,7 +57208,11 @@ def _open_gui_structure_action(
                 },
             }
 
-    gui_status = gui.status(project_id=log_project_id, revision=log_revision)
+    gui_status = _gui_status(
+        gui,
+        project_id=log_project_id,
+        revision=log_revision,
+    )
     response_base["gui_status"] = gui_status
     blocked_response = _with_single_window_hotload_block(response_base, gui_status)
     if blocked_response is not response_base:
@@ -56916,7 +57322,11 @@ def _open_gui_structure_action(
     if transaction is not None:
         response["gui_action_transaction"] = transaction
     try:
-        response["gui_status"] = gui.status(project_id=log_project_id, revision=log_revision)
+        response["gui_status"] = _gui_status(
+            gui,
+            project_id=log_project_id,
+            revision=log_revision,
+        )
     except Exception:
         response["gui_status"] = gui_status
     if isinstance(sync_context.get("project_resolution"), dict):
@@ -57398,7 +57808,8 @@ def material_studio_gui_record_view_replay(
         replay_binding: dict[str, Any] | None = None
         if expected_window_handle is not None and expected_window_title is not None:
             try:
-                gui_status = gui.status(
+                gui_status = _gui_status(
+                    gui,
                     project_id=str(context["project_id"]),
                     revision=int(context["revision"]),
                 )
@@ -57639,13 +58050,182 @@ def material_studio_gui_record_view_replay(
         return _compact_live_response(_error(exc), response_mode)
 
 
+def _direct_fit_to_view_failure_response(
+    result: dict[str, Any],
+    *,
+    retry_payload: dict[str, Any] | None,
+    status_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Fail closed while preserving whether a Fit command may have been sent."""
+
+    response = dict(result)
+    action_receipt = (
+        response.get("action_receipt")
+        if isinstance(response.get("action_receipt"), dict)
+        else {}
+    )
+    attempted_evidence = (
+        response.get("gui_input_attempted"),
+        action_receipt.get("gui_input_attempted"),
+    )
+    gui_input_performed = bool(
+        response.get("gui_input_performed") is True
+        or action_receipt.get("gui_input_performed") is True
+    )
+    side_effect_evidence = (
+        response.get("side_effect_may_have_occurred"),
+        action_receipt.get("side_effect_may_have_occurred"),
+    )
+    automatic_retry_evidence = (
+        response.get("automatic_retry_allowed"),
+        action_receipt.get("automatic_retry_allowed"),
+    )
+
+    def conservative_boolean_evidence(values: tuple[Any, ...]) -> bool | None:
+        observed = [value for value in values if value is not None]
+        if any(value is True for value in observed):
+            return True
+        if observed and all(value is False for value in observed):
+            return False
+        return None
+
+    gui_input_attempted_value = conservative_boolean_evidence(attempted_evidence)
+    side_effect_value = conservative_boolean_evidence(side_effect_evidence)
+    if gui_input_performed or gui_input_attempted_value is True:
+        gui_input_attempted_value = True
+        side_effect_value = True
+    elif response.get("execution_mode") == "preview":
+        if gui_input_attempted_value is None:
+            gui_input_attempted_value = False
+        if side_effect_value is None:
+            side_effect_value = False
+    if any(value is False for value in automatic_retry_evidence):
+        automatic_retry_value: bool | None = False
+    elif any(value is True for value in automatic_retry_evidence):
+        automatic_retry_value = True
+    else:
+        automatic_retry_value = None
+    gui_input_attempted = (
+        bool(gui_input_attempted_value)
+        if gui_input_attempted_value is not None
+        else None
+    )
+    side_effect_may_have_occurred = (
+        bool(side_effect_value) if side_effect_value is not None else None
+    )
+    automatic_retry_allowed = automatic_retry_value is True
+    safe_pre_dispatch_failure = bool(
+        automatic_retry_allowed
+        and gui_input_attempted is False
+        and side_effect_may_have_occurred is False
+    )
+    uncertain_after_dispatch = bool(
+        gui_input_attempted is True
+        or side_effect_may_have_occurred is True
+        or gui_input_attempted is None
+        or side_effect_may_have_occurred is None
+    )
+    response.update(
+        {
+            "ok": False,
+            "gui_input_attempted": gui_input_attempted,
+            "side_effect_may_have_occurred": side_effect_may_have_occurred,
+            "automatic_retry_allowed": safe_pre_dispatch_failure,
+            "manual_review_required": uncertain_after_dispatch,
+        }
+    )
+    response.setdefault(
+        "error",
+        "Materials Studio Fit-to-View did not complete successfully.",
+    )
+    response.pop("gui_fit_to_view_retry_tool", None)
+    response.pop("gui_fit_to_view_retry_payload", None)
+    if safe_pre_dispatch_failure and retry_payload is not None:
+        response.update(
+            {
+                "recommended_tool": "material_studio_gui_fit_to_view",
+                "recommended_action": "retry_fit_to_view_after_pre_dispatch_failure",
+                "required_next_step": (
+                    "Retry the exact Fit-to-View payload after confirming the "
+                    "pre-dispatch blocker is resolved."
+                ),
+                "gui_fit_to_view_retry_tool": "material_studio_gui_fit_to_view",
+                "gui_fit_to_view_retry_payload": retry_payload,
+            }
+        )
+    elif uncertain_after_dispatch:
+        response.update(
+            {
+                "recommended_tool": "material_studio_gui_status",
+                "recommended_action": "refresh_status_and_review_fit_to_view_state",
+                "required_next_step": (
+                    "Do not retry Fit-to-View automatically; refresh the exact GUI "
+                    "status and review the viewport state first."
+                ),
+                "payload_hint": status_payload,
+            }
+        )
+    return response
+
+
+def _direct_fit_to_view_persistence_failure_response(
+    result: dict[str, Any],
+    exc: Exception,
+    *,
+    status_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve GUI side-effect evidence when post-Fit persistence fails."""
+
+    response = dict(result)
+    response.update(
+        {
+            "fit_action_status_before_persistence_failure": response.get("status"),
+            "status": "execution_failed",
+            "error": (
+                "Fit-to-View returned a GUI action result, but its evidence could "
+                "not be fully persisted."
+            ),
+            "persistence_warning": str(exc),
+            "persistence_error_type": type(exc).__name__,
+            "report_persistence_failed": True,
+            "automatic_retry_allowed": False,
+        }
+    )
+    action_receipt = response.get("action_receipt")
+    if isinstance(action_receipt, dict):
+        action_receipt = dict(action_receipt)
+        action_receipt["automatic_retry_allowed"] = False
+        response["action_receipt"] = action_receipt
+    failure = _direct_fit_to_view_failure_response(
+        response,
+        retry_payload=None,
+        status_payload=status_payload,
+    )
+    failure.update(
+        {
+            "automatic_retry_allowed": False,
+            "manual_review_required": True,
+            "recommended_tool": "material_studio_gui_status",
+            "recommended_action": "refresh_status_and_review_fit_to_view_state",
+            "required_next_step": (
+                "Do not retry Fit-to-View automatically; refresh the exact GUI "
+                "status and review the viewport plus persisted evidence first."
+            ),
+            "payload_hint": status_payload,
+        }
+    )
+    failure.pop("gui_fit_to_view_retry_tool", None)
+    failure.pop("gui_fit_to_view_retry_payload", None)
+    return failure
+
+
 @mcp.tool(
-    name="material_studio_gui_fit_to_view",
+name="material_studio_gui_fit_to_view",
     annotations={
         "title": "Preview or execute Materials Studio Fit-to-View",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": False,
     },
 )
@@ -57700,6 +58280,19 @@ def material_studio_gui_fit_to_view(
                     confirmation_action.get("payload"),
                     working_dir,
                 )
+            if result.get("status") != "preview_ready":
+                return _direct_fit_to_view_failure_response(
+                    result,
+                    retry_payload=None,
+                    status_payload=_workspace_bound_payload_hint(
+                        "material_studio_gui_status",
+                        {
+                            "project_id": resolved_project_id,
+                            "revision": resolved_revision,
+                        },
+                        working_dir,
+                    ),
+                )
             return _ok(result)
 
         retry_payload = {
@@ -57711,6 +58304,16 @@ def material_studio_gui_fit_to_view(
         retry_payload = _workspace_bound_payload_hint(
             "material_studio_gui_fit_to_view", retry_payload, working_dir
         )
+        status_payload = _workspace_bound_payload_hint(
+            "material_studio_gui_status",
+            {
+                "project_id": resolved_project_id,
+                "revision": resolved_revision,
+            },
+            working_dir,
+        )
+        result: dict[str, Any] | None = None
+        persistence_error: Exception | None = None
         try:
             with _gui_artifact_report_transaction(
                 project_id=resolved_project_id,
@@ -57740,24 +58343,48 @@ def material_studio_gui_fit_to_view(
                         ),
                     }
                 )
-                for snapshot_key in ("before_snapshot", "after_snapshot"):
-                    snapshot = result.get(snapshot_key)
-                    if not isinstance(snapshot, dict) or not snapshot.get("screenshot_path"):
-                        continue
-                    structured = _persist_gui_snapshot_report(
-                        project_id=resolved_project_id,
-                        revision=resolved_revision,
-                        snapshot=snapshot,
-                        gui=gui,
-                        working_dir=working_dir,
-                        views=None,
-                        project_resolution=context.get("project_resolution"),
-                    )
-                    result.update(structured)
-                result["gui_action_transaction"] = transaction
-                _attach_gui_artifact_transaction(result, transaction)
-                return _ok(result)
+                try:
+                    for snapshot_key in ("before_snapshot", "after_snapshot"):
+                        snapshot = result.get(snapshot_key)
+                        if (
+                            not isinstance(snapshot, dict)
+                            or not snapshot.get("screenshot_path")
+                        ):
+                            continue
+                        structured = _persist_gui_snapshot_report(
+                            project_id=resolved_project_id,
+                            revision=resolved_revision,
+                            snapshot=snapshot,
+                            gui=gui,
+                            working_dir=working_dir,
+                            views=None,
+                            project_resolution=context.get("project_resolution"),
+                        )
+                        result.update(structured)
+                    result["gui_action_transaction"] = transaction
+                    _attach_gui_artifact_transaction(result, transaction)
+                except Exception as exc:
+                    persistence_error = exc
+            if persistence_error is not None:
+                return _direct_fit_to_view_persistence_failure_response(
+                    result,
+                    persistence_error,
+                    status_payload=status_payload,
+                )
+            if result.get("status") != "executed":
+                return _direct_fit_to_view_failure_response(
+                    result,
+                    retry_payload=retry_payload,
+                    status_payload=status_payload,
+                )
+            return _ok(result)
         except GuiError as exc:
+            if result is not None:
+                return _direct_fit_to_view_persistence_failure_response(
+                    result,
+                    exc,
+                    status_payload=status_payload,
+                )
             if "GUI artifact report write transaction is busy" not in str(exc):
                 raise
             return {
@@ -57768,6 +58395,10 @@ def material_studio_gui_fit_to_view(
                 "revision": resolved_revision,
                 "execution_mode": mode.value,
                 "gui_input_started": False,
+                "gui_input_attempted": False,
+                "side_effect_may_have_occurred": False,
+                "automatic_retry_allowed": True,
+                "manual_review_required": False,
                 "gui_modified": False,
                 "structure_modified": False,
                 "report_persistence_deferred": True,
@@ -57778,6 +58409,14 @@ def material_studio_gui_fit_to_view(
                 "gui_fit_to_view_retry_tool": "material_studio_gui_fit_to_view",
                 "gui_fit_to_view_retry_payload": retry_payload,
             }
+        except Exception as exc:
+            if result is not None:
+                return _direct_fit_to_view_persistence_failure_response(
+                    result,
+                    exc,
+                    status_payload=status_payload,
+                )
+            raise
     except Exception as exc:
         return _error(exc)
 
@@ -57933,7 +58572,11 @@ def material_studio_gui_apply_current_revision(
         script = script_path.read_text(encoding="utf-8")
         script_validation = validate_generated_script(script)
         generated = _generate_structured_script(spec, store)
-        gui_status = gui.status(project_id=project_id, revision=spec.revision)
+        gui_status = _gui_status(
+            gui,
+            project_id=project_id,
+            revision=spec.revision,
+        )
         persisted_context = (
             _persisted_live_context_for_export(store, spec)
             if mode == ExecutionMode.PREVIEW

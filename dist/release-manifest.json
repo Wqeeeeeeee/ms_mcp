@@ -1,10 +1,10 @@
 {
   "artifact_kind": "codex_plugin_windows_release",
-  "base_sha": "28a71eac7ddc10ff3e1d3cf49af2a3971ac3ef9b",
-  "bundle_root": "materials-studio-mcp-plugin-0.5.1-windows",
+  "base_sha": "b11c44942692e5e8044b9e0e39ad9c48f9ff6221",
+  "bundle_root": "materials-studio-mcp-plugin-0.5.2-windows",
   "distribution_artifacts": {
-    "plugin_zip": "materials-studio-mcp-plugin-0.5.1-windows.zip",
-    "wheel": "materials_studio_mcp-0.5.1-py3-none-any.whl"
+    "plugin_zip": "materials-studio-mcp-plugin-0.5.2-windows.zip",
+    "wheel": "materials_studio_mcp-0.5.2-py3-none-any.whl"
   },
   "files": [
     {
@@ -59,8 +59,8 @@
     },
     {
       "path": "docs/REAL_MS_ACCEPTANCE.zh-CN.md",
-      "sha256": "0e0b0809f700cc76f1885e0c4268dafc9aa6b6ae6d32361884d8180c2f9eb3ad",
-      "size": 7849
+      "sha256": "8b79fcfe73cc53b06f09410731b711565870f02ceee3f2cfdeb2be676382a1fa",
+      "size": 8066
     },
     {
       "path": "docs/TROUBLESHOOTING.zh-CN.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/gui_control.md",
-      "sha256": "aac7f1e8a19f53a1a8e4f3f4d2bd40e9175b88408c2ce73bb899b45e6e7ed2eb",
-      "size": 100254
+      "sha256": "4f57380e0f17836cf583527a3122972e5a655d3d94bcbf4f4ba4557b75021fac",
+      "size": 101582
     },
     {
       "path": "docs/gui_loop.md",
@@ -79,17 +79,17 @@
     },
     {
       "path": "docs/packaging/codex_plugin_packaging_audit.md",
-      "sha256": "8dfc2eb936a72ff74e5ce81b683e9375b096fe9ef415a30f26b76d07b7b2fae4",
-      "size": 22101
+      "sha256": "850ca06767c1c64514f555e244cbde0df2fc2bfe21113cb9a3bcb6c14cbdcf08",
+      "size": 25016
     },
     {
-      "path": "materials_studio_mcp-0.5.1-py3-none-any.whl",
-      "sha256": "c32984c0abdf01655d6ffe469df37d64e00999ac117e94ca68ac0b0225b92870",
-      "size": 1249703
+      "path": "materials_studio_mcp-0.5.2-py3-none-any.whl",
+      "sha256": "7edfc1ba94b5fd54191bb2b58e2ece7b24edbd3dc7303760fd8ea39adffaa7a6",
+      "size": 1277056
     },
     {
       "path": "plugins/materials-studio-mcp/.codex-plugin/plugin.json",
-      "sha256": "f5e931426b9ab0c1b663988b335f52732d85606604824f6dd5f75b68f9f5403c",
+      "sha256": "7d5fde09ab79cee97c597ada667eb1438f338bd28ffe2d3d3d6609815f84673b",
       "size": 1848
     },
     {
@@ -114,8 +114,8 @@
     },
     {
       "path": "plugins/materials-studio-mcp/skills/materials-studio-modeling/SKILL.md",
-      "sha256": "c21dfe5df398e7dae5872d2d5ccf21f75c1e45eca754f087d9750193cb7f613b",
-      "size": 5883
+      "sha256": "6b6e31cb859c70814b80c1068b2c98af56ff109d7c16f8fccb5680d220a5d2a4",
+      "size": 6546
     },
     {
       "path": "plugins/materials-studio-mcp/skills/materials-studio-modeling/agents/openai.yaml",
@@ -169,10 +169,13 @@
     "path": null,
     "required": false
   },
-  "version": "0.5.1",
+  "version": "0.5.2",
   "wheel": {
-    "path": "materials_studio_mcp-0.5.1-py3-none-any.whl",
-    "sha256": "c32984c0abdf01655d6ffe469df37d64e00999ac117e94ca68ac0b0225b92870",
-    "size": 1249703
+    "path": "materials_studio_mcp-0.5.2-py3-none-any.whl",
+    "required_runtime_members": [
+      "material_studio_mcp_server/gui_fit_probe.py"
+    ],
+    "sha256": "7edfc1ba94b5fd54191bb2b58e2ece7b24edbd3dc7303760fd8ea39adffaa7a6",
+    "size": 1277056
   }
 }

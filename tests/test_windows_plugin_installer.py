@@ -18,6 +18,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows installer tests")
@@ -1331,8 +1332,16 @@ def test_built_wheel_metadata_pins_mcp_below_2() -> None:
     assert len(mcp_requirements) == 1
     assert ">=1.12.4" in mcp_requirements[0]
     assert "<2" in mcp_requirements[0]
-    assert "Requires-Dist: comtypes==1.4.16; sys_platform == \"win32\"" in metadata
-    assert "Requires-Dist: pywinauto==0.6.9; sys_platform == \"win32\"" in metadata
+    requirements = [
+        Requirement(line.removeprefix("Requires-Dist:").strip())
+        for line in metadata.splitlines()
+        if line.lower().startswith("requires-dist:")
+    ]
+    windows_uia = {requirement.name.lower(): requirement for requirement in requirements}
+    assert str(windows_uia["comtypes"].specifier) == "==1.4.16"
+    assert str(windows_uia["comtypes"].marker) == 'sys_platform == "win32"'
+    assert str(windows_uia["pywinauto"].specifier) == "==0.6.9"
+    assert str(windows_uia["pywinauto"].marker) == 'sys_platform == "win32"'
 
 
 def test_real_wheel_guided_install_and_safe_cache_protocol_smoke(

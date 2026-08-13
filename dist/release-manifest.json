@@ -1,10 +1,10 @@
 {
   "artifact_kind": "codex_plugin_windows_release",
-  "base_sha": "b11c44942692e5e8044b9e0e39ad9c48f9ff6221",
-  "bundle_root": "materials-studio-mcp-plugin-0.5.2-windows",
+  "base_sha": "21ae0273eeaf21a5d0a9102078e3dc3a3c134702",
+  "bundle_root": "materials-studio-mcp-plugin-0.5.3-windows",
   "distribution_artifacts": {
-    "plugin_zip": "materials-studio-mcp-plugin-0.5.2-windows.zip",
-    "wheel": "materials_studio_mcp-0.5.2-py3-none-any.whl"
+    "plugin_zip": "materials-studio-mcp-plugin-0.5.3-windows.zip",
+    "wheel": "materials_studio_mcp-0.5.3-py3-none-any.whl"
   },
   "files": [
     {
@@ -29,8 +29,8 @@
     },
     {
       "path": "README.md",
-      "sha256": "0fe4776e243312ee6b69cb71aa0f663c8af3670e0a7ca5b8b3bf24ddb0a82740",
-      "size": 4763
+      "sha256": "a1bd7e6359136417902a5c33eee90caf08a7b659ffe22e0c7237b87c8a6336eb",
+      "size": 4771
     },
     {
       "path": "Test-MS-MCP.bat",
@@ -59,8 +59,8 @@
     },
     {
       "path": "docs/REAL_MS_ACCEPTANCE.zh-CN.md",
-      "sha256": "8b79fcfe73cc53b06f09410731b711565870f02ceee3f2cfdeb2be676382a1fa",
-      "size": 8066
+      "sha256": "c93fc59c2937549c2b89e3778da042a542441096a9298b0594b4cba02564e2bf",
+      "size": 8071
     },
     {
       "path": "docs/TROUBLESHOOTING.zh-CN.md",
@@ -69,8 +69,8 @@
     },
     {
       "path": "docs/gui_control.md",
-      "sha256": "4f57380e0f17836cf583527a3122972e5a655d3d94bcbf4f4ba4557b75021fac",
-      "size": 101582
+      "sha256": "b3ab58c687ce6be85a5f1ecdc3e100b8a753913693bd28da50bf87447995100d",
+      "size": 101584
     },
     {
       "path": "docs/gui_loop.md",
@@ -79,23 +79,23 @@
     },
     {
       "path": "docs/packaging/codex_plugin_packaging_audit.md",
-      "sha256": "850ca06767c1c64514f555e244cbde0df2fc2bfe21113cb9a3bcb6c14cbdcf08",
-      "size": 25016
+      "sha256": "3ab8d9a330beeb14b0c272cdebc87c76539e5b95c01794f6f211287ba62e67cf",
+      "size": 27361
     },
     {
-      "path": "materials_studio_mcp-0.5.2-py3-none-any.whl",
-      "sha256": "7edfc1ba94b5fd54191bb2b58e2ece7b24edbd3dc7303760fd8ea39adffaa7a6",
-      "size": 1277056
+      "path": "materials_studio_mcp-0.5.3-py3-none-any.whl",
+      "sha256": "7658e77174b34594af39e49dbfbd703850f815d9d4d9bac9b475a58726da8fc3",
+      "size": 1275997
     },
     {
       "path": "plugins/materials-studio-mcp/.codex-plugin/plugin.json",
-      "sha256": "7d5fde09ab79cee97c597ada667eb1438f338bd28ffe2d3d3d6609815f84673b",
+      "sha256": "5d32fe3587ff3ae326ed848f280258d7e94bcc453d23ad5d00d779d81227a7ef",
       "size": 1848
     },
     {
       "path": "plugins/materials-studio-mcp/.mcp.json",
-      "sha256": "75a6b61a21a474bb455ccbd7ee400e0951ad1838dfe15ff5aaa44c86811ec629",
-      "size": 2527
+      "sha256": "0c468158ed6a5c6badd37d77a1ba3d9e162df60b17e7174a9b1e72ad330e3808",
+      "size": 2555
     },
     {
       "path": "plugins/materials-studio-mcp/LICENSE",
@@ -109,13 +109,13 @@
     },
     {
       "path": "plugins/materials-studio-mcp/scripts/Run-MS-MCP.ps1",
-      "sha256": "bdb28cfaeb8934453d2998a91df0b408279188c242751a4feee1ecf08304408b",
-      "size": 16579
+      "sha256": "023f944d21cb2c35f9648f15d9a53afc42516697d2f18e42291e0e578646c012",
+      "size": 16670
     },
     {
       "path": "plugins/materials-studio-mcp/skills/materials-studio-modeling/SKILL.md",
-      "sha256": "6b6e31cb859c70814b80c1068b2c98af56ff109d7c16f8fccb5680d220a5d2a4",
-      "size": 6546
+      "sha256": "5dc9154f8b83702042c84b92d5320c25f738759f8c1249893da0505cf9509bd8",
+      "size": 6558
     },
     {
       "path": "plugins/materials-studio-mcp/skills/materials-studio-modeling/agents/openai.yaml",
@@ -129,13 +129,13 @@
     },
     {
       "path": "scripts/windows/Install-MS-MCP.ps1",
-      "sha256": "eb867d291e11659eb50b00f45bfcc1df27f4e9684b049b6479e573d46db93112",
-      "size": 44900
+      "sha256": "6dabfb2c6b292ce03167baaf88ae5290073edeebb3db3b9daba772fce4cbf758",
+      "size": 44918
     },
     {
       "path": "scripts/windows/Test-MS-MCP.ps1",
-      "sha256": "0c0a995fc3b56f86e167565c89afb5ad4672d01ba1c367b837cb5243b6ccab28",
-      "size": 19617
+      "sha256": "2a7db2b4a8aa5a02c506f9b69ed09e936844bdc8490cdeea327a9371dd44e32d",
+      "size": 19761
     },
     {
       "path": "scripts/windows/Uninstall-MS-MCP.ps1",
@@ -144,8 +144,8 @@
     },
     {
       "path": "scripts/windows/WindowsInstaller.Common.ps1",
-      "sha256": "c82a27fac9654d4dfb75f7f75d6daf84c192f0ac8a3671b943c9604a07cbcbce",
-      "size": 28419
+      "sha256": "904d7c1b7fe1f6959a56abd96a5ebabd4a9e7a493bdcf2cbe56aa5829ad79622",
+      "size": 28523
     }
   ],
   "package_name": "materials-studio-mcp",
@@ -169,13 +169,13 @@
     "path": null,
     "required": false
   },
-  "version": "0.5.2",
+  "version": "0.5.3",
   "wheel": {
-    "path": "materials_studio_mcp-0.5.2-py3-none-any.whl",
+    "path": "materials_studio_mcp-0.5.3-py3-none-any.whl",
     "required_runtime_members": [
       "material_studio_mcp_server/gui_fit_probe.py"
     ],
-    "sha256": "7edfc1ba94b5fd54191bb2b58e2ece7b24edbd3dc7303760fd8ea39adffaa7a6",
-    "size": 1277056
+    "sha256": "7658e77174b34594af39e49dbfbd703850f815d9d4d9bac9b475a58726da8fc3",
+    "size": 1275997
   }
 }

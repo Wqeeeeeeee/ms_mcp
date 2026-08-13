@@ -52,6 +52,9 @@ try {
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw "Plugin launcher implementation is missing." }
     $launcherText = Get-Content -LiteralPath $launcherPath -Raw -Encoding UTF8
     if ($launcherText -notmatch 'MATERIAL_STUDIO_WORKSPACE' -or $launcherText -notmatch 'MATERIAL_STUDIO_MCP_WORKSPACE') { throw "Plugin launcher must bind both workspace environment variables." }
+    foreach ($guiLoopVariable in @('MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT', 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS', 'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS')) {
+        if ($launcherText -notmatch $guiLoopVariable) { throw "Plugin launcher is missing GUI-loop environment default: $guiLoopVariable" }
+    }
     $server = $mcpManifest.'materials-studio'
     if ($null -eq $server -and $null -ne $mcpManifest.mcpServers) { $server = $mcpManifest.mcpServers.'materials-studio' }
     if ($null -eq $server) { throw ".mcp.json does not define materials-studio." }

@@ -1,55 +1,53 @@
 # Codex plugin packaging audit
 
-Goal ID: `CODEX-MS-PLUGIN-PACKAGING-V1`
+Goal ID: `CODEX-MS-PLUGIN-GUI-LOOP-V1`
 
-Audit date: 2026-08-12 (Asia/Shanghai)
+Audit date: 2026-08-13 (Asia/Shanghai)
 
-This is the authoritative Phase 0 re-audit after PR #156 merged. It supersedes
-the pre-license audit recorded on the original branch base. The audit was
-completed read-only before rebuilding any release artifact. No real Codex
-configuration, Materials Studio process, GUI, calculation, workspace model, or
-user data was changed.
+This is the authoritative incremental audit for the `0.5.0` signed GUI-loop
+release after the `0.4.0` Codex plugin packaging work merged as PR #157. It
+supersedes the packaging-only safety decision wherever that older decision
+rejected every persistent GUI loop. The source and release review itself was
+completed without changing active Codex configuration, starting a calculation,
+or weakening any existing modeling, revision, window, or evidence gate.
 
 ## Decision
 
 Packaging may proceed from the exact current `origin/main` baseline:
 
-- base SHA: `c04e6dc66cae52ab64a0af40b19596249e976b6b`;
-- base package version: `0.3.0`;
+- base SHA: `3b2502a479f39b52aa7358ab20ef34985911eed3`;
+- base package version: `0.4.0`;
 - repository license: SPDX `MIT`;
 - copyright: `Copyright (c) 2026 Xu kaidong`;
-- PR #156 Windows child-process stdin fix: merged and verified;
+- PR #157 Codex plugin packaging: merged and verified;
 - DrYe reference: read-only only, with no commit-history import and no detected
   copied source or documentation requiring a third-party notice;
 - Real Materials Studio: `NOT_RUN`;
 - Real CASTEP: `NOT_RUN`.
 
-The packaging branch uses new package/plugin/runtime version `0.4.0` because an immutable runtime is
-addressed by package version. Reusing `0.3.0` for a different wheel would make
-an already installed internal-preview runtime correctly fail the integrity
-gate rather than upgrade. This is a packaging/runtime version change, not a
-new material, CASTEP, GUI-modeling, or calculation capability.
+The increment uses new package/plugin/runtime version `0.5.0` because it adds a
+new same-window GUI hot-load capability and because each managed runtime is
+addressed immutably by package version. Reusing `0.4.0` for a different wheel
+would make an installed runtime correctly fail its integrity gate rather than
+upgrade. This increment does not add a material template or authorize CASTEP,
+Forcite, DMol3, or any other calculation.
 
 ## Git and source baseline
 
 Read-only commands and observations:
 
-1. `git fetch origin --prune` advanced `origin/main` from
-   `8920ae5c7e44ec947e08be9ba52ff9b2279735ae` to
-   `c04e6dc66cae52ab64a0af40b19596249e976b6b`.
-2. `c04e6dc6` is `Merge pull request #156 from
-   msm123MSM/codex/fix-windows-mcp-subprocess-stdin`.
-3. Its first parent, `8920ae5c`, adds the repository MIT license.
-4. Its second-parent feature commit is
-   `c26d98fa255402e5952ac3258e0faa7309353927`.
-5. `origin/main:src/material_studio_mcp_server/python_runtime.py` passes
-   `stdin=subprocess.DEVNULL` to the isolated `subprocess.run` runtime probe.
-6. `origin/main:tests/test_python_runtime_contract.py` asserts that exact
-   `subprocess.DEVNULL` binding.
-7. The packaging work is isolated on
-   `codex/codex-plugin-windows-installer-v1`; it was not pushed to `main`.
-8. No open Draft PR, including the former #156 branch, was cherry-picked or
-   stacked. The packaging checkpoint was rebased normally after #156 merged.
+1. `git fetch origin --prune` resolved `origin/main` to
+   `3b2502a479f39b52aa7358ab20ef34985911eed3`.
+2. `3b2502a4` is `feat: package Materials Studio MCP as a Codex plugin (#157)`
+   and its tree is the reviewed `0.4.0` package/plugin/runtime baseline.
+3. The GUI-loop increment is isolated on `codex/gui-loop-hotload-v1`; its final
+   change must be based on `3b2502a4` so PR review does not replay the already
+   merged packaging commit under a different SHA.
+4. The original development worktree and unrelated user changes remain outside
+   this dedicated sibling worktree.
+5. The `0.5.0` wheel, ZIP, checksums, and release manifest must be rebuilt only
+   after the final source and audit commit; artifacts built from an intermediate
+   dirty tree are not release candidates.
 
 The initially supplied development worktree and any unrelated user changes
 were left untouched. Work continued in the dedicated sibling worktree.
@@ -102,16 +100,17 @@ the plugin launcher must never use it.
 
 ## Public MCP tool baseline
 
-The exact base was imported as
-`material_studio_mcp_server.server.mcp`, and `mcp.list_tools()` was awaited.
-An independent AST scan of top-level `@mcp.tool(...)` registrations produced
-the same set. Both methods returned 49 tools; tests compare the source checkout
-and clean wheel dynamically and never hardcode the historical count.
+The exact `0.4.0` base exposed 49 public tools. The `0.5.0` increment adds only
+`material_studio_gui_loop_status`, `material_studio_gui_loop_prepare`, and
+`material_studio_gui_loop_stop`. The current server was imported as
+`material_studio_mcp_server.server.mcp`, `mcp.list_tools()` was awaited, and an
+independent AST scan of top-level `@mcp.tool(...)` registrations produced the
+same 52-tool set. Tests compare the source checkout and clean wheel dynamically.
 
 - registry-order newline-list SHA-256:
-  `9a1a88c0b344fd50b6e5587bea186de0f731c98ed0a8bdbd147313262535d366`
+  `4cae241538584e08838556f5235330da9ffe7becc87f218eec77737fbb403f30`
 - sorted newline-list SHA-256:
-  `35dbc16d44f01b295bcddaaef53803781e2eeaa4bf65bcf1a67b2f4bf9f5d2f5`
+  `ed34ee359c3e264fcbc0b487337e56d54773aff866e8419599f919dcdc8a0ea4`
 
 ```text
 material_studio_get_status
@@ -144,6 +143,9 @@ material_studio_castep_run_current
 material_studio_castep_relax_current
 material_studio_live_modeling_request
 material_studio_gui_status
+material_studio_gui_loop_status
+material_studio_gui_loop_prepare
+material_studio_gui_loop_stop
 material_studio_gui_launch
 material_studio_gui_activate
 material_studio_gui_snapshot
@@ -165,11 +167,48 @@ material_studio_remote_job_status
 material_studio_dmol3_relax_current
 ```
 
-`src/material_studio_mcp_server/codex_config.py` defines the existing 44-tool
+`src/material_studio_mcp_server/codex_config.py` defines the current 47-tool
 safe allowlist and the explicit denylist
 `["material_studio_run_script"]`. Four other compatibility tools are outside
 the recommended allowlist. Plugin mode adds a server-side fail-closed guard for
 the arbitrary-script tool without changing the public wheel tool set.
+
+## Signed GUI-loop protocol decision
+
+The `0.5.0` GUI loop is a bounded transport for structures that have already
+passed the existing explicit execute, immutable revision, materialization, and
+single-window gates. It is not a modeling engine and is not a general
+MaterialsScript runner.
+
+- The generated GUI-context script has one fixed operation:
+  `import_structure`. Queue jobs contain data envelopes, never Perl source or a
+  path to executable script content.
+- Manager key material is local and at least 32 bytes. Configuration, current
+  state, heartbeat, jobs, and terminal results are HMAC-SHA256 authenticated;
+  invalid or mismatched signatures fail closed.
+- Every session is bound to an exact Materials Studio PID, top-level HWND,
+  workspace project, and base/current revision. Every import is a
+  compare-and-swap from the signed `expected_revision` to `target_revision` and
+  also binds the document name, absolute structure path, and structure SHA-256.
+- Queue publication and state transitions use exclusive producer ownership and
+  atomic `staging -> pending -> running -> done|failed` moves. A terminal success
+  is accepted only when its signed receipt and committed state match the exact
+  job, revision, document, and structure digest.
+- `auto` may use the existing verified File/Open dialog only when the exact loop
+  is not ready **before** enqueue. Once a job is enqueued, timeout, failure, or
+  uncertain completion reports `side_effect_may_have_occurred=true` and
+  `automatic_dialog_fallback_allowed=false`; it must never retry through the
+  dialog or enqueue the same import automatically.
+- Preparation writes the fixed loop but sends no GUI input and does not start it
+  through `RunMatScript.bat`. The operator starts it once inside the already
+  verified Materials Studio GUI context. Stop is explicit session shutdown, not
+  routine cleanup.
+
+These constraints preserve the existing same-window policy and allow Codex
+modeling requests to hot-load successive revisions without opening a second
+Materials Studio process. They do not authorize Fit-to-View, screenshots,
+visual acceptance, or report publication outside their existing exact-revision
+GUI artifact transaction.
 
 ## Already merged DrYe capability absorption
 
@@ -183,9 +222,10 @@ Main already contains the separately reviewed capability absorption work:
   `991a1b3ab2ad985529fb645dc82f47528a2a1297`.
 
 That work already reviewed external CIF, DMol3, CASTEP handoff, workspace read,
-dashboard, GUI, modeling, and calculation ideas. This increment packages the
-current main implementation only. It does not add a semiconductor template,
-CASTEP scientific feature, GUI modeling algorithm, or unmerged PR feature.
+dashboard, GUI, modeling, and calculation ideas. This increment adds only the
+independently implemented fixed-operation GUI transport described above. It
+does not add a semiconductor template, CASTEP scientific feature, GUI modeling
+algorithm, or unmerged PR feature.
 
 ## Read-only DrYe packaging comparison
 
@@ -202,7 +242,7 @@ Reference commit: `991a1b3ab2ad985529fb645dc82f47528a2a1297`
 | `Test-MS-MCP.bat` | Layered installation/security/protocol checks. | Adapt to isolated `LOCALAPPDATA`/workspace, dynamic tool parity, schema/annotation checks, stdout purity, cache-copy execution, and no GUI input. |
 | `Run-MS-MCP.bat` | Relative self-location and readable errors. | Validate the fixed user runtime, runner, workspace, package version, and hashes; launch only `material_studio_mcp_server.server:main`. |
 | Configuration generation | Writes executable repository-local settings. | Write data-only JSON under `%LOCALAPPDATA%\MaterialsStudioMCP\config`; never write active Codex config. |
-| GUI loop / `mcp_loop_gui.pl` | Polls a mutable queue and can execute arbitrary pending Perl scripts without immutable project/revision/window bindings. | Reject completely. No arbitrary GUI script queue or persistent mutation loop is shipped. |
+| GUI loop / `mcp_loop_gui.pl` | Polls a mutable queue and can execute arbitrary pending Perl scripts without immutable project/revision/window bindings. | Reject its arbitrary-script protocol and implementation. Independently adapt only the GUI-context polling pattern into the fixed HMAC-authenticated `import_structure` protocol bound to PID/HWND/project/revision CAS. |
 
 ## Adopt / Adapt / Reject
 
@@ -214,7 +254,7 @@ Reference commit: `991a1b3ab2ad985529fb645dc82f47528a2a1297`
 | Relative bundled MCP launch | Use direct `.mcp.json`, exact allowlist, explicit `material_studio_run_script` denylist | Automatic edits to active Codex config |
 | Layered smoke-test experience | Add wheel, entrypoint, protocol, schema, cache, reparse, Unicode, long-path and uninstall tests | Calling fake/protocol smoke a real Materials Studio acceptance |
 | Narrow release allowlist | Build deterministic wheel/ZIP/SHA/release manifest from reviewed files | Copying DrYe metadata, license, Git history, or wholesale source |
-| Human-readable configuration flow | Explicit runner/workspace choices and safe noninteractive arguments | Arbitrary `.pl` queue, GUI loop, hardcoded drive paths, dashboard autostart or SSH config writes |
+| Human-readable configuration flow | Explicit runner/workspace choices; add a fixed signed GUI-context import loop with exact binding and no post-enqueue fallback | Arbitrary `.pl` queue, queued code execution, hardcoded drive paths, dashboard autostart or SSH config writes |
 
 ## THIRD_PARTY_NOTICES audit
 
@@ -230,7 +270,9 @@ Evidence from the fixed reference SHA:
   shell/PowerShell/manifest/MaterialsScript constructs and task-mandated fields;
 - the current manifest, MCP map, scripts, English guide, Skill, Uninstall flow,
   wheel/venv runtime, and deterministic release builder are independent;
-- the current tree ships no `.pl` file or GUI queue;
+- the current tree copies no DrYe `.pl` file; it independently generates one
+  fixed-operation loop whose queue contains authenticated data rather than
+  executable script text;
 - the DrYe MIT copyright is `shengh_he`, and neither that license nor its
   NOTICE/source was incorporated.
 
@@ -297,25 +339,27 @@ both the stale-validator mismatch and an isolated real-host load/cache test.
 
 ## Old artifact audit and disposal requirement
 
-Before rebase, the existing internal-preview artifacts were inspected without
-deleting them:
+The merged `0.4.0` artifacts were inspected before replacement:
 
 | File | SHA-256 |
 |---|---|
-| `materials_studio_mcp-0.3.0-py3-none-any.whl` | `df24e5784ed7b6dc1f2772d18bf9fb4001d879a3818e4dc08ede890c4607b7f2` |
-| `materials-studio-mcp-plugin-0.3.0-windows.zip` | `8e92d55c752acae26e35542e7787e3f6499eff81d8ae04016849ce3131a8ff3e` |
-| `release-manifest.json` | `e633bd92939420b864e48edc69ccde085cc947df430ec3f94ea6505f90ed2133` |
-| `SHA256SUMS.txt` | `a4ce43c1b03d26861de282a61287d772237e5837d8e32c4245e2496c5459509a` |
+| `materials_studio_mcp-0.4.0-py3-none-any.whl` | `4a22e64f4cb5b4600dcf2b35234883e6eb4ae73939b26f17400557164bcc1604` |
+| `materials-studio-mcp-plugin-0.4.0-windows.zip` | `10ccb94f81fc379e83b948a67666e33e4854dc93255d0b84ec365bcd8e5e59ea` |
+| `release-manifest.json` | `974ecd486a42e52cc5134cba8aee0f1fcbb7e17192fc1ae5003580e60368f39d` |
+| `SHA256SUMS.txt` | `931bfe0be6bc27ad796e1ab091e7da5b5eb2172de88ceba204b28d63a2dd8e7f` |
 
-Those files predate PR #156, omit the new repository license metadata, bind
-the old base SHA, and are not release candidates. They must be removed and
-must never have their hashes reused. Final artifacts are rebuilt from a clean
-committed tree after the version/license/staging migration.
+Those files bind the immutable `0.4.0` runtime and do not contain the signed
+GUI-loop implementation. They must not be renamed or reused as `0.5.0`.
+Intermediate `0.5.0` artifacts built while source was still changing are also
+not release candidates. Final artifacts must be rebuilt from the clean final
+commit and their source/wheel/protocol parity rechecked before publication.
 
 ## Non-negotiable safety boundaries
 
 - Do not rewrite the Python MCP server as Node.
-- Do not add an arbitrary GUI script queue or GUI polling loop.
+- Do not add an arbitrary GUI script queue. A GUI polling loop is acceptable
+  only when it implements the reviewed fixed HMAC-authenticated
+  `import_structure` protocol and exact PID/HWND/project/revision CAS contract.
 - Do not enable arbitrary MaterialsScript by default.
 - Do not weaken preview-first, revision, execution-attempt, runner, exact-window
   GUI, calculation, provenance, lock, or evidence-integrity gates.
@@ -333,8 +377,9 @@ committed tree after the version/license/staging migration.
 
 ## Phase 0 outcome
 
-Proceed with the isolated packaging increment. Before push, rebuild every
-artifact from a clean tree, run the complete source/wheel/protocol/installer/
-cache acceptance matrix, verify active Codex config and workspace preservation,
-perform an independent review, and report real Materials Studio and real CASTEP
-as `NOT_RUN`.
+Proceed with the isolated `0.5.0` GUI-loop increment. After the final source and
+audit commit, rebuild every artifact from that clean tree, run the complete
+source/wheel/protocol/installer/cache acceptance matrix, verify active Codex
+config and workspace preservation, perform an independent review, and report
+real Materials Studio and real CASTEP evidence exactly as observed rather than
+inferring it from protocol or unit tests.

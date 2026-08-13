@@ -19,7 +19,7 @@ from scripts.build_plugin_release import (
 )
 
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 BASE_SHA = "a" * 40
 REFERENCE_SHA = "b" * 40
 LICENSE_TEXT = "MIT License\n\nCopyright (c) 2026 Xu kaidong\n"
@@ -63,7 +63,7 @@ def _make_wheel(
     license_file_lines = "".join(f"License-File: {name}\n" for name in license_file_headers)
     requirement_line = f"Requires-Dist: {mcp_requirement}\n" if mcp_requirement else ""
     entries = {
-        "material_studio_mcp_server/__init__.py": b"__version__ = '0.4.0'\n",
+        "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.0'\n",
         f"{dist_info}/METADATA": (
             f"Metadata-Version: {core_metadata_version}\n"
             "Name: materials-studio-mcp\n"
@@ -128,7 +128,7 @@ def _make_source(root: Path) -> Path:
         "pyproject.toml",
         "[project]\n"
         "name = \"materials-studio-mcp\"\n"
-        "version = \"0.4.0\"\n"
+        "version = \"0.5.0\"\n"
         "authors = [{ name = \"Xu kaidong\" }]\n"
         "license = \"MIT\"\n"
         "license-files = [\"LICENSE\"]\n\n"
@@ -436,7 +436,7 @@ def test_rejects_wheel_member_path_traversal(tmp_path: Path) -> None:
         _zip_write(
             archive,
             f"materials_studio_mcp-{VERSION}.dist-info/METADATA",
-            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.4.0\n\n",
+            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.0\n\n",
         )
     with pytest.raises(ReleaseBuildError, match="unsafe archive path"):
         build_release(

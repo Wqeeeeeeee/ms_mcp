@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_SCRIPTS = ROOT / "scripts" / "windows"
 POWERSHELL = shutil.which("powershell.exe")
 CMD = shutil.which("cmd.exe")
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 def _run_ps(script: str, *arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -1202,7 +1202,12 @@ def test_source_and_built_wheel_public_tools_match_dynamically(tmp_path: Path) -
         pytest.skip("origin/main is unavailable for the dynamic public-tool baseline")
     baseline_names = decorated_tool_names(main_source.stdout)
     source_names = decorated_tool_names((ROOT / "src" / "material_studio_mcp_server" / "server.py").read_text(encoding="utf-8"))
-    assert source_names == baseline_names
+    release_tool_additions = {
+        "material_studio_gui_loop_status",
+        "material_studio_gui_loop_prepare",
+        "material_studio_gui_loop_stop",
+    }
+    assert source_names == baseline_names | release_tool_additions
     probe = f"""
 import asyncio, json, sys
 sys.path.insert(0, {str(wheel_site)!r})
@@ -1221,7 +1226,7 @@ print(json.dumps(sorted(tool.name for tool in asyncio.run(mcp.list_tools()))))
     )
     assert completed.returncode == 0, completed.stderr
     wheel_names = set(json.loads(completed.stdout))
-    assert wheel_names == baseline_names
+    assert wheel_names == source_names
 
 
 def test_built_wheel_metadata_pins_mcp_below_2() -> None:

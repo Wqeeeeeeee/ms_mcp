@@ -1,6 +1,6 @@
 {
   "name": "materials-studio-mcp",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Local Materials Studio MCP server and safety-first modeling workflow for Windows.",
   "author": {
     "name": "Xu kaidong",
@@ -27,6 +27,7 @@
       "Inspect local MCP, runner, project, and GUI status",
       "Preview revisioned Materials Studio model changes",
       "Operate only a verified Materials Studio window",
+      "Hot-load revisions through a signed same-window GUI loop",
       "Export structure and multi-view diagnostics",
       "Preview guarded CASTEP, Forcite, and DMol3 workflows"
     ],

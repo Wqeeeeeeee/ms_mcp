@@ -40,6 +40,8 @@ from .gui_uia import (
     ViewReplayAutomationBackend,
     local_uia_view_replay_implementation_contract,
 )
+from .config import resolve_config
+from .gui_loop import GuiLoopError, GuiLoopManager
 from .parsers.copy_script import analyze_reviewed_copy_script
 from .state.store import default_workspace_root, sanitize_project_id
 
@@ -62,6 +64,10 @@ VIEW_REPLAY_STAGED_KEYBOARD_RECIPE_SCHEMA_VERSION = 4
 CRYSTAL_STANDARD_VIEW_RECIPE_SCHEMA_VERSION = 5
 MILLER_VIEW_ONTO_RECIPE_SCHEMA_VERSION = 8
 GUI_BACKEND_ENV = "MATERIAL_STUDIO_MCP_GUI_BACKEND"
+GUI_LOOP_BINDING_EVENT_SCHEMA = "materials_studio_gui_loop_binding_event_v1"
+GUI_LOOP_LIVE_BINDING_SCHEMA = "materials_studio_gui_loop_live_binding_v1"
+GUI_LOOP_BINDING_JOURNAL_MAX_BYTES = 8 * 1024 * 1024
+GUI_LOOP_BINDING_JOURNAL_MAX_EVENTS = 10_000
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -2876,6 +2882,9 @@ class MaterialsStudioGuiController:
         workspace_root: str | Path | None = None,
         backend: GuiBackend | None = None,
         view_replay_backend: ViewReplayAutomationBackend | None = None,
+        gui_loop_manager: GuiLoopManager | None = None,
+        gui_hotload_transport: str | None = None,
+        gui_loop_timeout_seconds: float | None = None,
     ) -> None:
         """初始化 GUI 控制器。
 
@@ -2894,6 +2903,26 @@ class MaterialsStudioGuiController:
             self.backend = WindowsGuiBackend() if os.name == "nt" else NullGuiBackend()
         self.view_replay_backend = view_replay_backend or PywinautoViewReplayBackend(
             window_capture_fn=_capture_window_bmp,
+        )
+        config = resolve_config(self.workspace_root)
+        configured_transport = str(
+            gui_hotload_transport or config.gui_hotload_transport
+        ).strip().lower()
+        if configured_transport not in {"auto", "loop", "dialog"}:
+            raise ValueError("gui_hotload_transport must be auto, loop, or dialog")
+        self.gui_hotload_transport = configured_transport
+        self.gui_loop_timeout_seconds = float(
+            gui_loop_timeout_seconds
+            if gui_loop_timeout_seconds is not None
+            else config.gui_loop_timeout_seconds
+        )
+        if self.gui_loop_timeout_seconds <= 0:
+            raise ValueError("gui_loop_timeout_seconds must be positive")
+        self.gui_loop_manager = gui_loop_manager or GuiLoopManager(
+            self.workspace_root,
+            heartbeat_max_age_seconds=float(
+                config.gui_loop_heartbeat_ttl_seconds
+            ),
         )
 
     def status(self, *, project_id: str | None = None, revision: int | None = None) -> dict[str, Any]:
@@ -2945,7 +2974,7 @@ class MaterialsStudioGuiController:
                 False,
             )
         )
-        return {
+        status_payload = {
             "ok": self.backend.supported,
             "supported": self.backend.supported,
             "unavailable_reason": self.backend.unavailable_reason,
@@ -3088,6 +3117,285 @@ class MaterialsStudioGuiController:
                 "Fit-to-View only changes the current GUI camera framing; it never changes the structure artifact.",
             ],
         }
+        loop_window = target_window or window
+        loop_metadata = (
+            self._project_wrapper_metadata_for_window(loop_window)
+            if loop_window is not None
+            else None
+        )
+        if (
+            loop_window is not None
+            and isinstance(loop_metadata, dict)
+            and loop_metadata.get("wrapper_provenance_status")
+            == "verified_revision_wrapper"
+            and loop_metadata.get("project_id")
+            and loop_metadata.get("revision") is not None
+        ):
+            try:
+                loop_status = self.gui_loop_manager.status(
+                    self._gui_loop_binding(
+                        window=loop_window,
+                        project_id=str(loop_metadata["project_id"]),
+                        revision=int(loop_metadata["revision"]),
+                    )
+                )
+            except Exception as exc:
+                loop_status = {
+                    "ok": False,
+                    "status": "not_prepared",
+                    "loop_ready": False,
+                    "error": str(exc)[:1000],
+                }
+        else:
+            loop_status = {
+                "ok": False,
+                "status": "target_binding_unavailable",
+                "loop_ready": False,
+            }
+        status_payload["gui_loop"] = loop_status
+        status_payload["gui_hotload_transport_configured"] = self.gui_hotload_transport
+        status_payload["preferred_hotload_transport"] = (
+            self.gui_hotload_transport
+            if self.gui_hotload_transport in {"loop", "dialog"}
+            else ("loop" if loop_status.get("loop_ready") is True else "dialog")
+        )
+        status_payload["gui_loop_start_required"] = bool(
+            self.gui_hotload_transport != "dialog"
+            and not loop_status.get("loop_ready")
+        )
+        status_payload["capabilities"] = [
+            *status_payload["capabilities"],
+            "prepare_signed_gui_loop",
+            "inspect_signed_gui_loop",
+            "stop_signed_gui_loop",
+            "hotload_revision_via_gui_loop",
+        ]
+        return status_payload
+
+    @staticmethod
+    def _gui_loop_binding(
+        *,
+        window: WindowInfo,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        """Return the immutable process/window/project binding for a GUI loop."""
+
+        return {
+            "pid": int(window.pid or 0),
+            "window_handle": int(window.handle),
+            "project_id": sanitize_project_id(project_id),
+            "revision": int(revision),
+        }
+
+    def gui_loop_status(
+        self,
+        *,
+        project_id: str | None = None,
+        revision: int | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Inspect the exact GUI-side loop without creating queue artifacts."""
+
+        try:
+            window, target_resolution = self._require_window(
+                project_id=project_id,
+                revision=revision,
+            )
+        except GuiError as exc:
+            return {
+                "ok": False,
+                "status": "target_window_unavailable",
+                "error": str(exc),
+                "loop_ready": False,
+                "requires_gui_context_start": True,
+                "recommended_tool": "material_studio_gui_loop_prepare",
+            }
+        metadata = self._project_wrapper_metadata_for_window(window)
+        if not isinstance(metadata, dict) or metadata.get(
+            "wrapper_provenance_status"
+        ) != "verified_revision_wrapper":
+            return {
+                "ok": False,
+                "status": "verified_wrapper_required",
+                "loop_ready": False,
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "requires_gui_context_start": True,
+                "recommended_tool": "material_studio_gui_open_structure",
+            }
+        loaded_project = sanitize_project_id(str(metadata.get("project_id") or ""))
+        if project_id is not None and sanitize_project_id(project_id) != loaded_project:
+            return {
+                "ok": False,
+                "status": "loaded_wrapper_project_mismatch",
+                "loop_ready": False,
+                "requested_project_id": project_id,
+                "loaded_project_id": loaded_project,
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "requires_gui_context_start": False,
+                "recommended_tool": "material_studio_gui_status",
+            }
+        effective_revision = int(metadata["revision"])
+        binding = self._gui_loop_binding(
+            window=window,
+            project_id=loaded_project,
+            revision=effective_revision,
+        )
+        try:
+            status = self.gui_loop_manager.status(binding, job_id=job_id)
+        except GuiLoopError as exc:
+            status = {
+                "ok": False,
+                "status": exc.receipt.get("status", "not_prepared"),
+                "error": str(exc),
+                "loop_ready": False,
+                **exc.receipt,
+            }
+        status.update(
+            {
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "project_id": loaded_project,
+                "revision": effective_revision,
+                "requested_revision": revision,
+                "requested_revision_loaded": (
+                    revision is None or int(revision) == effective_revision
+                ),
+                "transport": "loop",
+                "requires_gui_context_start": not bool(status.get("loop_ready")),
+                "recommended_tool": (
+                    "material_studio_gui_open_structure"
+                    if status.get("loop_ready")
+                    else "material_studio_gui_loop_prepare"
+                ),
+            }
+        )
+        return status
+
+    def prepare_gui_loop(
+        self,
+        *,
+        project_id: str | None = None,
+        revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Generate one exact-bound static loop without issuing GUI input."""
+
+        window, target_resolution = self._require_window(
+            project_id=project_id,
+            revision=revision,
+        )
+        metadata = self._project_wrapper_metadata_for_window(window)
+        if not isinstance(metadata, dict) or metadata.get(
+            "wrapper_provenance_status"
+        ) != "verified_revision_wrapper":
+            raise GuiError(
+                "GUI loop preparation requires an exact MCP-generated wrapper window"
+            )
+        loaded_project = sanitize_project_id(str(metadata.get("project_id") or ""))
+        if project_id is not None and sanitize_project_id(project_id) != loaded_project:
+            raise GuiError(
+                "GUI loop preparation refused: the visible verified wrapper belongs "
+                "to a different project"
+            )
+        effective_revision = int(metadata["revision"])
+        initial_document_name = Path(
+            str(
+                metadata.get("document_name")
+                or metadata.get("source_name")
+                or metadata.get("source_path")
+                or ""
+            )
+        ).stem
+        if not initial_document_name:
+            raise GuiError(
+                "GUI loop preparation requires the active wrapper document name"
+            )
+        binding = self._gui_loop_binding(
+            window=window,
+            project_id=loaded_project,
+            revision=effective_revision,
+        )
+        prepared = self.gui_loop_manager.prepare(
+            {
+                **binding,
+                "base_revision": effective_revision,
+                "initial_document_name": initial_document_name,
+            }
+        )
+        prepared.update(
+            {
+                "project_id": loaded_project,
+                "revision": effective_revision,
+                "requested_revision": revision,
+                "requested_revision_loaded": (
+                    revision is None or int(revision) == effective_revision
+                ),
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "gui_input_performed": False,
+                "loop_started": False,
+                "required_next_step": (
+                    "In this exact Materials Studio window, run the generated "
+                    "materials_studio_gui_loop.pl once from the Script Library/User "
+                    "menu. If Materials Studio first asks for a Workspace Folder, "
+                    "confirm a suitable local temporary folder. Then call "
+                    "material_studio_gui_loop_status until loop_ready=true."
+                ),
+                "first_run_workspace_folder_prompt_possible": True,
+                "status_tool": "material_studio_gui_loop_status",
+                "status_payload": {
+                    "project_id": loaded_project,
+                    "revision": effective_revision,
+                    "working_dir": str(self.workspace_root),
+                },
+            }
+        )
+        return prepared
+
+    def stop_gui_loop(
+        self,
+        *,
+        project_id: str | None = None,
+        revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Publish a signed stop marker for the exact prepared loop."""
+
+        window, target_resolution = self._require_window(
+            project_id=project_id,
+            revision=revision,
+        )
+        metadata = self._project_wrapper_metadata_for_window(window)
+        if not isinstance(metadata, dict) or metadata.get(
+            "wrapper_provenance_status"
+        ) != "verified_revision_wrapper":
+            raise GuiError("Cannot stop a GUI loop without a verified wrapper binding")
+        loaded_project = sanitize_project_id(str(metadata.get("project_id") or ""))
+        if project_id is not None and sanitize_project_id(project_id) != loaded_project:
+            raise GuiError(
+                "GUI loop stop refused: the visible verified wrapper belongs to a "
+                "different project"
+            )
+        effective_revision = int(metadata["revision"])
+        result = self.gui_loop_manager.request_stop(
+            self._gui_loop_binding(
+                window=window,
+                project_id=loaded_project,
+                revision=effective_revision,
+            )
+        )
+        result.update(
+            {
+                "window": window.to_dict(),
+                "target_window_resolution": target_resolution,
+                "project_id": loaded_project,
+                "revision": effective_revision,
+                "requested_revision": revision,
+                "gui_input_performed": False,
+            }
+        )
+        return result
 
     def _fit_to_view_registry_preflight(self) -> dict[str, Any]:
         """Verify the installed Materials Studio toolbar mapping for Fit-to-View."""
@@ -3507,6 +3815,43 @@ class MaterialsStudioGuiController:
                 provenance_status = "source_outside_wrapper_workspace"
             else:
                 provenance_status = "legacy_or_unscoped_wrapper"
+            live_binding = _load_gui_loop_live_binding(
+                metadata_path=metadata_path,
+                static_metadata=metadata,
+                workspace_root=workspace_root,
+            )
+            if live_binding.get("verified") is True:
+                live_cache = live_binding.get("cache") or {}
+                if (
+                    int(live_cache.get("pid") or 0) != int(window.pid or 0)
+                    or int(live_cache.get("window_handle") or 0)
+                    != int(window.handle)
+                ):
+                    live_binding = {
+                        **live_binding,
+                        "status": "window_binding_mismatch",
+                        "verified": False,
+                        "error": (
+                            "GUI loop live binding PID/window handle no longer "
+                            "matches the observed wrapper window"
+                        ),
+                    }
+            if live_binding.get("status") not in {"not_configured", "verified"}:
+                provenance_status = "gui_loop_live_binding_invalid"
+            elif live_binding.get("verified") is True:
+                cache = dict(live_binding["cache"])
+                metadata = {
+                    **metadata,
+                    "wrapper_initial_revision": metadata.get("revision"),
+                    "revision": int(cache["revision"]),
+                    "source_path": str(cache["source_path"]),
+                    "source_name": Path(str(cache["source_path"])).name,
+                    "document_name": cache.get("document_name"),
+                    "gui_loop_live_binding": live_binding,
+                    "wrapper_binding_mode": "verified_gui_loop_live_binding",
+                }
+                source_path = metadata.get("source_path")
+                source_inside_workspace = True
             readable_candidates.append(
                 {
                     **metadata,
@@ -3761,9 +4106,15 @@ class MaterialsStudioGuiController:
         revision: int | None = None,
         take_snapshot: bool = True,
         reuse_existing_window_only: bool = True,
+        hotload_transport: str | None = None,
     ) -> dict[str, Any]:
         """Open a structure in Materials Studio GUI."""
 
+        requested_transport = str(
+            hotload_transport or self.gui_hotload_transport
+        ).strip().lower()
+        if requested_transport not in {"auto", "loop", "dialog"}:
+            raise GuiError("hotload_transport must be auto, loop, or dialog")
         path = Path(structure_path).expanduser().resolve()
         if not path.exists() or not path.is_file():
             raise GuiError(f"结构文件不存在: {path}")
@@ -3788,9 +4139,186 @@ class MaterialsStudioGuiController:
                 f"Violations: {', '.join(single_window_violation_reasons)}"
             )
 
+        pre_open_wrapper_metadata = self._project_wrapper_metadata_for_window(window)
+        loop_binding_revision = (
+            int(pre_open_wrapper_metadata["revision"])
+            if isinstance(pre_open_wrapper_metadata, dict)
+            and pre_open_wrapper_metadata.get("revision") is not None
+            else (int(revision) if revision is not None else None)
+        )
+        loop_preflight: dict[str, Any] = {
+            "status": "not_checked",
+            "loop_ready": False,
+        }
+        loop_binding: dict[str, Any] | None = None
+        if (
+            requested_transport in {"auto", "loop"}
+            and project_id is not None
+            and revision is not None
+            and loop_binding_revision is not None
+            and isinstance(pre_open_wrapper_metadata, dict)
+            and pre_open_wrapper_metadata.get("wrapper_provenance_status")
+            == "verified_revision_wrapper"
+            and pre_open_wrapper_metadata.get("wrapper_workspace_matches_controller")
+            is True
+            and pre_open_wrapper_metadata.get("project_id")
+            == sanitize_project_id(project_id)
+        ):
+            loop_binding = self._gui_loop_binding(
+                window=window,
+                project_id=project_id,
+                revision=loop_binding_revision,
+            )
+            try:
+                loop_preflight = self.gui_loop_manager.status(loop_binding)
+            except GuiLoopError as exc:
+                loop_preflight = {
+                    "ok": False,
+                    "status": exc.receipt.get("status", "not_prepared"),
+                    "error": str(exc),
+                    "loop_ready": False,
+                    **exc.receipt,
+                }
+            except Exception as exc:
+                loop_preflight = {
+                    "ok": False,
+                    "status": "status_error",
+                    "error": str(exc)[:1000],
+                    "loop_ready": False,
+                }
+
+        loop_queue = (
+            loop_preflight.get("queue")
+            if isinstance(loop_preflight.get("queue"), dict)
+            else None
+        )
+        queue_state_observed = loop_queue is not None
+
+        def _observed_job_ids(queue_name: str) -> list[str]:
+            if loop_queue is None:
+                return []
+            values = loop_queue.get(queue_name)
+            if not isinstance(values, list):
+                return []
+            return [str(value) for value in values if str(value)]
+
+        staging_job_ids = _observed_job_ids("staging")
+        pending_job_ids = _observed_job_ids("pending")
+        running_job_ids = _observed_job_ids("running")
+        active_job_ids = _unique_strings([*pending_job_ids, *running_job_ids])
+        nonterminal_job_ids = _unique_strings(
+            [*staging_job_ids, *pending_job_ids, *running_job_ids]
+        )
+        preflight_error_fields = sorted(
+            str(key)
+            for key, value in loop_preflight.items()
+            if value is not None
+            and value != ""
+            and (str(key) == "error" or str(key).endswith("_error"))
+        )
+        signature_or_status_error = bool(
+            loop_preflight.get("ok") is False
+            or preflight_error_fields
+            or (
+                loop_preflight.get("heartbeat_present") is True
+                and loop_preflight.get("heartbeat_signature_valid") is not True
+            )
+            or (
+                loop_preflight.get("prepared") is True
+                and loop_preflight.get("current_state_signature_valid") is not True
+            )
+        )
+        auto_dialog_fallback_reasons: list[str] = []
+        if loop_preflight.get("status") not in {"not_prepared", "prepared"}:
+            auto_dialog_fallback_reasons.append("loop_status_not_safe_for_dialog_fallback")
+        if loop_preflight.get("loop_lock_present") is not False:
+            auto_dialog_fallback_reasons.append("loop_lock_absence_not_proven")
+        if not queue_state_observed:
+            auto_dialog_fallback_reasons.append("loop_queue_state_unobserved")
+        if nonterminal_job_ids:
+            auto_dialog_fallback_reasons.append("loop_nonterminal_jobs_present")
+        if signature_or_status_error:
+            auto_dialog_fallback_reasons.append("loop_status_or_signature_error")
+        auto_dialog_fallback_allowed = not auto_dialog_fallback_reasons
+
+        if (
+            requested_transport == "auto"
+            and loop_binding is not None
+            and loop_preflight.get("loop_ready") is not True
+            and not auto_dialog_fallback_allowed
+        ):
+            raise GuiLoopError(
+                "The exact Materials Studio GUI-loop state is uncertain; refusing "
+                "automatic File/Open fallback because a queued or running import "
+                "could still affect this window",
+                {
+                    "status": (
+                        "loop_job_in_flight"
+                        if active_job_ids
+                        else "loop_preflight_uncertain"
+                    ),
+                    "transport": "auto",
+                    "gui_input_started": False,
+                    "side_effect_may_have_occurred": True,
+                    "automatic_dialog_fallback_allowed": False,
+                    "gui_open_retry_allowed": False,
+                    "active_job_ids": active_job_ids,
+                    "staging_job_ids": staging_job_ids,
+                    "pending_job_ids": pending_job_ids,
+                    "running_job_ids": running_job_ids,
+                    "preflight_error_fields": preflight_error_fields,
+                    "fallback_blocking_reasons": auto_dialog_fallback_reasons,
+                    "loop_preflight": loop_preflight,
+                    "recommended_tool": "material_studio_gui_loop_status",
+                    "recommended_payload": {
+                        "project_id": project_id,
+                        "revision": loop_binding_revision,
+                        "working_dir": str(self.workspace_root),
+                    },
+                    "required_next_step": (
+                        "Inspect the exact signed GUI-loop state and any listed job "
+                        "IDs. Do not reopen or re-import the structure until the "
+                        "terminal state is known."
+                    ),
+                },
+            )
+        if requested_transport == "loop" and not loop_preflight.get("loop_ready"):
+            loop_state_uncertain = bool(
+                active_job_ids
+                or staging_job_ids
+                or loop_preflight.get("loop_lock_present") is True
+                or signature_or_status_error
+            )
+            raise GuiLoopError(
+                "The exact Materials Studio GUI loop is not ready; prepare it and "
+                "start the generated script once inside this GUI window",
+                {
+                    "status": "loop_start_required",
+                    "transport": "loop",
+                    "gui_input_started": False,
+                    "side_effect_may_have_occurred": loop_state_uncertain,
+                    "automatic_dialog_fallback_allowed": False,
+                    "active_job_ids": active_job_ids,
+                    "staging_job_ids": staging_job_ids,
+                    "pending_job_ids": pending_job_ids,
+                    "running_job_ids": running_job_ids,
+                    "loop_preflight": loop_preflight,
+                    "recommended_tool": "material_studio_gui_loop_prepare",
+                    "recommended_payload": {
+                        "project_id": project_id,
+                        "revision": loop_binding_revision,
+                        "working_dir": str(self.workspace_root),
+                    },
+                },
+            )
+        use_gui_loop = bool(
+            requested_transport in {"auto", "loop"}
+            and loop_preflight.get("loop_ready") is True
+        )
+
         open_target = path
         wrapper: dict[str, Any] | None = None
-        if isinstance(self.backend, WindowsGuiBackend) and path.suffix.lower() in {
+        if not use_gui_loop and isinstance(self.backend, WindowsGuiBackend) and path.suffix.lower() in {
             ".arc",
             ".car",
             ".cif",
@@ -3820,7 +4348,7 @@ class MaterialsStudioGuiController:
                 )
             refreshed_window, refreshed_resolution = self._require_window(
                 project_id=project_id,
-                revision=revision,
+                revision=(loop_binding_revision if use_gui_loop else revision),
             )
             if refreshed_window.handle != window.handle:
                 raise GuiError(
@@ -3833,7 +4361,7 @@ class MaterialsStudioGuiController:
                 target_window=window,
                 target_resolution=target_resolution,
                 project_id=project_id,
-                revision=revision,
+                revision=(loop_binding_revision if use_gui_loop else revision),
             )
             if post_activation_window_management.get("activation_required_before_capture_or_input"):
                 raise GuiError(
@@ -3843,7 +4371,120 @@ class MaterialsStudioGuiController:
 
         same_window_opener = _backend_same_window_open_callable(self.backend)
         same_window_open_used = False
-        if reuse_existing_window_only and _backend_file_open_may_launch_new_instance(self.backend):
+        loop_binding_publication: dict[str, Any] | None = None
+        if use_gui_loop:
+            loop_receipt = self.gui_loop_manager.enqueue_and_wait(
+                path,
+                loop_binding or {},
+                int(revision),
+                timeout_seconds=self.gui_loop_timeout_seconds,
+                document_name=path.stem,
+            )
+            receipt_mismatch_reasons: list[str] = []
+            try:
+                if int(loop_receipt.get("expected_revision", -1)) != int(
+                    loop_binding_revision
+                ):
+                    receipt_mismatch_reasons.append("expected_revision_mismatch")
+                if int(loop_receipt.get("target_revision", -1)) != int(revision):
+                    receipt_mismatch_reasons.append("target_revision_mismatch")
+                result_receipt = (
+                    loop_receipt.get("result")
+                    if isinstance(loop_receipt.get("result"), dict)
+                    else {}
+                )
+                if int(result_receipt.get("current_revision", -1)) != int(revision):
+                    receipt_mismatch_reasons.append("terminal_current_revision_mismatch")
+            except (TypeError, ValueError):
+                receipt_mismatch_reasons.append("terminal_revision_not_integer")
+            if not str(loop_receipt.get("imported_document_name") or "").strip():
+                receipt_mismatch_reasons.append("imported_document_name_missing")
+            if receipt_mismatch_reasons:
+                raise GuiLoopError(
+                    "GUI loop completion receipt failed controller validation",
+                    {
+                        "status": "invalid_terminal_receipt",
+                        "job_id": loop_receipt.get("job_id"),
+                        "expected_revision": loop_binding_revision,
+                        "target_revision": revision,
+                        "side_effect_may_have_occurred": True,
+                        "automatic_dialog_fallback_allowed": False,
+                        "mismatch_reasons": receipt_mismatch_reasons,
+                        "loop_receipt": loop_receipt,
+                    },
+                )
+            try:
+                refreshed_window, _ = self._require_window(
+                    project_id=project_id,
+                    revision=loop_binding_revision,
+                )
+            except Exception as exc:
+                raise GuiLoopError(
+                    "GUI loop import completed but the target window could not be revalidated",
+                    {
+                        "status": "loop_completion_window_revalidation_failed",
+                        "job_id": loop_receipt.get("job_id"),
+                        "expected_revision": loop_binding_revision,
+                        "target_revision": revision,
+                        "side_effect_may_have_occurred": True,
+                        "automatic_dialog_fallback_allowed": False,
+                        "loop_receipt": loop_receipt,
+                        "error": str(exc)[:1000],
+                    },
+                ) from exc
+            if (
+                refreshed_window.handle != window.handle
+                or int(refreshed_window.pid or 0) != int(window.pid or 0)
+            ):
+                raise GuiLoopError(
+                    "GUI loop import completed but the target PID/window identity changed",
+                    {
+                        "status": "loop_completion_window_identity_changed",
+                        "job_id": loop_receipt.get("job_id"),
+                        "expected_revision": loop_binding_revision,
+                        "target_revision": revision,
+                        "side_effect_may_have_occurred": True,
+                        "automatic_dialog_fallback_allowed": False,
+                        "loop_receipt": loop_receipt,
+                    },
+                )
+            window = refreshed_window
+            try:
+                loop_binding_publication = self._publish_gui_loop_live_binding(
+                    window=window,
+                    wrapper_metadata=pre_open_wrapper_metadata,
+                    project_id=str(project_id),
+                    expected_revision=int(loop_binding_revision),
+                    target_revision=int(revision),
+                    structure_path=path,
+                    loop_receipt=loop_receipt,
+                )
+            except Exception as exc:
+                raise GuiLoopError(
+                    "GUI loop import completed but its live binding could not be published",
+                    {
+                        "status": "loop_live_binding_publication_failed",
+                        "job_id": loop_receipt.get("job_id"),
+                        "expected_revision": loop_binding_revision,
+                        "target_revision": revision,
+                        "side_effect_may_have_occurred": True,
+                        "automatic_dialog_fallback_allowed": False,
+                        "loop_receipt": loop_receipt,
+                        "error": str(exc)[:1000],
+                    },
+                ) from exc
+            open_result = {
+                "method": "verified_gui_loop_import",
+                "path": str(path),
+                "window": window.to_dict(),
+                "same_window_open_requested": True,
+                "spawned_process_ids": [],
+                "gui_loop_used": True,
+                "loop_receipt": loop_receipt,
+                "live_binding_publication": loop_binding_publication,
+            }
+            same_window_open_used = True
+        elif reuse_existing_window_only and _backend_file_open_may_launch_new_instance(self.backend):
             if same_window_opener is None:
                 raise GuiError(
                     "Refusing to open the structure through the local Windows file-open fallback because it "
@@ -3855,7 +4496,7 @@ class MaterialsStudioGuiController:
             same_window_open_used = True
         else:
             open_result = self.backend.open_file(open_target)
-        if isinstance(self.backend, WindowsGuiBackend):
+        if isinstance(self.backend, WindowsGuiBackend) and not use_gui_loop:
             launch_pid = open_result.get("pid") if isinstance(open_result.get("pid"), int) else None
             target_pid = window.pid if same_window_open_used else launch_pid
             dismissed = _dismiss_backend_startup_dialogs(self.backend, pid=target_pid, timeout_seconds=8.0)
@@ -3867,7 +4508,7 @@ class MaterialsStudioGuiController:
                 target_pid=target_pid,
                 expected_project_name=wrapper.get("project_name") if wrapper else None,
             )
-        else:
+        elif not use_gui_loop:
             refreshed_window = self.backend.find_window()
             if refreshed_window is not None:
                 window = refreshed_window
@@ -3940,6 +4581,11 @@ class MaterialsStudioGuiController:
             "reuse_existing_window_only": reuse_existing_window_only,
             "same_window_open_supported": _backend_same_window_open_supported(self.backend),
             "same_window_open_used": same_window_open_used,
+            "hotload_transport_requested": requested_transport,
+            "hotload_transport_used": "loop" if use_gui_loop else "dialog",
+            "gui_loop_used": use_gui_loop,
+            "gui_loop_preflight": loop_preflight,
+            "gui_loop_live_binding_publication": loop_binding_publication,
             "window_management": window_management,
             "post_activation_window_management": post_activation_window_management,
             "post_open_target_window_resolution": post_open_target_resolution,
@@ -6705,6 +7351,206 @@ class MaterialsStudioGuiController:
             "open_note": "Generated .stp wrapper so Materials Studio opens with an active project.",
         }
 
+    def _publish_gui_loop_live_binding(
+        self,
+        *,
+        window: WindowInfo,
+        wrapper_metadata: dict[str, Any],
+        project_id: str,
+        expected_revision: int,
+        target_revision: int,
+        structure_path: Path,
+        loop_receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit a loop-imported revision to one stable wrapper audit chain."""
+
+        if int(loop_receipt.get("expected_revision", -1)) != int(expected_revision):
+            raise GuiError("GUI loop receipt expected revision does not match publication")
+        if int(loop_receipt.get("target_revision", -1)) != int(target_revision):
+            raise GuiError("GUI loop receipt target revision does not match publication")
+        terminal = (
+            loop_receipt.get("result")
+            if isinstance(loop_receipt.get("result"), dict)
+            else {}
+        )
+        if int(terminal.get("current_revision", -1)) != int(target_revision):
+            raise GuiError("GUI loop terminal revision does not match publication")
+        if not str(loop_receipt.get("imported_document_name") or "").strip():
+            raise GuiError("GUI loop receipt has no imported document identity")
+
+        metadata_path = Path(str(wrapper_metadata.get("metadata_path") or "")).resolve()
+        _ensure_inside(self.workspace_root, metadata_path)
+        if not metadata_path.is_file():
+            raise GuiError("GUI loop wrapper metadata is missing after import")
+        project_dir = metadata_path.parent
+        events_path = (project_dir / "gui_loop_events.jsonl").resolve()
+        binding_path = (project_dir / "live_binding.json").resolve()
+        lock_path = (project_dir / "gui_loop_live_binding.lock").resolve()
+        source = structure_path.expanduser().resolve()
+        _ensure_inside(self.workspace_root, source)
+        if not source.is_file():
+            raise GuiError("GUI loop structure artifact disappeared before binding commit")
+        source_sha256, source_byte_count = _sha256_file(source)
+        receipt_source_sha256 = next(
+            (
+                str(value)
+                for value in (
+                    loop_receipt.get("structure_sha256"),
+                    loop_receipt.get("source_sha256"),
+                    loop_receipt.get("payload_sha256"),
+                )
+                if value
+            ),
+            None,
+        )
+        if receipt_source_sha256 and receipt_source_sha256 != source_sha256:
+            raise GuiError(
+                "GUI loop completion receipt does not match the current structure artifact"
+            )
+        with _workspace_advisory_write_lock(
+            lock_path,
+            workspace_root=self.workspace_root,
+            timeout_seconds=VIEW_REPLAY_WRITE_LOCK_TIMEOUT_SECONDS,
+            poll_seconds=VIEW_REPLAY_WRITE_LOCK_POLL_SECONDS,
+        ) as transaction:
+            try:
+                static_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise GuiError("GUI loop wrapper metadata is unreadable") from exc
+            if not isinstance(static_metadata, dict):
+                raise GuiError("GUI loop wrapper metadata is not an object")
+            safe_project = sanitize_project_id(project_id)
+            if static_metadata.get("project_id") != safe_project:
+                raise GuiError("GUI loop wrapper project identity changed before commit")
+            project_name = str(static_metadata.get("project_name") or "")
+            if _project_name_from_window_title(window.title) != project_name:
+                raise GuiError("GUI loop target window no longer owns the verified wrapper")
+            live_binding = _load_gui_loop_live_binding(
+                metadata_path=metadata_path,
+                static_metadata=static_metadata,
+                workspace_root=self.workspace_root,
+            )
+            if live_binding.get("status") not in {"not_configured", "verified"}:
+                raise GuiError(
+                    "GUI loop live binding history is incomplete or invalid; preserve "
+                    "the artifacts and reconcile before another hot-load"
+                )
+            if live_binding.get("verified") is True:
+                current_revision = int(live_binding["cache"]["revision"])
+                journal_lines = [
+                    line
+                    for line in events_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                last_event = json.loads(journal_lines[-1])
+                previous_digest = str(last_event["event_sha256"])
+                event_sequence = len(journal_lines) + 1
+            else:
+                current_revision = int(static_metadata["revision"])
+                previous_digest = None
+                event_sequence = 1
+            if event_sequence > GUI_LOOP_BINDING_JOURNAL_MAX_EVENTS:
+                raise GuiError("GUI loop binding journal reached its event limit")
+            if current_revision != int(expected_revision):
+                raise GuiError(
+                    "GUI loop wrapper revision changed before binding commit: "
+                    f"expected {expected_revision}, observed {current_revision}"
+                )
+            receipt_digest = hashlib.sha256(
+                json.dumps(
+                    loop_receipt,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            document_name = next(
+                (
+                    str(value)
+                    for value in (
+                        loop_receipt.get("imported_document_name"),
+                        loop_receipt.get("document_name"),
+                        loop_receipt.get("after_document_name"),
+                    )
+                    if value
+                ),
+                source.name,
+            )
+            event: dict[str, Any] = {
+                "schema": GUI_LOOP_BINDING_EVENT_SCHEMA,
+                "event_id": uuid.uuid4().hex,
+                "sequence": event_sequence,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "previous_event_sha256": previous_digest,
+                "project_id": safe_project,
+                "project_name": project_name,
+                "wrapper_initial_revision": int(static_metadata["revision"]),
+                "expected_revision": int(expected_revision),
+                "target_revision": int(target_revision),
+                "pid": int(window.pid or 0),
+                "window_handle": int(window.handle),
+                "window_title": window.title,
+                "source_path": str(source),
+                "source_sha256": source_sha256,
+                "source_byte_count": source_byte_count,
+                "document_name": document_name,
+                "loop_job_id": loop_receipt.get("job_id")
+                or loop_receipt.get("command_id"),
+                "loop_receipt_sha256": receipt_digest,
+                "transport": "verified_gui_loop_import",
+            }
+            event["event_sha256"] = _gui_loop_binding_event_sha256(event)
+            encoded_event = json.dumps(event, ensure_ascii=False, sort_keys=True)
+            existing_size = events_path.stat().st_size if events_path.exists() else 0
+            if existing_size + len(encoded_event.encode("utf-8")) + 1 > GUI_LOOP_BINDING_JOURNAL_MAX_BYTES:
+                raise GuiError("GUI loop binding journal reached its size limit")
+            events_path.parent.mkdir(parents=True, exist_ok=True)
+            with events_path.open("a", encoding="utf-8", newline="") as handle:
+                handle.write(encoded_event)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            cache = {
+                "schema": GUI_LOOP_LIVE_BINDING_SCHEMA,
+                "project_id": safe_project,
+                "project_name": project_name,
+                "wrapper_initial_revision": int(static_metadata["revision"]),
+                "revision": int(target_revision),
+                "source_path": str(source),
+                "source_sha256": source_sha256,
+                "source_byte_count": source_byte_count,
+                "document_name": document_name,
+                "pid": int(window.pid or 0),
+                "window_handle": int(window.handle),
+                "loop_job_id": event["loop_job_id"],
+                "committed_event_sha256": event["event_sha256"],
+                "updated_at": event["recorded_at"],
+            }
+            _write_json_atomic(binding_path, cache)
+            verified = _load_gui_loop_live_binding(
+                metadata_path=metadata_path,
+                static_metadata=static_metadata,
+                workspace_root=self.workspace_root,
+            )
+            if verified.get("verified") is not True:
+                raise GuiError(
+                    "GUI loop live binding failed its post-publication integrity check"
+                )
+            return {
+                "status": "published",
+                "project_id": safe_project,
+                "expected_revision": int(expected_revision),
+                "target_revision": int(target_revision),
+                "source_path": str(source),
+                "source_sha256": source_sha256,
+                "document_name": document_name,
+                "event_sha256": event["event_sha256"],
+                "events_path": str(events_path),
+                "binding_path": str(binding_path),
+                "write_transaction": transaction,
+            }
+
     def _wait_for_window_after_open(
         self,
         *,
@@ -9348,6 +10194,164 @@ def _sha256_file(path: Path) -> tuple[str, int]:
             digest.update(chunk)
             byte_count += len(chunk)
     return digest.hexdigest(), byte_count
+
+
+def _gui_loop_binding_event_sha256(event: dict[str, Any]) -> str:
+    """Return the immutable digest for one live-wrapper transition event."""
+
+    payload = {key: value for key, value in event.items() if key != "event_sha256"}
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _load_gui_loop_live_binding(
+    *,
+    metadata_path: Path,
+    static_metadata: dict[str, Any],
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Verify the append-only event and cache used by a stable GUI wrapper."""
+
+    project_dir = metadata_path.parent.resolve()
+    events_path = (project_dir / "gui_loop_events.jsonl").resolve()
+    binding_path = (project_dir / "live_binding.json").resolve()
+    try:
+        _ensure_inside(workspace_root, project_dir)
+        _ensure_inside(workspace_root, events_path)
+        _ensure_inside(workspace_root, binding_path)
+    except GuiError as exc:
+        return {
+            "status": "path_outside_workspace",
+            "verified": False,
+            "error": str(exc),
+            "events_path": str(events_path),
+            "binding_path": str(binding_path),
+        }
+    if not events_path.exists() and not binding_path.exists():
+        return {
+            "status": "not_configured",
+            "verified": False,
+            "events_path": str(events_path),
+            "binding_path": str(binding_path),
+        }
+    if not events_path.is_file() or not binding_path.is_file():
+        return {
+            "status": "incomplete",
+            "verified": False,
+            "error": "live binding requires both its journal and cache",
+            "events_path": str(events_path),
+            "binding_path": str(binding_path),
+        }
+    try:
+        cache = json.loads(binding_path.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            raise ValueError("live_binding.json must contain an object")
+        if events_path.stat().st_size > GUI_LOOP_BINDING_JOURNAL_MAX_BYTES:
+            raise ValueError("GUI loop binding journal exceeds its audit size limit")
+        events: list[dict[str, Any]] = []
+        previous_digest: str | None = None
+        for line_number, line in enumerate(
+            events_path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                raise ValueError(f"event line {line_number} is not an object")
+            if event.get("schema") != GUI_LOOP_BINDING_EVENT_SCHEMA:
+                raise ValueError(f"event line {line_number} has an unknown schema")
+            if event.get("previous_event_sha256") != previous_digest:
+                raise ValueError(f"event line {line_number} breaks the hash chain")
+            digest = _gui_loop_binding_event_sha256(event)
+            if event.get("event_sha256") != digest:
+                raise ValueError(f"event line {line_number} digest mismatch")
+            previous_digest = digest
+            events.append(event)
+            if len(events) > GUI_LOOP_BINDING_JOURNAL_MAX_EVENTS:
+                raise ValueError("GUI loop binding journal has too many events")
+        if not events:
+            raise ValueError("GUI loop binding journal is empty")
+        if cache.get("schema") != GUI_LOOP_LIVE_BINDING_SCHEMA:
+            raise ValueError("live binding cache has an unknown schema")
+        committed_digest = cache.get("committed_event_sha256")
+        committed_event = next(
+            (
+                event
+                for event in events
+                if event.get("event_sha256") == committed_digest
+            ),
+            None,
+        )
+        if committed_event is None:
+            raise ValueError("live binding cache is not backed by its journal")
+        if committed_event is not events[-1]:
+            raise ValueError(
+                "live binding transition is incomplete: journal tail is not committed"
+            )
+        project_name = str(static_metadata.get("project_name") or "")
+        project_id = str(static_metadata.get("project_id") or "")
+        if cache.get("project_name") != project_name:
+            raise ValueError("live binding project_name does not match wrapper metadata")
+        if cache.get("project_id") != project_id:
+            raise ValueError("live binding project_id does not match wrapper metadata")
+        if int(cache.get("wrapper_initial_revision")) != int(
+            static_metadata.get("revision")
+        ):
+            raise ValueError("live binding initial revision does not match wrapper metadata")
+        if committed_event.get("project_name") != project_name:
+            raise ValueError("committed event project_name does not match wrapper metadata")
+        if committed_event.get("project_id") != project_id:
+            raise ValueError("committed event project_id does not match wrapper metadata")
+        revision = int(cache["revision"])
+        if int(committed_event["target_revision"]) != revision:
+            raise ValueError("live binding revision does not match committed event")
+        source_path = Path(str(cache["source_path"])).expanduser().resolve()
+        _ensure_inside(workspace_root, source_path)
+        if not source_path.is_file():
+            raise ValueError("live binding structure artifact is missing")
+        source_sha256, source_byte_count = _sha256_file(source_path)
+        if source_sha256 != cache.get("source_sha256"):
+            raise ValueError("live binding structure artifact digest mismatch")
+        if int(cache.get("source_byte_count", -1)) != source_byte_count:
+            raise ValueError("live binding structure artifact size mismatch")
+        if committed_event.get("source_sha256") != source_sha256:
+            raise ValueError("committed event structure digest mismatch")
+        for cache_key, event_key in (
+            ("document_name", "document_name"),
+            ("pid", "pid"),
+            ("window_handle", "window_handle"),
+            ("source_path", "source_path"),
+            ("source_byte_count", "source_byte_count"),
+            ("loop_job_id", "loop_job_id"),
+        ):
+            if cache.get(cache_key) != committed_event.get(event_key):
+                raise ValueError(
+                    f"live binding {cache_key} does not match committed event"
+                )
+        return {
+            "status": "verified",
+            "verified": True,
+            "cache": cache,
+            "committed_event": committed_event,
+            "event_count": len(events),
+            "uncommitted_tail_event_count": 0,
+            "events_path": str(events_path),
+            "binding_path": str(binding_path),
+        }
+    except Exception as exc:
+        return {
+            "status": "invalid",
+            "verified": False,
+            "error": str(exc)[:1000],
+            "events_path": str(events_path),
+            "binding_path": str(binding_path),
+        }
 
 
 def _immutable_evidence_integrity_payload(value: Any) -> dict[str, Any] | None:

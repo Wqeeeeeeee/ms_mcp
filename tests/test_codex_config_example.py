@@ -14,6 +14,9 @@ def test_codex_config_example_disables_custom_script() -> None:
     assert "material_studio_model_export_view_audit" in text
     assert "material_studio_model_export_view_bundle" in text
     assert "material_studio_gui_status" in text
+    assert "material_studio_gui_loop_status" in text
+    assert "material_studio_gui_loop_prepare" in text
+    assert "material_studio_gui_loop_stop" in text
     assert "material_studio_gui_launch" in text
     assert "material_studio_gui_apply_current_revision" in text
     assert "material_studio_gui_fit_to_view" in text
@@ -33,6 +36,19 @@ def test_codex_config_example_disables_custom_script() -> None:
     )
     assert "material_studio_run_script" in text
     assert "disabled_tools" in text
+    assert "MATERIAL_STUDIO_MCP_WORKSPACE" in text
+    assert "MATERIAL_STUDIO_WORKSPACE" in text
+    assert 'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"' in text
+    assert 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"' in text
+    assert 'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "10"' in text
+    assert (
+        "[mcp_servers.materials_studio.tools.material_studio_gui_loop_prepare]"
+        in text
+    )
+    assert (
+        "[mcp_servers.materials_studio.tools.material_studio_gui_loop_stop]"
+        in text
+    )
     assert (
         "[mcp_servers.materials_studio.tools.material_studio_castep_relax_current]"
         in text

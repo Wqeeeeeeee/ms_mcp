@@ -15,6 +15,12 @@ try:
 except ModuleNotFoundError:  # Python 3.10 compatibility.
     import tomli as tomllib
 
+from .config import (
+    DEFAULT_GUI_HOTLOAD_TRANSPORT,
+    DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS,
+    DEFAULT_GUI_LOOP_TIMEOUT_SECONDS,
+    GUI_HOTLOAD_TRANSPORTS,
+)
 from .protocol_smoke import REQUIRED_PROTOCOL_TOOLS, audit_codex_config
 from .managed_runtime import (
     filesystem_io_path,
@@ -50,6 +56,9 @@ SAFE_ENABLED_TOOLS: tuple[str, ...] = (
     "material_studio_project_rollback",
     "material_studio_project_reconcile_dopant_metadata",
     "material_studio_gui_status",
+    "material_studio_gui_loop_status",
+    "material_studio_gui_loop_prepare",
+    "material_studio_gui_loop_stop",
     "material_studio_gui_launch",
     "material_studio_gui_activate",
     "material_studio_gui_snapshot",
@@ -84,6 +93,8 @@ PROMPT_TOOLS: tuple[str, ...] = (
     "material_studio_live_update_with_patch",
     "material_studio_project_reconcile_dopant_metadata",
     "material_studio_gui_launch",
+    "material_studio_gui_loop_prepare",
+    "material_studio_gui_loop_stop",
     "material_studio_gui_apply_current_revision",
     "material_studio_gui_fit_to_view",
     "material_studio_gui_record_visual_confirmation",
@@ -123,11 +134,19 @@ def build_codex_config_snippet(
     repo_root: str | Path,
     *,
     python_command: str | Path | None = None,
+    workspace: str | Path | None = None,
+    runner: str | Path | None = None,
 ) -> str:
     root = Path(repo_root).expanduser().resolve()
     command = resolve_python_command(root, python_command)
     server_args = managed_runtime_server_args(root)
     launch_cwd = managed_runtime_launch_cwd(root)
+    workspace_path = (
+        Path(workspace).expanduser().resolve()
+        if workspace is not None
+        else (root / "workspace").resolve()
+    )
+    runner_path = Path(runner).expanduser().resolve() if runner is not None else None
     lines = [
         f"[mcp_servers.{SERVER_NAME}]",
         f"command = {_toml_string(command)}",
@@ -145,7 +164,25 @@ def build_codex_config_snippet(
         "disabled_tools = [",
         *[f"  {_toml_string(tool)}," for tool in DISABLED_TOOLS],
         "]",
+        "",
+        f"[mcp_servers.{SERVER_NAME}.env]",
+        f"MATERIAL_STUDIO_MCP_WORKSPACE = {_toml_string(workspace_path)}",
+        f"MATERIAL_STUDIO_WORKSPACE = {_toml_string(workspace_path)}",
+        (
+            "MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "
+            f"{_toml_string(DEFAULT_GUI_HOTLOAD_TRANSPORT)}"
+        ),
+        (
+            "MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "
+            f"{_toml_string(DEFAULT_GUI_LOOP_TIMEOUT_SECONDS)}"
+        ),
+        (
+            "MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "
+            f"{_toml_string(DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS)}"
+        ),
     ]
+    if runner_path is not None:
+        lines.append(f"MATERIAL_STUDIO_RUNNER = {_toml_string(runner_path)}")
     for tool in PROMPT_TOOLS:
         lines.extend(
             (
@@ -162,6 +199,8 @@ def diagnose_codex_config(
     config_path: str | Path | None = None,
     repo_root: str | Path | None = None,
     python_command: str | Path | None = None,
+    workspace: str | Path | None = None,
+    runner: str | Path | None = None,
     include_snippet: bool = True,
 ) -> dict[str, Any]:
     """Inspect an active Codex config without modifying it."""
@@ -173,6 +212,12 @@ def diagnose_codex_config(
     run_server_exists = filesystem_io_path(run_server).is_file()
     expected_args = managed_runtime_server_args(root)
     launch_cwd = managed_runtime_launch_cwd(root)
+    expected_workspace = (
+        Path(workspace).expanduser().resolve()
+        if workspace is not None
+        else (root / "workspace").resolve()
+    )
+    expected_runner = Path(runner).expanduser().resolve() if runner is not None else None
     managed_runtime = managed_runtime_status(root)
     declared_python_runtime = managed_runtime.get("declared_python_runtime")
     declared_python_command = (
@@ -185,7 +230,12 @@ def diagnose_codex_config(
         if declared_python_command
         else None
     )
-    snippet = build_codex_config_snippet(root, python_command=command)
+    snippet = build_codex_config_snippet(
+        root,
+        python_command=command,
+        workspace=expected_workspace,
+        runner=expected_runner,
+    )
     before_hash = _file_sha256(config)
     result: dict[str, Any] = {
         "ok": True,
@@ -203,6 +253,11 @@ def diagnose_codex_config(
             "command": str(command),
             "args": expected_args,
             "cwd": str(launch_cwd),
+            "workspace": str(expected_workspace),
+            "runner": str(expected_runner) if expected_runner is not None else None,
+            "gui_hotload_transport": DEFAULT_GUI_HOTLOAD_TRANSPORT,
+            "gui_loop_timeout_seconds": DEFAULT_GUI_LOOP_TIMEOUT_SECONDS,
+            "gui_loop_heartbeat_ttl_seconds": DEFAULT_GUI_LOOP_HEARTBEAT_TTL_SECONDS,
             "python_exists": command.exists(),
             "run_server_exists": run_server_exists,
         },
@@ -353,6 +408,38 @@ def diagnose_codex_config(
     args = server.get("args") if isinstance(server.get("args"), list) else []
     args_match = _same_server_args(args, expected_args)
     cwd_matches = _same_path(server.get("cwd"), launch_cwd)
+    server_env = server.get("env") if isinstance(server.get("env"), dict) else {}
+    structured_workspace_matches = _same_path(
+        server_env.get("MATERIAL_STUDIO_MCP_WORKSPACE"), expected_workspace
+    )
+    runner_workspace_matches = _same_path(
+        server_env.get("MATERIAL_STUDIO_WORKSPACE"), expected_workspace
+    )
+    workspace_matches = structured_workspace_matches and runner_workspace_matches
+    runner_matches = (
+        True
+        if expected_runner is None
+        else _same_path(server_env.get("MATERIAL_STUDIO_RUNNER"), expected_runner)
+    )
+    gui_hotload_transport_valid = _valid_gui_hotload_transport(
+        server_env.get("MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT")
+    )
+    gui_loop_timeout_valid = _valid_positive_integer_env(
+        server_env.get("MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS")
+    )
+    gui_loop_heartbeat_ttl_valid = _valid_positive_integer_env(
+        server_env.get("MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS")
+    )
+    gui_loop_env_valid = bool(
+        gui_hotload_transport_valid
+        and gui_loop_timeout_valid
+        and gui_loop_heartbeat_ttl_valid
+    )
+    startup_timeout_matches = server.get("startup_timeout_sec") == 30
+    tool_timeout_matches = server.get("tool_timeout_sec") == 1800
+    default_approval_matches = server.get("default_tools_approval_mode") == "prompt"
+    prompt_policy_drift_tools = _prompt_policy_drift_tools(server)
+    prompt_tool_policy_matches = not prompt_policy_drift_tools
     missing_recommended = sorted(
         set(SAFE_ENABLED_TOOLS) - {str(item) for item in server.get("enabled_tools", []) or []}
     )
@@ -363,6 +450,13 @@ def diagnose_codex_config(
         and command_matches
         and args_match
         and cwd_matches
+        and workspace_matches
+        and runner_matches
+        and gui_loop_env_valid
+        and startup_timeout_matches
+        and tool_timeout_matches
+        and default_approval_matches
+        and prompt_tool_policy_matches
         and command.exists()
         and run_server.exists()
     )
@@ -372,6 +466,16 @@ def diagnose_codex_config(
         status = "server_disabled"
     elif not (command_matches and args_match and cwd_matches):
         status = "entrypoint_drift"
+    elif not workspace_matches:
+        status = "workspace_env_drift"
+    elif not runner_matches:
+        status = "runner_env_drift"
+    elif not gui_loop_env_valid:
+        status = "gui_loop_env_drift"
+    elif not (startup_timeout_matches and tool_timeout_matches):
+        status = "timeout_drift"
+    elif not (default_approval_matches and prompt_tool_policy_matches):
+        status = "approval_policy_drift"
     else:
         status = "tool_allowlist_drift"
     result.update(
@@ -390,6 +494,28 @@ def diagnose_codex_config(
             "command_matches": command_matches,
             "args_match": args_match,
             "cwd_matches": cwd_matches,
+            "workspace_matches": workspace_matches,
+            "structured_workspace_matches": structured_workspace_matches,
+            "runner_workspace_matches": runner_workspace_matches,
+            "runner_matches": runner_matches,
+            "gui_loop_env_valid": gui_loop_env_valid,
+            "gui_hotload_transport_valid": gui_hotload_transport_valid,
+            "gui_loop_timeout_valid": gui_loop_timeout_valid,
+            "gui_loop_heartbeat_ttl_valid": gui_loop_heartbeat_ttl_valid,
+            "configured_gui_hotload_transport": server_env.get(
+                "MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT"
+            ),
+            "configured_gui_loop_timeout_seconds": server_env.get(
+                "MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS"
+            ),
+            "configured_gui_loop_heartbeat_ttl_seconds": server_env.get(
+                "MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS"
+            ),
+            "startup_timeout_matches": startup_timeout_matches,
+            "tool_timeout_matches": tool_timeout_matches,
+            "default_approval_matches": default_approval_matches,
+            "prompt_tool_policy_matches": prompt_tool_policy_matches,
+            "prompt_policy_drift_tools": prompt_policy_drift_tools,
             "missing_required_tools": base_audit.get("missing_enabled_tools") or [],
             "missing_recommended_tools": missing_recommended,
             "unexpected_dangerous_enabled_tools": base_audit.get(
@@ -524,6 +650,8 @@ def write_recommended_snippet(
     active_config_path: str | Path | None = None,
     repo_root: str | Path | None = None,
     python_command: str | Path | None = None,
+    workspace: str | Path | None = None,
+    runner: str | Path | None = None,
 ) -> Path:
     output = Path(output_path).expanduser().resolve()
     active = (
@@ -536,6 +664,8 @@ def write_recommended_snippet(
     snippet = build_codex_config_snippet(
         repo_root or Path.cwd(),
         python_command=python_command,
+        workspace=workspace,
+        runner=runner,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(snippet, encoding="utf-8")
@@ -571,6 +701,30 @@ def _registration_candidates(servers: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return candidates
+
+
+def _prompt_policy_drift_tools(server: dict[str, Any]) -> list[str]:
+    tools = server.get("tools") if isinstance(server.get("tools"), dict) else {}
+    drift: list[str] = []
+    for tool in PROMPT_TOOLS:
+        policy = tools.get(tool) if isinstance(tools.get(tool), dict) else {}
+        if policy.get("approval_mode") != "prompt":
+            drift.append(tool)
+    return drift
+
+
+def _valid_gui_hotload_transport(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() in GUI_HOTLOAD_TRANSPORTS
+
+
+def _valid_positive_integer_env(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = int(value.strip())
+    except ValueError:
+        return False
+    return parsed > 0
 
 
 def _same_path(left: Any, right: Any) -> bool:
@@ -625,6 +779,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Active Codex config.toml; defaults to CODEX_HOME or ~/.codex.")
     parser.add_argument("--cwd", default=str(Path.cwd()), help="Materials Studio MCP repository root.")
     parser.add_argument("--python", dest="python_command", help="Python executable for the MCP entrypoint.")
+    parser.add_argument("--workspace", help="Workspace path persisted into the generated MCP environment.")
+    parser.add_argument("--runner", help="Optional RunMatScript.bat path persisted into the generated MCP environment.")
     parser.add_argument("--output-snippet", help="Write the recommendation to a separate file, never active config.")
     parser.add_argument("--omit-snippet", action="store_true", help="Do not include TOML in JSON output.")
     parser.add_argument("--strict", action="store_true", help="Exit nonzero unless the active config is ready.")
@@ -637,6 +793,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config_path=options.config,
         repo_root=options.cwd,
         python_command=options.python_command,
+        workspace=options.workspace,
+        runner=options.runner,
         include_snippet=not options.omit_snippet,
     )
     if options.output_snippet:
@@ -646,6 +804,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 active_config_path=options.config,
                 repo_root=options.cwd,
                 python_command=options.python_command,
+                workspace=options.workspace,
+                runner=options.runner,
             )
             result["snippet_output_path"] = str(output)
             result["snippet_output_sha256"] = _file_sha256(output)

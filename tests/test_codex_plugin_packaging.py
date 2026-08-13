@@ -59,7 +59,7 @@ def test_plugin_manifest_has_current_repository_metadata() -> None:
     interface = manifest["interface"]
 
     assert manifest["name"] == PLUGIN_ROOT.name == "materials-studio-mcp"
-    assert manifest["version"] == _project_version() == "0.4.0"
+    assert manifest["version"] == _project_version() == "0.5.0"
     assert manifest["author"] == {
         "name": "Xu kaidong",
         "url": "https://github.com/Wqeeeeeeee",
@@ -196,6 +196,8 @@ def test_release_documentation_has_no_bundle_relative_broken_links() -> None:
         REPO_ROOT / "docs/CODEX_PLUGIN.zh-CN.md",
         REPO_ROOT / "docs/REAL_MS_ACCEPTANCE.zh-CN.md",
         REPO_ROOT / "docs/TROUBLESHOOTING.zh-CN.md",
+        REPO_ROOT / "docs/gui_loop.md",
+        REPO_ROOT / "docs/gui_control.md",
         REPO_ROOT / "docs/packaging/codex_plugin_packaging_audit.md",
     }
     markdown = [path for path in bundled if path.suffix == ".md"]
@@ -224,6 +226,12 @@ def test_batch_launcher_is_cache_relative_and_uses_formal_runtime_launcher() -> 
     assert "pip install" not in lowered
     assert "1>&2" in text
     assert not re.search(r"(?i)(?:^|[\s\"'])[a-z]:\\", text)
+    runtime_launcher = (PLUGIN_ROOT / "scripts" / "Run-MS-MCP.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert 'MATERIAL_STUDIO_GUI_HOTLOAD_TRANSPORT = "auto"' in runtime_launcher
+    assert 'MATERIAL_STUDIO_GUI_LOOP_TIMEOUT_SECONDS = "45"' in runtime_launcher
+    assert 'MATERIAL_STUDIO_GUI_LOOP_HEARTBEAT_TTL_SECONDS = "10"' in runtime_launcher
 
 
 def test_marketplace_entry_matches_plugin_and_policy() -> None:

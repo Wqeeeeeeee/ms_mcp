@@ -77,6 +77,7 @@ from .gui import (
     _workspace_advisory_lock_status,
     _workspace_advisory_write_lock,
 )
+from .gui_loop import GuiLoopError
 from .gui_uia import local_uia_view_replay_implementation_contract
 from .health import build_modeling_health
 from .natural_language import (
@@ -218,6 +219,14 @@ class McpResponseMode(str, Enum):
     COMPACT = "compact"
 
 
+class GuiHotloadTransport(str, Enum):
+    """Select the exact GUI hot-load mechanism."""
+
+    AUTO = "auto"
+    LOOP = "loop"
+    DIALOG = "dialog"
+
+
 LIVE_COMPACT_RESPONSE_SCHEMA = "material_studio_live_compact_v2"
 CAPABILITIES_COMPACT_RESPONSE_SCHEMA = "material_studio_capabilities_compact_v2"
 NORMALITY_DECISION_SCHEMA = "material_studio_normality_decision_v1"
@@ -239,6 +248,9 @@ _WORKSPACE_AWARE_ACTION_TOOLS = frozenset(
         "material_studio_gui_execute_view_replay",
         "material_studio_gui_fit_to_view",
         "material_studio_gui_launch",
+        "material_studio_gui_loop_prepare",
+        "material_studio_gui_loop_status",
+        "material_studio_gui_loop_stop",
         "material_studio_gui_open_structure",
         "material_studio_gui_prepare_view_replay",
         "material_studio_gui_snapshot",
@@ -354,6 +366,13 @@ LIVE_COMPACT_SEMANTIC_CORE_FIELDS = (
     "visual_diagnostics_next_action_plan",
     "coordinated_next_action_plan",
     "next_action_tracks",
+    "gui_loop_failure",
+    "gui_loop_status_tool",
+    "gui_loop_status_payload",
+    "job_id",
+    "side_effect_may_have_occurred",
+    "automatic_dialog_fallback_allowed",
+    "gui_open_retry_allowed",
     "normality_decision",
     "normality_gate",
     "normality_explanation",
@@ -1174,6 +1193,9 @@ RUNTIME_SOURCE_GUARDED_TOOL_NAMES = (
     "material_studio_gui_record_view_replay",
     "material_studio_gui_apply_current_revision",
     "material_studio_gui_fit_to_view",
+    "material_studio_gui_loop_prepare",
+    "material_studio_gui_loop_status",
+    "material_studio_gui_loop_stop",
 )
 _RUNTIME_SOURCE_GUARDED_TOOL_NAME_SET = frozenset(
     RUNTIME_SOURCE_GUARDED_TOOL_NAMES
@@ -1596,6 +1618,13 @@ def _gui_snapshot_completed_receipt(
 
 
 def _error(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, GuiLoopError):
+        return {
+            "ok": False,
+            "error": str(exc),
+            "status": exc.receipt.get("status", "gui_loop_error"),
+            **exc.receipt,
+        }
     if isinstance(exc, GuiSnapshotBlockedError):
         return {
             "ok": False,
@@ -4103,6 +4132,9 @@ _TOP_LEVEL_CURRENT_MODEL_CONTEXT_FIELDS = (
 
 _TOP_LEVEL_GUI_BINDING_FIELDS = (
     "gui_open_method",
+    "gui_hotload_transport_used",
+    "gui_loop_used",
+    "gui_loop_live_binding_publication_status",
     "gui_open_path",
     "gui_opened_structure_path",
     "gui_project_wrapper_path",
@@ -8445,6 +8477,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "material_studio_gui_activate",
             "material_studio_gui_snapshot",
             "material_studio_gui_record_visual_confirmation",
+            "material_studio_gui_loop_status",
+            "material_studio_gui_loop_prepare",
+            "material_studio_gui_loop_stop",
             "material_studio_gui_open_structure",
             "material_studio_gui_apply_current_revision",
             "material_studio_gui_fit_to_view",
@@ -8460,6 +8495,9 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
             "activate_tool": "material_studio_gui_activate",
             "snapshot_tool": "material_studio_gui_snapshot",
             "visual_confirmation_tool": "material_studio_gui_record_visual_confirmation",
+            "loop_status_tool": "material_studio_gui_loop_status",
+            "loop_prepare_tool": "material_studio_gui_loop_prepare",
+            "loop_stop_tool": "material_studio_gui_loop_stop",
             "open_structure_tool": "material_studio_gui_open_structure",
             "apply_current_revision_tool": "material_studio_gui_apply_current_revision",
             "fit_to_view_tool": "material_studio_gui_fit_to_view",
@@ -8538,6 +8576,13 @@ def _live_capabilities_payload(*, include_status: bool = False) -> dict[str, Any
                 "reuse_existing_window_default": True,
                 "refuses_file_open_methods_that_may_spawn_new_instance": True,
                 "same_window_open_method": "existing_window_file_open_dialog",
+                "preferred_same_window_open_method": "verified_gui_loop_when_ready",
+                "gui_loop_transport_supported": True,
+                "gui_loop_default_transport": "auto",
+                "gui_loop_auto_fallback_before_enqueue_only": True,
+                "gui_loop_failure_after_enqueue_never_falls_back": True,
+                "gui_loop_arbitrary_script_queue_supported": False,
+                "gui_loop_requires_one_time_gui_context_start": True,
                 "same_window_open_does_not_spawn_matstudio": True,
                 "post_open_single_window_audit": True,
                 "explicit_launch_tool": "material_studio_gui_launch",
@@ -19127,6 +19172,20 @@ def _promote_response_gui_binding(response: dict[str, Any]) -> None:
     promoted = _drop_none_values(
         {
             "gui_open_method": _first_not_none(gui.get("open_method"), open_result.get("method")),
+            "gui_hotload_transport_used": gui_open.get(
+                "hotload_transport_used"
+            ),
+            "gui_loop_used": _first_not_none(
+                gui_open.get("gui_loop_used"),
+                open_result.get("gui_loop_used"),
+            ),
+            "gui_loop_live_binding_publication_status": (
+                gui_open.get("gui_loop_live_binding_publication") or {}
+            ).get("status")
+            if isinstance(
+                gui_open.get("gui_loop_live_binding_publication"), dict
+            )
+            else None,
             "gui_open_path": _first_not_none(gui.get("open_path"), open_result.get("path")),
             "gui_opened_structure_path": _first_not_none(
                 gui.get("opened_structure_path"),
@@ -23951,6 +24010,19 @@ def _build_modeling_report(response: dict[str, Any]) -> dict[str, Any]:
         ),
         "gui_open_retry_tool": response.get("gui_open_retry_tool"),
         "gui_open_retry_payload": response.get("gui_open_retry_payload"),
+        "partial_success": response.get("partial_success"),
+        "required_next_step": response.get("required_next_step"),
+        "gui_loop_failure": response.get("gui_loop_failure"),
+        "gui_loop_status_tool": response.get("gui_loop_status_tool"),
+        "gui_loop_status_payload": response.get("gui_loop_status_payload"),
+        "job_id": response.get("job_id"),
+        "side_effect_may_have_occurred": response.get(
+            "side_effect_may_have_occurred"
+        ),
+        "automatic_dialog_fallback_allowed": response.get(
+            "automatic_dialog_fallback_allowed"
+        ),
+        "gui_open_retry_allowed": response.get("gui_open_retry_allowed"),
         "execution_backend": result.get("execution_backend"),
         "diagnostic_export_requested": bool(response.get("diagnostic_export_requested")),
         "normality_check_requested": normality_check_requested,
@@ -24622,6 +24694,7 @@ def _gui_open_structure_retry_payload(
     working_dir: str | Path | None,
     fit_to_view_after_open: bool = False,
     prepare_view_replay_after_open: bool = False,
+    hotload_transport: GuiHotloadTransport | str | None = None,
 ) -> dict[str, Any]:
     """Build an artifact-only same-window open continuation."""
 
@@ -24641,6 +24714,13 @@ def _gui_open_structure_retry_payload(
         payload["fit_to_view_after_open"] = True
     if prepare_view_replay_after_open:
         payload["prepare_view_replay_after_open"] = True
+    normalized_hotload_transport = None
+    if isinstance(hotload_transport, GuiHotloadTransport):
+        normalized_hotload_transport = hotload_transport.value
+    elif hotload_transport is not None:
+        normalized_hotload_transport = str(hotload_transport)
+    if normalized_hotload_transport is not None:
+        payload["hotload_transport"] = normalized_hotload_transport
     return _workspace_bound_payload_hint(
         "material_studio_gui_open_structure",
         payload,
@@ -30614,6 +30694,32 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(report.get("gui_postexecution_block"), dict)
         else {}
     )
+    gui_loop_failure = (
+        report.get("gui_loop_failure")
+        if isinstance(report.get("gui_loop_failure"), dict)
+        else {}
+    )
+    gui_loop_status_payload = (
+        report.get("gui_loop_status_payload")
+        if isinstance(report.get("gui_loop_status_payload"), dict)
+        else {}
+    )
+    gui_loop_status_tool = report.get("gui_loop_status_tool")
+    gui_loop_job_id = _first_not_none(
+        report.get("job_id"),
+        gui_loop_failure.get("job_id"),
+    )
+    exact_gui_loop_job_continuation = bool(
+        report.get("ok") is False
+        and report.get("partial_success") is True
+        and gui_loop_status_tool == "material_studio_gui_loop_status"
+        and isinstance(gui_loop_job_id, str)
+        and bool(gui_loop_job_id)
+        and gui_loop_status_payload.get("job_id") == gui_loop_job_id
+        and report.get("execution_must_not_repeat") is True
+        and report.get("automatic_dialog_fallback_allowed") is False
+        and report.get("gui_open_retry_allowed") is False
+    )
     state = readiness.get("state") or "unknown"
     recommended_tool = readiness.get("recommended_tool") or "material_studio_live_project_status"
     needs_user_confirmation = bool(readiness.get("needs_user_confirmation"))
@@ -30632,7 +30738,15 @@ def _modeling_report_next_action_plan(report: dict[str, Any]) -> dict[str, Any]:
     )
     deferred_hotload_action: dict[str, Any] = {}
 
-    if gui_postexecution_block.get("blocked") is True:
+    if exact_gui_loop_job_continuation:
+        action_id = "inspect_exact_signed_gui_loop_job"
+        recommended_tool = "material_studio_gui_loop_status"
+        recommended_action_override = (
+            "inspect_exact_signed_gui_loop_job_before_any_further_gui_action"
+        )
+        needs_user_confirmation = False
+        payload_hint = dict(gui_loop_status_payload)
+    elif gui_postexecution_block.get("blocked") is True:
         action_id = "activate_current_revision_before_artifact_hotload"
         recommended_tool = str(
             gui_postexecution_block.get("recommended_tool")
@@ -42105,6 +42219,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "gui_open_retry_tool",
             "gui_open_retry_payload",
             "gui_open_warning",
+            "gui_loop_failure",
+            "gui_loop_status_tool",
+            "gui_loop_status_payload",
+            "job_id",
+            "side_effect_may_have_occurred",
+            "automatic_dialog_fallback_allowed",
+            "gui_open_retry_allowed",
             "response_mode",
             "response_schema",
             "planned_outputs",
@@ -42337,6 +42458,13 @@ def _enforce_live_compact_budget(compact: dict[str, Any]) -> dict[str, Any]:
             "current_revision_hotload_block",
             "gui_open_retry_tool",
             "gui_open_retry_payload",
+            "gui_loop_failure",
+            "gui_loop_status_tool",
+            "gui_loop_status_payload",
+            "job_id",
+            "side_effect_may_have_occurred",
+            "automatic_dialog_fallback_allowed",
+            "gui_open_retry_allowed",
             "response_mode",
             "response_schema",
             "planned_outputs",
@@ -42415,7 +42543,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
                 "natural_language.cjk_semiconductor_hotload_examples"
             )
         bounded["natural_language"] = natural_language
-    for key in ("schemas", "view_replay_confirmation_entry", "visual_confirmation_entry"):
+    for key in ("gui_tools", "view_replay_confirmation_entry", "visual_confirmation_entry"):
         if key in bounded:
             bounded.pop(key, None)
             receipt["omitted_fields"].append(key)
@@ -42471,6 +42599,7 @@ def _enforce_capabilities_compact_budget(compact: dict[str, Any]) -> dict[str, A
             "view_replay_runtime_availability",
             "domain_focus",
             "diagnostics",
+            "schemas",
             "gui_tools",
             "safety",
         ),
@@ -42890,6 +43019,18 @@ def _compact_live_response(
             "gui_open_retry_payload",
             "gui_open_warning",
             "gui_status_warning",
+            "hotload_transport_requested",
+            "hotload_transport_used",
+            "gui_hotload_transport_used",
+            "gui_loop_used",
+            "gui_loop_live_binding_publication_status",
+            "gui_loop_failure",
+            "gui_loop_status_tool",
+            "gui_loop_status_payload",
+            "job_id",
+            "side_effect_may_have_occurred",
+            "automatic_dialog_fallback_allowed",
+            "gui_open_retry_allowed",
             "reconciliation_status",
             "metadata_reconciliation",
             "gui_view_replay_status",
@@ -43063,6 +43204,58 @@ def _compact_live_response(
                 "error",
             ),
         )
+    gui_open = response.get("gui_open")
+    if isinstance(gui_open, dict):
+        compact_gui_open = _mapping_subset(
+            gui_open,
+            (
+                "project_id",
+                "revision",
+                "structure_path",
+                "hotload_transport_used",
+                "gui_loop_used",
+                "same_window_open_used",
+                "post_open_single_window_policy_ok",
+            ),
+        )
+        open_result = gui_open.get("open_result")
+        if isinstance(open_result, dict):
+            compact_open_result = _mapping_subset(
+                open_result,
+                ("method", "path", "gui_loop_used", "same_window_open_requested"),
+            )
+            loop_receipt = open_result.get("loop_receipt")
+            if isinstance(loop_receipt, dict):
+                compact_open_result["loop_receipt"] = _mapping_subset(
+                    loop_receipt,
+                    (
+                        "status",
+                        "job_id",
+                        "expected_revision",
+                        "target_revision",
+                        "imported_document_name",
+                    ),
+                )
+            if compact_open_result:
+                compact_gui_open["open_result"] = compact_open_result
+        publication = gui_open.get("gui_loop_live_binding_publication")
+        if not isinstance(publication, dict) and isinstance(open_result, dict):
+            publication = open_result.get("live_binding_publication")
+        if isinstance(publication, dict):
+            compact_gui_open["gui_loop_live_binding_publication"] = _mapping_subset(
+                publication,
+                (
+                    "status",
+                    "project_id",
+                    "expected_revision",
+                    "target_revision",
+                    "document_name",
+                    "event_sha256",
+                    "binding_path",
+                ),
+            )
+        if compact_gui_open:
+            compact["gui_open"] = compact_gui_open
     post_hotload_fit_to_view = response.get("post_hotload_fit_to_view")
     if not isinstance(post_hotload_fit_to_view, dict):
         post_hotload_fit_to_view = report.get("post_hotload_fit_to_view")
@@ -54802,6 +54995,71 @@ def _finalize_high_level_gui_hotload(
                                 gui_artifacts=audit_artifacts,
                             )
                             response["view_audit_report_path"] = str(report_path)
+                    except GuiLoopError as exc:
+                        loop_receipt = dict(exc.receipt)
+                        job_id = loop_receipt.get("job_id")
+                        loop_status_payload: dict[str, Any] | None = None
+                        recommended_tool = loop_receipt.get("recommended_tool")
+                        required_next_step = loop_receipt.get(
+                            "required_next_step"
+                        )
+                        if isinstance(job_id, str) and job_id:
+                            recommended_tool = "material_studio_gui_loop_status"
+                            loop_status_payload = _workspace_bound_payload_hint(
+                                recommended_tool,
+                                {
+                                    "project_id": spec.project_id,
+                                    "revision": loop_receipt.get(
+                                        "expected_revision", spec.revision
+                                    ),
+                                    "job_id": job_id,
+                                },
+                                working_dir,
+                            )
+                            required_next_step = (
+                                "Inspect this exact signed GUI-loop job before any "
+                                "further GUI action. Do not reopen, re-import, or rerun "
+                                "the structure while its terminal state is uncertain."
+                            )
+                        response = {
+                            **response,
+                            **loop_receipt,
+                            "ok": False,
+                            "partial_success": True,
+                            "status": loop_receipt.get(
+                                "status", "gui_loop_error"
+                            ),
+                            "error": str(exc),
+                            "gui_open_warning": str(exc),
+                            "gui_loop_failure": loop_receipt,
+                            "structure_ready_for_gui_retry": structure_path.exists(),
+                            "automatic_dialog_fallback_allowed": False,
+                            "gui_open_retry_allowed": False,
+                            "execution_must_not_repeat": True,
+                            "recommended_tool": recommended_tool,
+                            "required_next_step": required_next_step,
+                        }
+                        if loop_status_payload is not None:
+                            response["gui_loop_status_tool"] = recommended_tool
+                            response["gui_loop_status_payload"] = loop_status_payload
+                        response.pop("gui_open_retry_tool", None)
+                        response.pop("gui_open_retry_payload", None)
+                        audit_artifacts.append(
+                            {
+                                "type": "gui_loop_failure",
+                                "result": {
+                                    "error": str(exc),
+                                    **loop_receipt,
+                                },
+                            }
+                        )
+                        try:
+                            response["gui_status"] = gui.status(
+                                project_id=spec.project_id,
+                                revision=spec.revision,
+                            )
+                        except Exception as status_exc:
+                            response["gui_status_warning"] = str(status_exc)
                     except Exception as exc:
                         response["gui_open_warning"] = str(exc)
                         try:
@@ -55781,6 +56039,116 @@ def material_studio_gui_status(
     except Exception as exc:
         return _error(exc)
 
+
+@mcp.tool(
+    name="material_studio_gui_loop_status",
+    annotations={
+        "title": "Inspect the bound Materials Studio GUI hot-load loop",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_gui_loop_status(
+    project_id: Annotated[str | None, Field(description="Optional exact structured project ID.", min_length=1, max_length=120)] = None,
+    revision: Annotated[int | None, Field(description="Optional exact currently loaded revision.", ge=0)] = None,
+    working_dir: Annotated[str | None, Field(description="Optional GUI workspace root.")] = None,
+    job_id: Annotated[str | None, Field(description="Optional 32-character queued job ID.", pattern=r"^[0-9a-f]{32}$")] = None,
+) -> dict[str, Any]:
+    """Read the signed loop heartbeat, current revision, and queue state."""
+
+    try:
+        context = _resolve_gui_action_context(
+            project_id=project_id,
+            revision=revision,
+            working_dir=working_dir,
+        )
+        result = _gui_controller(working_dir).gui_loop_status(
+            project_id=context.get("project_id"),
+            revision=context.get("revision"),
+            job_id=job_id,
+        )
+        result["gui_action_context"] = context
+        if isinstance(context.get("project_resolution"), dict):
+            result["project_resolution"] = context["project_resolution"]
+        return _ok(result) if result.get("ok") is not False else result
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_gui_loop_prepare",
+    annotations={
+        "title": "Prepare a fixed signed Materials Studio GUI hot-load loop",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_gui_loop_prepare(
+    project_id: Annotated[str | None, Field(description="Optional exact structured project ID.", min_length=1, max_length=120)] = None,
+    revision: Annotated[int | None, Field(description="Optional exact currently loaded revision.", ge=0)] = None,
+    working_dir: Annotated[str | None, Field(description="Optional GUI workspace root.")] = None,
+) -> dict[str, Any]:
+    """Generate the exact-bound static loop without sending GUI input."""
+
+    try:
+        context = _resolve_gui_action_context(
+            project_id=project_id,
+            revision=revision,
+            working_dir=working_dir,
+        )
+        result = _gui_controller(working_dir).prepare_gui_loop(
+            project_id=context.get("project_id"),
+            revision=context.get("revision"),
+        )
+        result["gui_action_context"] = context
+        if isinstance(context.get("project_resolution"), dict):
+            result["project_resolution"] = context["project_resolution"]
+        return _ok(result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@mcp.tool(
+    name="material_studio_gui_loop_stop",
+    annotations={
+        "title": "Stop the exact Materials Studio GUI hot-load loop",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+@_require_current_runtime_source
+def material_studio_gui_loop_stop(
+    project_id: Annotated[str | None, Field(description="Optional exact structured project ID.", min_length=1, max_length=120)] = None,
+    revision: Annotated[int | None, Field(description="Optional exact current loop revision.", ge=0)] = None,
+    working_dir: Annotated[str | None, Field(description="Optional GUI workspace root.")] = None,
+) -> dict[str, Any]:
+    """Publish a signed stop marker without killing Materials Studio."""
+
+    try:
+        context = _resolve_gui_action_context(
+            project_id=project_id,
+            revision=revision,
+            working_dir=working_dir,
+        )
+        result = _gui_controller(working_dir).stop_gui_loop(
+            project_id=context.get("project_id"),
+            revision=context.get("revision"),
+        )
+        result["gui_action_context"] = context
+        if isinstance(context.get("project_resolution"), dict):
+            result["project_resolution"] = context["project_resolution"]
+        return _ok(result)
+    except Exception as exc:
+        return _error(exc)
+
 @mcp.tool(
     name="material_studio_gui_launch",
     annotations={
@@ -56189,6 +56557,7 @@ def _open_gui_structure_action(
     take_snapshot: bool,
     export_view_audit: bool,
     reuse_existing_window_only: bool,
+    hotload_transport: GuiHotloadTransport | str | None,
     fit_to_view_after_open: bool,
     prepare_view_replay_after_open: bool,
     views: list[str] | None,
@@ -56201,6 +56570,15 @@ def _open_gui_structure_action(
     log_revision = sync_context.get("revision") if sync_context.get("available") else revision
     response_base: dict[str, Any] = {
         "structured_sync_context": sync_context,
+        "hotload_transport_requested": (
+            hotload_transport.value
+            if isinstance(hotload_transport, GuiHotloadTransport)
+            else (
+                str(hotload_transport)
+                if hotload_transport is not None
+                else "configured_default"
+            )
+        ),
         "post_hotload_fit_to_view_requested": fit_to_view_after_open,
         "post_hotload_fit_to_view_request_source": (
             "artifact_only_postexecution_continuation"
@@ -56444,6 +56822,7 @@ def _open_gui_structure_action(
         working_dir=working_dir,
         fit_to_view_after_open=fit_to_view_after_open,
         prepare_view_replay_after_open=prepare_view_replay_after_open,
+        hotload_transport=hotload_transport,
     )
     activation_blocked_response = _with_gui_open_activation_block(
         response_base,
@@ -56471,12 +56850,23 @@ def _open_gui_structure_action(
             )
         return activation_blocked_response
 
+    normalized_hotload_transport = None
+    if isinstance(hotload_transport, GuiHotloadTransport):
+        normalized_hotload_transport = hotload_transport.value
+    elif hotload_transport is not None:
+        normalized_hotload_transport = str(hotload_transport)
+    open_transport_kwargs = (
+        {"hotload_transport": normalized_hotload_transport}
+        if normalized_hotload_transport is not None
+        else {}
+    )
     opened = gui.open_structure(
         structure_path,
         project_id=log_project_id,
         revision=log_revision,
         take_snapshot=take_snapshot,
         reuse_existing_window_only=reuse_existing_window_only,
+        **open_transport_kwargs,
     )
     response: dict[str, Any] = {**response_base, **opened}
     response["gui_open"] = opened
@@ -56586,6 +56976,7 @@ def material_studio_gui_open_structure(
     working_dir: Annotated[str | None, Field(description="可选的 GUI 工作区根目录。")] = None,
     fit_to_view_after_open: Annotated[bool, Field(description="After opening the exact current structured artifact, execute Fit-to-View and bind a final snapshot in the same GUI artifact transaction.")] = False,
     prepare_view_replay_after_open: Annotated[bool, Field(description="After the exact artifact is opened and its report transaction is released, prepare the current revision's view-replay manifest without GUI input.")] = False,
+    hotload_transport: Annotated[GuiHotloadTransport | None, Field(description="Optional override: auto prefers a healthy exact-bound GUI loop and otherwise falls back before enqueue; loop fails closed; dialog always uses the existing File/Open path. Omit it to use the configured server default.")] = None,
 ) -> dict[str, Any]:
     """在正在运行的 Materials Studio GUI 中打开现有的结构文件。"""
 
@@ -56670,6 +57061,7 @@ def material_studio_gui_open_structure(
                     take_snapshot=take_snapshot,
                     export_view_audit=export_view_audit,
                     reuse_existing_window_only=reuse_existing_window_only,
+                    hotload_transport=hotload_transport,
                     fit_to_view_after_open=fit_to_view_after_open,
                     prepare_view_replay_after_open=prepare_view_replay_after_open,
                     views=views,
@@ -56686,6 +57078,7 @@ def material_studio_gui_open_structure(
                 take_snapshot=take_snapshot,
                 export_view_audit=export_view_audit,
                 reuse_existing_window_only=reuse_existing_window_only,
+                hotload_transport=hotload_transport,
                 fit_to_view_after_open=fit_to_view_after_open,
                 prepare_view_replay_after_open=prepare_view_replay_after_open,
                 views=views,

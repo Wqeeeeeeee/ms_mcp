@@ -66,11 +66,13 @@ class _LiveGui:
         fit_status: str = "executed",
         fail_final_snapshot: bool = False,
         fail_prepare_view_replay: bool = False,
+        raise_fit_exception: bool = False,
     ) -> None:
         self.workspace = workspace
         self.fit_status = fit_status
         self.fail_final_snapshot = fail_final_snapshot
         self.fail_prepare_view_replay = fail_prepare_view_replay
+        self.raise_fit_exception = raise_fit_exception
         self.calls: list[tuple[str, dict]] = []
         self.fit_transaction: dict | None = None
         self.prepare_transaction: dict | None = None
@@ -224,7 +226,12 @@ class _LiveGui:
         assert execution_mode == "execute"
         assert take_snapshot is False
         assert self.fit_transaction is not None
+        if self.raise_fit_exception:
+            raise RuntimeError("native Fit dispatch result unavailable")
         if self.fit_status != "executed":
+            post_dispatch_failure = (
+                self.fit_status == "execution_failed_after_dispatch"
+            )
             return {
                 "project_id": project_id,
                 "revision": revision,
@@ -235,6 +242,11 @@ class _LiveGui:
                 "gui_modified": False,
                 "structure_modified": False,
                 "structure_unchanged": True,
+                "action_receipt": {
+                    "gui_input_attempted": post_dispatch_failure,
+                    "side_effect_may_have_occurred": post_dispatch_failure,
+                    "automatic_retry_allowed": not post_dispatch_failure,
+                },
                 "recommended_tool": "material_studio_gui_status",
                 "recommended_action": "resolve_fit_to_view_preflight_then_retry",
             }
@@ -248,6 +260,11 @@ class _LiveGui:
             "gui_modified": True,
             "structure_modified": False,
             "structure_unchanged": True,
+            "action_receipt": {
+                "gui_input_attempted": True,
+                "side_effect_may_have_occurred": True,
+                "automatic_retry_allowed": False,
+            },
         }
 
     def prepare_view_replay(
@@ -495,6 +512,9 @@ def test_requested_fit_block_returns_partial_success_and_exact_retry(
     assert fit["status"] == "blocked"
     assert fit["completed"] is False
     assert fit["gui_input_performed"] is False
+    assert fit["gui_input_attempted"] is False
+    assert fit["side_effect_may_have_occurred"] is False
+    assert fit["automatic_retry_allowed"] is True
     assert fit["retry_tool"] == "material_studio_gui_fit_to_view"
     assert fit["retry_payload"] == {
         "project_id": project_id,
@@ -507,6 +527,13 @@ def test_requested_fit_block_returns_partial_success_and_exact_retry(
     compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
     assert compact["partial_success"] is True
     assert compact["post_hotload_fit_to_view"]["completed"] is False
+    assert compact["post_hotload_fit_to_view"]["gui_input_attempted"] is False
+    assert compact["post_hotload_fit_to_view"][
+        "side_effect_may_have_occurred"
+    ] is False
+    assert compact["post_hotload_fit_to_view"][
+        "automatic_retry_allowed"
+    ] is True
     assert compact["post_hotload_fit_to_view"]["retry_tool"] == (
         "material_studio_gui_fit_to_view"
     )
@@ -545,11 +572,120 @@ def test_executed_fit_without_final_snapshot_is_not_accepted(
     assert fit["final_snapshot_bound"] is False
     assert fit["structure_unchanged"] is True
     assert fit["snapshot_warning"] == "final snapshot unavailable"
-    assert fit["retry_tool"] == "material_studio_gui_fit_to_view"
-    assert fit["retry_payload"]["take_snapshot"] is True
+    assert fit["gui_input_attempted"] is True
+    assert fit["side_effect_may_have_occurred"] is True
+    assert fit["automatic_retry_allowed"] is False
+    assert fit["retry_tool"] == "material_studio_gui_snapshot"
+    assert fit["retry_payload"] == {
+        "label": "post_hotload_fit_to_view",
+        "project_id": project_id,
+        "revision": 1,
+        "working_dir": str(tmp_path),
+    }
+    assert result["post_hotload_fit_to_view_retry_tool"] == (
+        "material_studio_gui_snapshot"
+    )
+    assert result["post_hotload_fit_to_view_retry_payload"] == fit["retry_payload"]
     compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
     assert compact["post_hotload_fit_to_view"]["action_completed"] is True
     assert compact["post_hotload_fit_to_view"]["final_snapshot_bound"] is False
+    assert compact["post_hotload_fit_to_view"]["automatic_retry_allowed"] is False
+    assert compact["post_hotload_fit_to_view"]["retry_tool"] == (
+        "material_studio_gui_snapshot"
+    )
+
+
+def test_post_dispatch_fit_failure_forbids_fit_retry_and_routes_to_status(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "combined_fit_post_dispatch_failure"
+    ProjectStore(tmp_path).create_project(_silicon_spec(project_id), user_text="fixture")
+    gui = _LiveGui(tmp_path, fit_status="execution_failed_after_dispatch")
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_live_modeling_request(
+        "Make a 2x1x1 supercell and hot-load it in Materials Studio.",
+        project_id=project_id,
+        fit_to_view_after_open=True,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+
+    assert result["ok"] is False
+    assert result["partial_success"] is True
+    assert result["status"] == "hotload_completed_fit_to_view_state_uncertain"
+    fit = result["post_hotload_fit_to_view"]
+    assert fit["action_completed"] is False
+    assert fit["gui_input_attempted"] is True
+    assert fit["side_effect_may_have_occurred"] is True
+    assert fit["automatic_retry_allowed"] is False
+    assert fit["manual_review_required"] is True
+    assert fit["recommended_tool"] == "material_studio_gui_status"
+    assert fit["followup_tool"] == "material_studio_gui_status"
+    assert fit["followup_payload"] == {
+        "project_id": project_id,
+        "revision": 1,
+        "working_dir": str(tmp_path),
+    }
+    assert "retry_tool" not in fit
+    assert "retry_payload" not in fit
+    assert "post_hotload_fit_to_view_retry_tool" not in result
+    assert "post_hotload_fit_to_view_retry_payload" not in result
+
+    compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
+    compact_fit = compact["post_hotload_fit_to_view"]
+    assert compact_fit["gui_input_attempted"] is True
+    assert compact_fit["side_effect_may_have_occurred"] is True
+    assert compact_fit["automatic_retry_allowed"] is False
+    assert compact_fit["manual_review_required"] is True
+    assert compact_fit["recommended_tool"] == "material_studio_gui_status"
+    assert compact_fit["followup_payload"] == fit["followup_payload"]
+    assert "retry_tool" not in compact_fit
+
+
+def test_fit_exception_conservatively_forbids_fit_retry(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    project_id = "combined_fit_exception"
+    ProjectStore(tmp_path).create_project(_silicon_spec(project_id), user_text="fixture")
+    gui = _LiveGui(tmp_path, raise_fit_exception=True)
+    monkeypatch.setattr(server, "_gui_controller", lambda working_dir=None: gui)
+
+    result = server.material_studio_live_modeling_request(
+        "Make a 2x1x1 supercell and hot-load it in Materials Studio.",
+        project_id=project_id,
+        fit_to_view_after_open=True,
+        working_dir=str(tmp_path),
+        take_snapshot=True,
+    )
+
+    assert result["ok"] is False
+    assert result["partial_success"] is True
+    assert result["status"] == "hotload_completed_fit_to_view_failed"
+    fit = result["post_hotload_fit_to_view"]
+    assert fit["side_effect_may_have_occurred"] is True
+    assert fit["automatic_retry_allowed"] is False
+    assert fit["manual_review_required"] is True
+    assert fit["recommended_tool"] == "material_studio_gui_status"
+    assert fit["followup_tool"] == "material_studio_gui_status"
+    assert fit["followup_payload"] == {
+        "project_id": project_id,
+        "revision": 1,
+        "working_dir": str(tmp_path),
+    }
+    assert "retry_tool" not in fit
+    assert "retry_payload" not in fit
+    assert "post_hotload_fit_to_view_retry_tool" not in result
+    assert "post_hotload_fit_to_view_retry_payload" not in result
+
+    compact = server._compact_live_response(result, server.McpResponseMode.COMPACT)
+    compact_fit = compact["post_hotload_fit_to_view"]
+    assert compact_fit["side_effect_may_have_occurred"] is True
+    assert compact_fit["automatic_retry_allowed"] is False
+    assert compact_fit["manual_review_required"] is True
+    assert compact_fit["followup_payload"] == fit["followup_payload"]
 
 
 def test_explicit_current_reload_wins_over_display_only_fit_routing() -> None:

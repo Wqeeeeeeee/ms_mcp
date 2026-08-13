@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_SCRIPTS = ROOT / "scripts" / "windows"
 POWERSHELL = shutil.which("powershell.exe")
 CMD = shutil.which("cmd.exe")
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 
 def _run_ps(script: str, *arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -1319,6 +1319,47 @@ print(json.dumps(sorted(tool.name for tool in asyncio.run(mcp.list_tools()))))
     assert completed.returncode == 0, completed.stderr
     wheel_names = set(json.loads(completed.stdout))
     assert wheel_names == source_names
+
+
+def test_built_wheel_native_fit_probe_imports_in_isolated_mode(tmp_path: Path) -> None:
+    wheels = sorted((ROOT / "dist").glob(f"materials_studio_mcp-{VERSION}-py3-none-any.whl"))
+    if not wheels:
+        pytest.skip("Build the project wheel before checking the native Fit probe")
+    wheel = wheels[0]
+    member = "material_studio_mcp_server/gui_fit_probe.py"
+    with zipfile.ZipFile(wheel) as archive:
+        assert member in archive.namelist()
+    probe = f"""
+import json, sys
+sys.path.insert(0, {str(wheel)!r})
+import material_studio_mcp_server.gui_fit_probe as module
+print(json.dumps({{
+    "callable": callable(module.inspect_native_fit_target),
+    "file": module.__file__,
+    "isolated": bool(sys.flags.isolated),
+}}))
+"""
+    encoded = base64.b64encode(probe.encode("utf-8")).decode("ascii")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import base64;exec(base64.b64decode('{encoded}'))",
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(completed.stdout)
+    assert receipt["isolated"] is True
+    assert receipt["callable"] is True
+    assert receipt["file"].replace("\\", "/") == f"{wheel}/{member}".replace("\\", "/")
 
 
 def test_built_wheel_metadata_pins_mcp_below_2() -> None:

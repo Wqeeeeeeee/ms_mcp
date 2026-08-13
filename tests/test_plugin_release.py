@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -19,10 +22,26 @@ from scripts.build_plugin_release import (
 )
 
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 BASE_SHA = "a" * 40
 REFERENCE_SHA = "b" * 40
 LICENSE_TEXT = "MIT License\n\nCopyright (c) 2026 Xu kaidong\n"
+PACKAGE_MEMBERS = {
+    "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.2'\n",
+    "material_studio_mcp_server/codex_config.py": (
+        b"SAFE_ENABLED_TOOLS = ('material_studio_get_status',)\n"
+        b"DISABLED_TOOLS = ('material_studio_run_script',)\n"
+    ),
+    "material_studio_mcp_server/gui.py": b'"""GUI controller test source."""\n',
+    "material_studio_mcp_server/gui_fit_probe.py": (
+        b'"""Native Fit-to-View probe helper."""\n'
+        b"def inspect_native_fit_target(*, window_handle, expected_window_title):\n"
+        b"    return {'read_only': True}\n"
+    ),
+    "material_studio_mcp_server/schemas/test.schema.json": b'{"type":"object"}\n',
+    "ms_mcp/__init__.py": b'"""Legacy compatibility package."""\n',
+    "ms_mcp/server.py": b"def main():\n    return None\n",
+}
 
 
 def _write(root: Path, relative: str, content: str) -> Path:
@@ -73,7 +92,7 @@ def _make_wheel(
         if requirement
     )
     entries = {
-        "material_studio_mcp_server/__init__.py": b"__version__ = '0.5.1'\n",
+        **PACKAGE_MEMBERS,
         f"{dist_info}/METADATA": (
             f"Metadata-Version: {core_metadata_version}\n"
             "Name: materials-studio-mcp\n"
@@ -132,13 +151,39 @@ def _rewrite_wheel(wheel: Path, *, remove_suffix: str | None = None, tamper_modu
             _zip_write(archive, name, data)
 
 
+def _rewrite_wheel_with_valid_record(
+    wheel: Path,
+    *,
+    replacement_members: dict[str, bytes] | None = None,
+    remove_members: tuple[str, ...] = (),
+    extra_members: dict[str, bytes] | None = None,
+) -> None:
+    with zipfile.ZipFile(wheel) as archive:
+        entries = {
+            info.filename: archive.read(info)
+            for info in archive.infolist()
+            if not info.is_dir() and not info.filename.endswith(".dist-info/RECORD")
+        }
+    for member in remove_members:
+        entries.pop(member)
+    entries.update(replacement_members or {})
+    entries.update(extra_members or {})
+    record_path = f"materials_studio_mcp-{VERSION}.dist-info/RECORD"
+    entries[record_path] = "".join(
+        f"{name},{_record_digest(data)},{len(data)}\n" for name, data in entries.items()
+    ).encode("utf-8") + f"{record_path},,\n".encode("utf-8")
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, data in entries.items():
+            _zip_write(archive, name, data)
+
+
 def _make_source(root: Path) -> Path:
     _write(
         root,
         "pyproject.toml",
         "[project]\n"
         "name = \"materials-studio-mcp\"\n"
-        "version = \"0.5.1\"\n"
+        "version = \"0.5.2\"\n"
         "authors = [{ name = \"Xu kaidong\" }]\n"
         "license = \"MIT\"\n"
         "license-files = [\"LICENSE\"]\n\n"
@@ -192,12 +237,10 @@ def _make_source(root: Path) -> Path:
             indent=2,
         ),
     )
-    _write(
-        root,
-        "src/material_studio_mcp_server/codex_config.py",
-        "SAFE_ENABLED_TOOLS = ('material_studio_get_status',)\n"
-        "DISABLED_TOOLS = ('material_studio_run_script',)\n",
-    )
+    for relative, data in PACKAGE_MEMBERS.items():
+        path = root / "src" / Path(relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     _write(root, "plugins/materials-studio-mcp/Run-MS-MCP.bat", "@echo off\nexit /b 0\n")
     _write(
         root,
@@ -283,6 +326,9 @@ def test_builds_deterministic_release_without_using_repository_dist(tmp_path: Pa
     assert manifest["release_blockers"] == []
     assert manifest["third_party_notices"]["required"] is False
     assert manifest["wheel"]["path"] == f"materials_studio_mcp-{VERSION}-py3-none-any.whl"
+    assert manifest["wheel"]["required_runtime_members"] == [
+        "material_studio_mcp_server/gui_fit_probe.py"
+    ]
     assert manifest["wheel"]["sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
     assert manifest["real_acceptance"] == {
         "castep": "NOT_RUN",
@@ -301,10 +347,15 @@ def test_builds_deterministic_release_without_using_repository_dist(tmp_path: Pa
         assert f"{bundle_root}/plugins/materials-studio-mcp/.codex-plugin/plugin.json" in names
         assert f"{bundle_root}/materials_studio_mcp-{VERSION}-py3-none-any.whl" in names
         assert f"{bundle_root}/release-manifest.json" in names
+        nested_wheel = archive.read(
+            f"{bundle_root}/materials_studio_mcp-{VERSION}-py3-none-any.whl"
+        )
         internal_sums = archive.read(f"{bundle_root}/SHA256SUMS.txt").decode("utf-8")
         for line in internal_sums.splitlines():
             digest, relative = line.split("  ", 1)
             assert hashlib.sha256(archive.read(f"{bundle_root}/{relative}")).hexdigest() == digest
+    with zipfile.ZipFile(io.BytesIO(nested_wheel)) as archive:
+        assert "material_studio_mcp_server/gui_fit_probe.py" in archive.namelist()
 
     external = _sum_lines(first.checksums)
     assert external == {
@@ -313,6 +364,51 @@ def test_builds_deterministic_release_without_using_repository_dist(tmp_path: Pa
         first.wheel.name: hashlib.sha256(first.wheel.read_bytes()).hexdigest(),
     }
     assert not (source / "dist").exists()
+
+
+def test_release_wheel_native_fit_probe_imports_in_isolated_mode(tmp_path: Path) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel")
+    artifacts = build_release(
+        source_root=source,
+        wheel_path=wheel,
+        output_dir=tmp_path / "out",
+        base_sha=BASE_SHA,
+        reference_sha=REFERENCE_SHA,
+    )
+    probe = f"""
+import json, sys
+sys.path.insert(0, {str(artifacts.wheel)!r})
+import material_studio_mcp_server.gui_fit_probe as module
+print(json.dumps({{
+    "callable": callable(module.inspect_native_fit_target),
+    "file": module.__file__,
+    "isolated": bool(sys.flags.isolated),
+}}))
+"""
+    encoded = base64.b64encode(probe.encode("utf-8")).decode("ascii")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import base64;exec(base64.b64decode('{encoded}'))",
+        ],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    receipt = json.loads(completed.stdout)
+    assert receipt["callable"] is True
+    assert receipt["isolated"] is True
+    assert receipt["file"].replace("\\", "/") == (
+        f"{artifacts.wheel}/material_studio_mcp_server/gui_fit_probe.py".replace("\\", "/")
+    )
 
 
 @pytest.mark.parametrize("field", ["skills", "mcpServers"])
@@ -450,6 +546,89 @@ def test_rejects_wheel_missing_entrypoints_or_record(
         )
 
 
+def test_rejects_wheel_missing_required_native_fit_probe(tmp_path: Path) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel")
+    _rewrite_wheel(wheel, remove_suffix="material_studio_mcp_server/gui_fit_probe.py")
+    with pytest.raises(
+        ReleaseBuildError,
+        match=r"missing required runtime member.*gui_fit_probe\.py",
+    ):
+        build_release(
+            source_root=source,
+            wheel_path=wheel,
+            output_dir=tmp_path / "out",
+            base_sha=BASE_SHA,
+            reference_sha=REFERENCE_SHA,
+        )
+
+
+@pytest.mark.parametrize(
+    "member",
+    (
+        "material_studio_mcp_server/gui.py",
+        "material_studio_mcp_server/gui_fit_probe.py",
+    ),
+)
+def test_rejects_same_version_wheel_with_stale_package_bytes(
+    tmp_path: Path,
+    member: str,
+) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel")
+    _rewrite_wheel_with_valid_record(
+        wheel,
+        replacement_members={member: b'"""Stale same-version module."""\n'},
+    )
+
+    with pytest.raises(
+        ReleaseBuildError,
+        match=rf"package bytes do not match.*{Path(member).name}",
+    ):
+        build_release(
+            source_root=source,
+            wheel_path=wheel,
+            output_dir=tmp_path / "out",
+            base_sha=BASE_SHA,
+            reference_sha=REFERENCE_SHA,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_message"),
+    (
+        ("missing", r"package member set.*missing: ms_mcp/server\.py"),
+        ("extra", r"package member set.*extra: ms_mcp/unreviewed\.json"),
+    ),
+)
+def test_rejects_missing_or_extra_wheel_package_members(
+    tmp_path: Path,
+    mutation: str,
+    expected_message: str,
+) -> None:
+    source = _make_source(tmp_path / "source")
+    wheel = _make_wheel(tmp_path / "wheel")
+    if mutation == "missing":
+        _rewrite_wheel_with_valid_record(
+            wheel,
+            remove_members=("ms_mcp/server.py",),
+        )
+    else:
+        _rewrite_wheel_with_valid_record(
+            wheel,
+            extra_members={"ms_mcp/unreviewed.json": b"{}\n"},
+        )
+
+    with pytest.raises(ReleaseBuildError, match=expected_message):
+        build_release(
+            source_root=source,
+            wheel_path=wheel,
+            output_dir=tmp_path / "out",
+            base_sha=BASE_SHA,
+            reference_sha=REFERENCE_SHA,
+        )
+
+
 def test_rejects_wheel_record_integrity_mismatch(tmp_path: Path) -> None:
     source = _make_source(tmp_path / "source")
     wheel = _make_wheel(tmp_path / "wheel")
@@ -473,7 +652,7 @@ def test_rejects_wheel_member_path_traversal(tmp_path: Path) -> None:
         _zip_write(
             archive,
             f"materials_studio_mcp-{VERSION}.dist-info/METADATA",
-            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.1\n\n",
+            b"Metadata-Version: 2.4\nName: materials-studio-mcp\nVersion: 0.5.2\n\n",
         )
     with pytest.raises(ReleaseBuildError, match="unsafe archive path"):
         build_release(

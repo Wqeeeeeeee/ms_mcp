@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ctypes
 import importlib
+import hashlib
 import os
 import struct
 import subprocess
@@ -10,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import material_studio_mcp_server.gui_uia as gui_uia_module
 
 from material_studio_mcp_server.gui import (
     VIEW_RUNTIME_ACCESSIBILITY_COMMAND_LABELS,
@@ -17,9 +20,21 @@ from material_studio_mcp_server.gui import (
 )
 from material_studio_mcp_server.gui_uia import (
     COMTYPES_CACHE_ENV,
+    FIT_TO_VIEW_COMMAND_ID,
+    FIT_TO_VIEW_CONTROL_NAME,
+    FIT_TO_VIEW_TOOLBAR_NAME,
+    FitProbeCleanupError,
+    FitProbeTimeoutError,
     PywinautoViewReplayBackend,
     UiaReplayError,
+    VIEWER_TOOLBAR_NATIVE_COMMAND_IDS,
+    VIEWER_TOOLBAR_NATIVE_STYLES,
+    _default_bounded_fit_probe_runner,
+    _default_native_window_identity,
     _external_comtypes_gen_cache,
+    _fit_probe_runtime_paths,
+    _launch_fit_probe_process,
+    _WindowsKillOnCloseJob,
     analyze_miller_plane_bmp_diff,
     compare_bmp_region,
     local_uia_view_replay_implementation_contract,
@@ -553,6 +568,20 @@ def test_local_uia_implementation_contract_exposes_transactional_recipe_boundary
     assert contract["default_execution_mode"] == "preview"
     assert contract["explicit_execute_required"] is True
     assert contract["records_visual_acceptance"] is False
+    assert recipe_classes["fit_to_view"] == {
+        "implemented": True,
+        "execute_tool": "material_studio_gui_fit_to_view",
+        "requires_bounded_native_probe": True,
+        "probe_process_timeout_seconds": 30.0,
+        "requires_exact_window_pid_document_and_viewport": True,
+        "requires_full_live_toolbar_mapping": True,
+        "numeric_command_id": 33299,
+        "native_command_timeout_milliseconds": 5000,
+        "requires_immediate_pre_dispatch_native_window_identity": True,
+        "requires_single_native_materials_studio_process_and_window": True,
+        "registry_sha256_verified_after_final_proof_gate": True,
+        "uses_uia_descendant_tree": False,
+    }
     assert recipe_classes["transactional_miller_plane"] == {
         "implemented": True,
         "recipe_kind": "miller_plane_view_onto",
@@ -576,6 +605,1092 @@ def test_local_uia_implementation_contract_exposes_transactional_recipe_boundary
         "crystal_direction_via_collinear_miller_plane_view_onto",
         "miller_plane_view_onto",
     ]
+
+
+def _native_fit_probe_payload(
+    *,
+    title: str = "project - Materials Studio",
+) -> dict[str, object]:
+    rows = [
+        {
+            "index": index,
+            "command_id": command_id,
+            "style": VIEWER_TOOLBAR_NATIVE_STYLES[index],
+            "state": 0 if index == 4 else 4,
+            "text": "",
+        }
+        for index, command_id in enumerate(VIEWER_TOOLBAR_NATIVE_COMMAND_IDS)
+    ]
+    runtime = _fit_probe_runtime_paths()
+    window = {
+        "handle": 9001,
+        "title": title,
+        "class_name": "MaterialsStudioMainWindow",
+        "process_id": 7001,
+        "is_foreground": True,
+        "visible": True,
+        "enabled": True,
+        "minimized": False,
+    }
+    toolbar = {
+        "handle": 9101,
+        "control_id": 12122,
+        "class_name": "ToolbarWindow32",
+        "title": "3D Viewer",
+        "process_id": 7001,
+        "visible": True,
+        "enabled": True,
+    }
+    viewport = {
+        "handle": 9301,
+        "class_name": "CViewer3DCtrl",
+        "process_id": 7001,
+        "visible": True,
+        "enabled": True,
+    }
+    return {
+        "schema_version": 1,
+        "kind": "materials_studio_native_fit_target_probe",
+        "probe_runtime": {
+            "module_path": str(runtime["helper_path"]),
+            "module_sha256": runtime["helper_sha256"],
+            "dependency_module_path": str(runtime["dependency_module_path"]),
+            "dependency_module_sha256": runtime["dependency_module_sha256"],
+            "package_version": "0.5.2",
+            "python_executable": str(runtime["base_executable"]),
+            "isolated_mode": True,
+            "no_site_mode": True,
+        },
+        "supported": True,
+        "read_only": True,
+        "gui_input_performed": False,
+        "ok": True,
+        "safe_for_fit_to_view_invoke": True,
+        "window_handle": 9001,
+        "expected_window_title": "project - Materials Studio",
+        "expected_window_pid": 7001,
+        "expected_document_name": "structure_r004",
+        "window": window,
+        "mdi_client": {
+            "handle": 9151,
+            "class_name": "MDIClient",
+            "process_id": 7001,
+            "visible": True,
+            "enabled": True,
+        },
+        "toolbar": toolbar,
+        "toolbar_candidates": [dict(toolbar)],
+        "toolbar_buttons": rows,
+        "active_document": {
+            "handle": 9201,
+            "title": "structure_r004 *",
+            "process_id": 7001,
+            "visible": True,
+            "enabled": True,
+        },
+        "active_viewport": viewport,
+        "viewport_candidates": [dict(viewport)],
+        "block_reasons": [],
+        "helper_exit_code": 0,
+    }
+
+
+def _native_window_identity_payload(**overrides: object) -> dict[str, object]:
+    return {
+        "is_window": True,
+        "handle": 9001,
+        "pid": 7001,
+        "title": "project - Materials Studio",
+        "is_foreground": True,
+        "is_visible": True,
+        "is_enabled": True,
+        "is_minimized": False,
+        "session_enumeration_succeeded": True,
+        "process_count": 1,
+        "window_count": 1,
+        "materials_studio_process_ids": [7001],
+        "materials_studio_window_handles": [9001],
+        "target_pid_is_materials_studio": True,
+        "target_window_is_materials_studio": True,
+        **overrides,
+    }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Win32 native identity only")
+def test_native_window_identity_uses_pointer_sized_explicit_win32_signatures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ctypes.wintypes as wintypes
+
+    high_handle = 0x123456789ABC
+    title = "project - Materials Studio"
+
+    class _Function:
+        def __init__(self, callback: object) -> None:
+            self.callback = callback
+            self.argtypes: object = None
+            self.restype: object = None
+
+        def __call__(self, *args: object) -> object:
+            return self.callback(*args)
+
+    class _User32:
+        def __init__(self) -> None:
+            self.IsWindow = _Function(lambda hwnd: int(hwnd.value) == high_handle)
+
+            def set_pid(_hwnd: object, output: object) -> int:
+                ctypes.cast(
+                    output, ctypes.POINTER(wintypes.DWORD)
+                ).contents.value = 7001
+                return 1
+
+            self.GetWindowThreadProcessId = _Function(set_pid)
+            self.GetWindowTextLengthW = _Function(lambda _hwnd: len(title))
+
+            def set_title(_hwnd: object, buffer: object, _length: int) -> int:
+                buffer.value = title
+                return len(title)
+
+            self.GetWindowTextW = _Function(set_title)
+            self.GetForegroundWindow = _Function(lambda: high_handle)
+            self.IsWindowVisible = _Function(lambda _hwnd: 1)
+            self.IsWindowEnabled = _Function(lambda _hwnd: 1)
+            self.IsIconic = _Function(lambda _hwnd: 0)
+            self.EnumWindows = _Function(
+                lambda callback, lparam: int(bool(callback(high_handle, lparam)))
+            )
+
+    class _Kernel32:
+        def __init__(self) -> None:
+            self.CreateToolhelp32Snapshot = _Function(lambda _flags, _pid: 55)
+
+            def first(_snapshot: object, output: object) -> int:
+                entry = output._obj
+                entry.th32ProcessID = 7001
+                entry.szExeFile = "MatStudio.exe"
+                return 1
+
+            def next_entry(_snapshot: object, _output: object) -> int:
+                ctypes.set_last_error(18)
+                return 0
+
+            self.Process32FirstW = _Function(first)
+            self.Process32NextW = _Function(next_entry)
+            self.CloseHandle = _Function(lambda _handle: 1)
+
+    user32 = _User32()
+    kernel32 = _Kernel32()
+    monkeypatch.setattr(
+        gui_uia_module.ctypes,
+        "WinDLL",
+        lambda name, **_kwargs: (
+            user32 if str(name).casefold() == "user32" else kernel32
+        ),
+    )
+
+    result = _default_native_window_identity(high_handle)
+
+    assert result == {
+        "is_window": True,
+        "handle": high_handle,
+        "pid": 7001,
+        "title": title,
+        "is_foreground": True,
+        "is_visible": True,
+        "is_enabled": True,
+        "is_minimized": False,
+        "session_enumeration_succeeded": True,
+        "process_count": 1,
+        "window_count": 1,
+        "materials_studio_process_ids": [7001],
+        "materials_studio_window_handles": [high_handle],
+        "target_pid_is_materials_studio": True,
+        "target_window_is_materials_studio": True,
+    }
+    assert user32.GetForegroundWindow.argtypes == ()
+    assert user32.GetForegroundWindow.restype is wintypes.HWND
+    assert user32.IsWindow.argtypes == (wintypes.HWND,)
+    assert user32.GetWindowThreadProcessId.argtypes == (
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    assert user32.GetWindowTextW.argtypes == (
+        wintypes.HWND,
+        wintypes.LPWSTR,
+        ctypes.c_int,
+    )
+    assert user32.GetWindowTextLengthW.argtypes == (wintypes.HWND,)
+    assert user32.GetWindowTextLengthW.restype is ctypes.c_int
+    assert user32.GetWindowTextW.restype is ctypes.c_int
+    assert user32.GetWindowThreadProcessId.restype is wintypes.DWORD
+    assert user32.IsWindow.restype is wintypes.BOOL
+    assert user32.IsWindowVisible.argtypes == (wintypes.HWND,)
+    assert user32.IsWindowVisible.restype is wintypes.BOOL
+    assert user32.IsWindowEnabled.argtypes == (wintypes.HWND,)
+    assert user32.IsWindowEnabled.restype is wintypes.BOOL
+    assert user32.IsIconic.argtypes == (wintypes.HWND,)
+    assert user32.IsIconic.restype is wintypes.BOOL
+    assert len(user32.EnumWindows.argtypes) == 2
+    assert user32.EnumWindows.argtypes[1] is wintypes.LPARAM
+    assert user32.EnumWindows.restype is wintypes.BOOL
+    assert kernel32.CreateToolhelp32Snapshot.argtypes == (
+        wintypes.DWORD,
+        wintypes.DWORD,
+    )
+    assert kernel32.CreateToolhelp32Snapshot.restype is wintypes.HANDLE
+    process_entry_pointer = kernel32.Process32FirstW.argtypes[1]
+    assert kernel32.Process32FirstW.argtypes == (
+        wintypes.HANDLE,
+        process_entry_pointer,
+    )
+    assert kernel32.Process32FirstW.restype is wintypes.BOOL
+    assert kernel32.Process32NextW.argtypes == (
+        wintypes.HANDLE,
+        process_entry_pointer,
+    )
+    assert kernel32.Process32NextW.restype is wintypes.BOOL
+    assert kernel32.CloseHandle.argtypes == (wintypes.HANDLE,)
+    assert kernel32.CloseHandle.restype is wintypes.BOOL
+
+
+def _native_fit_backend(
+    *,
+    runner: object,
+    native_commands: list[tuple[int, int]],
+) -> PywinautoViewReplayBackend:
+    return PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Fit must not enumerate the UIA descendant tree")
+        ),
+        keyboard_sender=lambda _token: (_ for _ in ()).throw(
+            AssertionError("Fit must not send keyboard input")
+        ),
+        foreground_handle_getter=lambda: 9001,
+        native_window_identity_getter=lambda _handle: (
+            _native_window_identity_payload()
+        ),
+        fit_command_sender=lambda handle, command: native_commands.append(
+            (handle, command)
+        ),
+        fit_probe_runner=runner,
+        fit_probe_timeout_seconds=0.25,
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+
+
+def _native_registry(tmp_path: Path) -> tuple[Path, str]:
+    path = tmp_path / "#SVViewer3d.xml"
+    path.write_text("<toolbar/>", encoding="utf-8")
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_fit_probe_uses_bounded_native_mapping_without_uia_tree() -> None:
+    calls: list[dict[str, object]] = []
+
+    def runner(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return _native_fit_probe_payload()
+
+    backend = _native_fit_backend(runner=runner, native_commands=[])
+    result = backend.probe_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["fit_command_ready"] is True
+    assert result["live_toolbar_mapping_verified"] is True
+    assert result["resolved_command_ids"] == [FIT_TO_VIEW_COMMAND_ID]
+    assert result["accessibility_tree_enumerated"] is False
+    assert result["fit_command"]["numeric_command_id"] == 33299
+    assert calls == [
+        {
+            "window_handle": 9001,
+            "expected_window_title": "project - Materials Studio",
+            "expected_window_pid": 7001,
+            "expected_document_name": "structure_r004",
+            "timeout_seconds": 0.25,
+        }
+    ]
+
+
+def test_fit_probe_timeout_fails_closed_without_input() -> None:
+    def runner(**_kwargs: object) -> dict[str, object]:
+        raise FitProbeTimeoutError("deadline")
+
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=runner,
+        native_commands=native_commands,
+    )
+    result = backend.probe_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["fit_command_ready"] is False
+    assert result["probe_timed_out"] is True
+    assert result["block_reasons"] == ["native_fit_probe_timed_out"]
+    assert result["gui_input_performed"] is False
+    assert native_commands == []
+
+
+def test_fit_probe_requires_exact_pid_and_document_before_helper() -> None:
+    calls: list[dict[str, object]] = []
+    backend = _native_fit_backend(
+        runner=lambda **kwargs: calls.append(dict(kwargs)) or _native_fit_probe_payload(),
+        native_commands=[],
+    )
+    result = backend.probe_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+    )
+
+    assert result["fit_command_ready"] is False
+    assert result["block_reasons"] == [
+        "fit_to_view_expected_window_pid_missing",
+        "fit_to_view_expected_document_name_missing",
+    ]
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_reason"),
+    [
+        (
+            lambda payload: payload["probe_runtime"].update(
+                {"module_sha256": "0" * 64}
+            ),
+            "native_fit_probe_module_sha256_mismatch",
+        ),
+        (
+            lambda payload: payload.update({"read_only": False}),
+            "native_fit_probe_not_read_only",
+        ),
+        (
+            lambda payload: payload["toolbar_buttons"][7].update({"state": 5}),
+            "native_fit_probe_fit_button_state_mismatch",
+        ),
+        (
+            lambda payload: payload["viewport_candidates"].append(
+                dict(payload["viewport_candidates"][0], handle=9302)
+            ),
+            "native_fit_probe_viewport_candidates_mismatch",
+        ),
+        (
+            lambda payload: (
+                payload["toolbar"].update({"handle": 0}),
+                payload["toolbar_candidates"][0].update({"handle": 0}),
+            ),
+            "native_fit_probe_toolbar_handle_invalid",
+        ),
+    ],
+)
+def test_fit_probe_parent_rejects_forged_or_ambiguous_helper_receipt(
+    mutator: object,
+    expected_reason: str,
+) -> None:
+    payload = _native_fit_probe_payload()
+    mutator(payload)
+    backend = _native_fit_backend(
+        runner=lambda **_kwargs: payload,
+        native_commands=[],
+    )
+
+    result = backend.probe_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["fit_command_ready"] is False
+    assert expected_reason in result["block_reasons"]
+
+
+def test_bounded_fit_probe_runner_terminates_timed_out_helper_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Stream:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _Process:
+        pid = 41234
+        returncode = None
+
+        def __init__(self) -> None:
+            self.stdout = _Stream()
+            self.stderr = _Stream()
+            self.wait_calls: list[float] = []
+
+        def communicate(self, timeout: float) -> tuple[str, str]:
+            raise subprocess.TimeoutExpired(["probe"], timeout)
+
+        def wait(self, timeout: float) -> int:
+            self.wait_calls.append(timeout)
+            self.returncode = -9
+            return -9
+
+    class _Job:
+        def __init__(self) -> None:
+            self.terminated: list[int] = []
+            self.closed = False
+
+        def terminate_and_verify(self, item: _Process, *, timeout_seconds: float) -> None:
+            self.terminated.append(item.pid)
+            item.wait(timeout_seconds)
+
+        def verify_empty(self, *, timeout_seconds: float) -> bool:
+            return True
+
+        def close(self) -> None:
+            self.closed = True
+
+    process = _Process()
+    job = _Job()
+    monkeypatch.setattr(
+        "material_studio_mcp_server.gui_uia._launch_fit_probe_process",
+        lambda *_args, **_kwargs: (process, job),
+    )
+
+    with pytest.raises(FitProbeTimeoutError, match="terminated"):
+        _default_bounded_fit_probe_runner(
+            window_handle=9001,
+            expected_window_title="project - Materials Studio",
+            timeout_seconds=0.01,
+        )
+
+    assert job.terminated == [41234]
+    assert process.wait_calls == [5]
+    assert process.stdout.closed is True
+    assert process.stderr.closed is True
+    assert job.closed is True
+
+
+def test_bounded_fit_probe_runner_closes_job_when_empty_query_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Process:
+        returncode = 0
+        stdout = None
+        stderr = None
+
+        def communicate(self, timeout: float) -> tuple[str, str]:
+            del timeout
+            return "{}", ""
+
+        def wait(self, timeout: float) -> int:
+            del timeout
+            return 0
+
+    class _Job:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.closed = False
+
+        def verify_empty(self, *, timeout_seconds: float) -> bool:
+            del timeout_seconds
+            raise FitProbeCleanupError("query failed")
+
+        def terminate_and_verify(
+            self,
+            process: _Process,
+            *,
+            timeout_seconds: float,
+        ) -> None:
+            del process, timeout_seconds
+            self.terminated = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    process = _Process()
+    job = _Job()
+    monkeypatch.setattr(
+        "material_studio_mcp_server.gui_uia._launch_fit_probe_process",
+        lambda *_args, **_kwargs: (process, job),
+    )
+
+    with pytest.raises(FitProbeCleanupError, match="could not prove"):
+        _default_bounded_fit_probe_runner(
+            window_handle=9001,
+            expected_window_title="project - Materials Studio",
+            timeout_seconds=0.1,
+        )
+
+    assert job.terminated is True
+    assert job.closed is True
+
+
+def test_windows_fit_probe_job_close_failure_is_not_reported_closed() -> None:
+    class _Kernel:
+        @staticmethod
+        def CloseHandle(_handle: object) -> int:
+            return 0
+
+    job = object.__new__(_WindowsKillOnCloseJob)
+    job._kernel32 = _Kernel()
+    job._handle = 123
+    job._closed = False
+
+    with pytest.raises(FitProbeCleanupError, match="CloseHandle failed"):
+        job.close()
+
+    assert job._closed is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Objects only")
+def test_windows_fit_probe_job_terminates_real_root_and_child(tmp_path: Path) -> None:
+    base_executable = str(_fit_probe_runtime_paths()["base_executable"])
+    script = (
+        "import subprocess,sys,time;"
+        "child=subprocess.Popen([sys.executable,'-I','-S','-c','import time;time.sleep(60)']);"
+        "print(child.pid,flush=True);time.sleep(60)"
+    )
+    process, job = _launch_fit_probe_process(
+        [base_executable, "-I", "-S", "-c", script],
+        environment=os.environ.copy(),
+        cwd=tmp_path,
+    )
+    try:
+        child_pid = int(process.stdout.readline().strip())
+        assert child_pid > 0
+        assert job.active_process_count() >= 2
+        job.terminate_and_verify(process, timeout_seconds=5.0)
+        assert process.poll() is not None
+        assert job.active_process_count() == 0
+    finally:
+        if process.poll() is None:
+            job.terminate_and_verify(process, timeout_seconds=5.0)
+        job.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows helper only")
+def test_bounded_fit_probe_ignores_cwd_and_pythonpath_shadow_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    shadow = tmp_path / "material_studio_mcp_server"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("raise RuntimeError('shadowed')\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+
+    result = _default_bounded_fit_probe_runner(
+        window_handle=1,
+        expected_window_title="missing - Materials Studio",
+        expected_window_pid=1,
+        expected_document_name="missing",
+        timeout_seconds=30.0,
+    )
+
+    expected = _fit_probe_runtime_paths()
+    assert result["helper_exit_code"] == 0
+    assert Path(result["probe_runtime"]["module_path"]).resolve() == expected[
+        "helper_path"
+    ]
+    assert result["probe_runtime"]["module_sha256"] == expected["helper_sha256"]
+    assert Path(result["probe_runtime"]["dependency_module_path"]).resolve() == expected[
+        "dependency_module_path"
+    ]
+    assert result["probe_runtime"]["dependency_module_sha256"] == expected[
+        "dependency_module_sha256"
+    ]
+    assert result["probe_runtime"]["isolated_mode"] is True
+    assert result["probe_runtime"]["no_site_mode"] is True
+
+
+def test_execute_fit_uses_fresh_native_probe_before_and_after_one_command(
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def runner(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return _native_fit_probe_payload()
+
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=runner,
+        native_commands=native_commands,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is True
+    assert result["gui_input_performed"] is True
+    assert result["structure_modified"] is False
+    assert result["automatic_retry_allowed"] is False
+    assert native_commands == [(9001, 33299)]
+    assert len(calls) == 2
+
+
+def test_execute_fit_runs_native_probe_then_short_controller_gate_before_input(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    expected_binding = {
+        "project_id": "project",
+        "revision": 4,
+        "result_metadata_path": "result_metadata.json",
+        "execution_attempt_id": "a" * 32,
+        "execution_attempt_sequence": 1,
+        "planned_structure_path": "structure.xsd",
+        "wrapper_source_path": "structure.xsd",
+        "structure_sha256": "b" * 64,
+        "structure_size_bytes": 42,
+        "journal_latest_event_sha256": "c" * 64,
+    }
+
+    def runner(**_kwargs: object) -> dict[str, object]:
+        events.append("native_probe")
+        return _native_fit_probe_payload()
+
+    def controller_gate() -> dict[str, object]:
+        events.append("controller_gate")
+        return {
+            "execution_ready": True,
+            "project_id": "project",
+            "revision": 4,
+            "process_count": 1,
+            "window_count": 1,
+            "single_window_policy_ok": True,
+            "native_probe_performed": False,
+            "target_window": {
+                "handle": 9001,
+                "title": "project - Materials Studio",
+                "pid": 7001,
+                "is_foreground": True,
+            },
+            "target_wrapper_metadata": {
+                "wrapper_provenance_status": "verified_revision_wrapper",
+                "wrapper_workspace_matches_controller": True,
+                "source_inside_wrapper_workspace": True,
+                "project_id": "project",
+                "revision": 4,
+                "document_name": "structure_r004",
+            },
+            "structure_binding": {
+                "verified": True,
+                "identity": expected_binding,
+            },
+            "block_reasons": [],
+        }
+
+    expected_proof = {
+        "files": {"structure_artifact": {"sha256": "d" * 64}},
+        "journal_latest_event_sha256": "c" * 64,
+    }
+
+    def final_proof_gate() -> dict[str, object]:
+        events.append("final_proof_gate")
+        return {
+            "execution_ready": True,
+            "project_id": "project",
+            "revision": 4,
+            "current_revision": 4,
+            "process_count": 1,
+            "window_count": 1,
+            "single_window_policy_ok": True,
+            "target_window": {
+                "handle": 9001,
+                "title": "project - Materials Studio",
+                "pid": 7001,
+                "is_foreground": True,
+            },
+            "execution_lock": {"active": False},
+            "proof_identity": expected_proof,
+            "block_reasons": [],
+        }
+
+    def native_identity(_handle: int) -> dict[str, object]:
+        events.append("native_identity")
+        return _native_window_identity_payload()
+
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Fit must not enumerate the UIA descendant tree")
+        ),
+        keyboard_sender=lambda _token: (_ for _ in ()).throw(
+            AssertionError("Fit must not send keyboard input")
+        ),
+        foreground_handle_getter=lambda: 9001,
+        native_window_identity_getter=native_identity,
+        fit_command_sender=lambda _handle, _command: events.append("native_input"),
+        fit_probe_runner=runner,
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        expected_project_id="project",
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+        expected_structure_binding=expected_binding,
+        expected_structure_proof=expected_proof,
+        pre_input_gate=controller_gate,
+        final_pre_dispatch_gate=final_proof_gate,
+    )
+
+    assert result["execution_succeeded"] is True
+    assert result["immediate_pre_input_gate"]["native_probe_performed"] is False
+    assert events == [
+        "native_probe",
+        "controller_gate",
+        "final_proof_gate",
+        "native_identity",
+        "native_input",
+        "native_probe",
+    ]
+
+
+def test_execute_fit_mapping_mismatch_fails_before_native_command(
+    tmp_path: Path,
+) -> None:
+    payload = _native_fit_probe_payload()
+    payload["toolbar_buttons"][7]["command_id"] = 12345
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=lambda **_kwargs: payload,
+        native_commands=native_commands,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_attempted"] is False
+    assert result["gui_input_performed"] is False
+    assert result["side_effect_may_have_occurred"] is False
+    assert native_commands == []
+
+
+def test_execute_fit_rechecks_foreground_after_probe_before_command(
+    tmp_path: Path,
+) -> None:
+    native_commands: list[tuple[int, int]] = []
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Fit must not enumerate the UIA descendant tree")
+        ),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        native_window_identity_getter=lambda _handle: (
+            _native_window_identity_payload(is_foreground=False)
+        ),
+        fit_command_sender=lambda handle, command: native_commands.append(
+            (handle, command)
+        ),
+        fit_probe_runner=lambda **_kwargs: _native_fit_probe_payload(),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_attempted"] is False
+    assert result["automatic_retry_allowed"] is True
+    assert native_commands == []
+
+
+def test_execute_fit_native_identity_blocks_second_materials_studio_window(
+    tmp_path: Path,
+) -> None:
+    native_commands: list[tuple[int, int]] = []
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Fit must not enumerate the UIA descendant tree")
+        ),
+        keyboard_sender=lambda _token: None,
+        foreground_handle_getter=lambda: 9001,
+        native_window_identity_getter=lambda _handle: (
+            _native_window_identity_payload(
+                window_count=2,
+                materials_studio_window_handles=[9001, 9002],
+            )
+        ),
+        fit_command_sender=lambda handle, command: native_commands.append(
+            (handle, command)
+        ),
+        fit_probe_runner=lambda **_kwargs: _native_fit_probe_payload(),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_attempted"] is False
+    assert result["automatic_retry_allowed"] is True
+    assert result["pre_dispatch_native_window_identity"]["window_count"] == 2
+    assert "single-session identity" in result["error"]
+    assert native_commands == []
+
+
+def test_execute_fit_blocks_when_immediate_controller_gate_advances_revision(
+    tmp_path: Path,
+) -> None:
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=lambda **_kwargs: _native_fit_probe_payload(),
+        native_commands=native_commands,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        expected_project_id="project",
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+        pre_input_gate=lambda: {
+            "execution_ready": False,
+            "project_id": "project",
+            "revision": 5,
+            "single_window_policy_ok": True,
+            "target_window": {
+                "handle": 9001,
+                "title": "project - Materials Studio",
+                "pid": 7001,
+                "is_foreground": True,
+            },
+            "local_uia_probe": _native_fit_probe_payload(),
+            "block_reasons": ["current_project_revision_advanced"],
+        },
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_attempted"] is False
+    assert result["automatic_retry_allowed"] is True
+    assert native_commands == []
+
+
+def test_execute_fit_post_probe_failure_disables_automatic_retry(
+    tmp_path: Path,
+) -> None:
+    payloads = [_native_fit_probe_payload(), _native_fit_probe_payload()]
+    payloads[1]["toolbar"]["title"] = "Unexpected"
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=lambda **_kwargs: payloads.pop(0),
+        native_commands=native_commands,
+    )
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_performed"] is True
+    assert result["side_effect_may_have_occurred"] is True
+    assert result["automatic_retry_allowed"] is False
+    assert native_commands == [(9001, 33299)]
+
+
+def test_execute_fit_registry_mismatch_blocks_before_native_command(
+    tmp_path: Path,
+) -> None:
+    native_commands: list[tuple[int, int]] = []
+    backend = _native_fit_backend(
+        runner=lambda **_kwargs: _native_fit_probe_payload(),
+        native_commands=native_commands,
+    )
+    registry_path, _registry_sha256 = _native_registry(tmp_path)
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256="0" * 64,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_attempted"] is False
+    assert result["side_effect_may_have_occurred"] is False
+    assert native_commands == []
+
+
+def test_execute_fit_registry_change_after_command_disables_retry(
+    tmp_path: Path,
+) -> None:
+    registry_path, registry_sha256 = _native_registry(tmp_path)
+    native_commands: list[tuple[int, int]] = []
+
+    def sender(handle: int, command: int) -> None:
+        native_commands.append((handle, command))
+        registry_path.write_text("<changed/>", encoding="utf-8")
+
+    backend = PywinautoViewReplayBackend(
+        desktop_factory=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Fit must not enumerate the UIA descendant tree")
+        ),
+        keyboard_sender=lambda _token: (_ for _ in ()).throw(
+            AssertionError("Fit must not send keyboard input")
+        ),
+        foreground_handle_getter=lambda: 9001,
+        native_window_identity_getter=lambda _handle: (
+            _native_window_identity_payload()
+        ),
+        fit_command_sender=sender,
+        fit_probe_runner=lambda **_kwargs: _native_fit_probe_payload(),
+        sleep_fn=lambda _seconds: None,
+        platform_supported=True,
+    )
+    result = backend.execute_fit_to_view(
+        window_handle=9001,
+        expected_window_title="project - Materials Studio",
+        expected_revision=4,
+        toolbar_contracts={
+            FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                FIT_TO_VIEW_TOOLBAR_NAME
+            ]
+        },
+        command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
+        registry_sha256=registry_sha256,
+        registry_path=registry_path,
+        expected_window_pid=7001,
+        expected_document_name="structure_r004",
+    )
+
+    assert result["execution_succeeded"] is False
+    assert result["gui_input_performed"] is True
+    assert result["side_effect_may_have_occurred"] is True
+    assert result["automatic_retry_allowed"] is False
+    assert native_commands == [(9001, 33299)]
 
 
 def test_viewport_capture_bounds_clips_uia_child_to_negative_monitor_window() -> None:

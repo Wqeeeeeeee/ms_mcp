@@ -1,13 +1,69 @@
 # Codex plugin packaging audit
 
+## Authoritative v0.5.2 addendum
+
+Goal ID: `CODEX-MS-PLUGIN-BOUNDED-NATIVE-FIT-V0.5.2`
+
+Audit date: 2026-08-13 (Asia/Shanghai)
+
+This addendum is the authoritative packaging decision for `0.5.2`. It
+supersedes the release decision in the historical `0.5.1` baseline below while
+retaining that section as the runtime-cache provenance record.
+
+The exact audited baselines are:
+
+- Wqeeeeeeee/ms_mcp base SHA:
+  `b11c44942692e5e8044b9e0e39ad9c48f9ff6221` (`v0.5.1`, the current
+  `origin/main` baseline when this change began);
+- DrYe1109/MS-MCP read-only reference SHA:
+  `991a1b3ab2ad985529fb645dc82f47528a2a1297`;
+- new package, plugin, managed-runtime, and release version: `0.5.2`;
+- repository license: SPDX `MIT`.
+
+The scoped real-application smoke for this release successfully exercised the
+existing signed Materials Studio GUI loop and the bounded native
+Fit-to-View path in a real Materials Studio session. This proves only that the
+reviewed same-window GUI transport and mechanical framing path worked for that
+smoke. It is not the complete formal checklist in
+`docs/REAL_MS_ACCEPTANCE.zh-CN.md`, does not establish scientific validity, and
+does not change the release manifest's conservative
+`real_acceptance.materials_studio="NOT_RUN"` declaration. CASTEP, DMol3, and
+Forcite were not run; no calculation was started.
+
+`0.5.2` replaces the potentially blocking full UIA descendant-tree scan in the
+Fit-to-View path with a short-lived, isolated native Win32 probe. The helper is
+bound by exact interpreter/package/module identity and SHA-256, a hard timeout,
+and a kill-on-close Windows Job Object. Execute revalidates the exact
+project/revision/PID/HWND, active document, unique viewer and toolbar mapping,
+foreground state, and registry SHA-256 before sending only the bounded native
+Fit command. A proven pre-dispatch failure may return the exact Fit retry; an
+attempted or uncertain dispatch cannot be retried automatically; a successful
+Fit followed only by snapshot failure retries only that snapshot.
+
+The release builder must bind the wheel to the final source tree, not merely to
+the same version string. It enumerates every regular source/data file under
+`src/material_studio_mcp_server` and `src/ms_mcp` (excluding source
+`__pycache__` and `.pyc`/`.pyo` artifacts), requires the wheel package-member
+set to match exactly, and compares every member byte-for-byte. A missing,
+extra, stale, or tampered package member is a release blocker even when wheel
+metadata and `RECORD` remain internally valid.
+
+Packaging may proceed only after the final source and audit changes are
+committed, a fresh `0.5.2` wheel is built from that exact tree, the deterministic
+Windows plugin ZIP/release manifest/checksums are regenerated from that wheel,
+and the release tests pass. Intermediate or dirty-tree `0.5.2` artifacts are not
+release candidates.
+
+## Historical v0.5.1 runtime-integrity baseline (superseded)
+
 Goal ID: `CODEX-MS-PLUGIN-GUI-LOOP-V1-RUNTIME-HOTFIX`
 
 Audit date: 2026-08-13 (Asia/Shanghai)
 
-This is the authoritative incremental audit for the `0.5.1` runtime-integrity
+This was the authoritative incremental audit for the `0.5.1` runtime-integrity
 hotfix after the HMAC-signed GUI-loop release merged as PR #158. The `0.5.0`
 capability and safety analysis remains the feature baseline below; this hotfix
-supersedes its runtime-launch and artifact-publication decision. The source and
+superseded its runtime-launch and artifact-publication decision. The source and
 release review itself did not start a calculation or weaken any modeling,
 revision, window, or evidence gate.
 

@@ -101,14 +101,16 @@ structure artifact SHA-256 和 result metadata。只有同一 revision 仍为 cu
 ### 5. Fit-to-View
 
 结构成功热加载后，先调用 `material_studio_gui_fit_to_view` preview。确认其绑定
-同一 project/revision/PID/HWND、当前 accessibility mapping 和 structure SHA-256。
+同一 project/revision/PID/HWND、当前 bounded native toolbar mapping 和 structure SHA-256。
 用户明确确认后再 execute。要求：
 
 - `post_hotload_fit_to_view.completed=true`；
 - `structure_unchanged=true`；
 - 最终 snapshot 与同一 revision 绑定。
 
-若执行被阻塞，按返回的 exact Fit-to-View retry payload 重试；不得重新物化结构。
+若命令派发前被阻塞，可按返回的 exact Fit-to-View retry payload 重试；不得重新物化
+结构。若已尝试派发或可能产生 GUI 副作用，禁止自动重试 Fit，先按状态/人工复核路径
+确认；若 Fit 已完成而仅最终截图失败，只重试返回的 snapshot payload。
 
 ### 6. front、top、isometric 视角证据
 

@@ -11,6 +11,7 @@ import csv
 import ctypes
 import errno
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -43,7 +44,13 @@ from .gui_uia import (
 from .config import resolve_config
 from .gui_loop import GuiLoopError, GuiLoopManager
 from .parsers.copy_script import analyze_reviewed_copy_script
-from .state.store import default_workspace_root, sanitize_project_id
+from .state.execution import (
+    ExecutionAttemptRecord,
+    canonical_json_sha256,
+    inspect_execution_runtime,
+)
+from .state.store import ProjectStore, default_workspace_root, sanitize_project_id
+from .translators import render_model_to_perl
 
 
 class GuiError(RuntimeError):
@@ -68,6 +75,66 @@ GUI_LOOP_BINDING_EVENT_SCHEMA = "materials_studio_gui_loop_binding_event_v1"
 GUI_LOOP_LIVE_BINDING_SCHEMA = "materials_studio_gui_loop_live_binding_v1"
 GUI_LOOP_BINDING_JOURNAL_MAX_BYTES = 8 * 1024 * 1024
 GUI_LOOP_BINDING_JOURNAL_MAX_EVENTS = 10_000
+
+_FIT_PROBE_REQUIRED_KEYWORDS = frozenset(
+    {
+        "window_handle",
+        "expected_window_title",
+        "expected_revision",
+        "toolbar_contracts",
+        "command_labels",
+        "expected_window_pid",
+        "expected_document_name",
+    }
+)
+_FIT_EXECUTE_REQUIRED_KEYWORDS = frozenset(
+    {
+        *_FIT_PROBE_REQUIRED_KEYWORDS,
+        "registry_sha256",
+        "registry_path",
+        "expected_project_id",
+        "expected_structure_binding",
+        "expected_structure_proof",
+        "pre_input_gate",
+        "final_pre_dispatch_gate",
+    }
+)
+
+
+def _callable_accepts_keywords(
+    callback: Any,
+    required_keywords: frozenset[str],
+) -> bool:
+    if not callable(callback):
+        return False
+    try:
+        parameters = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    return all(
+        name in parameters
+        and parameters[name].kind is not inspect.Parameter.POSITIONAL_ONLY
+        for name in required_keywords
+    )
+
+
+def _fit_backend_contract_supported(backend: Any) -> bool:
+    return bool(
+        getattr(backend, "supported", False)
+        and _callable_accepts_keywords(
+            getattr(backend, "probe_fit_to_view", None),
+            _FIT_PROBE_REQUIRED_KEYWORDS,
+        )
+        and _callable_accepts_keywords(
+            getattr(backend, "execute_fit_to_view", None),
+            _FIT_EXECUTE_REQUIRED_KEYWORDS,
+        )
+    )
 
 # These identifiers come from the Materials Studio 2020 #SVViewer3d command
 # registry. They are evidence for reviewed GUI automation, not a public
@@ -2967,6 +3034,9 @@ class MaterialsStudioGuiController:
         recommended_action = window_management.get("recommended_action")
         local_uia_implementation = local_uia_view_replay_implementation_contract()
         local_uia_supported = bool(self.view_replay_backend.supported)
+        local_uia_fit_supported = _fit_backend_contract_supported(
+            self.view_replay_backend
+        )
         local_uia_miller_supported = bool(
             getattr(
                 self.view_replay_backend,
@@ -3080,7 +3150,7 @@ class MaterialsStudioGuiController:
                 "execution_requires_explicit_execute": True,
                 "post_action_visual_confirmation_required": True,
             },
-            "local_uia_fit_to_view_supported": local_uia_supported,
+            "local_uia_fit_to_view_supported": local_uia_fit_supported,
             "local_uia_fit_to_view_command_id": FIT_TO_VIEW_COMMAND_ID,
             "capabilities": [
                 "detect_matstudio_window",
@@ -3105,7 +3175,11 @@ class MaterialsStudioGuiController:
                     else []
                 ),
                 "record_external_view_replay",
-                *(["execute_fit_to_view_with_local_uia"] if local_uia_supported else []),
+                *(
+                    ["execute_fit_to_view_with_local_uia"]
+                    if local_uia_fit_supported
+                    else []
+                ),
             ],
             "limits": [
                 "COM automation is not used.",
@@ -3458,16 +3532,512 @@ class MaterialsStudioGuiController:
             "registry_toolbar_layouts": layouts,
         }
 
-    def _fit_to_view_runtime_preflight(
+    def _fit_to_view_file_proof(
+        self,
+        *,
+        paths: dict[str, str],
+        expected_journal_head_sha256: str | None,
+    ) -> dict[str, Any]:
+        """Hash the frozen Fit proof files without interpreting model content."""
+
+        reasons: list[str] = []
+        files: dict[str, dict[str, Any]] = {}
+        journal_head_sha256: str | None = None
+        for label, raw_path in sorted(paths.items()):
+            path: Path | None = None
+            try:
+                candidate = Path(str(raw_path)).expanduser()
+                if not candidate.is_absolute():
+                    raise ValueError("proof path is relative")
+                path = candidate.resolve()
+                if not _path_is_inside(self.workspace_root, path):
+                    raise ValueError("proof path escapes the controller workspace")
+                if not path.exists() or not path.is_file() or path.is_symlink():
+                    raise ValueError("proof file is missing, non-regular, or a symlink")
+                if label == "execution_journal":
+                    if path.stat().st_size > 16 * 1024 * 1024:
+                        raise ValueError("execution journal exceeds bounded size")
+                    journal_bytes = path.read_bytes()
+                    sha256 = hashlib.sha256(journal_bytes).hexdigest()
+                    size_bytes = len(journal_bytes)
+                    journal_lines = journal_bytes.decode("utf-8").splitlines()
+                    if not journal_lines or not journal_lines[-1].strip():
+                        raise ValueError("execution journal has no terminal line")
+                    journal_tail = json.loads(journal_lines[-1])
+                    if not isinstance(journal_tail, dict):
+                        raise ValueError(
+                            "execution journal terminal line is not an object"
+                        )
+                    raw_digest = journal_tail.get("event_record_sha256")
+                    if (
+                        not isinstance(raw_digest, str)
+                        or len(raw_digest) != 64
+                        or any(
+                            character not in "0123456789abcdef"
+                            for character in raw_digest
+                        )
+                    ):
+                        raise ValueError(
+                            "execution journal terminal digest is invalid"
+                        )
+                    journal_head_sha256 = raw_digest
+                else:
+                    sha256, size_bytes = _sha256_file(path)
+                files[label] = {
+                    "path": str(path),
+                    "sha256": sha256,
+                    "size_bytes": size_bytes,
+                }
+            except Exception:
+                reasons.append(f"fit_proof_{label}_unavailable_or_invalid")
+                files[label] = {
+                    "path": str(path or raw_path),
+                    "sha256": None,
+                    "size_bytes": None,
+                }
+                if label == "execution_journal":
+                    reasons.append("fit_proof_execution_journal_head_invalid")
+        if journal_head_sha256 != expected_journal_head_sha256:
+            reasons.append("fit_proof_execution_journal_head_changed")
+
+        identity = {
+            "files": files,
+            "journal_latest_event_sha256": journal_head_sha256,
+        }
+        return {
+            "verified": not reasons,
+            "identity": identity,
+            "digest": canonical_json_sha256(identity),
+            "block_reasons": _unique_strings(reasons),
+        }
+
+    def _fit_to_view_structure_binding(
         self,
         *,
         project_id: str,
         revision: int,
+        target_metadata: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        """Read-only preflight for one exact current wrapper and Fit control."""
+        """Bind one wrapper source to the immutable current-revision result."""
+
+        output_dir = (
+            self.workspace_root
+            / project_id
+            / "outputs"
+            / f"r{revision:03d}"
+        ).resolve()
+        result_metadata_path = (output_dir / "result_metadata.json").resolve()
+        reasons: list[str] = []
+        payload: dict[str, Any] | None = None
+        embedded_attempt: ExecutionAttemptRecord | None = None
+        attempt: ExecutionAttemptRecord | None = None
+        execution_runtime: dict[str, Any] | None = None
+        planned_structure: Path | None = None
+        wrapper_source: Path | None = None
+        structure_sha256: str | None = None
+        structure_size_bytes: int | None = None
+
+        if not _path_is_inside(self.workspace_root, result_metadata_path):
+            reasons.append("canonical_result_metadata_outside_controller_workspace")
+        elif (
+            not result_metadata_path.exists()
+            or not result_metadata_path.is_file()
+            or result_metadata_path.is_symlink()
+        ):
+            reasons.append("canonical_result_metadata_unavailable")
+        else:
+            try:
+                if result_metadata_path.stat().st_size > 8 * 1024 * 1024:
+                    raise ValueError("result metadata exceeds the bounded read limit")
+                candidate = json.loads(result_metadata_path.read_text(encoding="utf-8"))
+                if not isinstance(candidate, dict):
+                    raise ValueError("result metadata is not an object")
+                payload = candidate
+            except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+                reasons.append("canonical_result_metadata_invalid")
+
+        if payload is not None:
+            if payload.get("success") is not True:
+                reasons.append("canonical_result_metadata_not_successful")
+            attempt_payload = payload.get("execution_attempt")
+            if not isinstance(attempt_payload, dict):
+                reasons.append("canonical_execution_attempt_missing_or_invalid")
+            else:
+                try:
+                    embedded_attempt = ExecutionAttemptRecord.model_validate(
+                        attempt_payload
+                    )
+                except Exception:
+                    reasons.append("canonical_execution_attempt_missing_or_invalid")
+
+        execution_lock_path = (output_dir / "revision_execution.lock").resolve()
+        try:
+            stored_spec = ProjectStore(self.workspace_root).get_revision(
+                project_id, revision
+            )
+            generated = render_model_to_perl(stored_spec, output_dir)
+            script_path = (
+                self.workspace_root
+                / project_id
+                / "scripts"
+                / f"r{revision:03d}_build.pl"
+            ).resolve()
+            execution_runtime = inspect_execution_runtime(
+                output_dir,
+                project_id=project_id,
+                revision=revision,
+                result_metadata=payload,
+                lock_probe=lambda: _workspace_advisory_lock_status(
+                    execution_lock_path,
+                    workspace_root=self.workspace_root,
+                ),
+                expected_spec_payload=stored_spec.model_dump(mode="json"),
+                expected_script=generated.script,
+                expected_script_path=script_path,
+                expected_lock_path=execution_lock_path,
+                expected_result_metadata_path=result_metadata_path,
+            )
+        except Exception:
+            reasons.append("canonical_execution_runtime_unavailable")
+        if execution_runtime is not None:
+            if execution_runtime.get("lock_observation_stable") is not True:
+                reasons.append("canonical_execution_lock_observation_unstable")
+            if execution_runtime.get("active") is not False:
+                reasons.append("canonical_execution_not_inactive")
+            if execution_runtime.get("status") != "completed":
+                reasons.append("canonical_execution_runtime_not_completed")
+            if execution_runtime.get("attempt_record_source") != "journal":
+                reasons.append("canonical_execution_attempt_not_from_journal")
+            consistency = execution_runtime.get("consistency")
+            if (
+                not isinstance(consistency, dict)
+                or consistency.get("ok") is not True
+            ):
+                reasons.append("canonical_execution_history_inconsistent")
+            journal = execution_runtime.get("journal")
+            if (
+                not isinstance(journal, dict)
+                or journal.get("status") != "loaded"
+                or journal.get("exists") is not True
+                or not isinstance(journal.get("event_count"), int)
+                or int(journal.get("event_count") or 0) < 2
+            ):
+                reasons.append("canonical_execution_journal_missing_or_invalid")
+            if execution_runtime.get("state_exists") is not True:
+                reasons.append("canonical_execution_state_missing_or_invalid")
+            latest_attempt_payload = execution_runtime.get("latest_attempt")
+            if isinstance(latest_attempt_payload, dict):
+                try:
+                    attempt = ExecutionAttemptRecord.model_validate(
+                        latest_attempt_payload
+                    )
+                except Exception:
+                    reasons.append("canonical_journal_terminal_attempt_invalid")
+            else:
+                reasons.append("canonical_journal_terminal_attempt_invalid")
+
+        if (
+            attempt is not None
+            and embedded_attempt is not None
+            and attempt != embedded_attempt
+        ):
+            reasons.append("canonical_result_attempt_diverges_from_journal")
+
+        if attempt is not None:
+            if attempt.project_id != project_id:
+                reasons.append("canonical_execution_attempt_project_mismatch")
+            if attempt.revision != revision:
+                reasons.append("canonical_execution_attempt_revision_mismatch")
+            if attempt.status != "completed" or attempt.result_success is not True:
+                reasons.append("canonical_execution_attempt_not_successful")
+            if (
+                attempt.current_revision_at_start != revision
+                or attempt.current_revision_after_execution != revision
+                or attempt.current_revision_still_current is not True
+            ):
+                reasons.append("canonical_execution_attempt_current_binding_invalid")
+            attempt_result_path = attempt.result_metadata_path
+            if (
+                not isinstance(attempt_result_path, str)
+                or not attempt_result_path.strip()
+                or not Path(attempt_result_path).expanduser().is_absolute()
+                or not _same_resolved_path(
+                    Path(attempt_result_path).expanduser(),
+                    result_metadata_path,
+                )
+            ):
+                reasons.append("canonical_execution_attempt_result_path_mismatch")
+
+            raw_planned_structure = attempt.planned_structure_path
+            if (
+                not isinstance(raw_planned_structure, str)
+                or not raw_planned_structure.strip()
+                or not Path(raw_planned_structure).expanduser().is_absolute()
+            ):
+                reasons.append("canonical_structure_path_missing_or_relative")
+            else:
+                planned_structure = Path(raw_planned_structure).expanduser().resolve()
+                if not _path_is_inside(self.workspace_root, planned_structure):
+                    reasons.append("canonical_structure_outside_controller_workspace")
+                if not _path_is_inside(output_dir, planned_structure):
+                    reasons.append("canonical_structure_outside_revision_output")
+                if (
+                    not planned_structure.exists()
+                    or not planned_structure.is_file()
+                    or planned_structure.is_symlink()
+                ):
+                    reasons.append("canonical_structure_artifact_unavailable")
+                else:
+                    try:
+                        structure_sha256, structure_size_bytes = _sha256_file(
+                            planned_structure
+                        )
+                    except Exception:
+                        reasons.append("canonical_structure_artifact_unreadable")
+
+            planned_outputs = payload.get("planned_outputs") if payload else None
+            result_planned = (
+                planned_outputs.get("structure")
+                if isinstance(planned_outputs, dict)
+                else None
+            )
+            if result_planned:
+                result_planned_path = Path(str(result_planned)).expanduser()
+                if (
+                    not result_planned_path.is_absolute()
+                    or planned_structure is None
+                    or not _same_resolved_path(result_planned_path, planned_structure)
+                ):
+                    reasons.append("result_planned_structure_path_mismatch")
+
+        artifact_validation = (
+            payload.get("structure_artifact_validation")
+            if isinstance(payload, dict)
+            else None
+        )
+        if not isinstance(artifact_validation, dict):
+            reasons.append("structure_artifact_validation_missing_or_invalid")
+        else:
+            if (
+                artifact_validation.get("ok") is not True
+                or artifact_validation.get("status") != "matched"
+            ):
+                reasons.append("structure_artifact_validation_not_matched")
+            raw_validation_path = artifact_validation.get("structure_path")
+            if (
+                not isinstance(raw_validation_path, str)
+                or not raw_validation_path.strip()
+                or not Path(raw_validation_path).expanduser().is_absolute()
+                or planned_structure is None
+                or not _same_resolved_path(
+                    Path(raw_validation_path).expanduser(), planned_structure
+                )
+            ):
+                reasons.append("structure_artifact_validation_path_mismatch")
+            if (
+                structure_sha256 is None
+                or artifact_validation.get("sha256") != structure_sha256
+            ):
+                reasons.append("structure_artifact_validation_sha256_mismatch")
+            validation_size = artifact_validation.get("file_size_bytes")
+            if (
+                not isinstance(validation_size, int)
+                or isinstance(validation_size, bool)
+                or structure_size_bytes is None
+                or validation_size != structure_size_bytes
+            ):
+                reasons.append("structure_artifact_validation_size_mismatch")
+
+        raw_wrapper_source = (
+            target_metadata.get("source_path")
+            if isinstance(target_metadata, dict)
+            else None
+        )
+        if (
+            not isinstance(raw_wrapper_source, str)
+            or not raw_wrapper_source.strip()
+            or not Path(raw_wrapper_source).expanduser().is_absolute()
+        ):
+            reasons.append("target_wrapper_source_path_missing_or_relative")
+        else:
+            wrapper_source = Path(raw_wrapper_source).expanduser().resolve()
+            if not _path_is_inside(self.workspace_root, wrapper_source):
+                reasons.append("target_wrapper_source_outside_controller_workspace")
+            if (
+                planned_structure is None
+                or not _same_resolved_path(wrapper_source, planned_structure)
+            ):
+                reasons.append("target_wrapper_source_not_canonical_structure")
+
+        live_binding = (
+            target_metadata.get("gui_loop_live_binding")
+            if isinstance(target_metadata, dict)
+            else None
+        )
+        if isinstance(live_binding, dict) and live_binding.get("verified") is True:
+            live_cache = live_binding.get("cache")
+            live_source_sha256 = (
+                live_cache.get("source_sha256")
+                if isinstance(live_cache, dict)
+                else None
+            )
+            if (
+                not isinstance(live_source_sha256, str)
+                or live_source_sha256 != structure_sha256
+            ):
+                reasons.append("gui_loop_source_sha256_mismatch")
+            live_source_size = live_cache.get("source_byte_count") if isinstance(
+                live_cache, dict
+            ) else None
+            if (
+                live_source_size is not None
+                and (
+                    not isinstance(live_source_size, int)
+                    or isinstance(live_source_size, bool)
+                    or live_source_size != structure_size_bytes
+                )
+            ):
+                reasons.append("gui_loop_source_size_mismatch")
+
+        reasons = _unique_strings(reasons)
+        journal = (
+            execution_runtime.get("journal")
+            if isinstance(execution_runtime, dict)
+            and isinstance(execution_runtime.get("journal"), dict)
+            else {}
+        )
+        proof_paths = {
+            "structure_artifact": (
+                str(planned_structure) if planned_structure is not None else ""
+            ),
+            "result_metadata": str(result_metadata_path),
+            "execution_journal": str(
+                (output_dir / "execution_attempts.jsonl").resolve()
+            ),
+            "execution_state": str(
+                (output_dir / "execution_attempt_state.json").resolve()
+            ),
+            "revision_spec": str(
+                (
+                    self.workspace_root
+                    / project_id
+                    / "revisions"
+                    / f"r{revision:03d}_model_spec.json"
+                ).resolve()
+            ),
+            "saved_script": str(
+                (
+                    self.workspace_root
+                    / project_id
+                    / "scripts"
+                    / f"r{revision:03d}_build.pl"
+                ).resolve()
+            ),
+            "wrapper_metadata": str(
+                target_metadata.get("metadata_path")
+                if isinstance(target_metadata, dict)
+                else ""
+            ),
+            # The proof helper sorts labels and performs no I/O after its loop.
+            # Keep current.json last so a revision publication cannot hide
+            # behind a later journal-tail read in the final proof pass.
+            "zz_current_pointer": str(
+                (self.workspace_root / project_id / "current.json").resolve()
+            ),
+        }
+        file_proof = self._fit_to_view_file_proof(
+            paths=proof_paths,
+            expected_journal_head_sha256=journal.get("latest_event_sha256"),
+        )
+        reasons.extend(str(item) for item in file_proof.get("block_reasons") or [])
+        reasons = _unique_strings(reasons)
+        identity = {
+            "project_id": project_id,
+            "revision": revision,
+            "result_metadata_path": str(result_metadata_path),
+            "execution_attempt_id": (
+                attempt.attempt_id if attempt is not None else None
+            ),
+            "execution_attempt_sequence": (
+                attempt.sequence if attempt is not None else None
+            ),
+            "planned_structure_path": (
+                str(planned_structure) if planned_structure is not None else None
+            ),
+            "wrapper_source_path": (
+                str(wrapper_source) if wrapper_source is not None else None
+            ),
+            "structure_sha256": structure_sha256,
+            "structure_size_bytes": structure_size_bytes,
+            "journal_latest_event_sha256": journal.get("latest_event_sha256"),
+            "file_proof_digest": file_proof.get("digest"),
+        }
+        return {
+            "verified": not reasons,
+            "project_id": project_id,
+            "revision": revision,
+            "revision_output_dir": str(output_dir),
+            "result_metadata_path": str(result_metadata_path),
+            "execution_attempt_id": attempt.attempt_id if attempt is not None else None,
+            "execution_attempt_sequence": (
+                attempt.sequence if attempt is not None else None
+            ),
+            "planned_structure_path": (
+                str(planned_structure) if planned_structure is not None else None
+            ),
+            "wrapper_source_path": (
+                str(wrapper_source) if wrapper_source is not None else None
+            ),
+            "structure_sha256": structure_sha256,
+            "structure_size_bytes": structure_size_bytes,
+            "journal_latest_event_sha256": journal.get("latest_event_sha256"),
+            "execution_runtime": execution_runtime,
+            "file_proof": file_proof,
+            "proof_paths": proof_paths,
+            "identity": identity,
+            "block_reasons": reasons,
+        }
+
+    def _fit_to_view_final_pre_dispatch_gate(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+        expected_target_window: dict[str, Any],
+        expected_target_metadata: dict[str, Any],
+        expected_structure_binding: dict[str, Any],
+        expected_file_proof: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Rehash frozen evidence and recheck the exact GUI just before input."""
 
         safe_project = sanitize_project_id(project_id)
-        status = self.status(project_id=safe_project, revision=revision)
+        reasons: list[str] = []
+        proof_paths = expected_structure_binding.get("proof_paths")
+        expected_binding_identity = expected_structure_binding.get("identity")
+        if not isinstance(proof_paths, dict) or not isinstance(
+            expected_binding_identity, dict
+        ):
+            reasons.append("fit_final_proof_contract_missing")
+            proof_paths = {}
+            expected_binding_identity = {}
+        output_dir = (
+            self.workspace_root
+            / safe_project
+            / "outputs"
+            / f"r{revision:03d}"
+        ).resolve()
+        execution_lock = _workspace_advisory_lock_status(
+            output_dir / "revision_execution.lock",
+            workspace_root=self.workspace_root,
+        )
+        if execution_lock.get("active") is not False:
+            reasons.append("fit_final_execution_lock_not_inactive")
+
+        try:
+            status = self.status(project_id=safe_project, revision=revision)
+        except Exception:
+            status = {}
+            reasons.append("fit_final_status_unavailable")
         target_window = (
             status.get("target_window")
             if isinstance(status.get("target_window"), dict)
@@ -3478,46 +4048,272 @@ class MaterialsStudioGuiController:
             if isinstance(status.get("target_window_resolution"), dict)
             else {}
         )
+        target_metadata = target_resolution.get("target_project_wrapper_metadata")
+        target_metadata = target_metadata if isinstance(target_metadata, dict) else {}
+        if status.get("supported") is not True:
+            reasons.append("fit_final_gui_backend_unavailable")
+        if status.get("process_count") != 1:
+            reasons.append("fit_final_exactly_one_process_required")
+        if status.get("window_count") != 1:
+            reasons.append("fit_final_exactly_one_window_required")
+        if status.get("single_window_policy_ok") is not True:
+            reasons.append("fit_final_single_window_policy_failed")
+        if (
+            status.get("target_window_found") is not True
+            or status.get("current_revision_loaded") is not True
+            or target_resolution.get("matched_project_window") is not True
+            or target_resolution.get("matching_window_count") != 1
+        ):
+            reasons.append("fit_final_target_revision_window_unverified")
+        window_identity_fields = (
+            "handle",
+            "pid",
+            "title",
+            "is_foreground",
+            "is_visible",
+            "is_minimized",
+        )
+        if {
+            field: target_window.get(field) for field in window_identity_fields
+        } != {
+            field: expected_target_window.get(field)
+            for field in window_identity_fields
+        }:
+            reasons.append("fit_final_target_window_changed")
+        metadata_identity_fields = (
+            "metadata_path",
+            "wrapper_workspace_root",
+            "wrapper_workspace_matches_controller",
+            "wrapper_provenance_status",
+            "project_id",
+            "revision",
+            "source_path",
+            "source_inside_wrapper_workspace",
+            "document_name",
+        )
+        if {
+            field: target_metadata.get(field) for field in metadata_identity_fields
+        } != {
+            field: expected_target_metadata.get(field)
+            for field in metadata_identity_fields
+        }:
+            reasons.append("fit_final_target_wrapper_metadata_changed")
+
+        try:
+            current_revision = int(
+                ProjectStore(self.workspace_root).load_current(safe_project).revision
+            )
+        except Exception:
+            current_revision = None
+            reasons.append("fit_final_current_revision_unavailable")
+        if current_revision != revision:
+            reasons.append("fit_final_current_revision_changed")
+
+        # Stabilize the proof across two adjacent reads.  The second read is
+        # deliberately the callback's final I/O.  Nothing after it may touch
+        # status, locks, project state, or files; the backend performs only an
+        # in-memory comparison, registry digest, one native HWND identity read,
+        # and the command dispatch.
+        preliminary_file_proof = self._fit_to_view_file_proof(
+            paths={str(key): str(value) for key, value in proof_paths.items()},
+            expected_journal_head_sha256=expected_binding_identity.get(
+                "journal_latest_event_sha256"
+            ),
+        )
+        execution_lock_before_final_proof = _workspace_advisory_lock_status(
+            output_dir / "revision_execution.lock",
+            workspace_root=self.workspace_root,
+        )
+        if execution_lock_before_final_proof.get("active") is not False:
+            reasons.append("fit_final_execution_lock_changed_before_final_proof")
+        fresh_file_proof = self._fit_to_view_file_proof(
+            paths={str(key): str(value) for key, value in proof_paths.items()},
+            expected_journal_head_sha256=expected_binding_identity.get(
+                "journal_latest_event_sha256"
+            ),
+        )
+        reasons.extend(
+            str(item) for item in preliminary_file_proof.get("block_reasons") or []
+        )
+        reasons.extend(
+            str(item) for item in fresh_file_proof.get("block_reasons") or []
+        )
+        if (
+            not isinstance(expected_file_proof, dict)
+            or not expected_file_proof
+            or preliminary_file_proof.get("identity") != expected_file_proof
+            or fresh_file_proof.get("identity") != expected_file_proof
+            or preliminary_file_proof.get("identity")
+            != fresh_file_proof.get("identity")
+        ):
+            reasons.append("fit_final_file_proof_changed")
+
+        reasons = _unique_strings(reasons)
+        return {
+            "status": "verified_fit_final_proof" if not reasons else "blocked",
+            "execution_ready": not reasons,
+            "project_id": safe_project,
+            "revision": revision,
+            "current_revision": current_revision,
+            "process_count": status.get("process_count"),
+            "window_count": status.get("window_count"),
+            "single_window_policy_ok": status.get("single_window_policy_ok"),
+            "target_window": target_window or None,
+            "target_wrapper_metadata": target_metadata or None,
+            "execution_lock": execution_lock,
+            "execution_lock_before_final_proof": (
+                execution_lock_before_final_proof
+            ),
+            "preliminary_file_proof": preliminary_file_proof,
+            "file_proof": fresh_file_proof,
+            "proof_identity": fresh_file_proof.get("identity"),
+            "block_reasons": reasons,
+            "gui_input_performed": False,
+        }
+
+    def _fit_to_view_controller_gate(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+        include_native_probe: bool,
+    ) -> dict[str, Any]:
+        """Recheck controller state, optionally including the bounded helper."""
+
+        safe_project = sanitize_project_id(project_id)
+        store = ProjectStore(self.workspace_root)
+        current_before: int | None = None
+        current_after: int | None = None
         reasons: list[str] = []
+        try:
+            current_before = int(store.load_current(safe_project).revision)
+        except Exception:
+            reasons.append("current_project_revision_unavailable")
+
+        status = self.status(project_id=safe_project, revision=revision)
+        try:
+            current_after = int(store.load_current(safe_project).revision)
+        except Exception:
+            reasons.append("current_project_revision_unavailable")
+        if current_before != revision or current_after != revision:
+            reasons.append("current_project_revision_advanced")
+        if current_before != current_after:
+            reasons.append("current_project_revision_changed_during_fit_gate")
+
+        target_window = (
+            status.get("target_window")
+            if isinstance(status.get("target_window"), dict)
+            else {}
+        )
+        target_resolution = (
+            status.get("target_window_resolution")
+            if isinstance(status.get("target_window_resolution"), dict)
+            else {}
+        )
+        raw_target_metadata = target_resolution.get(
+            "target_project_wrapper_metadata"
+        )
+        target_metadata = (
+            raw_target_metadata if isinstance(raw_target_metadata, dict) else None
+        )
+
         if status.get("supported") is not True:
             reasons.append("gui_backend_unavailable")
         if status.get("process_count") != 1:
             reasons.append("exactly_one_matstudio_process_required")
+        if status.get("window_count") != 1:
+            reasons.append("exactly_one_matstudio_window_required")
         if status.get("single_window_policy_ok") is not True:
-            reasons.extend(str(item) for item in status.get("single_window_violation_reasons") or [])
+            reasons.extend(
+                str(item)
+                for item in status.get("single_window_violation_reasons") or []
+            )
         if status.get("target_window_found") is not True:
             reasons.append("target_revision_window_not_found")
         if target_resolution.get("matched_project_window") is not True:
             reasons.append("target_revision_window_identity_unverified")
+        if target_resolution.get("matching_window_count") != 1:
+            reasons.append("target_revision_window_identity_not_unique")
         if status.get("current_revision_loaded") is not True:
             reasons.append("target_revision_not_loaded_in_gui")
-        if target_resolution.get("target_wrapper_workspace_matches_controller") is False:
-            reasons.append("target_wrapper_workspace_mismatch")
         if target_window.get("is_visible") is not True:
             reasons.append("target_window_not_visible")
         if target_window.get("is_minimized") is True:
             reasons.append("target_window_minimized")
         if target_window.get("is_foreground") is not True:
             reasons.append("target_window_not_foreground")
-        structure_path = _target_structure_path(target_resolution)
-        if structure_path is None or not structure_path.exists() or not structure_path.is_file():
-            reasons.append("target_structure_artifact_unavailable")
+
+        if target_metadata is None:
+            reasons.append("target_wrapper_metadata_missing_or_invalid")
+        else:
+            if (
+                target_metadata.get("wrapper_provenance_status")
+                != "verified_revision_wrapper"
+            ):
+                reasons.append("target_wrapper_provenance_unverified")
+            if target_metadata.get("wrapper_workspace_matches_controller") is not True:
+                reasons.append("target_wrapper_workspace_mismatch")
+            raw_wrapper_root = target_metadata.get("wrapper_workspace_root")
+            if (
+                not isinstance(raw_wrapper_root, str)
+                or not raw_wrapper_root.strip()
+                or not Path(raw_wrapper_root).expanduser().is_absolute()
+                or not _same_resolved_path(
+                    Path(raw_wrapper_root).expanduser(), self.workspace_root
+                )
+            ):
+                reasons.append("target_wrapper_workspace_root_mismatch")
+            if target_metadata.get("project_id") != safe_project:
+                reasons.append("target_wrapper_project_mismatch")
+            metadata_revision = target_metadata.get("revision")
+            if (
+                not isinstance(metadata_revision, int)
+                or isinstance(metadata_revision, bool)
+                or metadata_revision != revision
+            ):
+                reasons.append("target_wrapper_revision_mismatch")
+            if target_metadata.get("source_inside_wrapper_workspace") is not True:
+                reasons.append("target_wrapper_source_not_inside_workspace")
+
+        structure_binding = self._fit_to_view_structure_binding(
+            project_id=safe_project,
+            revision=revision,
+            target_metadata=target_metadata,
+        )
+        reasons.extend(
+            str(item) for item in structure_binding.get("block_reasons") or []
+        )
 
         registry = self._fit_to_view_registry_preflight()
         reasons.extend(str(item) for item in registry.get("block_reasons") or [])
         probe: dict[str, Any] | None = None
-        if not reasons:
-            probe = self.view_replay_backend.probe(
-                window_handle=int(target_window["handle"]),
-                expected_window_title=str(target_window["title"]),
-                expected_revision=revision,
-                toolbar_contracts={
-                    FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
-                        FIT_TO_VIEW_TOOLBAR_NAME
-                    ]
-                },
-                command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
-            )
+        post_native_gate: dict[str, Any] | None = None
+        if include_native_probe and not reasons:
+            fit_probe = getattr(self.view_replay_backend, "probe_fit_to_view", None)
+            if _fit_backend_contract_supported(self.view_replay_backend):
+                probe = fit_probe(
+                    window_handle=int(target_window["handle"]),
+                    expected_window_title=str(target_window["title"]),
+                    expected_revision=revision,
+                    toolbar_contracts={
+                        FIT_TO_VIEW_TOOLBAR_NAME: VIEW_RUNTIME_ACCESSIBILITY_TOOLBAR_CONTRACTS[
+                            FIT_TO_VIEW_TOOLBAR_NAME
+                        ]
+                    },
+                    command_labels={
+                        FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME
+                    },
+                    expected_window_pid=target_window.get("pid"),
+                    expected_document_name=target_metadata.get("document_name"),
+                )
+            else:
+                probe = {
+                    "supported": False,
+                    "fit_command_ready": False,
+                    "resolved_command_ids": [],
+                    "gui_input_performed": False,
+                    "block_reasons": ["bounded_native_fit_probe_unavailable"],
+                }
             if probe.get("supported") is not True:
                 reasons.append("local_uia_backend_unavailable")
             reasons.extend(str(item) for item in probe.get("block_reasons") or [])
@@ -3525,26 +4321,205 @@ class MaterialsStudioGuiController:
                 str(item) for item in probe.get("resolved_command_ids") or []
             }:
                 reasons.append("fit_to_view_control_not_invocable")
-            if probe.get("viewport") is None:
-                reasons.append("local_uia_unique_viewport_not_observed")
+            if probe.get("fit_command_ready") is not True:
+                reasons.append("bounded_native_fit_command_not_ready")
+
+            # The native helper is intentionally isolated and may run for many
+            # seconds.  Its receipt cannot vouch for controller state that may
+            # have changed while it was running, so close that race with one
+            # short controller-only gate after the helper has exited.
+            post_native_gate = self._fit_to_view_controller_gate(
+                project_id=safe_project,
+                revision=revision,
+                include_native_probe=False,
+            )
+            reasons.extend(
+                str(item) for item in post_native_gate.get("block_reasons") or []
+            )
+
+        final_gate = post_native_gate or {}
+        if post_native_gate is not None:
+            target_window = (
+                post_native_gate.get("target_window")
+                if isinstance(post_native_gate.get("target_window"), dict)
+                else {}
+            )
+            target_resolution = (
+                post_native_gate.get("target_window_resolution")
+                if isinstance(
+                    post_native_gate.get("target_window_resolution"), dict
+                )
+                else {}
+            )
+            target_metadata = (
+                post_native_gate.get("target_wrapper_metadata")
+                if isinstance(
+                    post_native_gate.get("target_wrapper_metadata"), dict
+                )
+                else None
+            )
+            structure_binding = dict(
+                post_native_gate.get("structure_binding") or {}
+            )
+            registry = dict(post_native_gate.get("registry") or {})
+            current_before = post_native_gate.get(
+                "current_revision_before_status"
+            )
+            current_after = post_native_gate.get("current_revision_after_status")
+
+        # Structure/history verification and registry parsing happen after the
+        # first status read.  Close that final TOCTOU interval with one last,
+        # short controller-only observation immediately before returning this
+        # gate to either the preview caller or the UIA executor.
+        current_before_return: int | None = None
+        final_status: dict[str, Any] = {}
+        try:
+            final_status = self.status(project_id=safe_project, revision=revision)
+        except Exception:
+            reasons.append("fit_gate_final_status_unavailable")
+        try:
+            current_before_return = int(store.load_current(safe_project).revision)
+        except Exception:
+            reasons.append("current_project_revision_unavailable_before_fit_gate_return")
+        if (
+            current_before_return != revision
+            or current_before_return != current_before
+            or current_before_return != current_after
+        ):
+            reasons.append("current_project_revision_changed_before_fit_gate_return")
+
+        final_target_window = (
+            final_status.get("target_window")
+            if isinstance(final_status.get("target_window"), dict)
+            else {}
+        )
+        final_target_resolution = (
+            final_status.get("target_window_resolution")
+            if isinstance(final_status.get("target_window_resolution"), dict)
+            else {}
+        )
+        final_target_metadata = final_target_resolution.get(
+            "target_project_wrapper_metadata"
+        )
+        final_target_metadata = (
+            final_target_metadata
+            if isinstance(final_target_metadata, dict)
+            else None
+        )
+        if final_status:
+            if final_status.get("supported") is not True:
+                reasons.append("gui_backend_unavailable_before_fit_gate_return")
+            if final_status.get("process_count") != 1:
+                reasons.append("process_count_changed_before_fit_gate_return")
+            if final_status.get("window_count") != 1:
+                reasons.append("window_count_changed_before_fit_gate_return")
+            if final_status.get("single_window_policy_ok") is not True:
+                reasons.append("single_window_policy_changed_before_fit_gate_return")
+            if final_status.get("target_window_found") is not True:
+                reasons.append("target_window_lost_before_fit_gate_return")
+            if final_status.get("current_revision_loaded") is not True:
+                reasons.append("target_revision_unloaded_before_fit_gate_return")
+            if final_target_resolution.get("matched_project_window") is not True:
+                reasons.append("target_window_identity_lost_before_fit_gate_return")
+            if final_target_resolution.get("matching_window_count") != 1:
+                reasons.append("target_window_not_unique_before_fit_gate_return")
+            expected_window_identity = {
+                field: target_window.get(field)
+                for field in ("handle", "pid", "title")
+            }
+            observed_window_identity = {
+                field: final_target_window.get(field)
+                for field in ("handle", "pid", "title")
+            }
+            if observed_window_identity != expected_window_identity:
+                reasons.append("target_window_changed_before_fit_gate_return")
+            if final_target_window.get("is_visible") is not True:
+                reasons.append("target_window_not_visible_before_fit_gate_return")
+            if final_target_window.get("is_minimized") is True:
+                reasons.append("target_window_minimized_before_fit_gate_return")
+            if final_target_window.get("is_foreground") is not True:
+                reasons.append("target_window_not_foreground_before_fit_gate_return")
+            metadata_identity_fields = (
+                "metadata_path",
+                "wrapper_workspace_root",
+                "wrapper_workspace_matches_controller",
+                "wrapper_provenance_status",
+                "project_id",
+                "revision",
+                "source_path",
+                "source_inside_wrapper_workspace",
+                "document_name",
+            )
+            expected_metadata_identity = {
+                field: target_metadata.get(field)
+                for field in metadata_identity_fields
+            } if isinstance(target_metadata, dict) else None
+            observed_metadata_identity = {
+                field: final_target_metadata.get(field)
+                for field in metadata_identity_fields
+            } if isinstance(final_target_metadata, dict) else None
+            if observed_metadata_identity != expected_metadata_identity:
+                reasons.append("target_wrapper_metadata_changed_before_fit_gate_return")
 
         reasons = _unique_strings(reasons)
         return {
-            "status": "verified_fit_to_view_ready" if not reasons else "fit_to_view_blocked",
+            "status": (
+                "verified_fit_to_view_ready"
+                if include_native_probe and not reasons
+                else "verified_fit_to_view_controller_gate"
+                if not include_native_probe and not reasons
+                else "fit_to_view_blocked"
+            ),
             "execution_ready": not reasons,
             "project_id": safe_project,
             "revision": revision,
+            "current_revision_before_status": current_before,
+            "current_revision_after_status": current_after,
+            "current_revision_before_return": current_before_return,
+            "final_status_recheck": {
+                "process_count": final_status.get("process_count"),
+                "window_count": final_status.get("window_count"),
+                "single_window_policy_ok": final_status.get(
+                    "single_window_policy_ok"
+                ),
+                "target_window": final_target_window or None,
+                "target_window_resolution": final_target_resolution or None,
+            },
+            "process_count": final_gate.get(
+                "process_count", status.get("process_count")
+            ),
+            "window_count": final_gate.get("window_count", status.get("window_count")),
             "target_window": target_window or None,
             "target_window_resolution": target_resolution or None,
+            "target_wrapper_metadata": target_metadata,
             "target_window_is_foreground": target_window.get("is_foreground"),
-            "single_window_policy_ok": status.get("single_window_policy_ok"),
-            "structure_path": str(structure_path) if structure_path is not None else None,
+            "single_window_policy_ok": final_gate.get(
+                "single_window_policy_ok", status.get("single_window_policy_ok")
+            ),
+            "structure_path": structure_binding.get("planned_structure_path"),
+            "structure_binding": structure_binding,
             "registry": registry,
+            "native_probe_performed": bool(include_native_probe and probe is not None),
             "local_uia_probe": probe,
+            "post_native_controller_gate": post_native_gate,
             "block_reasons": reasons,
             "gui_input_performed": False,
             "structure_modified": False,
         }
+
+    def _fit_to_view_runtime_preflight(
+        self,
+        *,
+        project_id: str,
+        revision: int,
+    ) -> dict[str, Any]:
+        """Read-only preflight for one exact current wrapper and Fit control."""
+
+        return self._fit_to_view_controller_gate(
+            project_id=project_id,
+            revision=revision,
+            include_native_probe=True,
+        )
 
     def fit_to_view(
         self,
@@ -3574,6 +4549,11 @@ class MaterialsStudioGuiController:
             "execution_ready": preflight["execution_ready"],
             "preflight": preflight,
             "gui_input_performed": False,
+            "gui_input_attempted": False,
+            "side_effect_may_have_occurred": False,
+            "automatic_retry_allowed": bool(
+                mode == "execute" and not preflight["execution_ready"]
+            ),
             "gui_modified": False,
             "structure_modified": False,
             "structure_unchanged": True,
@@ -3612,7 +4592,11 @@ class MaterialsStudioGuiController:
 
         target_window = preflight["target_window"] or {}
         target_resolution = preflight["target_window_resolution"] or {}
-        structure_path = _target_structure_path(target_resolution)
+        structure_path = (
+            Path(str(preflight["structure_path"])).expanduser().resolve()
+            if preflight.get("structure_path")
+            else None
+        )
         structure_sha256_before: str | None = None
         structure_size_before: int | None = None
         if structure_path is not None and structure_path.exists():
@@ -3627,8 +4611,39 @@ class MaterialsStudioGuiController:
             )
 
         execute_method = getattr(self.view_replay_backend, "execute_fit_to_view", None)
-        if not callable(execute_method):
+        if not _fit_backend_contract_supported(self.view_replay_backend):
             raise GuiError("The configured local UIA backend does not support Fit-to-View.")
+
+        def immediate_pre_input_gate() -> dict[str, Any]:
+            return self._fit_to_view_controller_gate(
+                project_id=preflight["project_id"],
+                revision=revision,
+                include_native_probe=False,
+            )
+
+        frozen_structure_binding = dict(preflight.get("structure_binding") or {})
+        frozen_target_metadata = (
+            dict(target_resolution.get("target_project_wrapper_metadata") or {})
+            if isinstance(
+                target_resolution.get("target_project_wrapper_metadata"), dict
+            )
+            else {}
+        )
+        frozen_file_proof = dict(
+            (frozen_structure_binding.get("file_proof") or {}).get("identity")
+            or {}
+        )
+
+        def final_pre_dispatch_gate() -> dict[str, Any]:
+            return self._fit_to_view_final_pre_dispatch_gate(
+                project_id=preflight["project_id"],
+                revision=revision,
+                expected_target_window=dict(target_window),
+                expected_target_metadata=frozen_target_metadata,
+                expected_structure_binding=frozen_structure_binding,
+                expected_file_proof=frozen_file_proof,
+            )
+
         action_receipt = execute_method(
             window_handle=int(target_window["handle"]),
             expected_window_title=str(target_window["title"]),
@@ -3639,16 +4654,52 @@ class MaterialsStudioGuiController:
             },
             command_labels={FIT_TO_VIEW_COMMAND_ID: FIT_TO_VIEW_CONTROL_NAME},
             registry_sha256=preflight["registry"].get("registry_sha256"),
+            registry_path=preflight["registry"].get("registry_path"),
+            expected_revision=revision,
+            expected_window_pid=target_window.get("pid"),
+            expected_document_name=(
+                (
+                    target_resolution.get("target_project_wrapper_metadata")
+                    or {}
+                ).get("document_name")
+                if isinstance(
+                    target_resolution.get("target_project_wrapper_metadata"),
+                    dict,
+                )
+                else None
+            ),
+            expected_project_id=preflight["project_id"],
+            expected_structure_binding=dict(
+                (preflight.get("structure_binding") or {}).get("identity") or {}
+            ),
+            expected_structure_proof=frozen_file_proof,
+            pre_input_gate=immediate_pre_input_gate,
+            final_pre_dispatch_gate=final_pre_dispatch_gate,
         )
 
         structure_sha256_after: str | None = None
         structure_size_after: int | None = None
-        if structure_path is not None and structure_path.exists():
-            structure_sha256_after, structure_size_after = _sha256_file(structure_path)
+        structure_evidence_error: str | None = None
+        try:
+            if structure_path is not None and structure_path.exists():
+                structure_sha256_after, structure_size_after = _sha256_file(
+                    structure_path
+                )
+        except Exception as exc:
+            structure_evidence_error = str(exc)
         structure_unchanged = bool(
             structure_sha256_before is not None
+            and structure_evidence_error is None
             and structure_sha256_before == structure_sha256_after
             and structure_size_before == structure_size_after
+        )
+        structure_integrity_verified = bool(
+            structure_sha256_before is not None
+            and structure_sha256_after is not None
+            and structure_evidence_error is None
+        )
+        structure_modified: bool | None = (
+            not structure_unchanged if structure_integrity_verified else None
         )
 
         after_snapshot: dict[str, Any] | None = None
@@ -3678,22 +4729,40 @@ class MaterialsStudioGuiController:
                 "structure_sha256_before": structure_sha256_before,
                 "structure_sha256_after": structure_sha256_after,
                 "structure_unchanged": structure_unchanged,
+                "structure_integrity_verified": structure_integrity_verified,
+                "structure_evidence_error": structure_evidence_error,
                 "gui_input_performed": bool(
                     action_receipt.get("gui_input_performed") is True
                 ),
+                "gui_input_attempted": bool(
+                    action_receipt.get("gui_input_attempted") is True
+                ),
+                "side_effect_may_have_occurred": bool(
+                    action_receipt.get("side_effect_may_have_occurred") is True
+                ),
+                "automatic_retry_allowed": bool(
+                    action_receipt.get("automatic_retry_allowed") is True
+                ),
                 "gui_modified": bool(action_receipt.get("gui_modified") is True),
-                "structure_modified": not structure_unchanged,
+                "structure_modified": structure_modified,
                 "visual_acceptance_recorded": False,
                 "post_action_visual_confirmation_required": True,
             }
         )
-        log_path = self._write_log(
-            "fit_to_view",
-            project_id=preflight["project_id"],
-            revision=revision,
-            payload=response,
-        )
-        response["gui_log_path"] = str(log_path)
+        try:
+            log_path = self._write_log(
+                "fit_to_view",
+                project_id=preflight["project_id"],
+                revision=revision,
+                payload=response,
+            )
+            response["gui_log_path"] = str(log_path)
+            response["gui_log_persisted"] = True
+        except Exception as exc:
+            response["gui_log_path"] = None
+            response["gui_log_persisted"] = False
+            response["gui_log_warning"] = str(exc)
+            response["status"] = "execution_failed"
         return response
 
     def _window_inventory(self, windows: list[WindowInfo], *, selected_window: WindowInfo | None) -> list[dict[str, Any]]:

@@ -519,6 +519,27 @@ def test_compact_capabilities_preserve_semiconductor_discovery() -> None:
         "non_collinear_only"
     )
     implementation = replay_policy["local_uia_implementation_contract"]
+    full_implementation = full["view_replay_automation_policy"][
+        "local_uia_implementation_contract"
+    ]
+    compact_fit = implementation["recipe_classes"]["fit_to_view"]
+    full_fit = full_implementation["recipe_classes"]["fit_to_view"]
+    for key in (
+        "implemented",
+        "execute_tool",
+        "requires_bounded_native_probe",
+        "probe_process_timeout_seconds",
+        "requires_exact_window_pid_document_and_viewport",
+        "requires_full_live_toolbar_mapping",
+        "numeric_command_id",
+        "native_command_timeout_milliseconds",
+        "uses_uia_descendant_tree",
+        "native_command_message",
+    ):
+        assert compact_fit[key] == full_fit[key]
+    assert implementation["runtime_support_fields"]["fit_to_view"] == (
+        "gui_status.local_uia_fit_to_view_supported"
+    )
     assert implementation["recipe_classes"]["transactional_miller_plane"][
         "implemented"
     ] is True
@@ -636,6 +657,8 @@ def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> 
                 "single_window_policy_ok": True,
                 "single_window_violation_reasons": [],
                 "local_uia_view_replay_supported": True,
+                "local_uia_fit_to_view_supported": True,
+                "local_uia_fit_to_view_command_id": "cmdViewer3DFitToView",
                 "local_uia_view_replay_unavailable_reason": None,
                 "local_uia_view_replay_view_names": ["front", "isometric"],
                 "local_uia_miller_plane_transaction_supported": True,
@@ -691,6 +714,13 @@ def test_compact_capabilities_preserve_requested_runtime_status(monkeypatch) -> 
     assert compact["gui_status"][
         "local_uia_miller_plane_transaction_supported"
     ] is True
+    assert compact["gui_status"]["local_uia_fit_to_view_supported"] is False
+    assert compact["gui_status"]["local_uia_fit_to_view_command_id"] == (
+        "cmdViewer3DFitToView"
+    )
+    assert "bounded_native_fit_probe_unavailable" in compact["gui_status"][
+        "local_uia_fit_to_view_unavailable_reason"
+    ]
     runtime = compact["view_replay_runtime_availability"]
     assert runtime["status"] == "transactional_miller_available"
     assert runtime["transactional_miller_implemented"] is True
